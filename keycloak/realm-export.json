@@ -1,0 +1,126 @@
+{
+  "realm": "minga-greens",
+  "enabled": true,
+  "displayName": "Minga-Greens ERP",
+  "displayNameHtml": "<div class=\"kc-logo-text\"><span>Minga-Greens</span></div>",
+  "sslRequired": "external",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": true,
+  "editUsernameAllowed": false,
+  "bruteForceProtected": true,
+  "permanentLockout": false,
+  "maxFailureWaitSeconds": 900,
+  "minimumQuickLoginWaitSeconds": 60,
+  "waitIncrementSeconds": 60,
+  "quickLoginCheckMilliSeconds": 1000,
+  "maxDeltaTimeSeconds": 43200,
+  "failureFactor": 5,
+  "roles": {
+    "realm": [
+      {
+        "name": "admin",
+        "description": "System Administrator"
+      },
+      {
+        "name": "production_planner",
+        "description": "Produktionsplaner - Forecast & Planung"
+      },
+      {
+        "name": "production_staff",
+        "description": "Produktionsmitarbeiter"
+      },
+      {
+        "name": "sales",
+        "description": "Vertriebsmitarbeiter"
+      },
+      {
+        "name": "accounting",
+        "description": "Buchhaltung (eingeschränkt)"
+      }
+    ]
+  },
+  "users": [
+    {
+      "username": "admin",
+      "enabled": true,
+      "email": "admin@minga-greens.de",
+      "firstName": "Admin",
+      "lastName": "User",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "admin",
+          "temporary": true
+        }
+      ],
+      "realmRoles": ["admin", "production_planner", "production_staff", "sales"]
+    },
+    {
+      "username": "planner",
+      "enabled": true,
+      "email": "planner@minga-greens.de",
+      "firstName": "Production",
+      "lastName": "Planner",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "planner",
+          "temporary": true
+        }
+      ],
+      "realmRoles": ["production_planner", "production_staff"]
+    },
+    {
+      "username": "staff",
+      "enabled": true,
+      "email": "staff@minga-greens.de",
+      "firstName": "Production",
+      "lastName": "Staff",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "staff",
+          "temporary": true
+        }
+      ],
+      "realmRoles": ["production_staff"]
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "minga-frontend",
+      "name": "Minga-Greens Frontend",
+      "enabled": true,
+      "publicClient": true,
+      "redirectUris": [
+        "http://localhost:3000/*",
+        "http://localhost:8000/*"
+      ],
+      "webOrigins": [
+        "http://localhost:3000",
+        "http://localhost:8000"
+      ],
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": true,
+      "protocol": "openid-connect"
+    },
+    {
+      "clientId": "minga-backend",
+      "name": "Minga-Greens Backend",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "minga-backend-secret",
+      "serviceAccountsEnabled": true,
+      "protocol": "openid-connect"
+    }
+  ],
+  "defaultDefaultClientScopes": [
+    "role_list",
+    "profile",
+    "email",
+    "roles",
+    "web-origins"
+  ]
+}

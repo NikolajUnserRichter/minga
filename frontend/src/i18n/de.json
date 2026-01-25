@@ -1,0 +1,84 @@
+{
+  "common": {
+    "save": "Speichern",
+    "cancel": "Abbrechen",
+    "delete": "Löschen",
+    "edit": "Bearbeiten",
+    "create": "Erstellen",
+    "search": "Suchen",
+    "filter": "Filter",
+    "loading": "Lädt...",
+    "noData": "Keine Daten vorhanden",
+    "error": "Ein Fehler ist aufgetreten",
+    "success": "Erfolgreich",
+    "confirm": "Bestätigen",
+    "back": "Zurück"
+  },
+  "navigation": {
+    "dashboard": "Dashboard",
+    "production": "Produktion",
+    "sales": "Vertrieb",
+    "forecasting": "Forecasting",
+    "settings": "Einstellungen"
+  },
+  "production": {
+    "growBatches": "Wachstumschargen",
+    "seeds": "Saatgut",
+    "harvests": "Ernten",
+    "status": {
+      "keimung": "Keimung",
+      "wachstum": "Wachstum",
+      "erntereif": "Erntereif",
+      "geerntet": "Geerntet",
+      "verlust": "Verlust"
+    }
+  },
+  "sales": {
+    "customers": "Kunden",
+    "orders": "Bestellungen",
+    "subscriptions": "Abonnements",
+    "customerTypes": {
+      "gastro": "Gastronomie",
+      "handel": "Handel",
+      "privat": "Privat"
+    },
+    "orderStatus": {
+      "offen": "Offen",
+      "bestaetigt": "Bestätigt",
+      "inProduktion": "In Produktion",
+      "bereit": "Bereit",
+      "geliefert": "Geliefert",
+      "storniert": "Storniert"
+    }
+  },
+  "forecasting": {
+    "forecasts": "Prognosen",
+    "productionSuggestions": "Produktionsvorschläge",
+    "accuracy": "Genauigkeit",
+    "generate": "Generieren",
+    "approve": "Genehmigen",
+    "reject": "Ablehnen",
+    "warnings": {
+      "unterdeckung": "Unterdeckung",
+      "ueberproduktion": "Überproduktion",
+      "kapazitaet": "Kapazitätsüberschreitung"
+    }
+  },
+  "units": {
+    "gramm": "Gramm",
+    "kg": "Kilogramm",
+    "tray": "Tray",
+    "trays": "Trays",
+    "bund": "Bund",
+    "schale": "Schale"
+  },
+  "weekdays": {
+    "0": "Montag",
+    "1": "Dienstag",
+    "2": "Mittwoch",
+    "3": "Donnerstag",
+    "4": "Freitag",
+    "5": "Samstag",
+    "6": "Sonntag"
+  }
+}
