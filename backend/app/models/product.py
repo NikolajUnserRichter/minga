@@ -5,15 +5,18 @@ import uuid
 from datetime import datetime, date, timedelta
 from decimal import Decimal
 from enum import Enum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 from sqlalchemy import String, Integer, Numeric, Boolean, DateTime, Date, ForeignKey, Text, Enum as SQLEnum
+from sqlalchemy.types import Uuid, JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy.dialects.postgresql import UUID, JSONB
+
 
 from app.database import Base
 
 if TYPE_CHECKING:
     from app.models.unit import UnitOfMeasure
+
+from app.models.enums import TaxRate
 
 
 class ProductCategory(str, Enum):
@@ -32,14 +35,15 @@ class ProductGroup(Base):
     __tablename__ = "product_groups"
 
     id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+        Uuid, primary_key=True, default=uuid.uuid4
     )
+    code: Mapped[str] = mapped_column(String(20), unique=True, nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(100), nullable=False)
-    description: Mapped[str | None] = mapped_column(Text)
+    description: Mapped[Optional[str]] = mapped_column(Text)
 
     # Hierarchie
-    parent_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("product_groups.id")
+    parent_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid, ForeignKey("product_groups.id")
     )
 
     # Sortierung
@@ -52,7 +56,7 @@ class ProductGroup(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     # Relationships
-    parent: Mapped["ProductGroup | None"] = relationship(
+    parent: Mapped[Optional["ProductGroup"]] = relationship(
         "ProductGroup", remote_side=[id], back_populates="children"
     )
     children: Mapped[list["ProductGroup"]] = relationship(
@@ -74,17 +78,17 @@ class GrowPlan(Base):
     __tablename__ = "grow_plans"
 
     id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+        Uuid, primary_key=True, default=uuid.uuid4
     )
 
     # Identifikation
     code: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)
     name: Mapped[str] = mapped_column(String(100), nullable=False)
-    description: Mapped[str | None] = mapped_column(Text)
+    description: Mapped[Optional[str]] = mapped_column(Text)
 
     # Saatgut-Referenz (welches Saatgut wird verwendet)
-    seed_product_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("products.id")
+    seed_product_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid, ForeignKey("products.id", use_alter=True)
     )
 
     # Saatgut-Dichte
@@ -127,8 +131,8 @@ class GrowPlan(Base):
     light_hours_per_day: Mapped[int] = mapped_column(Integer, default=12)
 
     # Notizen
-    growing_notes: Mapped[str | None] = mapped_column(Text)
-    harvest_notes: Mapped[str | None] = mapped_column(Text)
+    growing_notes: Mapped[Optional[str]] = mapped_column(Text)
+    harvest_notes: Mapped[Optional[str]] = mapped_column(Text)
 
     # Status
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -140,7 +144,7 @@ class GrowPlan(Base):
     )
 
     # Relationships
-    seed_product: Mapped["Product | None"] = relationship(
+    seed_product: Mapped[Optional["Product"]] = relationship(
         "Product", foreign_keys=[seed_product_id]
     )
     products: Mapped[list["Product"]] = relationship(
@@ -176,55 +180,62 @@ class Product(Base):
     __tablename__ = "products"
 
     id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+        Uuid, primary_key=True, default=uuid.uuid4
     )
 
     # Identifikation
     sku: Mapped[str] = mapped_column(String(50), unique=True, nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
-    name_short: Mapped[str | None] = mapped_column(String(50))  # Für Labels
-    description: Mapped[str | None] = mapped_column(Text)
+    name_short: Mapped[Optional[str]] = mapped_column(String(50))  # Für Labels
+    description: Mapped[Optional[str]] = mapped_column(Text)
 
     # Klassifikation
     category: Mapped[ProductCategory] = mapped_column(
         SQLEnum(ProductCategory), nullable=False, index=True
     )
-    product_group_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("product_groups.id")
+    product_group_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid, ForeignKey("product_groups.id")
     )
 
     # Einheiten
     base_unit_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("units_of_measure.id"), nullable=False
+        Uuid, ForeignKey("units_of_measure.id"), nullable=False
     )
     # Verkaufseinheiten als JSON: [{unit_id, conversion_factor, is_default}]
-    sales_units: Mapped[dict | None] = mapped_column(JSONB)
+    sales_units: Mapped[Optional[dict]] = mapped_column(JSON)
 
     # Preise
-    base_price: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
-    cost_price: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
-    tax_rate: Mapped[Decimal] = mapped_column(Numeric(5, 2), default=Decimal("7.0"))
+    base_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 2))
+    cost_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 2))
+    tax_rate: Mapped[TaxRate] = mapped_column(
+        SQLEnum(TaxRate), default=TaxRate.REDUZIERT
+    )
 
     # Microgreen-spezifisch
-    grow_plan_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("grow_plans.id")
+    grow_plan_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid, ForeignKey("grow_plans.id", use_alter=True)
     )
-    shelf_life_days: Mapped[int | None] = mapped_column(Integer)
-    storage_temp_min: Mapped[Decimal | None] = mapped_column(Numeric(4, 1))
-    storage_temp_max: Mapped[Decimal | None] = mapped_column(Numeric(4, 1))
+    seed_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid, ForeignKey("seeds.id")
+    )
+    shelf_life_days: Mapped[Optional[int]] = mapped_column(Integer)
+    storage_temp_min: Mapped[Optional[Decimal]] = mapped_column(Numeric(4, 1))
+    storage_temp_max: Mapped[Optional[Decimal]] = mapped_column(Numeric(4, 1))
 
     # Saatgut-spezifisch
-    seed_variety: Mapped[str | None] = mapped_column(String(100))
-    seed_supplier: Mapped[str | None] = mapped_column(String(200))
-    germination_rate: Mapped[Decimal | None] = mapped_column(Numeric(5, 2))
+    seed_variety: Mapped[Optional[str]] = mapped_column(String(100))
+    seed_supplier: Mapped[Optional[str]] = mapped_column(String(200))
+    germination_rate: Mapped[Optional[Decimal]] = mapped_column(Numeric(5, 2))
 
     # Verpackung
-    packaging_type: Mapped[str | None] = mapped_column(String(50))
-    weight_per_unit: Mapped[Decimal | None] = mapped_column(Numeric(10, 3))
+    packaging_type: Mapped[Optional[str]] = mapped_column(String(50))
+    weight_per_unit: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 3))
 
     # Bundle-Komponenten (für BUNDLE-Kategorie)
-    bundle_components: Mapped[dict | None] = mapped_column(JSONB)
+    bundle_components: Mapped[Optional[dict]] = mapped_column(JSON)
+    bundle_components: Mapped[Optional[dict]] = mapped_column(JSON)
     # Format: [{"product_id": "uuid", "quantity": 1}]
+    is_bundle: Mapped[bool] = mapped_column(Boolean, default=False)
 
     # Status-Flags
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -244,10 +255,10 @@ class Product(Base):
 
     # Relationships
     base_unit: Mapped["UnitOfMeasure"] = relationship("UnitOfMeasure")
-    grow_plan: Mapped["GrowPlan | None"] = relationship(
+    grow_plan: Mapped[Optional["GrowPlan"]] = relationship(
         "GrowPlan", back_populates="products", foreign_keys=[grow_plan_id]
     )
-    product_group: Mapped["ProductGroup | None"] = relationship(
+    product_group: Mapped[Optional["ProductGroup"]] = relationship(
         "ProductGroup", back_populates="products"
     )
     price_list_items: Mapped[list["PriceListItem"]] = relationship(
@@ -266,17 +277,20 @@ class PriceList(Base):
     __tablename__ = "price_lists"
 
     id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+        Uuid, primary_key=True, default=uuid.uuid4
     )
 
+
+
     # Identifikation
+    code: Mapped[str] = mapped_column(String(20), unique=True, nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(100), nullable=False)
-    description: Mapped[str | None] = mapped_column(Text)
+    description: Mapped[Optional[str]] = mapped_column(Text)
     currency: Mapped[str] = mapped_column(String(3), default="EUR")
 
     # Gültigkeit
-    valid_from: Mapped[date | None] = mapped_column(Date)
-    valid_until: Mapped[date | None] = mapped_column(Date)
+    valid_from: Mapped[Optional[date]] = mapped_column(Date)
+    valid_until: Mapped[Optional[date]] = mapped_column(Date)
 
     # Flags
     is_default: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -293,7 +307,7 @@ class PriceList(Base):
         "PriceListItem", back_populates="price_list", cascade="all, delete-orphan"
     )
 
-    def is_valid(self, check_date: date | None = None) -> bool:
+    def is_valid(self, check_date: Optional[date] = None) -> bool:
         """Prüft ob Preisliste zum angegebenen Datum gültig ist"""
         check = check_date or date.today()
         if not self.is_active:
@@ -316,18 +330,18 @@ class PriceListItem(Base):
     __tablename__ = "price_list_items"
 
     id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+        Uuid, primary_key=True, default=uuid.uuid4
     )
 
     # Referenzen
     price_list_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("price_lists.id"), nullable=False
+        Uuid, ForeignKey("price_lists.id"), nullable=False
     )
     product_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("products.id"), nullable=False
+        Uuid, ForeignKey("products.id"), nullable=False
     )
     unit_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("units_of_measure.id"), nullable=False
+        Uuid, ForeignKey("units_of_measure.id"), nullable=False
     )
 
     # Preis
@@ -337,7 +351,12 @@ class PriceListItem(Base):
     min_quantity: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("1"))
 
     # Rabatt (optional)
-    discount_percent: Mapped[Decimal | None] = mapped_column(Numeric(5, 2))
+    discount_percent: Mapped[Optional[Decimal]] = mapped_column(Numeric(5, 2))
+
+    # Gültigkeit
+    valid_from: Mapped[Optional[date]] = mapped_column(Date)
+    valid_until: Mapped[Optional[date]] = mapped_column(Date)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

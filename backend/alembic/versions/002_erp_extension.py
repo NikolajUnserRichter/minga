@@ -40,17 +40,7 @@ def upgrade() -> None:
         sa.Column('created_at', sa.DateTime, server_default=sa.text('NOW()')),
     )
 
-    op.create_table(
-        'unit_conversions',
-        sa.Column('id', postgresql.UUID(as_uuid=True), primary_key=True, server_default=sa.text('gen_random_uuid()')),
-        sa.Column('product_id', postgresql.UUID(as_uuid=True), sa.ForeignKey('products.id', ondelete='CASCADE')),
-        sa.Column('from_unit_id', postgresql.UUID(as_uuid=True), sa.ForeignKey('units_of_measure.id'), nullable=False),
-        sa.Column('to_unit_id', postgresql.UUID(as_uuid=True), sa.ForeignKey('units_of_measure.id'), nullable=False),
-        sa.Column('factor', sa.Numeric(15, 6), nullable=False),
-        sa.Column('is_active', sa.Boolean, server_default='true'),
-        sa.Column('created_at', sa.DateTime, server_default=sa.text('NOW()')),
-        sa.UniqueConstraint('product_id', 'from_unit_id', 'to_unit_id', name='uq_unit_conversion'),
-    )
+
 
     # ============================================================
     # PRODUCTS & GROW PLANS
@@ -138,6 +128,18 @@ def upgrade() -> None:
         sa.Column('is_sellable', sa.Boolean, server_default='true'),
         sa.Column('created_at', sa.DateTime, server_default=sa.text('NOW()')),
         sa.Column('updated_at', sa.DateTime, server_default=sa.text('NOW()')),
+    )
+
+    op.create_table(
+        'unit_conversions',
+        sa.Column('id', postgresql.UUID(as_uuid=True), primary_key=True, server_default=sa.text('gen_random_uuid()')),
+        sa.Column('product_id', postgresql.UUID(as_uuid=True), sa.ForeignKey('products.id', ondelete='CASCADE')),
+        sa.Column('from_unit_id', postgresql.UUID(as_uuid=True), sa.ForeignKey('units_of_measure.id'), nullable=False),
+        sa.Column('to_unit_id', postgresql.UUID(as_uuid=True), sa.ForeignKey('units_of_measure.id'), nullable=False),
+        sa.Column('factor', sa.Numeric(15, 6), nullable=False),
+        sa.Column('is_active', sa.Boolean, server_default='true'),
+        sa.Column('created_at', sa.DateTime, server_default=sa.text('NOW()')),
+        sa.UniqueConstraint('product_id', 'from_unit_id', 'to_unit_id', name='uq_unit_conversion'),
     )
 
     op.create_table(

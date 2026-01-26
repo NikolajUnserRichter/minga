@@ -1,3 +1,4 @@
+from typing import Optional
 """
 Pydantic Schemas für Lagerverwaltung (Inventory)
 Mit Rückverfolgbarkeit und Bewegungshistorie
@@ -23,26 +24,26 @@ class InventoryLocationBase(BaseModel):
 
 class InventoryLocationCreate(InventoryLocationBase):
     """Schema zum Erstellen eines Lagerorts"""
-    parent_id: UUID | None = Field(None, description="Übergeordneter Lagerort")
-    capacity_trays: int | None = Field(None, ge=0, description="Max. Trays")
-    capacity_kg: Decimal | None = Field(None, ge=0, description="Max. Gewicht (kg)")
-    temperature_min: Decimal | None = Field(None, description="Min. Temperatur °C")
-    temperature_max: Decimal | None = Field(None, description="Max. Temperatur °C")
-    humidity_min: int | None = Field(None, ge=0, le=100, description="Min. Luftfeuchtigkeit %")
-    humidity_max: int | None = Field(None, ge=0, le=100, description="Max. Luftfeuchtigkeit %")
+    parent_id: Optional[UUID] = Field(None, description="Übergeordneter Lagerort")
+    capacity_trays: Optional[int] = Field(None, ge=0, description="Max. Trays")
+    capacity_kg: Optional[Decimal] = Field(None, ge=0, description="Max. Gewicht (kg)")
+    temperature_min: Optional[Decimal] = Field(None, description="Min. Temperatur °C")
+    temperature_max: Optional[Decimal] = Field(None, description="Max. Temperatur °C")
+    humidity_min: Optional[int] = Field(None, ge=0, le=100, description="Min. Luftfeuchtigkeit %")
+    humidity_max: Optional[int] = Field(None, ge=0, le=100, description="Max. Luftfeuchtigkeit %")
 
 
 class InventoryLocationUpdate(BaseModel):
     """Schema zum Aktualisieren eines Lagerorts"""
-    name: str | None = None
-    parent_id: UUID | None = None
-    capacity_trays: int | None = None
-    capacity_kg: Decimal | None = None
-    temperature_min: Decimal | None = None
-    temperature_max: Decimal | None = None
-    humidity_min: int | None = None
-    humidity_max: int | None = None
-    is_active: bool | None = None
+    name: Optional[str] = None
+    parent_id: Optional[UUID] = None
+    capacity_trays: Optional[int] = None
+    capacity_kg: Optional[Decimal] = None
+    temperature_min: Optional[Decimal] = None
+    temperature_max: Optional[Decimal] = None
+    humidity_min: Optional[int] = None
+    humidity_max: Optional[int] = None
+    is_active: Optional[bool] = None
 
 
 class InventoryLocationResponse(InventoryLocationBase):
@@ -50,22 +51,22 @@ class InventoryLocationResponse(InventoryLocationBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID
-    parent_id: UUID | None
-    capacity_trays: int | None
-    capacity_kg: Decimal | None
-    temperature_min: Decimal | None
-    temperature_max: Decimal | None
-    humidity_min: int | None
-    humidity_max: int | None
+    parent_id: Optional[UUID]
+    capacity_trays: Optional[int]
+    capacity_kg: Optional[Decimal]
+    temperature_min: Optional[Decimal]
+    temperature_max: Optional[Decimal]
+    humidity_min: Optional[int]
+    humidity_max: Optional[int]
     is_active: bool
     created_at: datetime
 
     # Expandiert
-    parent_name: str | None = None
+    parent_name: Optional[str] = None
 
     # Berechnete Felder
-    current_occupancy_trays: int | None = None
-    current_occupancy_kg: Decimal | None = None
+    current_occupancy_trays: Optional[int] = None
+    current_occupancy_kg: Optional[Decimal] = None
 
 
 class InventoryLocationListResponse(BaseModel):
@@ -81,34 +82,34 @@ class InventoryLocationListResponse(BaseModel):
 class SeedInventoryBase(BaseModel):
     """Basis-Schema für Saatgut-Bestand"""
     batch_number: str = Field(..., min_length=1, max_length=50, description="Chargennummer")
-    supplier_batch: str | None = Field(None, max_length=50, description="Lieferanten-Charge")
+    supplier_batch: Optional[str] = Field(None, max_length=50, description="Lieferanten-Charge")
     initial_quantity_kg: Decimal = Field(..., gt=0, description="Eingangsmenge (kg)")
     received_date: date = Field(..., description="Eingangsdatum")
-    best_before_date: date | None = Field(None, description="Mindesthaltbarkeit")
+    best_before_date: Optional[date] = Field(None, description="Mindesthaltbarkeit")
 
 
 class SeedInventoryCreate(SeedInventoryBase):
     """Schema zum Erstellen eines Saatgut-Bestands"""
     seed_id: UUID = Field(..., description="Saatgut-ID")
-    current_quantity_kg: Decimal | None = Field(None, description="Aktuelle Menge (default = initial)")
-    germination_rate: Decimal | None = Field(None, ge=0, le=100, description="Keimrate %")
-    quality_grade: str | None = Field(None, max_length=10, description="Qualitätsstufe")
-    production_date: date | None = Field(None, description="Produktionsdatum")
-    supplier_name: str | None = Field(None, max_length=200, description="Lieferant")
-    purchase_price_per_kg: Decimal | None = Field(None, ge=0, description="Einkaufspreis pro kg")
-    location_id: UUID | None = Field(None, description="Lagerort-ID")
+    current_quantity_kg: Optional[Decimal] = Field(None, description="Aktuelle Menge (default = initial)")
+    germination_rate: Optional[Decimal] = Field(None, ge=0, le=100, description="Keimrate %")
+    quality_grade: Optional[str] = Field(None, max_length=10, description="Qualitätsstufe")
+    production_date: Optional[date] = Field(None, description="Produktionsdatum")
+    supplier_name: Optional[str] = Field(None, max_length=200, description="Lieferant")
+    purchase_price_per_kg: Optional[Decimal] = Field(None, ge=0, description="Einkaufspreis pro kg")
+    location_id: Optional[UUID] = Field(None, description="Lagerort-ID")
     is_organic: bool = Field(default=False, description="Bio-Zertifiziert?")
-    organic_certificate: str | None = Field(None, max_length=100, description="Bio-Zertifikat")
+    organic_certificate: Optional[str] = Field(None, max_length=100, description="Bio-Zertifikat")
 
 
 class SeedInventoryUpdate(BaseModel):
     """Schema zum Aktualisieren eines Saatgut-Bestands"""
-    germination_rate: Decimal | None = None
-    quality_grade: str | None = None
-    location_id: UUID | None = None
-    is_blocked: bool | None = None
-    block_reason: str | None = None
-    is_active: bool | None = None
+    germination_rate: Optional[Decimal] = None
+    quality_grade: Optional[str] = None
+    location_id: Optional[UUID] = None
+    is_blocked: Optional[bool] = None
+    block_reason: Optional[str] = None
+    is_active: Optional[bool] = None
 
 
 class SeedInventoryResponse(SeedInventoryBase):
@@ -118,34 +119,34 @@ class SeedInventoryResponse(SeedInventoryBase):
     id: UUID
     seed_id: UUID
     current_quantity_kg: Decimal
-    germination_rate: Decimal | None
-    quality_grade: str | None
-    production_date: date | None
-    supplier_name: str | None
-    purchase_price_per_kg: Decimal | None
-    location_id: UUID | None
+    germination_rate: Optional[Decimal]
+    quality_grade: Optional[str]
+    production_date: Optional[date]
+    supplier_name: Optional[str]
+    purchase_price_per_kg: Optional[Decimal]
+    location_id: Optional[UUID]
     is_organic: bool
-    organic_certificate: str | None
+    organic_certificate: Optional[str]
     is_active: bool
     is_blocked: bool
-    block_reason: str | None
+    block_reason: Optional[str]
     created_at: datetime
     updated_at: datetime
 
     # Berechnete Felder
-    is_expired: bool | None = None
-    days_until_expiry: int | None = None
+    is_expired: Optional[bool] = None
+    days_until_expiry: Optional[int] = None
 
     # Expandierte Felder
-    seed_name: str | None = None
-    location_name: str | None = None
+    seed_name: Optional[str] = None
+    location_name: Optional[str] = None
 
 
 class SeedInventoryListResponse(BaseModel):
     """Schema für Saatgut-Bestands-Liste"""
     items: list[SeedInventoryResponse]
     total: int
-    total_quantity_kg: Decimal | None = None
+    total_quantity_kg: Optional[Decimal] = None
 
 
 # ============================================================
@@ -163,29 +164,29 @@ class FinishedGoodsInventoryBase(BaseModel):
 class FinishedGoodsInventoryCreate(FinishedGoodsInventoryBase):
     """Schema zum Erstellen eines Fertigwaren-Bestands"""
     product_id: UUID = Field(..., description="Produkt-ID")
-    harvest_id: UUID | None = Field(None, description="Ernte-ID (Rückverfolgung)")
-    grow_batch_id: UUID | None = Field(None, description="GrowBatch-ID (Rückverfolgung)")
-    seed_inventory_id: UUID | None = Field(None, description="Saatgut-Charge (Rückverfolgung)")
-    current_quantity_g: Decimal | None = Field(None, description="Aktuelle Menge (default = initial)")
-    initial_units: int | None = Field(None, ge=0, description="Eingangsmenge (Einheiten)")
-    current_units: int | None = Field(None, ge=0, description="Aktuelle Einheiten")
-    unit_size_g: Decimal | None = Field(None, gt=0, description="Gramm pro Einheit")
-    quality_grade: int | None = Field(None, ge=1, le=5, description="Qualitätsnote 1-5")
-    quality_notes: str | None = Field(None, description="Qualitätsnotizen")
-    packed_date: date | None = Field(None, description="Verpackungsdatum")
-    location_id: UUID | None = Field(None, description="Lagerort-ID")
-    storage_temp_celsius: Decimal | None = Field(None, description="Lagertemperatur °C")
+    harvest_id: Optional[UUID] = Field(None, description="Ernte-ID (Rückverfolgung)")
+    grow_batch_id: Optional[UUID] = Field(None, description="GrowBatch-ID (Rückverfolgung)")
+    seed_inventory_id: Optional[UUID] = Field(None, description="Saatgut-Charge (Rückverfolgung)")
+    current_quantity_g: Optional[Decimal] = Field(None, description="Aktuelle Menge (default = initial)")
+    initial_units: Optional[int] = Field(None, ge=0, description="Eingangsmenge (Einheiten)")
+    current_units: Optional[int] = Field(None, ge=0, description="Aktuelle Einheiten")
+    unit_size_g: Optional[Decimal] = Field(None, gt=0, description="Gramm pro Einheit")
+    quality_grade: Optional[int] = Field(None, ge=1, le=5, description="Qualitätsnote 1-5")
+    quality_notes: Optional[str] = Field(None, description="Qualitätsnotizen")
+    packed_date: Optional[date] = Field(None, description="Verpackungsdatum")
+    location_id: Optional[UUID] = Field(None, description="Lagerort-ID")
+    storage_temp_celsius: Optional[Decimal] = Field(None, description="Lagertemperatur °C")
 
 
 class FinishedGoodsInventoryUpdate(BaseModel):
     """Schema zum Aktualisieren eines Fertigwaren-Bestands"""
-    quality_grade: int | None = None
-    quality_notes: str | None = None
-    location_id: UUID | None = None
-    storage_temp_celsius: Decimal | None = None
-    is_reserved: bool | None = None
-    reserved_order_id: UUID | None = None
-    is_active: bool | None = None
+    quality_grade: Optional[int] = None
+    quality_notes: Optional[str] = None
+    location_id: Optional[UUID] = None
+    storage_temp_celsius: Optional[Decimal] = None
+    is_reserved: Optional[bool] = None
+    reserved_order_id: Optional[UUID] = None
+    is_active: Optional[bool] = None
 
 
 class FinishedGoodsInventoryResponse(FinishedGoodsInventoryBase):
@@ -194,41 +195,41 @@ class FinishedGoodsInventoryResponse(FinishedGoodsInventoryBase):
 
     id: UUID
     product_id: UUID
-    harvest_id: UUID | None
-    grow_batch_id: UUID | None
-    seed_inventory_id: UUID | None
+    harvest_id: Optional[UUID]
+    grow_batch_id: Optional[UUID]
+    seed_inventory_id: Optional[UUID]
     current_quantity_g: Decimal
-    initial_units: int | None
-    current_units: int | None
-    unit_size_g: Decimal | None
-    quality_grade: int | None
-    quality_notes: str | None
-    packed_date: date | None
-    location_id: UUID | None
-    storage_temp_celsius: Decimal | None
+    initial_units: Optional[int]
+    current_units: Optional[int]
+    unit_size_g: Optional[Decimal]
+    quality_grade: Optional[int]
+    quality_notes: Optional[str]
+    packed_date: Optional[date]
+    location_id: Optional[UUID]
+    storage_temp_celsius: Optional[Decimal]
     is_active: bool
     is_reserved: bool
-    reserved_order_id: UUID | None
+    reserved_order_id: Optional[UUID]
     created_at: datetime
     updated_at: datetime
 
     # Berechnete Felder
-    is_expired: bool | None = None
-    days_until_expiry: int | None = None
-    traceability_chain: dict | None = None
+    is_expired: Optional[bool] = None
+    days_until_expiry: Optional[int] = None
+    traceability_chain: Optional[dict] = None
 
     # Expandierte Felder
-    product_name: str | None = None
-    product_sku: str | None = None
-    location_name: str | None = None
+    product_name: Optional[str] = None
+    product_sku: Optional[str] = None
+    location_name: Optional[str] = None
 
 
 class FinishedGoodsInventoryListResponse(BaseModel):
     """Schema für Fertigwaren-Bestands-Liste"""
     items: list[FinishedGoodsInventoryResponse]
     total: int
-    total_quantity_g: Decimal | None = None
-    total_units: int | None = None
+    total_quantity_g: Optional[Decimal] = None
+    total_units: Optional[int] = None
 
 
 # ============================================================
@@ -239,32 +240,32 @@ class PackagingInventoryBase(BaseModel):
     """Basis-Schema für Verpackungs-Bestand"""
     name: str = Field(..., min_length=1, max_length=200, description="Artikelname")
     sku: str = Field(..., min_length=1, max_length=50, description="Artikelnummer")
-    description: str | None = Field(None, description="Beschreibung")
+    description: Optional[str] = Field(None, description="Beschreibung")
 
 
 class PackagingInventoryCreate(PackagingInventoryBase):
     """Schema zum Erstellen eines Verpackungs-Bestands"""
     current_quantity: int = Field(default=0, ge=0, description="Aktuelle Menge")
     min_quantity: int = Field(default=0, ge=0, description="Mindestbestand")
-    reorder_quantity: int | None = Field(None, ge=0, description="Nachbestellmenge")
+    reorder_quantity: Optional[int] = Field(None, ge=0, description="Nachbestellmenge")
     unit: str = Field(default="Stück", description="Einheit")
-    supplier_name: str | None = Field(None, max_length=200, description="Lieferant")
-    supplier_sku: str | None = Field(None, max_length=50, description="Lieferanten-Artikelnr.")
-    purchase_price: Decimal | None = Field(None, ge=0, description="Einkaufspreis")
-    location_id: UUID | None = Field(None, description="Lagerort-ID")
+    supplier_name: Optional[str] = Field(None, max_length=200, description="Lieferant")
+    supplier_sku: Optional[str] = Field(None, max_length=50, description="Lieferanten-Artikelnr.")
+    purchase_price: Optional[Decimal] = Field(None, ge=0, description="Einkaufspreis")
+    location_id: Optional[UUID] = Field(None, description="Lagerort-ID")
 
 
 class PackagingInventoryUpdate(BaseModel):
     """Schema zum Aktualisieren eines Verpackungs-Bestands"""
-    name: str | None = None
-    description: str | None = None
-    min_quantity: int | None = None
-    reorder_quantity: int | None = None
-    supplier_name: str | None = None
-    supplier_sku: str | None = None
-    purchase_price: Decimal | None = None
-    location_id: UUID | None = None
-    is_active: bool | None = None
+    name: Optional[str] = None
+    description: Optional[str] = None
+    min_quantity: Optional[int] = None
+    reorder_quantity: Optional[int] = None
+    supplier_name: Optional[str] = None
+    supplier_sku: Optional[str] = None
+    purchase_price: Optional[Decimal] = None
+    location_id: Optional[UUID] = None
+    is_active: Optional[bool] = None
 
 
 class PackagingInventoryResponse(PackagingInventoryBase):
@@ -274,21 +275,21 @@ class PackagingInventoryResponse(PackagingInventoryBase):
     id: UUID
     current_quantity: int
     min_quantity: int
-    reorder_quantity: int | None
+    reorder_quantity: Optional[int]
     unit: str
-    supplier_name: str | None
-    supplier_sku: str | None
-    purchase_price: Decimal | None
-    location_id: UUID | None
+    supplier_name: Optional[str]
+    supplier_sku: Optional[str]
+    purchase_price: Optional[Decimal]
+    location_id: Optional[UUID]
     is_active: bool
     created_at: datetime
     updated_at: datetime
 
     # Berechnete Felder
-    needs_reorder: bool | None = None
+    needs_reorder: Optional[bool] = None
 
     # Expandierte Felder
-    location_name: str | None = None
+    location_name: Optional[str] = None
 
 
 class PackagingInventoryListResponse(BaseModel):
@@ -311,19 +312,19 @@ class InventoryMovementBase(BaseModel):
 
 class InventoryMovementCreate(InventoryMovementBase):
     """Schema zum Erstellen einer Lagerbewegung"""
-    seed_inventory_id: UUID | None = Field(None, description="Saatgut-Bestand-ID")
-    finished_goods_id: UUID | None = Field(None, description="Fertigwaren-Bestand-ID")
-    packaging_id: UUID | None = Field(None, description="Verpackungs-Bestand-ID")
-    from_location_id: UUID | None = Field(None, description="Von Lagerort")
-    to_location_id: UUID | None = Field(None, description="Nach Lagerort")
-    order_id: UUID | None = Field(None, description="Bestellungs-ID")
-    order_item_id: UUID | None = Field(None, description="Bestellposition-ID")
-    grow_batch_id: UUID | None = Field(None, description="GrowBatch-ID")
-    harvest_id: UUID | None = Field(None, description="Ernte-ID")
-    created_by: str | None = Field(None, max_length=100, description="Erstellt von")
-    reason: str | None = Field(None, description="Grund")
-    reference_number: str | None = Field(None, max_length=50, description="Referenznummer")
-    movement_date: datetime | None = Field(None, description="Bewegungsdatum")
+    seed_inventory_id: Optional[UUID] = Field(None, description="Saatgut-Bestand-ID")
+    finished_goods_id: Optional[UUID] = Field(None, description="Fertigwaren-Bestand-ID")
+    packaging_id: Optional[UUID] = Field(None, description="Verpackungs-Bestand-ID")
+    from_location_id: Optional[UUID] = Field(None, description="Von Lagerort")
+    to_location_id: Optional[UUID] = Field(None, description="Nach Lagerort")
+    order_id: Optional[UUID] = Field(None, description="Bestellungs-ID")
+    order_item_id: Optional[UUID] = Field(None, description="Bestellposition-ID")
+    grow_batch_id: Optional[UUID] = Field(None, description="GrowBatch-ID")
+    harvest_id: Optional[UUID] = Field(None, description="Ernte-ID")
+    created_by: Optional[str] = Field(None, max_length=100, description="Erstellt von")
+    reason: Optional[str] = Field(None, description="Grund")
+    reference_number: Optional[str] = Field(None, max_length=50, description="Referenznummer")
+    movement_date: Optional[datetime] = Field(None, description="Bewegungsdatum")
 
 
 class InventoryMovementResponse(InventoryMovementBase):
@@ -331,27 +332,27 @@ class InventoryMovementResponse(InventoryMovementBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID
-    seed_inventory_id: UUID | None
-    finished_goods_id: UUID | None
-    packaging_id: UUID | None
+    seed_inventory_id: Optional[UUID]
+    finished_goods_id: Optional[UUID]
+    packaging_id: Optional[UUID]
     quantity_before: Decimal
     quantity_after: Decimal
-    from_location_id: UUID | None
-    to_location_id: UUID | None
-    order_id: UUID | None
-    order_item_id: UUID | None
-    grow_batch_id: UUID | None
-    harvest_id: UUID | None
-    created_by: str | None
-    reason: str | None
-    reference_number: str | None
+    from_location_id: Optional[UUID]
+    to_location_id: Optional[UUID]
+    order_id: Optional[UUID]
+    order_item_id: Optional[UUID]
+    grow_batch_id: Optional[UUID]
+    harvest_id: Optional[UUID]
+    created_by: Optional[str]
+    reason: Optional[str]
+    reference_number: Optional[str]
     movement_date: datetime
     created_at: datetime
 
     # Expandierte Felder
-    item_name: str | None = None
-    from_location_name: str | None = None
-    to_location_name: str | None = None
+    item_name: Optional[str] = None
+    from_location_name: Optional[str] = None
+    to_location_name: Optional[str] = None
 
 
 class InventoryMovementListResponse(BaseModel):
@@ -373,17 +374,17 @@ class InventoryCountItemBase(BaseModel):
 
 class InventoryCountItemCreate(InventoryCountItemBase):
     """Schema zum Erstellen einer Inventur-Position"""
-    seed_inventory_id: UUID | None = Field(None, description="Saatgut-Bestand-ID")
-    finished_goods_id: UUID | None = Field(None, description="Fertigwaren-Bestand-ID")
-    packaging_id: UUID | None = Field(None, description="Verpackungs-Bestand-ID")
-    counted_quantity: Decimal | None = Field(None, description="Gezählte Menge (Ist)")
-    notes: str | None = Field(None, description="Notizen")
+    seed_inventory_id: Optional[UUID] = Field(None, description="Saatgut-Bestand-ID")
+    finished_goods_id: Optional[UUID] = Field(None, description="Fertigwaren-Bestand-ID")
+    packaging_id: Optional[UUID] = Field(None, description="Verpackungs-Bestand-ID")
+    counted_quantity: Optional[Decimal] = Field(None, description="Gezählte Menge (Ist)")
+    notes: Optional[str] = Field(None, description="Notizen")
 
 
 class InventoryCountItemUpdate(BaseModel):
     """Schema zum Aktualisieren einer Inventur-Position"""
-    counted_quantity: Decimal | None = None
-    notes: str | None = None
+    counted_quantity: Optional[Decimal] = None
+    notes: Optional[str] = None
 
 
 class InventoryCountItemResponse(InventoryCountItemBase):
@@ -392,16 +393,16 @@ class InventoryCountItemResponse(InventoryCountItemBase):
 
     id: UUID
     count_id: UUID
-    seed_inventory_id: UUID | None
-    finished_goods_id: UUID | None
-    packaging_id: UUID | None
-    counted_quantity: Decimal | None
-    difference: Decimal | None
-    notes: str | None
+    seed_inventory_id: Optional[UUID]
+    finished_goods_id: Optional[UUID]
+    packaging_id: Optional[UUID]
+    counted_quantity: Optional[Decimal]
+    difference: Optional[Decimal]
+    notes: Optional[str]
 
     # Expandierte Felder
-    item_name: str | None = None
-    item_batch: str | None = None
+    item_name: Optional[str] = None
+    item_batch: Optional[str] = None
 
 
 class InventoryCountBase(BaseModel):
@@ -411,16 +412,16 @@ class InventoryCountBase(BaseModel):
 
 class InventoryCountCreate(InventoryCountBase):
     """Schema zum Erstellen einer Inventur"""
-    location_id: UUID | None = Field(None, description="Lagerort (für Teil-Inventur)")
-    notes: str | None = Field(None, description="Notizen")
-    counted_by: str | None = Field(None, max_length=100, description="Gezählt von")
+    location_id: Optional[UUID] = Field(None, description="Lagerort (für Teil-Inventur)")
+    notes: Optional[str] = Field(None, description="Notizen")
+    counted_by: Optional[str] = Field(None, max_length=100, description="Gezählt von")
 
 
 class InventoryCountUpdate(BaseModel):
     """Schema zum Aktualisieren einer Inventur"""
-    status: str | None = None
-    notes: str | None = None
-    counted_by: str | None = None
+    status: Optional[str] = None
+    notes: Optional[str] = None
+    counted_by: Optional[str] = None
 
 
 class InventoryCountResponse(InventoryCountBase):
@@ -430,18 +431,18 @@ class InventoryCountResponse(InventoryCountBase):
     id: UUID
     count_number: str
     status: str
-    location_id: UUID | None
-    notes: str | None
-    counted_by: str | None
+    location_id: Optional[UUID]
+    notes: Optional[str]
+    counted_by: Optional[str]
     created_at: datetime
-    completed_at: datetime | None
+    completed_at: Optional[datetime]
 
     # Expandierte Felder
-    location_name: str | None = None
+    location_name: Optional[str] = None
 
     # Berechnete Felder
-    item_count: int | None = None
-    difference_count: int | None = None
+    item_count: Optional[int] = None
+    difference_count: Optional[int] = None
 
 
 class InventoryCountDetailResponse(InventoryCountResponse):
@@ -461,18 +462,18 @@ class InventoryCountListResponse(BaseModel):
 
 class StockOverviewItem(BaseModel):
     """Schema für Bestandsübersicht-Eintrag"""
-    product_id: UUID | None
+    product_id: Optional[UUID]
     product_name: str
-    product_sku: str | None
+    product_sku: Optional[str]
     category: str
     current_stock: Decimal
     unit: str
-    min_stock: Decimal | None
+    min_stock: Optional[Decimal]
     location_count: int
     batch_count: int
     needs_reorder: bool
-    earliest_expiry: date | None
-    days_to_expiry: int | None
+    earliest_expiry: Optional[date]
+    days_to_expiry: Optional[int]
 
 
 class StockOverviewResponse(BaseModel):
@@ -487,12 +488,12 @@ class TraceabilityResponse(BaseModel):
     """Schema für Rückverfolgbarkeit"""
     finished_goods_batch: str
     product_name: str
-    harvest_date: date | None
-    harvest_id: UUID | None
-    grow_batch_id: UUID | None
-    grow_batch_sow_date: date | None
-    seed_inventory_id: UUID | None
-    seed_batch_number: str | None
-    seed_name: str | None
-    supplier: str | None
-    orders_delivered: list[dict] | None = None
+    harvest_date: Optional[date]
+    harvest_id: Optional[UUID]
+    grow_batch_id: Optional[UUID]
+    grow_batch_sow_date: Optional[date]
+    seed_inventory_id: Optional[UUID]
+    seed_batch_number: Optional[str]
+    seed_name: Optional[str]
+    supplier: Optional[str]
+    orders_delivered: Optional[list[dict]] = None

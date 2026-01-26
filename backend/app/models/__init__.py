@@ -33,7 +33,7 @@ from app.models.customer import (
     AddressType,
     SubscriptionInterval,
 )
-from app.models.order import Order, OrderItem
+from app.models.order import Order, OrderLine
 
 # Rechnungen (Accounting)
 from app.models.invoice import (
@@ -98,7 +98,7 @@ __all__ = [
     "AddressType",
     "SubscriptionInterval",
     "Order",
-    "OrderItem",
+    "OrderLine",
     # Invoice & Accounting
     "Invoice",
     "InvoiceLine",

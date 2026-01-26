@@ -141,7 +141,8 @@ class TestSeeds:
         update_data = {"ertrag_gramm_pro_tray": 280}
         response = client.patch(f"/api/v1/seeds/{seed_id}", json=update_data)
         assert response.status_code == 200
-        assert response.json()["ertrag_gramm_pro_tray"] == 280
+        # Convert to string for comparison or float
+        assert float(response.json()["ertrag_gramm_pro_tray"]) == 280.0
 
     def test_list_seeds_filter_aktiv(self, client):
         # Aktives Seed anlegen

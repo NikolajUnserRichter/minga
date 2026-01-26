@@ -8,17 +8,31 @@ from decimal import Decimal
 from enum import Enum
 from typing import Optional
 from sqlalchemy import String, Integer, Numeric, Boolean, DateTime, Date, ForeignKey, Text, Enum as SQLEnum
+from sqlalchemy.types import Uuid, JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy.dialects.postgresql import UUID, ARRAY, JSONB
+
 
 from app.database import Base
 
 
 class CustomerType(str, Enum):
-    """Kundentyp"""
-    GASTRO = "GASTRO"
-    HANDEL = "HANDEL"
-    PRIVAT = "PRIVAT"
+    """Kundentyp - B2B/B2C Klassifikation"""
+    # B2B Typen
+    GASTRO = "GASTRO"      # B2B: Gastronomie
+    HANDEL = "HANDEL"      # B2B: Handel/Großhandel
+    GEWERBE = "GEWERBE"    # B2B: Sonstiges Gewerbe
+    # B2C Typen
+    PRIVAT = "PRIVAT"      # B2C: Privatkunde
+
+    @property
+    def is_b2b(self) -> bool:
+        """Prüft ob B2B-Kunde"""
+        return self in (CustomerType.GASTRO, CustomerType.HANDEL, CustomerType.GEWERBE)
+
+    @property
+    def is_b2c(self) -> bool:
+        """Prüft ob B2C-Kunde"""
+        return self == CustomerType.PRIVAT
 
 
 class PaymentTerms(str, Enum):
@@ -53,10 +67,10 @@ class CustomerAddress(Base):
     __tablename__ = "customer_addresses"
 
     id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+        Uuid, primary_key=True, default=uuid.uuid4
     )
     customer_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("customers.id", ondelete="CASCADE"), nullable=False
+        Uuid, ForeignKey("customers.id", ondelete="CASCADE"), nullable=False
     )
 
     # Adresstyp
@@ -66,16 +80,16 @@ class CustomerAddress(Base):
     is_default: Mapped[bool] = mapped_column(Boolean, default=False)
 
     # Adressdaten
-    name: Mapped[str | None] = mapped_column(String(200))  # Abweichender Name
+    name: Mapped[Optional[str]] = mapped_column(String(200))  # Abweichender Name
     strasse: Mapped[str] = mapped_column(String(200), nullable=False)
-    hausnummer: Mapped[str | None] = mapped_column(String(20))
-    adresszusatz: Mapped[str | None] = mapped_column(String(200))  # c/o, Etage, etc.
+    hausnummer: Mapped[Optional[str]] = mapped_column(String(20))
+    adresszusatz: Mapped[Optional[str]] = mapped_column(String(200))  # c/o, Etage, etc.
     plz: Mapped[str] = mapped_column(String(10), nullable=False)
     ort: Mapped[str] = mapped_column(String(100), nullable=False)
     land: Mapped[str] = mapped_column(String(2), default="DE")  # ISO 3166-1 alpha-2
 
     # Lieferhinweise
-    lieferhinweise: Mapped[str | None] = mapped_column(Text)
+    lieferhinweise: Mapped[Optional[str]] = mapped_column(Text)
 
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
@@ -112,11 +126,11 @@ class Customer(Base):
     __tablename__ = "customers"
 
     id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+        Uuid, primary_key=True, default=uuid.uuid4
     )
 
     # Kundennummer (für Buchhaltung/DATEV)
-    customer_number: Mapped[str | None] = mapped_column(
+    customer_number: Mapped[Optional[str]] = mapped_column(
         String(20), unique=True, index=True
     )
 
@@ -124,41 +138,41 @@ class Customer(Base):
     typ: Mapped[CustomerType] = mapped_column(SQLEnum(CustomerType), nullable=False)
 
     # Kontakt (Hauptkontakt)
-    email: Mapped[str | None] = mapped_column(String(200))
-    telefon: Mapped[str | None] = mapped_column(String(50))
-    adresse: Mapped[str | None] = mapped_column(Text)  # Legacy, nutze addresses
+    email: Mapped[Optional[str]] = mapped_column(String(200))
+    telefon: Mapped[Optional[str]] = mapped_column(String(50))
+    adresse: Mapped[Optional[str]] = mapped_column(Text)  # Legacy, nutze addresses
 
     # Ansprechpartner
-    ansprechpartner_name: Mapped[str | None] = mapped_column(String(200))
-    ansprechpartner_email: Mapped[str | None] = mapped_column(String(200))
-    ansprechpartner_telefon: Mapped[str | None] = mapped_column(String(50))
+    ansprechpartner_name: Mapped[Optional[str]] = mapped_column(String(200))
+    ansprechpartner_email: Mapped[Optional[str]] = mapped_column(String(200))
+    ansprechpartner_telefon: Mapped[Optional[str]] = mapped_column(String(50))
 
     # Liefertage (0=Montag, 6=Sonntag)
-    liefertage: Mapped[list[int] | None] = mapped_column(ARRAY(Integer))
+    liefertage: Mapped[Optional[list[int]]] = mapped_column(JSON)
 
     # Steuer-IDs (Deutschland)
-    ust_id: Mapped[str | None] = mapped_column(String(20))  # USt-IdNr. (DE123456789)
-    steuernummer: Mapped[str | None] = mapped_column(String(20))  # Finanzamt-Steuernummer
+    ust_id: Mapped[Optional[str]] = mapped_column(String(20))  # USt-IdNr. (DE123456789)
+    steuernummer: Mapped[Optional[str]] = mapped_column(String(20))  # Finanzamt-Steuernummer
 
     # Zahlungsbedingungen
     payment_terms: Mapped[PaymentTerms] = mapped_column(
         SQLEnum(PaymentTerms), default=PaymentTerms.NET_14
     )
-    credit_limit: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))  # Kreditlimit in EUR
+    credit_limit: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 2))  # Kreditlimit in EUR
 
     # Preisgruppe (FK zu PriceList)
-    price_list_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("price_lists.id", ondelete="SET NULL")
+    price_list_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid, ForeignKey("price_lists.id", ondelete="SET NULL")
     )
 
     # Rabatt
     discount_percent: Mapped[Decimal] = mapped_column(Numeric(5, 2), default=Decimal("0"))
 
     # DATEV-Kontonummer (Debitor)
-    datev_account: Mapped[str | None] = mapped_column(String(10))  # z.B. 10001
+    datev_account: Mapped[Optional[str]] = mapped_column(String(10))  # z.B. 10001
 
     # Notizen
-    notizen: Mapped[str | None] = mapped_column(Text)
+    notizen: Mapped[Optional[str]] = mapped_column(Text)
 
     # Status
     aktiv: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -170,8 +184,10 @@ class Customer(Base):
     )
 
     # Beziehungen
+    # WICHTIG: Orders und Invoices haben KEINE cascade delete!
+    # Kunden mit Bestellungen/Rechnungen können nur deaktiviert (soft delete) werden.
     orders: Mapped[list["Order"]] = relationship(
-        "Order", back_populates="kunde", cascade="all, delete-orphan"
+        "Order", back_populates="customer"
     )
     subscriptions: Mapped[list["Subscription"]] = relationship(
         "Subscription", back_populates="kunde", cascade="all, delete-orphan"
@@ -181,8 +197,23 @@ class Customer(Base):
     )
     price_list: Mapped[Optional["PriceList"]] = relationship("PriceList")
     invoices: Mapped[list["Invoice"]] = relationship(
-        "Invoice", back_populates="customer", cascade="all, delete-orphan"
+        "Invoice", back_populates="customer"
     )
+
+    def can_be_deleted(self) -> bool:
+        """
+        Prüft ob Kunde gelöscht werden kann.
+        Kunden mit Bestellungen oder Rechnungen können nur deaktiviert werden.
+        """
+        return len(self.orders) == 0 and len(self.invoices) == 0
+
+    def deactivate(self) -> None:
+        """Deaktiviert den Kunden (Soft Delete)"""
+        self.aktiv = False
+
+    def reactivate(self) -> None:
+        """Reaktiviert den Kunden"""
+        self.aktiv = True
 
     @property
     def billing_address(self) -> Optional["CustomerAddress"]:
@@ -233,13 +264,13 @@ class Subscription(Base):
     __tablename__ = "subscriptions"
 
     id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+        Uuid, primary_key=True, default=uuid.uuid4
     )
     kunde_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("customers.id"), nullable=False
+        Uuid, ForeignKey("customers.id"), nullable=False
     )
     seed_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("seeds.id"), nullable=False
+        Uuid, ForeignKey("seeds.id"), nullable=False
     )
 
     # Bestellmenge
@@ -250,11 +281,11 @@ class Subscription(Base):
     intervall: Mapped[SubscriptionInterval] = mapped_column(
         SQLEnum(SubscriptionInterval), nullable=False
     )
-    liefertage: Mapped[list[int] | None] = mapped_column(ARRAY(Integer))
+    liefertage: Mapped[Optional[list[int]]] = mapped_column(JSON)
 
     # Gültigkeit
     gueltig_von: Mapped[date] = mapped_column(Date, nullable=False)
-    gueltig_bis: Mapped[date | None] = mapped_column(Date)
+    gueltig_bis: Mapped[Optional[date]] = mapped_column(Date)
     aktiv: Mapped[bool] = mapped_column(Boolean, default=True)
 
     # Timestamps

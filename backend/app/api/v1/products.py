@@ -1,3 +1,4 @@
+from typing import Optional
 """
 Produkt-API - Endpoints für Produkte, GrowPlans und Preislisten
 """
@@ -31,11 +32,11 @@ router = APIRouter(prefix="/products", tags=["Produkte"])
 
 @router.get("", response_model=list[ProductResponse])
 def list_products(
-    db: Session = Depends(DBSession),
+    db: DBSession,
     pagination: PaginationParams = Depends(),
-    category: ProductCategory | None = None,
+    category: Optional[ProductCategory] = None,
     is_active: bool = True,
-    search: str | None = None,
+    search: Optional[str] = None,
 ):
     """Listet alle Produkte mit optionaler Filterung."""
     query = select(Product).where(Product.is_active == is_active)
@@ -49,20 +50,20 @@ def list_products(
             Product.sku.ilike(f"%{search}%")
         )
 
-    query = query.offset(pagination.skip).limit(pagination.limit)
+    query = query.offset(pagination.offset).limit(pagination.page_size)
     products = db.execute(query).scalars().all()
     return products
 
 
 @router.get("/statistics")
-def get_product_statistics(db: Session = Depends(DBSession)):
+def get_product_statistics(db: DBSession):
     """Gibt Produktstatistiken zurück."""
     service = ProductService(db)
     return service.get_product_statistics()
 
 
 @router.get("/{product_id}", response_model=ProductDetailResponse)
-def get_product(product_id: UUID, db: Session = Depends(DBSession)):
+def get_product(product_id: UUID, db: DBSession):
     """Gibt ein einzelnes Produkt mit Details zurück."""
     product = db.get(Product, product_id)
     if not product:
@@ -71,7 +72,7 @@ def get_product(product_id: UUID, db: Session = Depends(DBSession)):
 
 
 @router.post("", response_model=ProductResponse, status_code=201)
-def create_product(data: ProductCreate, db: Session = Depends(DBSession)):
+def create_product(data: ProductCreate, db: DBSession):
     """Erstellt ein neues Produkt."""
     service = ProductService(db)
     try:
@@ -88,8 +89,8 @@ def create_microgreen_product(
     seed_id: UUID,
     grow_plan_id: UUID,
     base_price: Decimal,
+    db: DBSession,
     sku_prefix: str = "MG",
-    db: Session = Depends(DBSession),
 ):
     """Erstellt ein Microgreen-Produkt aus Saatgut und GrowPlan."""
     service = ProductService(db)
@@ -111,7 +112,7 @@ def create_microgreen_product(
 def update_product(
     product_id: UUID,
     data: ProductUpdate,
-    db: Session = Depends(DBSession),
+    db: DBSession,
 ):
     """Aktualisiert ein Produkt."""
     product = db.get(Product, product_id)
@@ -128,7 +129,7 @@ def update_product(
 
 
 @router.delete("/{product_id}", status_code=204)
-def deactivate_product(product_id: UUID, db: Session = Depends(DBSession)):
+def deactivate_product(product_id: UUID, db: DBSession):
     """Deaktiviert ein Produkt (soft delete)."""
     product = db.get(Product, product_id)
     if not product:
@@ -141,10 +142,10 @@ def deactivate_product(product_id: UUID, db: Session = Depends(DBSession)):
 @router.get("/{product_id}/price")
 def get_product_price(
     product_id: UUID,
-    customer_id: UUID | None = None,
+    db: DBSession,
+    customer_id: Optional[UUID] = None,
     quantity: Decimal = Decimal("1"),
-    price_date: date | None = None,
-    db: Session = Depends(DBSession),
+    price_date: Optional[date] = None,
 ):
     """Ermittelt den Preis für ein Produkt."""
     service = ProductService(db)
@@ -169,8 +170,8 @@ groups_router = APIRouter(prefix="/product-groups", tags=["Produktgruppen"])
 
 @groups_router.get("", response_model=list[ProductGroupResponse])
 def list_product_groups(
-    db: Session = Depends(DBSession),
-    parent_id: UUID | None = None,
+    db: DBSession,
+    parent_id: Optional[UUID] = None,
 ):
     """Listet alle Produktgruppen."""
     query = select(ProductGroup)
@@ -184,7 +185,7 @@ def list_product_groups(
 
 
 @groups_router.get("/{group_id}", response_model=ProductGroupResponse)
-def get_product_group(group_id: UUID, db: Session = Depends(DBSession)):
+def get_product_group(group_id: UUID, db: DBSession):
     """Gibt eine Produktgruppe zurück."""
     group = db.get(ProductGroup, group_id)
     if not group:
@@ -193,7 +194,7 @@ def get_product_group(group_id: UUID, db: Session = Depends(DBSession)):
 
 
 @groups_router.post("", response_model=ProductGroupResponse, status_code=201)
-def create_product_group(data: ProductGroupCreate, db: Session = Depends(DBSession)):
+def create_product_group(data: ProductGroupCreate, db: DBSession):
     """Erstellt eine neue Produktgruppe."""
     service = ProductService(db)
     try:
@@ -209,7 +210,7 @@ def create_product_group(data: ProductGroupCreate, db: Session = Depends(DBSessi
 def update_product_group(
     group_id: UUID,
     data: ProductGroupUpdate,
-    db: Session = Depends(DBSession),
+    db: DBSession,
 ):
     """Aktualisiert eine Produktgruppe."""
     group = db.get(ProductGroup, group_id)
@@ -234,7 +235,7 @@ grow_plans_router = APIRouter(prefix="/grow-plans", tags=["Wachstumspläne"])
 
 @grow_plans_router.get("", response_model=list[GrowPlanResponse])
 def list_grow_plans(
-    db: Session = Depends(DBSession),
+    db: DBSession,
     is_active: bool = True,
 ):
     """Listet alle Wachstumspläne."""
@@ -244,7 +245,7 @@ def list_grow_plans(
 
 
 @grow_plans_router.get("/{plan_id}", response_model=GrowPlanResponse)
-def get_grow_plan(plan_id: UUID, db: Session = Depends(DBSession)):
+def get_grow_plan(plan_id: UUID, db: DBSession):
     """Gibt einen Wachstumsplan zurück."""
     plan = db.get(GrowPlan, plan_id)
     if not plan:
@@ -253,7 +254,7 @@ def get_grow_plan(plan_id: UUID, db: Session = Depends(DBSession)):
 
 
 @grow_plans_router.post("", response_model=GrowPlanResponse, status_code=201)
-def create_grow_plan(data: GrowPlanCreate, db: Session = Depends(DBSession)):
+def create_grow_plan(data: GrowPlanCreate, db: DBSession):
     """Erstellt einen neuen Wachstumsplan."""
     service = ProductService(db)
     try:
@@ -269,7 +270,7 @@ def create_grow_plan(data: GrowPlanCreate, db: Session = Depends(DBSession)):
 def update_grow_plan(
     plan_id: UUID,
     data: GrowPlanUpdate,
-    db: Session = Depends(DBSession),
+    db: DBSession,
 ):
     """Aktualisiert einen Wachstumsplan."""
     plan = db.get(GrowPlan, plan_id)
@@ -289,7 +290,7 @@ def update_grow_plan(
 def calculate_sow_date(
     plan_id: UUID,
     target_harvest_date: date,
-    db: Session = Depends(DBSession),
+    db: DBSession,
 ):
     """Berechnet das Aussaat-Datum für ein gewünschtes Erntedatum."""
     service = ProductService(db)
@@ -308,7 +309,7 @@ def calculate_sow_date(
 def calculate_harvest_window(
     plan_id: UUID,
     sow_date: date,
-    db: Session = Depends(DBSession),
+    db: DBSession,
 ):
     """Berechnet das Erntefenster für ein Aussaat-Datum."""
     service = ProductService(db)
@@ -336,7 +337,7 @@ price_lists_router = APIRouter(prefix="/price-lists", tags=["Preislisten"])
 
 @price_lists_router.get("", response_model=list[PriceListResponse])
 def list_price_lists(
-    db: Session = Depends(DBSession),
+    db: DBSession,
     is_active: bool = True,
 ):
     """Listet alle Preislisten."""
@@ -346,7 +347,7 @@ def list_price_lists(
 
 
 @price_lists_router.get("/default", response_model=PriceListResponse)
-def get_default_price_list(db: Session = Depends(DBSession)):
+def get_default_price_list(db: DBSession):
     """Gibt die Standard-Preisliste zurück."""
     price_list = db.execute(
         select(PriceList).where(PriceList.is_default == True, PriceList.is_active == True)
@@ -358,7 +359,7 @@ def get_default_price_list(db: Session = Depends(DBSession)):
 
 
 @price_lists_router.get("/{list_id}", response_model=PriceListResponse)
-def get_price_list(list_id: UUID, db: Session = Depends(DBSession)):
+def get_price_list(list_id: UUID, db: DBSession):
     """Gibt eine Preisliste mit allen Positionen zurück."""
     price_list = db.get(PriceList, list_id)
     if not price_list:
@@ -367,7 +368,7 @@ def get_price_list(list_id: UUID, db: Session = Depends(DBSession)):
 
 
 @price_lists_router.post("", response_model=PriceListResponse, status_code=201)
-def create_price_list(data: PriceListCreate, db: Session = Depends(DBSession)):
+def create_price_list(data: PriceListCreate, db: DBSession):
     """Erstellt eine neue Preisliste."""
     service = ProductService(db)
     try:
@@ -383,7 +384,7 @@ def create_price_list(data: PriceListCreate, db: Session = Depends(DBSession)):
 def update_price_list(
     list_id: UUID,
     data: PriceListUpdate,
-    db: Session = Depends(DBSession),
+    db: DBSession,
 ):
     """Aktualisiert eine Preisliste."""
     price_list = db.get(PriceList, list_id)
@@ -404,8 +405,8 @@ def copy_price_list(
     list_id: UUID,
     new_code: str,
     new_name: str,
+    db: DBSession,
     price_adjustment_percent: Decimal = Decimal("0"),
-    db: Session = Depends(DBSession),
 ):
     """Kopiert eine Preisliste mit optionaler Preisanpassung."""
     service = ProductService(db)
@@ -427,14 +428,14 @@ def copy_price_list(
 def add_price_list_item(
     list_id: UUID,
     data: PriceListItemCreate,
-    db: Session = Depends(DBSession),
+    db: DBSession,
 ):
     """Fügt einen Preis zur Preisliste hinzu."""
     service = ProductService(db)
     try:
         item = service.add_price_list_item(
             price_list_id=list_id,
-            **data.model_dump(),
+            **data.model_dump(exclude={"price_list_id"}),
         )
         db.commit()
         db.refresh(item)
@@ -448,7 +449,7 @@ def update_price_list_item(
     list_id: UUID,
     item_id: UUID,
     data: PriceListItemUpdate,
-    db: Session = Depends(DBSession),
+    db: DBSession,
 ):
     """Aktualisiert einen Preis in der Preisliste."""
     item = db.get(PriceListItem, item_id)
@@ -468,7 +469,7 @@ def update_price_list_item(
 def delete_price_list_item(
     list_id: UUID,
     item_id: UUID,
-    db: Session = Depends(DBSession),
+    db: DBSession,
 ):
     """Löscht einen Preis aus der Preisliste."""
     item = db.get(PriceListItem, item_id)

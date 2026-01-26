@@ -1,12 +1,15 @@
+from typing import Optional
 """
 Saatgut-Models: Seed und SeedBatch
 """
+
 import uuid
 from datetime import datetime, date
 from decimal import Decimal
 from sqlalchemy import String, Integer, Numeric, Boolean, DateTime, Date, ForeignKey, Text
+from sqlalchemy.types import Uuid, JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy.dialects.postgresql import UUID
+
 
 from app.database import Base
 
@@ -19,11 +22,11 @@ class Seed(Base):
     __tablename__ = "seeds"
 
     id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+        Uuid, primary_key=True, default=uuid.uuid4
     )
     name: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
-    sorte: Mapped[str | None] = mapped_column(String(100))
-    lieferant: Mapped[str | None] = mapped_column(String(200))
+    sorte: Mapped[Optional[str]] = mapped_column(String(100))
+    lieferant: Mapped[Optional[str]] = mapped_column(String(200))
 
     # Wachstumsparameter
     keimdauer_tage: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -73,10 +76,10 @@ class SeedBatch(Base):
     __tablename__ = "seed_batches"
 
     id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+        Uuid, primary_key=True, default=uuid.uuid4
     )
     seed_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("seeds.id"), nullable=False
+        Uuid, ForeignKey("seeds.id"), nullable=False
     )
 
     # Chargen-Info
@@ -85,8 +88,8 @@ class SeedBatch(Base):
     verbleibend_gramm: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
 
     # Daten
-    mhd: Mapped[date | None] = mapped_column(Date)
-    lieferdatum: Mapped[date | None] = mapped_column(Date)
+    mhd: Mapped[Optional[date]] = mapped_column(Date)
+    lieferdatum: Mapped[Optional[date]] = mapped_column(Date)
 
     # Timestamp
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

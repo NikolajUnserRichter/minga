@@ -1,7 +1,9 @@
+from typing import Optional
 """
 API Endpoints für Forecasting und Produktionsplanung
+Erweitert mit Manual Adjustment Capability
 """
-from datetime import date, timedelta
+from datetime import date, timedelta, datetime
 from decimal import Decimal
 from uuid import UUID
 import math
@@ -12,18 +14,22 @@ from sqlalchemy.orm import joinedload
 from app.api.deps import DBSession, Pagination, CurrentUser
 from app.models.seed import Seed
 from app.models.customer import Subscription
-from app.models.order import Order, OrderItem, OrderStatus
+from app.models.order import Order, OrderLine, OrderStatus
 from app.models.forecast import (
     Forecast, ForecastModelType, ForecastAccuracy,
-    ProductionSuggestion, SuggestionStatus, WarningType
+    ProductionSuggestion, SuggestionStatus, WarningType,
+    ForecastManualAdjustment, AdjustmentType
 )
 from app.models.capacity import Capacity, ResourceType
 from app.schemas.forecast import (
     ForecastGenerateRequest, ForecastResponse, ForecastOverride,
     ForecastListResponse, ForecastAccuracyResponse, ForecastAccuracySummary,
-    ProductionSuggestionResponse, ProductionSuggestionApprove,
-    ProductionSuggestionListResponse, WeeklyForecastSummary
+    ProductionSuggestionResponse, ProductionSuggestionApprove, ProductionSuggestionReject,
+    ProductionSuggestionListResponse, WeeklyForecastSummary,
+    ManualAdjustmentCreate, ManualAdjustmentRevert, ManualAdjustmentResponse,
+    ForecastBreakdown, ForecastDetailResponse, ForecastDashboard
 )
+from app.tasks.forecast_tasks import apply_manual_adjustment, recalculate_production_suggestions
 
 router = APIRouter()
 
@@ -34,9 +40,10 @@ router = APIRouter()
 async def list_forecasts(
     db: DBSession,
     pagination: Pagination,
-    seed_id: UUID | None = None,
-    von_datum: date | None = None,
-    bis_datum: date | None = None
+    seed_id: Optional[UUID] = None,
+    von_datum: Optional[date] = None,
+    bis_datum: Optional[date] = None,
+    has_adjustments: Optional[bool] = None
 ):
     """
     Forecasts abrufen.
@@ -44,10 +51,12 @@ async def list_forecasts(
     Filter:
     - **seed_id**: Forecasts für ein bestimmtes Produkt
     - **von_datum** / **bis_datum**: Prognosezeitraum
+    - **has_adjustments**: Nur Forecasts mit manuellen Anpassungen
     """
     query = select(Forecast).options(
         joinedload(Forecast.seed),
-        joinedload(Forecast.kunde)
+        joinedload(Forecast.customer),
+        joinedload(Forecast.manual_adjustments)
     )
 
     if seed_id:
@@ -56,6 +65,11 @@ async def list_forecasts(
         query = query.where(Forecast.datum >= von_datum)
     if bis_datum:
         query = query.where(Forecast.datum <= bis_datum)
+    if has_adjustments is not None:
+        if has_adjustments:
+            query = query.where(Forecast.hat_manuelle_anpassung == True)
+        else:
+            query = query.where(Forecast.hat_manuelle_anpassung == False)
 
     # Total Count
     count_query = select(func.count()).select_from(query.subquery())
@@ -68,12 +82,35 @@ async def list_forecasts(
 
     items = []
     for fc in forecasts:
-        response = ForecastResponse.model_validate(fc)
-        response.seed_name = fc.seed.name if fc.seed else None
-        response.kunde_name = fc.kunde.name if fc.kunde else None
+        response = _build_forecast_response(fc)
         items.append(response)
 
     return ForecastListResponse(items=items, total=total)
+
+
+def _build_forecast_response(fc: Forecast) -> ForecastResponse:
+    """Baut ForecastResponse aus Forecast-Objekt."""
+    return ForecastResponse(
+        id=fc.id,
+        seed_id=fc.seed_id,
+        seed_name=fc.seed.name if fc.seed else None,
+        kunde_id=fc.customer_id,
+        kunde_name=fc.customer.name if fc.customer else None,
+        datum=fc.datum,
+        horizont_tage=fc.horizont_tage,
+        prognostizierte_menge=fc.prognostizierte_menge,
+        effektive_menge=fc.effektive_menge,
+        konfidenz_untergrenze=fc.konfidenz_untergrenze,
+        konfidenz_obergrenze=fc.konfidenz_obergrenze,
+        modell_typ=fc.modell_typ,
+        hat_manuelle_anpassung=fc.hat_manuelle_anpassung,
+        override_menge=fc.override_menge,
+        override_grund=fc.override_grund,
+        basiert_auf_historisch=fc.basiert_auf_historisch,
+        basiert_auf_abonnements=fc.basiert_auf_abonnements,
+        basiert_auf_saisonalitaet=fc.basiert_auf_saisonalitaet,
+        created_at=fc.created_at
+    )
 
 
 @router.post("/forecasts/generate", response_model=list[ForecastResponse])
@@ -126,9 +163,13 @@ async def generate_forecasts(request: ForecastGenerateRequest, db: DBSession):
                 datum=forecast_date,
                 horizont_tage=request.horizont_tage,
                 prognostizierte_menge=total_demand,
+                effektive_menge=total_demand,  # Initial gleich automatisch
                 konfidenz_untergrenze=max(Decimal("0"), total_demand - confidence_margin),
                 konfidenz_obergrenze=total_demand + confidence_margin,
-                modell_typ=request.modell_typ
+                modell_typ=request.modell_typ,
+                basiert_auf_historisch=base_demand > 0,
+                basiert_auf_abonnements=subscription_demand > 0,
+                basiert_auf_saisonalitaet=False  # Basis-Impl. ohne Saisonalität
             )
             db.add(forecast)
             forecasts.append(forecast)
@@ -139,29 +180,83 @@ async def generate_forecasts(request: ForecastGenerateRequest, db: DBSession):
     results = []
     for fc in forecasts:
         db.refresh(fc)
-        response = ForecastResponse.model_validate(fc)
+        response = _build_forecast_response(fc)
         response.seed_name = next(s.name for s in seeds if s.id == fc.seed_id)
         results.append(response)
 
     return results
 
 
-@router.get("/forecasts/{forecast_id}", response_model=ForecastResponse)
+@router.get("/forecasts/{forecast_id}", response_model=ForecastDetailResponse)
 async def get_forecast(forecast_id: UUID, db: DBSession):
-    """Einzelnen Forecast abrufen."""
+    """
+    Einzelnen Forecast mit Details abrufen.
+
+    Inkludiert:
+    - Automatische Prognose
+    - Alle manuellen Anpassungen
+    - Effektive Menge
+    - Breakdown der Berechnung
+    """
     forecast = db.execute(
         select(Forecast)
-        .options(joinedload(Forecast.seed), joinedload(Forecast.kunde))
+        .options(
+            joinedload(Forecast.seed),
+            joinedload(Forecast.customer),
+            joinedload(Forecast.manual_adjustments)
+        )
         .where(Forecast.id == forecast_id)
     ).scalar_one_or_none()
 
     if not forecast:
         raise HTTPException(status_code=404, detail="Forecast nicht gefunden")
 
-    response = ForecastResponse.model_validate(forecast)
-    response.seed_name = forecast.seed.name if forecast.seed else None
-    response.kunde_name = forecast.kunde.name if forecast.kunde else None
-    return response
+    # Breakdown berechnen
+    breakdown = forecast.get_forecast_breakdown()
+
+    # Manuelle Anpassungen sammeln
+    adjustments = [
+        ManualAdjustmentResponse(
+            id=adj.id,
+            forecast_id=adj.forecast_id,
+            adjustment_type=adj.adjustment_type,
+            adjustment_value=adj.adjustment_value,
+            reason=adj.reason,
+            valid_from=adj.valid_from,
+            valid_until=adj.valid_until,
+            is_active=adj.is_active,
+            created_at=adj.created_at,
+            created_by=adj.created_by,
+            reverted_at=adj.reverted_at,
+            reverted_by=adj.reverted_by,
+            revert_reason=adj.revert_reason
+        )
+        for adj in forecast.manual_adjustments
+    ]
+
+    return ForecastDetailResponse(
+        id=forecast.id,
+        seed_id=forecast.seed_id,
+        seed_name=forecast.seed.name if forecast.seed else None,
+        kunde_id=forecast.customer_id,
+        kunde_name=forecast.customer.name if forecast.customer else None,
+        datum=forecast.datum,
+        horizont_tage=forecast.horizont_tage,
+        prognostizierte_menge=forecast.prognostizierte_menge,
+        effektive_menge=forecast.effektive_menge,
+        konfidenz_untergrenze=forecast.konfidenz_untergrenze,
+        konfidenz_obergrenze=forecast.konfidenz_obergrenze,
+        modell_typ=forecast.modell_typ,
+        hat_manuelle_anpassung=forecast.hat_manuelle_anpassung,
+        override_menge=forecast.override_menge,
+        override_grund=forecast.override_grund,
+        basiert_auf_historisch=forecast.basiert_auf_historisch,
+        basiert_auf_abonnements=forecast.basiert_auf_abonnements,
+        basiert_auf_saisonalitaet=forecast.basiert_auf_saisonalitaet,
+        created_at=forecast.created_at,
+        breakdown=ForecastBreakdown(**breakdown),
+        manual_adjustments=adjustments
+    )
 
 
 @router.patch("/forecasts/{forecast_id}/override", response_model=ForecastResponse)
@@ -172,14 +267,14 @@ async def override_forecast(
     user: CurrentUser
 ):
     """
-    Manueller Override für Forecast.
+    Legacy: Manueller Override für Forecast.
 
-    Nur für Production Planner erlaubt.
-    Speichert Begründung für Nachvollziehbarkeit.
+    Nutze stattdessen /forecasts/{forecast_id}/adjustments für
+    reversible, nachvollziehbare Anpassungen.
     """
     forecast = db.execute(
         select(Forecast)
-        .options(joinedload(Forecast.seed), joinedload(Forecast.kunde))
+        .options(joinedload(Forecast.seed), joinedload(Forecast.customer))
         .where(Forecast.id == forecast_id)
     ).scalar_one_or_none()
 
@@ -189,14 +284,289 @@ async def override_forecast(
     forecast.override_menge = override_data.override_menge
     forecast.override_grund = override_data.override_grund
     forecast.override_user_id = UUID(user["id"])
+    forecast.effektive_menge = override_data.override_menge
+    forecast.hat_manuelle_anpassung = True
 
     db.commit()
     db.refresh(forecast)
 
-    response = ForecastResponse.model_validate(forecast)
-    response.seed_name = forecast.seed.name if forecast.seed else None
-    response.kunde_name = forecast.kunde.name if forecast.kunde else None
-    return response
+    return _build_forecast_response(forecast)
+
+
+# ============== Manual Adjustment Endpoints ==============
+
+@router.post("/forecasts/{forecast_id}/adjustments", response_model=ManualAdjustmentResponse, status_code=status.HTTP_201_CREATED)
+async def add_manual_adjustment(
+    forecast_id: UUID,
+    adjustment_data: ManualAdjustmentCreate,
+    db: DBSession,
+    user: CurrentUser
+):
+    """
+    Manuelle Anpassung zum Forecast hinzufügen.
+
+    Anpassungstypen:
+    - **ABSOLUTE**: Setzt die Menge auf einen festen Wert
+    - **PERCENTAGE_INCREASE**: Erhöht um X%
+    - **PERCENTAGE_DECREASE**: Reduziert um X%
+    - **ADDITION**: Addiert festen Wert
+    - **SUBTRACTION**: Subtrahiert festen Wert
+
+    Begründung ist Pflicht und muss mindestens 10 Zeichen haben.
+    """
+    forecast = db.get(Forecast, forecast_id)
+    if not forecast:
+        raise HTTPException(status_code=404, detail="Forecast nicht gefunden")
+
+    # Validierung: Begründung erforderlich
+    if not adjustment_data.reason or len(adjustment_data.reason.strip()) < 10:
+        raise HTTPException(
+            status_code=400,
+            detail="Begründung muss mindestens 10 Zeichen haben"
+        )
+
+    # Gültigkeitszeitraum validieren
+    if adjustment_data.valid_from and adjustment_data.valid_until:
+        if adjustment_data.valid_from > adjustment_data.valid_until:
+            raise HTTPException(
+                status_code=400,
+                detail="valid_from muss vor valid_until liegen"
+            )
+
+    adjustment = ForecastManualAdjustment(
+        forecast_id=forecast_id,
+        adjustment_type=adjustment_data.adjustment_type,
+        adjustment_value=adjustment_data.adjustment_value,
+        reason=adjustment_data.reason.strip(),
+        valid_from=adjustment_data.valid_from,
+        valid_until=adjustment_data.valid_until,
+        created_by=UUID(user["id"]) if user else None
+    )
+    db.add(adjustment)
+
+    # Forecast aktualisieren
+    forecast.apply_manual_adjustments()
+
+    db.commit()
+    db.refresh(adjustment)
+
+    # Produktionsvorschläge im Hintergrund neu berechnen
+    recalculate_production_suggestions.delay(str(forecast_id))
+
+    return ManualAdjustmentResponse(
+        id=adjustment.id,
+        forecast_id=adjustment.forecast_id,
+        adjustment_type=adjustment.adjustment_type,
+        adjustment_value=adjustment.adjustment_value,
+        reason=adjustment.reason,
+        valid_from=adjustment.valid_from,
+        valid_until=adjustment.valid_until,
+        is_active=adjustment.is_active,
+        created_at=adjustment.created_at,
+        created_by=adjustment.created_by,
+        reverted_at=None,
+        reverted_by=None,
+        revert_reason=None
+    )
+
+
+@router.get("/forecasts/{forecast_id}/adjustments", response_model=list[ManualAdjustmentResponse])
+async def list_manual_adjustments(
+    forecast_id: UUID,
+    db: DBSession,
+    include_reverted: bool = False
+):
+    """
+    Alle manuellen Anpassungen eines Forecasts abrufen.
+
+    - **include_reverted**: Auch rückgängig gemachte Anpassungen anzeigen
+    """
+    forecast = db.get(Forecast, forecast_id)
+    if not forecast:
+        raise HTTPException(status_code=404, detail="Forecast nicht gefunden")
+
+    query = select(ForecastManualAdjustment).where(
+        ForecastManualAdjustment.forecast_id == forecast_id
+    )
+
+    if not include_reverted:
+        query = query.where(ForecastManualAdjustment.is_active == True)
+
+    query = query.order_by(ForecastManualAdjustment.created_at.desc())
+    adjustments = db.execute(query).scalars().all()
+
+    return [
+        ManualAdjustmentResponse(
+            id=adj.id,
+            forecast_id=adj.forecast_id,
+            adjustment_type=adj.adjustment_type,
+            adjustment_value=adj.adjustment_value,
+            reason=adj.reason,
+            valid_from=adj.valid_from,
+            valid_until=adj.valid_until,
+            is_active=adj.is_active,
+            created_at=adj.created_at,
+            created_by=adj.created_by,
+            reverted_at=adj.reverted_at,
+            reverted_by=adj.reverted_by,
+            revert_reason=adj.revert_reason
+        )
+        for adj in adjustments
+    ]
+
+
+@router.post("/forecasts/{forecast_id}/adjustments/{adjustment_id}/revert", response_model=ManualAdjustmentResponse)
+async def revert_manual_adjustment(
+    forecast_id: UUID,
+    adjustment_id: UUID,
+    revert_data: ManualAdjustmentRevert,
+    db: DBSession,
+    user: CurrentUser
+):
+    """
+    Manuelle Anpassung rückgängig machen.
+
+    Die Anpassung wird nicht gelöscht, sondern als "reverted" markiert
+    für vollständige Nachvollziehbarkeit.
+    """
+    forecast = db.get(Forecast, forecast_id)
+    if not forecast:
+        raise HTTPException(status_code=404, detail="Forecast nicht gefunden")
+
+    adjustment = db.execute(
+        select(ForecastManualAdjustment).where(
+            ForecastManualAdjustment.id == adjustment_id,
+            ForecastManualAdjustment.forecast_id == forecast_id
+        )
+    ).scalar_one_or_none()
+
+    if not adjustment:
+        raise HTTPException(status_code=404, detail="Anpassung nicht gefunden")
+
+    if not adjustment.is_active:
+        raise HTTPException(
+            status_code=400,
+            detail="Anpassung wurde bereits rückgängig gemacht"
+        )
+
+    # Anpassung als reverted markieren
+    adjustment.is_active = False
+    adjustment.reverted_at = datetime.utcnow()
+    adjustment.reverted_by = UUID(user["id"]) if user else None
+    adjustment.revert_reason = revert_data.reason
+
+    # Forecast neu berechnen
+    forecast.apply_manual_adjustments()
+
+    db.commit()
+    db.refresh(adjustment)
+
+    # Produktionsvorschläge im Hintergrund neu berechnen
+    recalculate_production_suggestions.delay(str(forecast_id))
+
+    return ManualAdjustmentResponse(
+        id=adjustment.id,
+        forecast_id=adjustment.forecast_id,
+        adjustment_type=adjustment.adjustment_type,
+        adjustment_value=adjustment.adjustment_value,
+        reason=adjustment.reason,
+        valid_from=adjustment.valid_from,
+        valid_until=adjustment.valid_until,
+        is_active=adjustment.is_active,
+        created_at=adjustment.created_at,
+        created_by=adjustment.created_by,
+        reverted_at=adjustment.reverted_at,
+        reverted_by=adjustment.reverted_by,
+        revert_reason=adjustment.revert_reason
+    )
+
+
+# ============== Forecast Dashboard ==============
+
+@router.get("/dashboard", response_model=ForecastDashboard)
+async def get_forecast_dashboard(
+    db: DBSession,
+    tage: int = Query(default=7, ge=1, le=30)
+):
+    """
+    Forecast-Dashboard mit Übersicht.
+
+    Zeigt:
+    - Forecasts mit manuellen Anpassungen
+    - Aktuelle Produktionsvorschläge
+    - Warnungen
+    - Genauigkeits-Statistik
+    """
+    today = date.today()
+    end_date = today + timedelta(days=tage)
+
+    # Forecasts der nächsten Tage
+    forecasts = db.execute(
+        select(Forecast)
+        .options(joinedload(Forecast.seed))
+        .where(Forecast.datum.between(today, end_date))
+        .order_by(Forecast.datum)
+    ).scalars().unique().all()
+
+    # Mit Anpassungen
+    adjusted_forecasts = [f for f in forecasts if f.hat_manuelle_anpassung]
+
+    # Offene Produktionsvorschläge
+    pending_suggestions = db.execute(
+        select(ProductionSuggestion)
+        .options(joinedload(ProductionSuggestion.seed))
+        .where(ProductionSuggestion.status == SuggestionStatus.VORGESCHLAGEN)
+        .order_by(ProductionSuggestion.aussaat_datum)
+    ).scalars().unique().all()
+
+    # Warnungen sammeln
+    warnings = []
+    for sug in pending_suggestions:
+        if sug.warnungen:
+            for w in sug.warnungen:
+                warnings.append({
+                    "typ": w.get("typ", "UNBEKANNT"),
+                    "nachricht": w.get("nachricht", ""),
+                    "produkt": sug.seed.name if sug.seed else "Unbekannt",
+                    "datum": str(sug.aussaat_datum)
+                })
+
+    # Genauigkeits-Statistik (letzte 30 Tage)
+    thirty_days_ago = today - timedelta(days=30)
+    accuracy_data = db.execute(
+        select(func.avg(ForecastAccuracy.mape))
+        .join(Forecast)
+        .where(Forecast.datum >= thirty_days_ago)
+    ).scalar()
+
+    avg_mape = float(accuracy_data) if accuracy_data else 0
+
+    return ForecastDashboard(
+        zeitraum_von=today,
+        zeitraum_bis=end_date,
+        anzahl_forecasts=len(forecasts),
+        anzahl_mit_anpassungen=len(adjusted_forecasts),
+        offene_vorschlaege=len(pending_suggestions),
+        warnungen=warnings,
+        durchschnitt_mape=Decimal(str(avg_mape)),
+        forecasts=[_build_forecast_response(f) for f in forecasts[:10]],  # Top 10
+        vorschlaege=[
+            ProductionSuggestionResponse(
+                id=s.id,
+                forecast_id=s.forecast_id,
+                seed_id=s.seed_id,
+                seed_name=s.seed.name if s.seed else None,
+                empfohlene_trays=s.empfohlene_trays,
+                aussaat_datum=s.aussaat_datum,
+                erwartete_ernte_datum=s.erwartete_ernte_datum,
+                status=s.status,
+                warnungen=s.warnungen,
+                benoetigte_menge_gramm=s.benoetigte_menge_gramm,
+                erwartete_menge_gramm=s.erwartete_menge_gramm
+            )
+            for s in pending_suggestions[:10]  # Top 10
+        ]
+    )
 
 
 # ============== Forecast Accuracy ==============
@@ -204,8 +574,8 @@ async def override_forecast(
 @router.get("/forecasts/accuracy/summary", response_model=ForecastAccuracySummary)
 async def get_forecast_accuracy_summary(
     db: DBSession,
-    von_datum: date | None = None,
-    bis_datum: date | None = None
+    von_datum: Optional[date] = None,
+    bis_datum: Optional[date] = None
 ):
     """
     Zusammenfassung der Forecast-Genauigkeit.
@@ -270,8 +640,8 @@ async def get_forecast_accuracy_summary(
 async def list_production_suggestions(
     db: DBSession,
     pagination: Pagination,
-    status_filter: SuggestionStatus | None = Query(None, alias="status"),
-    seed_id: UUID | None = None
+    status_filter: Optional[SuggestionStatus] = Query(None, alias="status"),
+    seed_id: Optional[UUID] = None
 ):
     """
     Produktionsvorschläge abrufen.
@@ -310,8 +680,19 @@ async def list_production_suggestions(
 
     items = []
     for sug in suggestions:
-        response = ProductionSuggestionResponse.model_validate(sug)
-        response.seed_name = sug.seed.name if sug.seed else None
+        response = ProductionSuggestionResponse(
+            id=sug.id,
+            forecast_id=sug.forecast_id,
+            seed_id=sug.seed_id,
+            seed_name=sug.seed.name if sug.seed else None,
+            empfohlene_trays=sug.empfohlene_trays,
+            aussaat_datum=sug.aussaat_datum,
+            erwartete_ernte_datum=sug.erwartete_ernte_datum,
+            status=sug.status,
+            warnungen=sug.warnungen,
+            benoetigte_menge_gramm=sug.benoetigte_menge_gramm,
+            erwartete_menge_gramm=sug.erwartete_menge_gramm
+        )
         items.append(response)
 
     return ProductionSuggestionListResponse(
@@ -330,7 +711,7 @@ async def generate_production_suggestions(
     Produktionsvorschläge aus Forecasts generieren.
 
     Berechnet:
-    - Benötigte Trays basierend auf Forecast
+    - Benötigte Trays basierend auf Forecast (nutzt effektive_menge)
     - Aussaat-Datum (rückgerechnet von Erntedatum)
     - Warnungen bei Kapazitätsengpässen
     """
@@ -365,7 +746,7 @@ async def generate_production_suggestions(
         if not seed:
             continue
 
-        # Benötigte Menge
+        # Nutze effektive Menge (inkl. manueller Anpassungen)
         benoetigte_menge = forecast.effektive_menge
         if benoetigte_menge <= 0:
             continue
@@ -398,13 +779,18 @@ async def generate_production_suggestions(
                 "nachricht": f"Aussaat-Datum liegt in der Vergangenheit ({aussaat_datum})"
             })
 
+        # Berechne erwartete Menge
+        erwartete_menge = Decimal(str(trays * effektiver_ertrag))
+
         suggestion = ProductionSuggestion(
             forecast_id=forecast.id,
             seed_id=seed.id,
             empfohlene_trays=trays,
             aussaat_datum=max(aussaat_datum, today),
             erwartete_ernte_datum=forecast.datum,
-            warnungen=warnungen if warnungen else None
+            warnungen=warnungen if warnungen else None,
+            benoetigte_menge_gramm=benoetigte_menge,
+            erwartete_menge_gramm=erwartete_menge
         )
         db.add(suggestion)
         suggestions.append(suggestion)
@@ -417,8 +803,19 @@ async def generate_production_suggestions(
     results = []
     for sug in suggestions:
         db.refresh(sug)
-        response = ProductionSuggestionResponse.model_validate(sug)
-        response.seed_name = sug.seed.name if sug.seed else None
+        response = ProductionSuggestionResponse(
+            id=sug.id,
+            forecast_id=sug.forecast_id,
+            seed_id=sug.seed_id,
+            seed_name=sug.seed.name if sug.seed else None,
+            empfohlene_trays=sug.empfohlene_trays,
+            aussaat_datum=sug.aussaat_datum,
+            erwartete_ernte_datum=sug.erwartete_ernte_datum,
+            status=sug.status,
+            warnungen=sug.warnungen,
+            benoetigte_menge_gramm=sug.benoetigte_menge_gramm,
+            erwartete_menge_gramm=sug.erwartete_menge_gramm
+        )
         results.append(response)
 
     return results
@@ -436,8 +833,6 @@ async def approve_production_suggestion(
 
     Optional: Angepasste Tray-Anzahl übergeben.
     """
-    from datetime import datetime
-
     suggestion = db.execute(
         select(ProductionSuggestion)
         .options(joinedload(ProductionSuggestion.seed))
@@ -463,22 +858,65 @@ async def approve_production_suggestion(
     db.commit()
     db.refresh(suggestion)
 
-    response = ProductionSuggestionResponse.model_validate(suggestion)
-    response.seed_name = suggestion.seed.name if suggestion.seed else None
-    return response
+    return ProductionSuggestionResponse(
+        id=suggestion.id,
+        forecast_id=suggestion.forecast_id,
+        seed_id=suggestion.seed_id,
+        seed_name=suggestion.seed.name if suggestion.seed else None,
+        empfohlene_trays=suggestion.empfohlene_trays,
+        aussaat_datum=suggestion.aussaat_datum,
+        erwartete_ernte_datum=suggestion.erwartete_ernte_datum,
+        status=suggestion.status,
+        warnungen=suggestion.warnungen,
+        benoetigte_menge_gramm=suggestion.benoetigte_menge_gramm,
+        erwartete_menge_gramm=suggestion.erwartete_menge_gramm
+    )
 
 
-@router.post("/production-suggestions/{suggestion_id}/reject")
-async def reject_production_suggestion(suggestion_id: UUID, db: DBSession):
-    """Produktionsvorschlag ablehnen."""
-    suggestion = db.get(ProductionSuggestion, suggestion_id)
+@router.post("/production-suggestions/{suggestion_id}/reject", response_model=ProductionSuggestionResponse)
+async def reject_production_suggestion(
+    suggestion_id: UUID,
+    rejection: ProductionSuggestionReject,
+    db: DBSession,
+    user: CurrentUser
+):
+    """Produktionsvorschlag ablehnen mit Begründung."""
+    suggestion = db.execute(
+        select(ProductionSuggestion)
+        .options(joinedload(ProductionSuggestion.seed))
+        .where(ProductionSuggestion.id == suggestion_id)
+    ).scalar_one_or_none()
+
     if not suggestion:
         raise HTTPException(status_code=404, detail="Vorschlag nicht gefunden")
 
-    suggestion.status = SuggestionStatus.ABGELEHNT
-    db.commit()
+    if suggestion.status != SuggestionStatus.VORGESCHLAGEN:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Vorschlag hat Status {suggestion.status.value}, kann nicht abgelehnt werden"
+        )
 
-    return {"message": "Vorschlag abgelehnt"}
+    suggestion.status = SuggestionStatus.ABGELEHNT
+    suggestion.abgelehnt_am = datetime.utcnow()
+    suggestion.abgelehnt_von = UUID(user["id"])
+    suggestion.ablehnungsgrund = rejection.reason
+
+    db.commit()
+    db.refresh(suggestion)
+
+    return ProductionSuggestionResponse(
+        id=suggestion.id,
+        forecast_id=suggestion.forecast_id,
+        seed_id=suggestion.seed_id,
+        seed_name=suggestion.seed.name if suggestion.seed else None,
+        empfohlene_trays=suggestion.empfohlene_trays,
+        aussaat_datum=suggestion.aussaat_datum,
+        erwartete_ernte_datum=suggestion.erwartete_ernte_datum,
+        status=suggestion.status,
+        warnungen=suggestion.warnungen,
+        benoetigte_menge_gramm=suggestion.benoetigte_menge_gramm,
+        erwartete_menge_gramm=suggestion.erwartete_menge_gramm
+    )
 
 
 # ============== Weekly Summary ==============
@@ -486,8 +924,8 @@ async def reject_production_suggestion(suggestion_id: UUID, db: DBSession):
 @router.get("/weekly-summary", response_model=WeeklyForecastSummary)
 async def get_weekly_forecast_summary(
     db: DBSession,
-    kalenderwoche: int | None = None,
-    jahr: int | None = None
+    kalenderwoche: Optional[int] = None,
+    jahr: Optional[int] = None
 ):
     """
     Wöchentliche Forecast-Zusammenfassung.
@@ -527,17 +965,24 @@ async def get_weekly_forecast_summary(
                 w["produkt"] = sug.seed.name if sug.seed else "Unbekannt"
                 warnungen.append(w)
 
-    forecast_responses = []
-    for fc in forecasts:
-        response = ForecastResponse.model_validate(fc)
-        response.seed_name = fc.seed.name if fc.seed else None
-        forecast_responses.append(response)
+    forecast_responses = [_build_forecast_response(fc) for fc in forecasts]
 
-    suggestion_responses = []
-    for sug in suggestions:
-        response = ProductionSuggestionResponse.model_validate(sug)
-        response.seed_name = sug.seed.name if sug.seed else None
-        suggestion_responses.append(response)
+    suggestion_responses = [
+        ProductionSuggestionResponse(
+            id=sug.id,
+            forecast_id=sug.forecast_id,
+            seed_id=sug.seed_id,
+            seed_name=sug.seed.name if sug.seed else None,
+            empfohlene_trays=sug.empfohlene_trays,
+            aussaat_datum=sug.aussaat_datum,
+            erwartete_ernte_datum=sug.erwartete_ernte_datum,
+            status=sug.status,
+            warnungen=sug.warnungen,
+            benoetigte_menge_gramm=sug.benoetigte_menge_gramm,
+            erwartete_menge_gramm=sug.erwartete_menge_gramm
+        )
+        for sug in suggestions
+    ]
 
     return WeeklyForecastSummary(
         kalenderwoche=kalenderwoche,
@@ -564,10 +1009,10 @@ async def _calculate_base_demand(db, seed_id: UUID, forecast_date: date) -> Deci
     eight_weeks_ago = forecast_date - timedelta(weeks=8)
 
     historical_orders = db.execute(
-        select(func.sum(OrderItem.menge))
+        select(func.sum(OrderLine.menge))
         .join(Order)
         .where(
-            OrderItem.seed_id == seed_id,
+            OrderLine.seed_id == seed_id,
             Order.liefer_datum >= eight_weeks_ago,
             Order.liefer_datum < forecast_date,
             func.extract('dow', Order.liefer_datum) == weekday,
@@ -578,9 +1023,9 @@ async def _calculate_base_demand(db, seed_id: UUID, forecast_date: date) -> Deci
     # Anzahl Wochen mit Daten
     weeks_with_data = db.execute(
         select(func.count(func.distinct(Order.liefer_datum)))
-        .join(OrderItem)
+        .join(OrderLine)
         .where(
-            OrderItem.seed_id == seed_id,
+            OrderLine.seed_id == seed_id,
             Order.liefer_datum >= eight_weeks_ago,
             Order.liefer_datum < forecast_date,
             func.extract('dow', Order.liefer_datum) == weekday
@@ -592,7 +1037,7 @@ async def _calculate_base_demand(db, seed_id: UUID, forecast_date: date) -> Deci
 
 
 async def _calculate_subscription_demand(
-    db, seed_id: UUID, forecast_date: date, kunde_id: UUID | None
+    db, seed_id: UUID, forecast_date: date, kunde_id: Optional[UUID]
 ) -> Decimal:
     """
     Berechnet erwartete Nachfrage aus aktiven Abonnements.

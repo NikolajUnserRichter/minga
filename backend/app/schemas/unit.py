@@ -1,3 +1,4 @@
+from typing import Optional
 """
 Pydantic Schemas für Maßeinheiten (Units of Measure)
 """
@@ -13,23 +14,23 @@ class UnitOfMeasureBase(BaseModel):
     """Basis-Schema für Maßeinheit"""
     code: str = Field(..., min_length=1, max_length=10, description="Einheitenkürzel (z.B. KG, G)")
     name: str = Field(..., min_length=1, max_length=50, description="Einheitenname")
-    symbol: str | None = Field(None, max_length=10, description="Symbol (z.B. kg, g)")
+    symbol: Optional[str] = Field(None, max_length=10, description="Symbol (z.B. kg, g)")
     category: UnitCategory = Field(..., description="Kategorie (WEIGHT, VOLUME, COUNT, CONTAINER)")
 
 
 class UnitOfMeasureCreate(UnitOfMeasureBase):
     """Schema zum Erstellen einer Maßeinheit"""
-    base_unit_id: UUID | None = Field(None, description="Basis-Einheit für Umrechnung")
+    base_unit_id: Optional[UUID] = Field(None, description="Basis-Einheit für Umrechnung")
     conversion_factor: Decimal = Field(default=Decimal("1"), description="Umrechnungsfaktor zur Basiseinheit")
     is_base_unit: bool = Field(default=False, description="Ist dies eine Basiseinheit?")
 
 
 class UnitOfMeasureUpdate(BaseModel):
     """Schema zum Aktualisieren einer Maßeinheit"""
-    name: str | None = Field(None, min_length=1, max_length=50)
-    symbol: str | None = None
-    conversion_factor: Decimal | None = None
-    is_active: bool | None = None
+    name: Optional[str] = Field(None, min_length=1, max_length=50)
+    symbol: Optional[str] = None
+    conversion_factor: Optional[Decimal] = None
+    is_active: Optional[bool] = None
 
 
 class UnitOfMeasureResponse(UnitOfMeasureBase):
@@ -37,14 +38,14 @@ class UnitOfMeasureResponse(UnitOfMeasureBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID
-    base_unit_id: UUID | None
+    base_unit_id: Optional[UUID]
     conversion_factor: Decimal
     is_base_unit: bool
     is_active: bool
     created_at: datetime
 
     # Expandiertes Feld
-    base_unit_code: str | None = None
+    base_unit_code: Optional[str] = None
 
 
 class UnitOfMeasureListResponse(BaseModel):
@@ -64,7 +65,7 @@ class UnitConversionBase(BaseModel):
 
 class UnitConversionCreate(UnitConversionBase):
     """Schema zum Erstellen einer Umrechnung"""
-    product_id: UUID | None = Field(None, description="Produkt-spezifische Umrechnung")
+    product_id: Optional[UUID] = Field(None, description="Produkt-spezifische Umrechnung")
 
 
 class UnitConversionResponse(UnitConversionBase):
@@ -72,13 +73,13 @@ class UnitConversionResponse(UnitConversionBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID
-    product_id: UUID | None
+    product_id: Optional[UUID]
     is_active: bool
     created_at: datetime
 
     # Expandierte Felder
-    from_unit_code: str | None = None
-    to_unit_code: str | None = None
+    from_unit_code: Optional[str] = None
+    to_unit_code: Optional[str] = None
 
 
 class UnitConversionListResponse(BaseModel):
@@ -94,7 +95,7 @@ class ConvertUnitsRequest(BaseModel):
     value: Decimal = Field(..., description="Zu konvertierender Wert")
     from_unit_id: UUID = Field(..., description="Ausgangs-Einheit")
     to_unit_id: UUID = Field(..., description="Ziel-Einheit")
-    product_id: UUID | None = Field(None, description="Produkt für spezifische Umrechnung")
+    product_id: Optional[UUID] = Field(None, description="Produkt für spezifische Umrechnung")
 
 
 class ConvertUnitsResponse(BaseModel):

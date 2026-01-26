@@ -11,7 +11,7 @@ from app.celery_app import celery_app
 from app.database import SessionLocal
 from app.models.seed import Seed
 from app.models.production import GrowBatch, Harvest
-from app.models.order import Order, OrderItem
+from app.models.order import Order, OrderLine
 from app.models.forecast import Forecast, ForecastAccuracy
 
 logger = logging.getLogger(__name__)
@@ -161,9 +161,9 @@ def generate_sales_summary(von_datum: str = None, bis_datum: str = None):
         orders = db.execute(
             select(
                 func.count(Order.id).label("anzahl_bestellungen"),
-                func.sum(OrderItem.menge * OrderItem.preis_pro_einheit).label("umsatz")
+                func.sum(OrderLine.menge * OrderLine.preis_pro_einheit).label("umsatz")
             )
-            .join(OrderItem)
+            .join(OrderLine)
             .where(Order.liefer_datum.between(von, bis))
         ).first()
 
@@ -171,13 +171,13 @@ def generate_sales_summary(von_datum: str = None, bis_datum: str = None):
         top_produkte = db.execute(
             select(
                 Seed.name,
-                func.sum(OrderItem.menge).label("gesamt_menge")
+                func.sum(OrderLine.menge).label("gesamt_menge")
             )
-            .join(Seed, OrderItem.seed_id == Seed.id)
+            .join(Seed, OrderLine.seed_id == Seed.id)
             .join(Order)
             .where(Order.liefer_datum.between(von, bis))
             .group_by(Seed.name)
-            .order_by(func.sum(OrderItem.menge).desc())
+            .order_by(func.sum(OrderLine.menge).desc())
             .limit(5)
         ).all()
 

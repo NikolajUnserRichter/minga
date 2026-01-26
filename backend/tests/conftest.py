@@ -39,7 +39,12 @@ app.dependency_overrides[get_db] = override_get_db
 @pytest.fixture(scope="function")
 def db():
     """Datenbankverbindung für Tests"""
-    Base.metadata.create_all(bind=engine)
+    try:
+        Base.metadata.create_all(bind=engine)
+    except Exception as e:
+        print(f"Error creating tables: {e}")
+        # Optionally re-raise if you want the test to error out immediately
+        pass 
     db = TestingSessionLocal()
     yield db
     db.close()

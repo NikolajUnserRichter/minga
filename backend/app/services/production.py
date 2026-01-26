@@ -1,3 +1,4 @@
+from typing import Optional
 """
 Produktions-Service - Business Logic für Produktion
 """
@@ -23,8 +24,8 @@ class ProductionService:
         seed_batch_id: UUID,
         tray_anzahl: int,
         aussaat_datum: date,
-        regal_position: str | None = None,
-        notizen: str | None = None
+        regal_position: Optional[str] = None,
+        notizen: Optional[str] = None
     ) -> GrowBatch:
         """
         Erstellt eine neue Wachstumscharge und berechnet Erntedaten.
@@ -74,7 +75,7 @@ class ProductionService:
         ernte_datum: date,
         menge_gramm: Decimal,
         verlust_gramm: Decimal = Decimal("0"),
-        qualitaet_note: int | None = None
+        qualitaet_note: Optional[int] = None
     ) -> Harvest:
         """
         Erfasst eine Ernte und aktualisiert den Chargen-Status.

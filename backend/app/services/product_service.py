@@ -1,3 +1,4 @@
+from typing import Optional
 """
 Produkt-Service - Business Logic für Produkte, GrowPlans und Preislisten
 """
@@ -14,7 +15,7 @@ from app.models.product import (
 from app.models.unit import UnitOfMeasure
 from app.models.seed import Seed
 from app.models.customer import Customer
-from app.models.invoice import TaxRate
+from app.models.enums import TaxRate
 
 
 class ProductService:
@@ -32,18 +33,20 @@ class ProductService:
         sku: str,
         name: str,
         category: ProductCategory,
-        description: str | None = None,
-        product_group_id: UUID | None = None,
-        base_unit_id: UUID | None = None,
-        base_price: Decimal | None = None,
+        description: Optional[str] = None,
+        product_group_id: Optional[UUID] = None,
+        base_unit_id: Optional[UUID] = None,
+        base_price: Optional[Decimal] = None,
         tax_rate: TaxRate = TaxRate.REDUZIERT,
-        seed_id: UUID | None = None,
-        grow_plan_id: UUID | None = None,
-        seed_variety: str | None = None,
-        shelf_life_days: int | None = None,
-        storage_temp_min: Decimal | None = None,
-        storage_temp_max: Decimal | None = None,
-        min_stock_quantity: Decimal | None = None,
+        seed_id: Optional[UUID] = None,
+        grow_plan_id: Optional[UUID] = None,
+        seed_variety: Optional[str] = None,
+        shelf_life_days: Optional[int] = None,
+        storage_temp_min: Optional[Decimal] = None,
+        storage_temp_max: Optional[Decimal] = None,
+        min_stock_quantity: Optional[Decimal] = None,
+        is_bundle: bool = False,
+        bundle_components: Optional[list[dict]] = None,
     ) -> Product:
         """
         Erstellt ein neues Produkt.
@@ -71,7 +74,9 @@ class ProductService:
             shelf_life_days=shelf_life_days,
             storage_temp_min=storage_temp_min,
             storage_temp_max=storage_temp_max,
-            min_stock_quantity=min_stock_quantity,
+            min_stock_level=min_stock_quantity,
+            is_bundle=is_bundle,
+            bundle_components=bundle_components,
         )
 
         self.db.add(product)
@@ -127,7 +132,7 @@ class ProductService:
         sku: str,
         name: str,
         components: list[dict],  # [{"product_id": ..., "quantity": ...}, ...]
-        base_price: Decimal | None = None,
+        base_price: Optional[Decimal] = None,
     ) -> Product:
         """
         Erstellt ein Bundle-Produkt aus mehreren Komponenten.
@@ -159,9 +164,9 @@ class ProductService:
     def get_product_price(
         self,
         product_id: UUID,
-        customer_id: UUID | None = None,
+        customer_id: Optional[UUID] = None,
         quantity: Decimal = Decimal("1"),
-        price_date: date | None = None,
+        price_date: Optional[date] = None,
     ) -> Decimal:
         """
         Ermittelt den Preis für ein Produkt.
@@ -220,11 +225,11 @@ class ProductService:
         soak_hours: int = 0,
         blackout_days: int = 0,
         expected_loss_percent: Decimal = Decimal("5"),
-        description: str | None = None,
-        optimal_temp_celsius: Decimal | None = None,
-        optimal_humidity_percent: int | None = None,
-        light_hours_per_day: int | None = None,
-        seed_density_grams_per_tray: Decimal | None = None,
+        description: Optional[str] = None,
+        optimal_temp_celsius: Optional[Decimal] = None,
+        optimal_humidity_percent: Optional[int] = None,
+        light_hours_per_day: Optional[int] = None,
+        seed_density_grams_per_tray: Optional[Decimal] = None,
     ) -> GrowPlan:
         """
         Erstellt einen neuen Wachstumsplan.
@@ -254,8 +259,8 @@ class ProductService:
             harvest_window_end_days=harvest_window_end_days,
             expected_yield_grams_per_tray=expected_yield_grams_per_tray,
             expected_loss_percent=expected_loss_percent,
-            optimal_temp_celsius=optimal_temp_celsius,
-            optimal_humidity_percent=optimal_humidity_percent,
+            temp_growth_celsius=optimal_temp_celsius,
+            humidity_percent=optimal_humidity_percent,
             light_hours_per_day=light_hours_per_day,
             seed_density_grams_per_tray=seed_density_grams_per_tray,
         )
@@ -300,10 +305,10 @@ class ProductService:
         self,
         code: str,
         name: str,
-        description: str | None = None,
+        description: Optional[str] = None,
         currency: str = "EUR",
-        valid_from: date | None = None,
-        valid_until: date | None = None,
+        valid_from: Optional[date] = None,
+        valid_until: Optional[date] = None,
         is_default: bool = False,
     ) -> PriceList:
         """
@@ -344,10 +349,10 @@ class ProductService:
         price_list_id: UUID,
         product_id: UUID,
         price: Decimal,
-        unit_id: UUID | None = None,
+        unit_id: Optional[UUID] = None,
         min_quantity: Decimal = Decimal("1"),
-        valid_from: date | None = None,
-        valid_until: date | None = None,
+        valid_from: Optional[date] = None,
+        valid_until: Optional[date] = None,
     ) -> PriceListItem:
         """
         Fügt einen Preis zur Preisliste hinzu.
@@ -359,6 +364,9 @@ class ProductService:
         product = self.db.get(Product, product_id)
         if not product:
             raise ValueError("Produkt nicht gefunden")
+
+        if unit_id is None:
+            unit_id = product.base_unit_id
 
         item = PriceListItem(
             price_list_id=price_list_id,
@@ -420,8 +428,8 @@ class ProductService:
         self,
         code: str,
         name: str,
-        parent_id: UUID | None = None,
-        description: str | None = None,
+        parent_id: Optional[UUID] = None,
+        description: Optional[str] = None,
     ) -> ProductGroup:
         """
         Erstellt eine neue Produktgruppe.

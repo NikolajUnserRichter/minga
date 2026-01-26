@@ -1,3 +1,4 @@
+from typing import Optional
 """
 Lager-Service - Business Logic für Lagerverwaltung
 Mit vollständiger Rückverfolgbarkeit
@@ -16,7 +17,7 @@ from app.models.inventory import (
 from app.models.production import GrowBatch, Harvest
 from app.models.product import Product
 from app.models.seed import Seed
-from app.models.order import Order, OrderItem
+from app.models.order import Order, OrderLine
 
 
 class InventoryService:
@@ -34,15 +35,15 @@ class InventoryService:
         seed_id: UUID,
         batch_number: str,
         quantity_kg: Decimal,
-        received_date: date | None = None,
-        best_before_date: date | None = None,
-        supplier_name: str | None = None,
-        supplier_batch: str | None = None,
-        purchase_price_per_kg: Decimal | None = None,
-        location_id: UUID | None = None,
+        received_date: Optional[date] = None,
+        best_before_date: Optional[date] = None,
+        supplier_name: Optional[str] = None,
+        supplier_batch: Optional[str] = None,
+        purchase_price_per_kg: Optional[Decimal] = None,
+        location_id: Optional[UUID] = None,
         is_organic: bool = False,
-        organic_certificate: str | None = None,
-        germination_rate: Decimal | None = None,
+        organic_certificate: Optional[str] = None,
+        germination_rate: Optional[Decimal] = None,
     ) -> SeedInventory:
         """
         Erfasst einen neuen Saatgut-Wareneingang.
@@ -90,7 +91,7 @@ class InventoryService:
         seed_inventory_id: UUID,
         quantity_kg: Decimal,
         grow_batch_id: UUID,
-        created_by: str | None = None,
+        created_by: Optional[str] = None,
     ) -> InventoryMovement:
         """
         Verbucht Saatgut-Verbrauch für eine Aussaat.
@@ -136,13 +137,13 @@ class InventoryService:
         batch_number: str,
         quantity_g: Decimal,
         harvest_date: date,
-        harvest_id: UUID | None = None,
-        grow_batch_id: UUID | None = None,
-        seed_inventory_id: UUID | None = None,
+        harvest_id: Optional[UUID] = None,
+        grow_batch_id: Optional[UUID] = None,
+        seed_inventory_id: Optional[UUID] = None,
         shelf_life_days: int = 7,
-        quality_grade: int | None = None,
-        location_id: UUID | None = None,
-        created_by: str | None = None,
+        quality_grade: Optional[int] = None,
+        location_id: Optional[UUID] = None,
+        created_by: Optional[str] = None,
     ) -> FinishedGoodsInventory:
         """
         Erfasst geerntete Ware im Lager.
@@ -228,8 +229,8 @@ class InventoryService:
         finished_goods_id: UUID,
         quantity_g: Decimal,
         order_id: UUID,
-        order_item_id: UUID | None = None,
-        created_by: str | None = None,
+        order_item_id: Optional[UUID] = None,
+        created_by: Optional[str] = None,
     ) -> InventoryMovement:
         """
         Verbucht Warenausgang für Lieferung.
@@ -274,7 +275,7 @@ class InventoryService:
         finished_goods_id: UUID,
         quantity_g: Decimal,
         reason: str,
-        created_by: str | None = None,
+        created_by: Optional[str] = None,
     ) -> InventoryMovement:
         """
         Erfasst Verlust/Verderb.
@@ -314,11 +315,11 @@ class InventoryService:
         sku: str,
         quantity: int,
         unit: str = "Stück",
-        supplier_name: str | None = None,
-        purchase_price: Decimal | None = None,
-        location_id: UUID | None = None,
+        supplier_name: Optional[str] = None,
+        purchase_price: Optional[Decimal] = None,
+        location_id: Optional[UUID] = None,
         min_quantity: int = 0,
-        reorder_quantity: int | None = None,
+        reorder_quantity: Optional[int] = None,
     ) -> PackagingInventory:
         """
         Erfasst Verpackungsmaterial-Eingang.
@@ -378,8 +379,8 @@ class InventoryService:
         self,
         packaging_id: UUID,
         quantity: int,
-        order_id: UUID | None = None,
-        created_by: str | None = None,
+        order_id: Optional[UUID] = None,
+        created_by: Optional[str] = None,
     ) -> InventoryMovement:
         """
         Verbucht Verpackungsverbrauch.
@@ -416,7 +417,7 @@ class InventoryService:
     # STOCK QUERIES
     # ========================================
 
-    def get_stock_overview(self) -> dict:
+    def get_stock_overview(self, item_type: Optional[InventoryItemType] = None) -> dict:
         """
         Bestandsübersicht über alle Kategorien.
         """
@@ -479,6 +480,52 @@ class InventoryService:
                 "items": packaging_stock.items or 0,
                 "low_stock": low_packaging,
             },
+        }
+
+    def get_low_stock_alerts(self) -> dict:
+        """
+        Gibt Artikel mit niedrigem Bestand zurück.
+        """
+        # Saatgut
+        seeds = self.db.execute(
+            select(SeedInventory)
+            .join(Seed)
+            .where(
+                SeedInventory.is_active == True,
+                SeedInventory.current_quantity_kg <= SeedInventory.initial_quantity_kg * Decimal("0.1")  # < 10%
+            )
+        ).scalars().all()
+
+        # Verpackung
+        packaging = self.db.execute(
+            select(PackagingInventory)
+            .where(
+                PackagingInventory.is_active == True,
+                PackagingInventory.current_quantity <= PackagingInventory.min_quantity
+            )
+        ).scalars().all()
+
+        return {
+            "saatgut": [
+                {
+                    "id": str(s.id),
+                    "batch": s.batch_number,
+                    "seed": s.seed.name,
+                    "quantity": float(s.current_quantity_kg),
+                    "min_quantity": 0, # TODO: Min quantity logic
+                }
+                for s in seeds
+            ],
+            "verpackung": [
+                {
+                    "id": str(p.id),
+                    "sku": p.sku,
+                    "name": p.name,
+                    "quantity": p.current_quantity,
+                    "min_quantity": p.min_quantity,
+                }
+                for p in packaging
+            ]
         }
 
     def get_available_stock_for_product(self, product_id: UUID) -> list[FinishedGoodsInventory]:
@@ -593,9 +640,10 @@ class InventoryService:
 
     def create_inventory_count(
         self,
-        count_date: date | None = None,
-        location_id: UUID | None = None,
-        counted_by: str | None = None,
+        count_date: Optional[date] = None,
+        location_id: Optional[UUID] = None,
+        item_type: Optional[InventoryItemType] = None,
+        counted_by: Optional[str] = None,
     ) -> InventoryCount:
         """
         Startet eine neue Inventur.
@@ -620,79 +668,82 @@ class InventoryService:
         self.db.flush()
 
         # Positionen automatisch anlegen
-        self._populate_count_items(count)
+        self._populate_count_items(count, item_type)
 
         return count
 
-    def _populate_count_items(self, count: InventoryCount):
+    def _populate_count_items(self, count: InventoryCount, item_type: Optional[InventoryItemType] = None):
         """
         Füllt Inventur mit aktuellen Beständen.
         """
         # Saatgut
-        seed_items = self.db.execute(
-            select(SeedInventory)
-            .where(
-                SeedInventory.is_active == True,
-                or_(
-                    count.location_id == None,
-                    SeedInventory.location_id == count.location_id
+        if item_type is None or item_type == InventoryItemType.SAATGUT:
+            seed_items = self.db.execute(
+                select(SeedInventory)
+                .where(
+                    SeedInventory.is_active == True,
+                    or_(
+                        count.location_id == None,
+                        SeedInventory.location_id == count.location_id
+                    )
                 )
-            )
-        ).scalars().all()
+            ).scalars().all()
 
-        for item in seed_items:
-            count_item = InventoryCountItem(
-                count_id=count.id,
-                item_type=InventoryItemType.SAATGUT,
-                seed_inventory_id=item.id,
-                system_quantity=item.current_quantity_kg,
-                unit="kg",
-            )
-            self.db.add(count_item)
+            for item in seed_items:
+                count_item = InventoryCountItem(
+                    count_id=count.id,
+                    item_type=InventoryItemType.SAATGUT,
+                    seed_inventory_id=item.id,
+                    system_quantity=item.current_quantity_kg,
+                    unit="kg",
+                )
+                self.db.add(count_item)
 
         # Fertigware
-        finished_items = self.db.execute(
-            select(FinishedGoodsInventory)
-            .where(
-                FinishedGoodsInventory.is_active == True,
-                or_(
-                    count.location_id == None,
-                    FinishedGoodsInventory.location_id == count.location_id
+        if item_type is None or item_type == InventoryItemType.FERTIGWARE:
+            finished_items = self.db.execute(
+                select(FinishedGoodsInventory)
+                .where(
+                    FinishedGoodsInventory.is_active == True,
+                    or_(
+                        count.location_id == None,
+                        FinishedGoodsInventory.location_id == count.location_id
+                    )
                 )
-            )
-        ).scalars().all()
+            ).scalars().all()
 
-        for item in finished_items:
-            count_item = InventoryCountItem(
-                count_id=count.id,
-                item_type=InventoryItemType.FERTIGWARE,
-                finished_goods_id=item.id,
-                system_quantity=item.current_quantity_g,
-                unit="g",
-            )
-            self.db.add(count_item)
+            for item in finished_items:
+                count_item = InventoryCountItem(
+                    count_id=count.id,
+                    item_type=InventoryItemType.FERTIGWARE,
+                    finished_goods_id=item.id,
+                    system_quantity=item.current_quantity_g,
+                    unit="g",
+                )
+                self.db.add(count_item)
 
         # Verpackung
-        packaging_items = self.db.execute(
-            select(PackagingInventory)
-            .where(
-                PackagingInventory.is_active == True,
-                or_(
-                    count.location_id == None,
-                    PackagingInventory.location_id == count.location_id
+        if item_type is None or item_type == InventoryItemType.VERPACKUNG:
+            packaging_items = self.db.execute(
+                select(PackagingInventory)
+                .where(
+                    PackagingInventory.is_active == True,
+                    or_(
+                        count.location_id == None,
+                        PackagingInventory.location_id == count.location_id
+                    )
                 )
-            )
-        ).scalars().all()
+            ).scalars().all()
 
-        for item in packaging_items:
-            count_item = InventoryCountItem(
-                count_id=count.id,
-                item_type=InventoryItemType.VERPACKUNG,
-                packaging_id=item.id,
-                system_quantity=Decimal(item.current_quantity),
-                unit=item.unit,
-            )
-            self.db.add(count_item)
+            for item in packaging_items:
+                count_item = InventoryCountItem(
+                    count_id=count.id,
+                    item_type=InventoryItemType.VERPACKUNG,
+                    packaging_id=item.id,
+                    system_quantity=Decimal(item.current_quantity),
+                    unit=item.unit,
+                )
+                self.db.add(count_item)
 
     def finalize_inventory_count(
         self,
@@ -758,18 +809,18 @@ class InventoryService:
         unit: str,
         quantity_before: Decimal,
         quantity_after: Decimal,
-        seed_inventory_id: UUID | None = None,
-        finished_goods_id: UUID | None = None,
-        packaging_id: UUID | None = None,
-        from_location_id: UUID | None = None,
-        to_location_id: UUID | None = None,
-        order_id: UUID | None = None,
-        order_item_id: UUID | None = None,
-        grow_batch_id: UUID | None = None,
-        harvest_id: UUID | None = None,
-        created_by: str | None = None,
-        reason: str | None = None,
-        reference_number: str | None = None,
+        seed_inventory_id: Optional[UUID] = None,
+        finished_goods_id: Optional[UUID] = None,
+        packaging_id: Optional[UUID] = None,
+        from_location_id: Optional[UUID] = None,
+        to_location_id: Optional[UUID] = None,
+        order_id: Optional[UUID] = None,
+        order_item_id: Optional[UUID] = None,
+        grow_batch_id: Optional[UUID] = None,
+        harvest_id: Optional[UUID] = None,
+        created_by: Optional[str] = None,
+        reason: Optional[str] = None,
+        reference_number: Optional[str] = None,
     ) -> InventoryMovement:
         """
         Erstellt eine Lagerbewegung.

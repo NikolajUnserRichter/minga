@@ -322,6 +322,7 @@ export interface Invoice {
   header_text: string | null
   footer_text: string | null
   internal_notes: string | null
+  buchungskonto?: string | null
   datev_exported: boolean
   customer_name?: string
   lines?: InvoiceLine[]
@@ -344,6 +345,7 @@ export interface InvoiceLine {
   tax_rate: TaxRate
   line_total: number
   tax_amount: number
+  buchungskonto?: string | null
 }
 
 export interface Payment {

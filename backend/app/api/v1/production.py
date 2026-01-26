@@ -1,3 +1,4 @@
+from typing import Optional
 """
 API Endpoints für Produktions-Verwaltung
 """
@@ -24,9 +25,9 @@ router = APIRouter()
 async def list_grow_batches(
     db: DBSession,
     pagination: Pagination,
-    status_filter: GrowBatchStatus | None = Query(None, alias="status"),
-    seed_id: UUID | None = None,
-    erntereif: bool | None = None
+    status_filter: Optional[GrowBatchStatus] = Query(None, alias="status"),
+    seed_id: Optional[UUID] = None,
+    erntereif: Optional[bool] = None
 ):
     """
     Liste aller Wachstumschargen.
@@ -208,9 +209,9 @@ async def update_grow_batch_status(
 async def list_harvests(
     db: DBSession,
     pagination: Pagination,
-    von_datum: date | None = None,
-    bis_datum: date | None = None,
-    grow_batch_id: UUID | None = None
+    von_datum: Optional[date] = None,
+    bis_datum: Optional[date] = None,
+    grow_batch_id: Optional[UUID] = None
 ):
     """
     Liste aller Ernten.

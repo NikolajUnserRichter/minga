@@ -1,3 +1,4 @@
+from typing import Optional
 """
 Rechnungs-Service - Business Logic für Rechnungen
 Mit deutscher MwSt-Berechnung und DATEV-Export
@@ -16,7 +17,7 @@ from app.models.invoice import (
     generate_invoice_number, STANDARD_ACCOUNTS
 )
 from app.models.customer import Customer, AddressType
-from app.models.order import Order, OrderItem
+from app.models.order import Order, OrderLine
 from app.models.product import Product
 
 
@@ -29,15 +30,17 @@ class InvoiceService:
     def create_invoice(
         self,
         customer_id: UUID,
-        invoice_date: date | None = None,
-        delivery_date: date | None = None,
-        order_id: UUID | None = None,
+        invoice_date: Optional[date] = None,
+        delivery_date: Optional[date] = None,
+        order_id: Optional[UUID] = None,
         invoice_type: InvoiceType = InvoiceType.RECHNUNG,
-        original_invoice_id: UUID | None = None,
+        original_invoice_id: Optional[UUID] = None,
         discount_percent: Decimal = Decimal("0"),
-        header_text: str | None = None,
-        footer_text: str | None = None,
-        internal_notes: str | None = None,
+        header_text: Optional[str] = None,
+        footer_text: Optional[str] = None,
+        internal_notes: Optional[str] = None,
+        due_date: Optional[date] = None,
+        buchungskonto: Optional[str] = None,
     ) -> Invoice:
         """
         Erstellt eine neue Rechnung.
@@ -51,7 +54,8 @@ class InvoiceService:
 
         # Fälligkeitsdatum berechnen
         inv_date = invoice_date or date.today()
-        due_date = inv_date + timedelta(days=customer.payment_days)
+        if due_date is None:
+            due_date = inv_date + timedelta(days=customer.payment_days)
 
         # Adressen als Snapshot speichern
         billing_addr = None
@@ -91,7 +95,7 @@ class InvoiceService:
             header_text=header_text,
             footer_text=footer_text,
             internal_notes=internal_notes,
-            buchungskonto=STANDARD_ACCOUNTS["erloes_7"],  # Default 7% Erlöse
+            buchungskonto=buchungskonto or STANDARD_ACCOUNTS["erloes_7"],  # Default 7% Erlöse
         )
 
         self.db.add(invoice)
@@ -106,12 +110,13 @@ class InvoiceService:
         quantity: Decimal,
         unit: str,
         unit_price: Decimal,
-        product_id: UUID | None = None,
-        sku: str | None = None,
+        product_id: Optional[UUID] = None,
+        sku: Optional[str] = None,
         discount_percent: Decimal = Decimal("0"),
         tax_rate: TaxRate = TaxRate.REDUZIERT,
-        order_item_id: UUID | None = None,
-        harvest_batch_ids: list[UUID] | None = None,
+        order_item_id: Optional[UUID] = None,
+        harvest_batch_ids: Optional[list[UUID]] = None,
+        buchungskonto: Optional[str] = None,
     ) -> InvoiceLine:
         """
         Fügt eine Position zur Rechnung hinzu.
@@ -130,11 +135,12 @@ class InvoiceService:
         ).scalar() or 0
 
         # Buchungskonto basierend auf Steuersatz
-        buchungskonto = {
-            TaxRate.REDUZIERT: STANDARD_ACCOUNTS["erloes_7"],
-            TaxRate.STANDARD: STANDARD_ACCOUNTS["erloes_19"],
-            TaxRate.STEUERFREI: STANDARD_ACCOUNTS["erloes_steuerfrei"],
-        }.get(tax_rate, STANDARD_ACCOUNTS["erloes_7"])
+        if not buchungskonto:
+            buchungskonto = {
+                TaxRate.REDUZIERT: STANDARD_ACCOUNTS["erloes_7"],
+                TaxRate.STANDARD: STANDARD_ACCOUNTS["erloes_19"],
+                TaxRate.STEUERFREI: STANDARD_ACCOUNTS["erloes_steuerfrei"],
+            }.get(tax_rate, STANDARD_ACCOUNTS["erloes_7"])
 
         line = InvoiceLine(
             invoice_id=invoice_id,
@@ -225,11 +231,11 @@ class InvoiceService:
         self,
         invoice_id: UUID,
         amount: Decimal,
-        payment_date: date | None = None,
+        payment_date: Optional[date] = None,
         payment_method: PaymentMethod = PaymentMethod.UEBERWEISUNG,
-        reference: str | None = None,
-        bank_reference: str | None = None,
-        notes: str | None = None,
+        reference: Optional[str] = None,
+        bank_reference: Optional[str] = None,
+        notes: Optional[str] = None,
     ) -> Payment:
         """
         Erfasst eine Zahlung für eine Rechnung.
@@ -270,7 +276,7 @@ class InvoiceService:
         invoice_id: UUID,
         reason: str,
         create_credit_note: bool = True
-    ) -> tuple[Invoice, Invoice | None]:
+    ) -> tuple[Invoice, Optional[Invoice]]:
         """
         Storniert eine Rechnung und erstellt optional eine Gutschrift.
         """

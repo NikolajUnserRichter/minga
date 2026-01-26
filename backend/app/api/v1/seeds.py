@@ -1,3 +1,4 @@
+from typing import Optional
 """
 API Endpoints für Saatgut-Verwaltung
 """
@@ -22,8 +23,8 @@ router = APIRouter()
 async def list_seeds(
     db: DBSession,
     pagination: Pagination,
-    aktiv: bool | None = None,
-    search: str | None = None
+    aktiv: Optional[bool] = None,
+    search: Optional[str] = None
 ):
     """
     Liste aller Saatgut-Sorten abrufen.

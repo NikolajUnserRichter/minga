@@ -125,10 +125,10 @@ export default function Invoices() {
     activeTab === 'overdue'
       ? overdueInvoices
       : activeTab === 'open'
-      ? invoices.filter((i) => i.status === 'OFFEN')
-      : activeTab === 'paid'
-      ? invoices.filter((i) => i.status === 'BEZAHLT')
-      : filteredInvoices;
+        ? invoices.filter((i) => i.status === 'OFFEN')
+        : activeTab === 'paid'
+          ? invoices.filter((i) => i.status === 'BEZAHLT')
+          : filteredInvoices;
 
   if (isLoading) {
     return <PageLoader />;
@@ -380,8 +380,11 @@ function InvoiceCreateForm({ customers, onSubmit, onCancel }: InvoiceCreateFormP
     invoice_type: 'RECHNUNG' as InvoiceType,
     invoice_date: new Date().toISOString().split('T')[0],
     delivery_date: '',
+    due_date: '',
     header_text: '',
     footer_text: '',
+    internal_notes: '',
+    buchungskonto: '',
   });
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -396,6 +399,9 @@ function InvoiceCreateForm({ customers, onSubmit, onCancel }: InvoiceCreateFormP
       await invoicesApi.create({
         ...formData,
         delivery_date: formData.delivery_date || undefined,
+        due_date: formData.due_date || undefined,
+        buchungskonto: formData.buchungskonto || undefined,
+        internal_notes: formData.internal_notes || undefined,
       });
       onSubmit();
     } catch (error) {
@@ -441,11 +447,27 @@ function InvoiceCreateForm({ customers, onSubmit, onCancel }: InvoiceCreateFormP
         />
       </div>
 
+      <div className="grid grid-cols-2 gap-4">
+        <Input
+          label="Lieferdatum"
+          type="date"
+          value={formData.delivery_date}
+          onChange={(e) => setFormData({ ...formData, delivery_date: e.target.value })}
+        />
+        <Input
+          label="Fällig am"
+          type="date"
+          placeholder="Automatisch..."
+          value={formData.due_date}
+          onChange={(e) => setFormData({ ...formData, due_date: e.target.value })}
+        />
+      </div>
+
       <Input
-        label="Lieferdatum"
-        type="date"
-        value={formData.delivery_date}
-        onChange={(e) => setFormData({ ...formData, delivery_date: e.target.value })}
+        label="Buchungskonto"
+        placeholder="Standard (z.B. 8400)..."
+        value={formData.buchungskonto}
+        onChange={(e) => setFormData({ ...formData, buchungskonto: e.target.value })}
       />
 
       <Input
@@ -453,6 +475,13 @@ function InvoiceCreateForm({ customers, onSubmit, onCancel }: InvoiceCreateFormP
         value={formData.header_text}
         onChange={(e) => setFormData({ ...formData, header_text: e.target.value })}
         placeholder="Optionaler Text im Kopfbereich..."
+      />
+
+      <Input
+        label="Interne Notizen"
+        value={formData.internal_notes}
+        onChange={(e) => setFormData({ ...formData, internal_notes: e.target.value })}
+        placeholder="Nur intern sichtbar..."
       />
 
       <div className="flex gap-3 pt-4 border-t">

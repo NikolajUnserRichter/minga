@@ -11,7 +11,7 @@ from app.celery_app import celery_app
 from app.database import SessionLocal
 from app.models.inventory import (
     SeedInventory, FinishedGoodsInventory, PackagingInventory,
-    InventoryMovement, ArticleType, MovementType
+    InventoryMovement, InventoryItemType, MovementType
 )
 from app.models.seed import Seed
 
@@ -267,7 +267,7 @@ def cleanup_expired_goods():
         for inv in expired:
             # Verlust-Bewegung erstellen
             movement = InventoryMovement(
-                article_type=ArticleType.FERTIGWARE,
+                item_type=InventoryItemType.FERTIGWARE,
                 article_id=inv.id,
                 movement_type=MovementType.VERLUST,
                 quantity=-inv.current_quantity,

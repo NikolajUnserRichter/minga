@@ -1,3 +1,4 @@
+from typing import Optional
 """
 Maßeinheiten-Models: UnitOfMeasure und UnitConversion
 """
@@ -6,8 +7,9 @@ from datetime import datetime
 from decimal import Decimal
 from enum import Enum
 from sqlalchemy import String, Numeric, Boolean, DateTime, ForeignKey, Enum as SQLEnum
+from sqlalchemy.types import Uuid, JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy.dialects.postgresql import UUID
+
 
 from app.database import Base
 
@@ -32,13 +34,13 @@ class UnitOfMeasure(Base):
     __tablename__ = "units_of_measure"
 
     id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+        Uuid, primary_key=True, default=uuid.uuid4
     )
 
     # Identifikation
     code: Mapped[str] = mapped_column(String(20), unique=True, nullable=False)
     name: Mapped[str] = mapped_column(String(100), nullable=False)
-    symbol: Mapped[str | None] = mapped_column(String(10))
+    symbol: Mapped[Optional[str]] = mapped_column(String(10))
 
     # Kategorie
     category: Mapped[UnitCategory] = mapped_column(
@@ -46,8 +48,8 @@ class UnitOfMeasure(Base):
     )
 
     # Umrechnung zur Basiseinheit der Kategorie
-    base_unit_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("units_of_measure.id")
+    base_unit_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid, ForeignKey("units_of_measure.id")
     )
     conversion_factor: Mapped[Decimal] = mapped_column(
         Numeric(15, 6), default=Decimal("1")
@@ -67,7 +69,7 @@ class UnitOfMeasure(Base):
     )
 
     # Self-Reference für Basiseinheit
-    base_unit: Mapped["UnitOfMeasure | None"] = relationship(
+    base_unit: Mapped[Optional["UnitOfMeasure"]] = relationship(
         "UnitOfMeasure", remote_side=[id], foreign_keys=[base_unit_id]
     )
 
@@ -96,20 +98,20 @@ class UnitConversion(Base):
     __tablename__ = "unit_conversions"
 
     id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+        Uuid, primary_key=True, default=uuid.uuid4
     )
 
     # Produkt (optional - NULL = allgemeine Umrechnung)
-    product_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("products.id")
+    product_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid, ForeignKey("products.id")
     )
 
     # Von-Nach Einheiten
     from_unit_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("units_of_measure.id"), nullable=False
+        Uuid, ForeignKey("units_of_measure.id"), nullable=False
     )
     to_unit_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("units_of_measure.id"), nullable=False
+        Uuid, ForeignKey("units_of_measure.id"), nullable=False
     )
 
     # Umrechnungsfaktor (from_unit * factor = to_unit)

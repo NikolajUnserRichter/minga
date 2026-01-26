@@ -1,3 +1,4 @@
+from typing import Optional
 """
 Kapazitäts-Model für Ressourcenplanung
 """
@@ -5,8 +6,9 @@ import uuid
 from datetime import datetime
 from enum import Enum
 from sqlalchemy import String, Integer, DateTime, Enum as SQLEnum
+from sqlalchemy.types import Uuid, JSON
 from sqlalchemy.orm import Mapped, mapped_column
-from sqlalchemy.dialects.postgresql import UUID
+
 
 from app.database import Base
 
@@ -25,14 +27,14 @@ class Capacity(Base):
     __tablename__ = "capacities"
 
     id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+        Uuid, primary_key=True, default=uuid.uuid4
     )
 
     # Ressourcen-Info
     ressource_typ: Mapped[ResourceType] = mapped_column(
         SQLEnum(ResourceType), nullable=False
     )
-    name: Mapped[str | None] = mapped_column(String(100))
+    name: Mapped[Optional[str]] = mapped_column(String(100))
 
     # Kapazitätswerte
     max_kapazitaet: Mapped[int] = mapped_column(Integer, nullable=False)

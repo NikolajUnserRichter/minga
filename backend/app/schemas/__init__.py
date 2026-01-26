@@ -47,7 +47,7 @@ from app.schemas.customer import (
 # Order Schemas
 from app.schemas.order import (
     OrderBase, OrderCreate, OrderResponse,
-    OrderItemBase, OrderItemCreate, OrderItemResponse
+    OrderLineBase, OrderLineCreate, OrderLineResponse
 )
 
 # Invoice Schemas
@@ -115,7 +115,7 @@ __all__ = [
     "SubscriptionListResponse",
     # Order
     "OrderBase", "OrderCreate", "OrderResponse",
-    "OrderItemBase", "OrderItemCreate", "OrderItemResponse",
+    "OrderLineBase", "OrderLineCreate", "OrderLineResponse",
     # Invoice
     "InvoiceLineBase", "InvoiceLineCreate", "InvoiceLineUpdate", "InvoiceLineResponse",
     "PaymentBase", "PaymentCreate", "PaymentResponse", "PaymentListResponse",

@@ -261,6 +261,9 @@ export const invoicesApi = {
     discount_percent?: number
     header_text?: string
     footer_text?: string
+    internal_notes?: string
+    due_date?: string
+    buchungskonto?: string
   }) =>
     api.post<Invoice>('/invoices', data).then(r => r.data),
 

@@ -8,8 +8,9 @@ from decimal import Decimal
 from enum import Enum
 from typing import Optional
 from sqlalchemy import String, Integer, Numeric, Boolean, DateTime, Date, ForeignKey, Text, Enum as SQLEnum
+from sqlalchemy.types import Uuid, JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy.dialects.postgresql import UUID, JSONB
+
 
 from app.database import Base
 
@@ -51,7 +52,7 @@ class InventoryLocation(Base):
     __tablename__ = "inventory_locations"
 
     id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+        Uuid, primary_key=True, default=uuid.uuid4
     )
 
     # Identifikation
@@ -62,19 +63,19 @@ class InventoryLocation(Base):
     )
 
     # Hierarchie (optional für Regalsysteme: Halle > Reihe > Regal > Fach)
-    parent_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("inventory_locations.id", ondelete="SET NULL")
+    parent_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid, ForeignKey("inventory_locations.id", ondelete="SET NULL")
     )
 
     # Kapazität
-    capacity_trays: Mapped[int | None] = mapped_column(Integer)  # Max Trays
-    capacity_kg: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))  # Max Gewicht
+    capacity_trays: Mapped[Optional[int]] = mapped_column(Integer)  # Max Trays
+    capacity_kg: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 2))  # Max Gewicht
 
     # Umgebungsbedingungen
-    temperature_min: Mapped[Decimal | None] = mapped_column(Numeric(4, 1))  # °C
-    temperature_max: Mapped[Decimal | None] = mapped_column(Numeric(4, 1))
-    humidity_min: Mapped[int | None] = mapped_column(Integer)  # %
-    humidity_max: Mapped[int | None] = mapped_column(Integer)
+    temperature_min: Mapped[Optional[Decimal]] = mapped_column(Numeric(4, 1))  # °C
+    temperature_max: Mapped[Optional[Decimal]] = mapped_column(Numeric(4, 1))
+    humidity_min: Mapped[Optional[int]] = mapped_column(Integer)  # %
+    humidity_max: Mapped[Optional[int]] = mapped_column(Integer)
 
     # Status
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -101,48 +102,48 @@ class SeedInventory(Base):
     __tablename__ = "seed_inventory"
 
     id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+        Uuid, primary_key=True, default=uuid.uuid4
     )
 
     # Referenz zum Seed (Sorte)
     seed_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("seeds.id"), nullable=False
+        Uuid, ForeignKey("seeds.id"), nullable=False
     )
 
     # Chargenidentifikation
     batch_number: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
-    supplier_batch: Mapped[str | None] = mapped_column(String(50))  # Lieferanten-Charge
+    supplier_batch: Mapped[Optional[str]] = mapped_column(String(50))  # Lieferanten-Charge
 
     # Mengen
     initial_quantity_kg: Mapped[Decimal] = mapped_column(Numeric(10, 3), nullable=False)
     current_quantity_kg: Mapped[Decimal] = mapped_column(Numeric(10, 3), nullable=False)
 
     # Qualität
-    germination_rate: Mapped[Decimal | None] = mapped_column(Numeric(5, 2))  # Keimrate %
-    quality_grade: Mapped[str | None] = mapped_column(String(10))  # A, B, C
+    germination_rate: Mapped[Optional[Decimal]] = mapped_column(Numeric(5, 2))  # Keimrate %
+    quality_grade: Mapped[Optional[str]] = mapped_column(String(10))  # A, B, C
 
     # Datum
     received_date: Mapped[date] = mapped_column(Date, nullable=False)
-    best_before_date: Mapped[date | None] = mapped_column(Date)  # MHD
-    production_date: Mapped[date | None] = mapped_column(Date)  # Produktionsdatum
+    best_before_date: Mapped[Optional[date]] = mapped_column(Date)  # MHD
+    production_date: Mapped[Optional[date]] = mapped_column(Date)  # Produktionsdatum
 
     # Lieferant
-    supplier_name: Mapped[str | None] = mapped_column(String(200))
-    purchase_price_per_kg: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
+    supplier_name: Mapped[Optional[str]] = mapped_column(String(200))
+    purchase_price_per_kg: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 2))
 
     # Lagerort
-    location_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("inventory_locations.id", ondelete="SET NULL")
+    location_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid, ForeignKey("inventory_locations.id", ondelete="SET NULL")
     )
 
     # Bio-Zertifizierung
     is_organic: Mapped[bool] = mapped_column(Boolean, default=False)
-    organic_certificate: Mapped[str | None] = mapped_column(String(100))
+    organic_certificate: Mapped[Optional[str]] = mapped_column(String(100))
 
     # Status
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     is_blocked: Mapped[bool] = mapped_column(Boolean, default=False)  # Qualitätssperre
-    block_reason: Mapped[str | None] = mapped_column(Text)
+    block_reason: Mapped[Optional[str]] = mapped_column(Text)
 
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
@@ -167,7 +168,7 @@ class SeedInventory(Base):
         return date.today() > self.best_before_date
 
     @property
-    def days_until_expiry(self) -> int | None:
+    def days_until_expiry(self) -> Optional[int]:
         """Tage bis MHD"""
         if not self.best_before_date:
             return None
@@ -185,26 +186,26 @@ class FinishedGoodsInventory(Base):
     __tablename__ = "finished_goods_inventory"
 
     id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+        Uuid, primary_key=True, default=uuid.uuid4
     )
 
     # Referenz zum Produkt
     product_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("products.id"), nullable=False
+        Uuid, ForeignKey("products.id"), nullable=False
     )
 
     # Chargenidentifikation
     batch_number: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
 
     # Rückverfolgbarkeit
-    harvest_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("harvests.id", ondelete="SET NULL")
+    harvest_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid, ForeignKey("harvests.id", ondelete="SET NULL")
     )
-    grow_batch_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("grow_batches.id", ondelete="SET NULL")
+    grow_batch_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid, ForeignKey("grow_batches.id", ondelete="SET NULL")
     )
-    seed_inventory_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("seed_inventory.id", ondelete="SET NULL")
+    seed_inventory_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid, ForeignKey("seed_inventory.id", ondelete="SET NULL")
     )
 
     # Mengen
@@ -212,32 +213,32 @@ class FinishedGoodsInventory(Base):
     current_quantity_g: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
 
     # Verpackungseinheiten (optional)
-    initial_units: Mapped[int | None] = mapped_column(Integer)
-    current_units: Mapped[int | None] = mapped_column(Integer)
-    unit_size_g: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))  # Gramm pro Einheit
+    initial_units: Mapped[Optional[int]] = mapped_column(Integer)
+    current_units: Mapped[Optional[int]] = mapped_column(Integer)
+    unit_size_g: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 2))  # Gramm pro Einheit
 
     # Qualität
-    quality_grade: Mapped[int | None] = mapped_column(Integer)  # 1-5
-    quality_notes: Mapped[str | None] = mapped_column(Text)
+    quality_grade: Mapped[Optional[int]] = mapped_column(Integer)  # 1-5
+    quality_notes: Mapped[Optional[str]] = mapped_column(Text)
 
     # Datum
     harvest_date: Mapped[date] = mapped_column(Date, nullable=False)
     best_before_date: Mapped[date] = mapped_column(Date, nullable=False)
-    packed_date: Mapped[date | None] = mapped_column(Date)
+    packed_date: Mapped[Optional[date]] = mapped_column(Date)
 
     # Lagerort
-    location_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("inventory_locations.id", ondelete="SET NULL")
+    location_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid, ForeignKey("inventory_locations.id", ondelete="SET NULL")
     )
 
     # Lagerbedingungen
-    storage_temp_celsius: Mapped[Decimal | None] = mapped_column(Numeric(4, 1))
+    storage_temp_celsius: Mapped[Optional[Decimal]] = mapped_column(Numeric(4, 1))
 
     # Status
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     is_reserved: Mapped[bool] = mapped_column(Boolean, default=False)  # Für Bestellung reserviert
-    reserved_order_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("orders.id", ondelete="SET NULL")
+    reserved_order_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid, ForeignKey("orders.id", ondelete="SET NULL")
     )
 
     # Timestamps
@@ -289,30 +290,30 @@ class PackagingInventory(Base):
     __tablename__ = "packaging_inventory"
 
     id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+        Uuid, primary_key=True, default=uuid.uuid4
     )
 
     # Artikel
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     sku: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)
-    description: Mapped[str | None] = mapped_column(Text)
+    description: Mapped[Optional[str]] = mapped_column(Text)
 
     # Mengen
     current_quantity: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     min_quantity: Mapped[int] = mapped_column(Integer, default=0)  # Mindestbestand
-    reorder_quantity: Mapped[int | None] = mapped_column(Integer)  # Nachbestellmenge
+    reorder_quantity: Mapped[Optional[int]] = mapped_column(Integer)  # Nachbestellmenge
 
     # Einheit
     unit: Mapped[str] = mapped_column(String(20), default="Stück")
 
     # Lieferant
-    supplier_name: Mapped[str | None] = mapped_column(String(200))
-    supplier_sku: Mapped[str | None] = mapped_column(String(50))
-    purchase_price: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
+    supplier_name: Mapped[Optional[str]] = mapped_column(String(200))
+    supplier_sku: Mapped[Optional[str]] = mapped_column(String(50))
+    purchase_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 2))
 
     # Lagerort
-    location_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("inventory_locations.id", ondelete="SET NULL")
+    location_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid, ForeignKey("inventory_locations.id", ondelete="SET NULL")
     )
 
     # Status
@@ -349,7 +350,7 @@ class InventoryMovement(Base):
     __tablename__ = "inventory_movements"
 
     id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+        Uuid, primary_key=True, default=uuid.uuid4
     )
 
     # Bewegungsart
@@ -361,14 +362,14 @@ class InventoryMovement(Base):
     )
 
     # Referenz zum Bestand (eine davon muss gesetzt sein)
-    seed_inventory_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("seed_inventory.id", ondelete="SET NULL")
+    seed_inventory_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid, ForeignKey("seed_inventory.id", ondelete="SET NULL")
     )
-    finished_goods_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("finished_goods_inventory.id", ondelete="SET NULL")
+    finished_goods_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid, ForeignKey("finished_goods_inventory.id", ondelete="SET NULL")
     )
-    packaging_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("packaging_inventory.id", ondelete="SET NULL")
+    packaging_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid, ForeignKey("packaging_inventory.id", ondelete="SET NULL")
     )
 
     # Menge (positiv = Zugang, negativ = Abgang)
@@ -380,31 +381,31 @@ class InventoryMovement(Base):
     quantity_after: Mapped[Decimal] = mapped_column(Numeric(12, 3), nullable=False)
 
     # Lagerorte (bei Umlagerung)
-    from_location_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("inventory_locations.id", ondelete="SET NULL")
+    from_location_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid, ForeignKey("inventory_locations.id", ondelete="SET NULL")
     )
-    to_location_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("inventory_locations.id", ondelete="SET NULL")
+    to_location_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid, ForeignKey("inventory_locations.id", ondelete="SET NULL")
     )
 
     # Referenzen für Rückverfolgbarkeit
-    order_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("orders.id", ondelete="SET NULL")
+    order_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid, ForeignKey("orders.id", ondelete="SET NULL")
     )
-    order_item_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("order_items.id", ondelete="SET NULL")
+    order_item_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid, ForeignKey("order_lines.id", ondelete="SET NULL")
     )
-    grow_batch_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("grow_batches.id", ondelete="SET NULL")
+    grow_batch_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid, ForeignKey("grow_batches.id", ondelete="SET NULL")
     )
-    harvest_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("harvests.id", ondelete="SET NULL")
+    harvest_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid, ForeignKey("harvests.id", ondelete="SET NULL")
     )
 
     # Benutzer und Notizen
-    created_by: Mapped[str | None] = mapped_column(String(100))  # User ID/Name
-    reason: Mapped[str | None] = mapped_column(Text)  # Grund (bei Korrektur/Verlust)
-    reference_number: Mapped[str | None] = mapped_column(String(50))  # z.B. Lieferschein-Nr
+    created_by: Mapped[Optional[str]] = mapped_column(String(100))  # User ID/Name
+    reason: Mapped[Optional[str]] = mapped_column(Text)  # Grund (bei Korrektur/Verlust)
+    reference_number: Mapped[Optional[str]] = mapped_column(String(50))  # z.B. Lieferschein-Nr
 
     # Timestamps
     movement_date: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
@@ -438,7 +439,7 @@ class InventoryCount(Base):
     __tablename__ = "inventory_counts"
 
     id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+        Uuid, primary_key=True, default=uuid.uuid4
     )
 
     # Inventurdatum
@@ -449,17 +450,17 @@ class InventoryCount(Base):
     status: Mapped[str] = mapped_column(String(20), default="OFFEN")  # OFFEN, IN_BEARBEITUNG, ABGESCHLOSSEN
 
     # Lagerort (optional, für Teil-Inventur)
-    location_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("inventory_locations.id", ondelete="SET NULL")
+    location_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid, ForeignKey("inventory_locations.id", ondelete="SET NULL")
     )
 
     # Notizen
-    notes: Mapped[str | None] = mapped_column(Text)
-    counted_by: Mapped[str | None] = mapped_column(String(100))
+    notes: Mapped[Optional[str]] = mapped_column(Text)
+    counted_by: Mapped[Optional[str]] = mapped_column(String(100))
 
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    completed_at: Mapped[datetime | None] = mapped_column(DateTime)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
 
     # Beziehungen
     location: Mapped[Optional["InventoryLocation"]] = relationship("InventoryLocation")
@@ -478,41 +479,41 @@ class InventoryCountItem(Base):
     __tablename__ = "inventory_count_items"
 
     id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+        Uuid, primary_key=True, default=uuid.uuid4
     )
     count_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("inventory_counts.id", ondelete="CASCADE"), nullable=False
+        Uuid, ForeignKey("inventory_counts.id", ondelete="CASCADE"), nullable=False
     )
 
     # Artikel-Referenz (eine davon)
     item_type: Mapped[InventoryItemType] = mapped_column(
         SQLEnum(InventoryItemType), nullable=False
     )
-    seed_inventory_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("seed_inventory.id", ondelete="SET NULL")
+    seed_inventory_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid, ForeignKey("seed_inventory.id", ondelete="SET NULL")
     )
-    finished_goods_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("finished_goods_inventory.id", ondelete="SET NULL")
+    finished_goods_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid, ForeignKey("finished_goods_inventory.id", ondelete="SET NULL")
     )
-    packaging_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("packaging_inventory.id", ondelete="SET NULL")
+    packaging_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid, ForeignKey("packaging_inventory.id", ondelete="SET NULL")
     )
 
     # Mengen
     system_quantity: Mapped[Decimal] = mapped_column(Numeric(12, 3), nullable=False)  # Soll
-    counted_quantity: Mapped[Decimal | None] = mapped_column(Numeric(12, 3))  # Ist
+    counted_quantity: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 3))  # Ist
     unit: Mapped[str] = mapped_column(String(20), nullable=False)
 
     # Differenz wird berechnet
-    difference: Mapped[Decimal | None] = mapped_column(Numeric(12, 3))
+    difference: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 3))
 
     # Notizen
-    notes: Mapped[str | None] = mapped_column(Text)
+    notes: Mapped[Optional[str]] = mapped_column(Text)
 
     # Beziehungen
     count: Mapped["InventoryCount"] = relationship("InventoryCount", back_populates="items")
 
-    def calculate_difference(self) -> Decimal | None:
+    def calculate_difference(self) -> Optional[Decimal]:
         """Berechnet die Differenz zwischen Soll und Ist"""
         if self.counted_quantity is None:
             return None

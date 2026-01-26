@@ -1,3 +1,4 @@
+from typing import Optional
 """
 Pydantic Schemas für Produktion
 """
@@ -13,8 +14,8 @@ class GrowBatchBase(BaseModel):
     """Basis-Schema für Wachstumscharge"""
     tray_anzahl: int = Field(..., ge=1, description="Anzahl der Trays")
     aussaat_datum: date = Field(..., description="Datum der Aussaat")
-    regal_position: str | None = Field(None, max_length=50, description="Position im Regal")
-    notizen: str | None = Field(None, description="Zusätzliche Notizen")
+    regal_position: Optional[str] = Field(None, max_length=50, description="Position im Regal")
+    notizen: Optional[str] = Field(None, description="Zusätzliche Notizen")
 
 
 class GrowBatchCreate(GrowBatchBase):
@@ -24,9 +25,9 @@ class GrowBatchCreate(GrowBatchBase):
 
 class GrowBatchUpdate(BaseModel):
     """Schema zum Aktualisieren einer Wachstumscharge"""
-    status: GrowBatchStatus | None = None
-    regal_position: str | None = None
-    notizen: str | None = None
+    status: Optional[GrowBatchStatus] = None
+    regal_position: Optional[str] = None
+    notizen: Optional[str] = None
 
 
 class GrowBatchResponse(GrowBatchBase):
@@ -47,7 +48,7 @@ class GrowBatchResponse(GrowBatchBase):
     ist_erntereif: bool
 
     # Seed-Info (optional expandiert)
-    seed_name: str | None = None
+    seed_name: Optional[str] = None
 
 
 class GrowBatchListResponse(BaseModel):
@@ -63,7 +64,7 @@ class HarvestBase(BaseModel):
     ernte_datum: date = Field(..., description="Datum der Ernte")
     menge_gramm: Decimal = Field(..., gt=0, description="Geerntete Menge in Gramm")
     verlust_gramm: Decimal = Field(default=Decimal("0"), ge=0, description="Verlust in Gramm")
-    qualitaet_note: int | None = Field(None, ge=1, le=5, description="Qualitätsbewertung 1-5")
+    qualitaet_note: Optional[int] = Field(None, ge=1, le=5, description="Qualitätsbewertung 1-5")
 
 
 class HarvestCreate(HarvestBase):

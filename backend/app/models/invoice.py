@@ -8,66 +8,14 @@ from decimal import Decimal, ROUND_HALF_UP
 from enum import Enum
 from typing import Optional
 from sqlalchemy import String, Integer, Numeric, Boolean, DateTime, Date, ForeignKey, Text, Enum as SQLEnum
+from sqlalchemy.types import Uuid, JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy.dialects.postgresql import UUID, JSONB
+
 
 from app.database import Base
 
 
-class InvoiceStatus(str, Enum):
-    """Rechnungsstatus"""
-    ENTWURF = "ENTWURF"           # Noch nicht gesendet
-    OFFEN = "OFFEN"               # Gesendet, wartet auf Zahlung
-    TEILBEZAHLT = "TEILBEZAHLT"   # Teilweise bezahlt
-    BEZAHLT = "BEZAHLT"           # Vollständig bezahlt
-    UEBERFAELLIG = "UEBERFAELLIG" # Zahlungsziel überschritten
-    STORNIERT = "STORNIERT"       # Storniert/Gutschrift
-    MAHNVERFAHREN = "MAHNVERFAHREN"  # Im Mahnverfahren
-
-
-class InvoiceType(str, Enum):
-    """Rechnungstyp"""
-    RECHNUNG = "RECHNUNG"         # Normale Rechnung
-    GUTSCHRIFT = "GUTSCHRIFT"     # Gutschrift/Stornorechnung
-    PROFORMA = "PROFORMA"         # Proforma-Rechnung
-    ABSCHLAG = "ABSCHLAG"         # Abschlagsrechnung
-
-
-class TaxRate(str, Enum):
-    """Deutsche MwSt-Sätze"""
-    STANDARD = "STANDARD"         # 19%
-    REDUZIERT = "REDUZIERT"       # 7% (Lebensmittel)
-    STEUERFREI = "STEUERFREI"     # 0% (z.B. EU-Lieferungen)
-
-    @property
-    def rate(self) -> Decimal:
-        """Steuersatz als Dezimalzahl"""
-        rates = {
-            TaxRate.STANDARD: Decimal("0.19"),
-            TaxRate.REDUZIERT: Decimal("0.07"),
-            TaxRate.STEUERFREI: Decimal("0.00"),
-        }
-        return rates.get(self, Decimal("0.19"))
-
-    @property
-    def percent(self) -> int:
-        """Steuersatz als Prozent"""
-        percents = {
-            TaxRate.STANDARD: 19,
-            TaxRate.REDUZIERT: 7,
-            TaxRate.STEUERFREI: 0,
-        }
-        return percents.get(self, 19)
-
-
-class PaymentMethod(str, Enum):
-    """Zahlungsmethode"""
-    UEBERWEISUNG = "UEBERWEISUNG"  # Banküberweisung
-    BAR = "BAR"                    # Barzahlung
-    EC = "EC"                      # EC-Karte
-    KREDITKARTE = "KREDITKARTE"   # Kreditkarte
-    PAYPAL = "PAYPAL"             # PayPal
-    LASTSCHRIFT = "LASTSCHRIFT"   # SEPA-Lastschrift
+from app.models.enums import InvoiceStatus, InvoiceType, TaxRate, PaymentMethod
 
 
 class Invoice(Base):
@@ -77,7 +25,7 @@ class Invoice(Base):
     __tablename__ = "invoices"
 
     id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+        Uuid, primary_key=True, default=uuid.uuid4
     )
 
     # Rechnungsnummer (fortlaufend, Format: RE-2026-00001)
@@ -91,23 +39,23 @@ class Invoice(Base):
     )
 
     # Referenz auf Originalrechnung (bei Gutschrift)
-    original_invoice_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("invoices.id", ondelete="SET NULL")
+    original_invoice_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid, ForeignKey("invoices.id", ondelete="SET NULL")
     )
 
     # Kunde
     customer_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("customers.id"), nullable=False
+        Uuid, ForeignKey("customers.id"), nullable=False
     )
 
     # Bestellung (optional, Rechnung kann auch ohne Bestellung erstellt werden)
-    order_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("orders.id", ondelete="SET NULL")
+    order_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid, ForeignKey("orders.id", ondelete="SET NULL", use_alter=True)
     )
 
     # Datum
     invoice_date: Mapped[date] = mapped_column(Date, nullable=False, default=date.today)
-    delivery_date: Mapped[date | None] = mapped_column(Date)  # Liefer-/Leistungsdatum
+    delivery_date: Mapped[Optional[date]] = mapped_column(Date)  # Liefer-/Leistungsdatum
     due_date: Mapped[date] = mapped_column(Date, nullable=False)  # Fälligkeitsdatum
 
     # Status
@@ -116,8 +64,8 @@ class Invoice(Base):
     )
 
     # Adressen (als Snapshot zum Rechnungszeitpunkt)
-    billing_address: Mapped[dict | None] = mapped_column(JSONB)
-    shipping_address: Mapped[dict | None] = mapped_column(JSONB)
+    billing_address: Mapped[Optional[dict]] = mapped_column(JSON)
+    shipping_address: Mapped[Optional[dict]] = mapped_column(JSON)
 
     # Beträge (werden bei Speichern berechnet)
     subtotal: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("0"))  # Netto
@@ -136,24 +84,24 @@ class Invoice(Base):
 
     # DATEV-Felder
     datev_exported: Mapped[bool] = mapped_column(Boolean, default=False)
-    datev_export_date: Mapped[datetime | None] = mapped_column(DateTime)
-    buchungskonto: Mapped[str | None] = mapped_column(String(10))  # Erlöskonto (z.B. 8400)
+    datev_export_date: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    buchungskonto: Mapped[Optional[str]] = mapped_column(String(10))  # Erlöskonto (z.B. 8400)
 
     # Notizen
-    header_text: Mapped[str | None] = mapped_column(Text)  # Text vor Positionen
-    footer_text: Mapped[str | None] = mapped_column(Text)  # Text nach Positionen
-    internal_notes: Mapped[str | None] = mapped_column(Text)  # Interne Notizen
+    header_text: Mapped[Optional[str]] = mapped_column(Text)  # Text vor Positionen
+    footer_text: Mapped[Optional[str]] = mapped_column(Text)  # Text nach Positionen
+    internal_notes: Mapped[Optional[str]] = mapped_column(Text)  # Interne Notizen
 
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
     )
-    sent_at: Mapped[datetime | None] = mapped_column(DateTime)  # Wann versendet
+    sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime)  # Wann versendet
 
     # Beziehungen
     customer: Mapped["Customer"] = relationship("Customer", back_populates="invoices")
-    order: Mapped[Optional["Order"]] = relationship("Order")
+    order: Mapped[Optional["Order"]] = relationship("Order", foreign_keys=[order_id])
     original_invoice: Mapped[Optional["Invoice"]] = relationship(
         "Invoice", remote_side=[id], foreign_keys=[original_invoice_id]
     )
@@ -265,23 +213,23 @@ class InvoiceLine(Base):
     __tablename__ = "invoice_lines"
 
     id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+        Uuid, primary_key=True, default=uuid.uuid4
     )
     invoice_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("invoices.id", ondelete="CASCADE"), nullable=False
+        Uuid, ForeignKey("invoices.id", ondelete="CASCADE"), nullable=False
     )
 
     # Position auf der Rechnung
     position: Mapped[int] = mapped_column(Integer, nullable=False)
 
     # Produkt (optional, kann auch Freitext sein)
-    product_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("products.id", ondelete="SET NULL")
+    product_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid, ForeignKey("products.id", ondelete="SET NULL")
     )
 
     # Artikelbeschreibung (Snapshot oder Freitext)
     description: Mapped[str] = mapped_column(Text, nullable=False)
-    sku: Mapped[str | None] = mapped_column(String(50))  # Artikelnummer
+    sku: Mapped[Optional[str]] = mapped_column(String(50))  # Artikelnummer
 
     # Menge und Einheit
     quantity: Mapped[Decimal] = mapped_column(Numeric(10, 3), nullable=False)
@@ -300,15 +248,15 @@ class InvoiceLine(Base):
     line_total: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("0"))
 
     # Referenz auf Order-Item (für Rückverfolgung)
-    order_item_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("order_items.id", ondelete="SET NULL")
+    order_item_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid, ForeignKey("order_lines.id", ondelete="SET NULL")
     )
 
     # Chargen-Referenz (für Rückverfolgbarkeit)
-    harvest_batch_ids: Mapped[list | None] = mapped_column(JSONB)  # Liste von Harvest-IDs
+    harvest_batch_ids: Mapped[Optional[list]] = mapped_column(JSON)  # Liste von Harvest-IDs
 
     # DATEV
-    buchungskonto: Mapped[str | None] = mapped_column(String(10))  # Erlöskonto
+    buchungskonto: Mapped[Optional[str]] = mapped_column(String(10))  # Erlöskonto
 
     # Beziehungen
     invoice: Mapped["Invoice"] = relationship("Invoice", back_populates="lines")
@@ -345,10 +293,10 @@ class Payment(Base):
     __tablename__ = "payments"
 
     id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+        Uuid, primary_key=True, default=uuid.uuid4
     )
     invoice_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("invoices.id", ondelete="CASCADE"), nullable=False
+        Uuid, ForeignKey("invoices.id", ondelete="CASCADE"), nullable=False
     )
 
     # Zahlungsdaten
@@ -359,11 +307,11 @@ class Payment(Base):
     )
 
     # Referenz
-    reference: Mapped[str | None] = mapped_column(String(100))  # Überweisungsreferenz
-    bank_reference: Mapped[str | None] = mapped_column(String(100))  # Bank-Transaktions-ID
+    reference: Mapped[Optional[str]] = mapped_column(String(100))  # Überweisungsreferenz
+    bank_reference: Mapped[Optional[str]] = mapped_column(String(100))  # Bank-Transaktions-ID
 
     # Notizen
-    notes: Mapped[str | None] = mapped_column(Text)
+    notes: Mapped[Optional[str]] = mapped_column(Text)
 
     # DATEV
     datev_exported: Mapped[bool] = mapped_column(Boolean, default=False)

@@ -1,3 +1,4 @@
+from typing import Optional
 """
 Pydantic Schemas für Saatgut
 """
@@ -10,8 +11,8 @@ from pydantic import BaseModel, Field, ConfigDict
 class SeedBase(BaseModel):
     """Basis-Schema für Saatgut"""
     name: str = Field(..., min_length=1, max_length=100, description="Name der Sorte")
-    sorte: str | None = Field(None, max_length=100, description="Sortenbezeichnung")
-    lieferant: str | None = Field(None, max_length=200, description="Lieferant")
+    sorte: Optional[str] = Field(None, max_length=100, description="Sortenbezeichnung")
+    lieferant: Optional[str] = Field(None, max_length=200, description="Lieferant")
     keimdauer_tage: int = Field(..., ge=1, le=30, description="Keimdauer in Tagen")
     wachstumsdauer_tage: int = Field(..., ge=1, le=60, description="Wachstumsdauer in Tagen")
     erntefenster_min_tage: int = Field(..., ge=1, description="Frühester Erntezeitpunkt")
@@ -28,17 +29,17 @@ class SeedCreate(SeedBase):
 
 class SeedUpdate(BaseModel):
     """Schema zum Aktualisieren einer Saatgut-Sorte"""
-    name: str | None = Field(None, min_length=1, max_length=100)
-    sorte: str | None = None
-    lieferant: str | None = None
-    keimdauer_tage: int | None = Field(None, ge=1, le=30)
-    wachstumsdauer_tage: int | None = Field(None, ge=1, le=60)
-    erntefenster_min_tage: int | None = Field(None, ge=1)
-    erntefenster_optimal_tage: int | None = Field(None, ge=1)
-    erntefenster_max_tage: int | None = Field(None, ge=1)
-    ertrag_gramm_pro_tray: Decimal | None = Field(None, gt=0)
-    verlustquote_prozent: Decimal | None = Field(None, ge=0, le=100)
-    aktiv: bool | None = None
+    name: Optional[str] = Field(None, min_length=1, max_length=100)
+    sorte: Optional[str] = None
+    lieferant: Optional[str] = None
+    keimdauer_tage: Optional[int] = Field(None, ge=1, le=30)
+    wachstumsdauer_tage: Optional[int] = Field(None, ge=1, le=60)
+    erntefenster_min_tage: Optional[int] = Field(None, ge=1)
+    erntefenster_optimal_tage: Optional[int] = Field(None, ge=1)
+    erntefenster_max_tage: Optional[int] = Field(None, ge=1)
+    ertrag_gramm_pro_tray: Optional[Decimal] = Field(None, gt=0)
+    verlustquote_prozent: Optional[Decimal] = Field(None, ge=0, le=100)
+    aktiv: Optional[bool] = None
 
 
 class SeedResponse(SeedBase):
@@ -68,8 +69,8 @@ class SeedBatchBase(BaseModel):
     """Basis-Schema für Saatgut-Charge"""
     charge_nummer: str = Field(..., min_length=1, max_length=50, description="Eindeutige Chargennummer")
     menge_gramm: Decimal = Field(..., gt=0, description="Gelieferte Menge in Gramm")
-    mhd: date | None = Field(None, description="Mindesthaltbarkeitsdatum")
-    lieferdatum: date | None = Field(None, description="Lieferdatum")
+    mhd: Optional[date] = Field(None, description="Mindesthaltbarkeitsdatum")
+    lieferdatum: Optional[date] = Field(None, description="Lieferdatum")
 
 
 class SeedBatchCreate(SeedBatchBase):

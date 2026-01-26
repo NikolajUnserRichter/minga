@@ -1,3 +1,4 @@
+from typing import Optional
 """
 Produktions-Models: GrowBatch und Harvest
 """
@@ -6,8 +7,9 @@ from datetime import datetime, date
 from decimal import Decimal
 from enum import Enum
 from sqlalchemy import String, Integer, Numeric, DateTime, Date, ForeignKey, Text, Enum as SQLEnum
+from sqlalchemy.types import Uuid, JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy.dialects.postgresql import UUID
+
 
 from app.database import Base
 
@@ -29,10 +31,10 @@ class GrowBatch(Base):
     __tablename__ = "grow_batches"
 
     id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+        Uuid, primary_key=True, default=uuid.uuid4
     )
     seed_batch_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("seed_batches.id"), nullable=False
+        Uuid, ForeignKey("seed_batches.id"), nullable=False
     )
 
     # Produktionsdaten
@@ -48,10 +50,10 @@ class GrowBatch(Base):
     status: Mapped[GrowBatchStatus] = mapped_column(
         SQLEnum(GrowBatchStatus), default=GrowBatchStatus.KEIMUNG
     )
-    regal_position: Mapped[str | None] = mapped_column(String(50))
+    regal_position: Mapped[Optional[str]] = mapped_column(String(50))
 
     # Notizen
-    notizen: Mapped[str | None] = mapped_column(Text)
+    notizen: Mapped[Optional[str]] = mapped_column(Text)
 
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
@@ -88,10 +90,10 @@ class Harvest(Base):
     __tablename__ = "harvests"
 
     id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+        Uuid, primary_key=True, default=uuid.uuid4
     )
     grow_batch_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("grow_batches.id"), nullable=False
+        Uuid, ForeignKey("grow_batches.id"), nullable=False
     )
 
     # Erntedaten
@@ -100,15 +102,15 @@ class Harvest(Base):
     verlust_gramm: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("0"))
 
     # Qualität (1-5 Sterne)
-    qualitaet_note: Mapped[int | None] = mapped_column(Integer)
+    qualitaet_note: Mapped[Optional[int]] = mapped_column(Integer)
 
     # Timestamp
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     # Beziehungen
     grow_batch: Mapped["GrowBatch"] = relationship("GrowBatch", back_populates="harvests")
-    order_items: Mapped[list["OrderItem"]] = relationship(
-        "OrderItem", back_populates="harvest"
+    order_items: Mapped[list["OrderLine"]] = relationship(
+        "OrderLine", back_populates="harvest"
     )
 
     @property
@@ -125,4 +127,4 @@ class Harvest(Base):
 
 # Imports für Type Hints
 from app.models.seed import SeedBatch
-from app.models.order import OrderItem
+from app.models.order import OrderLine

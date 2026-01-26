@@ -1,3 +1,4 @@
+from typing import Optional
 """
 Pydantic Schemas für Rechnungen (Invoices)
 Mit deutscher MwSt-Berechnung und DATEV-Export
@@ -17,7 +18,7 @@ from app.models.invoice import InvoiceStatus, InvoiceType, TaxRate, PaymentMetho
 class InvoiceLineBase(BaseModel):
     """Basis-Schema für Rechnungsposition"""
     description: str = Field(..., min_length=1, description="Artikelbeschreibung")
-    sku: str | None = Field(None, max_length=50, description="Artikelnummer")
+    sku: Optional[str] = Field(None, max_length=50, description="Artikelnummer")
     quantity: Decimal = Field(..., gt=0, description="Menge")
     unit: str = Field(..., description="Einheit")
     unit_price: Decimal = Field(..., ge=0, description="Einzelpreis (netto)")
@@ -27,20 +28,20 @@ class InvoiceLineBase(BaseModel):
 
 class InvoiceLineCreate(InvoiceLineBase):
     """Schema zum Erstellen einer Rechnungsposition"""
-    product_id: UUID | None = Field(None, description="Produkt-ID")
-    order_item_id: UUID | None = Field(None, description="Bestellposition-ID")
-    harvest_batch_ids: list[UUID] | None = Field(None, description="Chargen-IDs für Rückverfolgung")
-    buchungskonto: str | None = Field(None, max_length=10, description="Erlöskonto (SKR03)")
+    product_id: Optional[UUID] = Field(None, description="Produkt-ID")
+    order_item_id: Optional[UUID] = Field(None, description="Bestellposition-ID")
+    harvest_batch_ids: Optional[list[UUID]] = Field(None, description="Chargen-IDs für Rückverfolgung")
+    buchungskonto: Optional[str] = Field(None, max_length=10, description="Erlöskonto (SKR03)")
 
 
 class InvoiceLineUpdate(BaseModel):
     """Schema zum Aktualisieren einer Rechnungsposition"""
-    description: str | None = None
-    quantity: Decimal | None = None
-    unit: str | None = None
-    unit_price: Decimal | None = None
-    discount_percent: Decimal | None = None
-    tax_rate: TaxRate | None = None
+    description: Optional[str] = None
+    quantity: Optional[Decimal] = None
+    unit: Optional[str] = None
+    unit_price: Optional[Decimal] = None
+    discount_percent: Optional[Decimal] = None
+    tax_rate: Optional[TaxRate] = None
 
 
 class InvoiceLineResponse(InvoiceLineBase):
@@ -50,18 +51,18 @@ class InvoiceLineResponse(InvoiceLineBase):
     id: UUID
     invoice_id: UUID
     position: int
-    product_id: UUID | None
+    product_id: Optional[UUID]
     line_total: Decimal
-    order_item_id: UUID | None
-    harvest_batch_ids: list[UUID] | None
-    buchungskonto: str | None
+    order_item_id: Optional[UUID]
+    harvest_batch_ids: Optional[list[UUID]]
+    buchungskonto: Optional[str]
 
     # Berechnete Felder
-    tax_amount: Decimal | None = None
-    gross_total: Decimal | None = None
+    tax_amount: Optional[Decimal] = None
+    gross_total: Optional[Decimal] = None
 
     # Expandierte Felder
-    product_name: str | None = None
+    product_name: Optional[str] = None
 
 
 # ============================================================
@@ -73,9 +74,9 @@ class PaymentBase(BaseModel):
     payment_date: date = Field(..., description="Zahlungsdatum")
     amount: Decimal = Field(..., gt=0, description="Betrag")
     payment_method: PaymentMethod = Field(default=PaymentMethod.UEBERWEISUNG, description="Zahlungsart")
-    reference: str | None = Field(None, max_length=100, description="Verwendungszweck")
-    bank_reference: str | None = Field(None, max_length=100, description="Bank-Referenz")
-    notes: str | None = Field(None, description="Notizen")
+    reference: Optional[str] = Field(None, max_length=100, description="Verwendungszweck")
+    bank_reference: Optional[str] = Field(None, max_length=100, description="Bank-Referenz")
+    notes: Optional[str] = Field(None, description="Notizen")
 
 
 class PaymentCreate(PaymentBase):
@@ -107,30 +108,30 @@ class InvoiceBase(BaseModel):
     """Basis-Schema für Rechnung"""
     invoice_type: InvoiceType = Field(default=InvoiceType.RECHNUNG, description="Rechnungstyp")
     invoice_date: date = Field(..., description="Rechnungsdatum")
-    delivery_date: date | None = Field(None, description="Liefer-/Leistungsdatum")
-    due_date: date = Field(..., description="Fälligkeitsdatum")
+    delivery_date: Optional[date] = Field(None, description="Liefer-/Leistungsdatum")
+    due_date: Optional[date] = Field(None, description="Fälligkeitsdatum")
 
 
 class InvoiceCreate(InvoiceBase):
     """Schema zum Erstellen einer Rechnung"""
     customer_id: UUID = Field(..., description="Kunden-ID")
-    order_id: UUID | None = Field(None, description="Bestellungs-ID")
-    original_invoice_id: UUID | None = Field(None, description="Original-Rechnung (bei Gutschrift)")
+    order_id: Optional[UUID] = Field(None, description="Bestellungs-ID")
+    original_invoice_id: Optional[UUID] = Field(None, description="Original-Rechnung (bei Gutschrift)")
 
     # Adressen (optional, werden sonst vom Kunden übernommen)
-    billing_address: dict | None = Field(None, description="Rechnungsadresse")
-    shipping_address: dict | None = Field(None, description="Lieferadresse")
+    billing_address: Optional[dict] = Field(None, description="Rechnungsadresse")
+    shipping_address: Optional[dict] = Field(None, description="Lieferadresse")
 
     # Rabatt
     discount_percent: Decimal = Field(default=Decimal("0"), ge=0, le=100, description="Gesamtrabatt %")
 
     # Texte
-    header_text: str | None = Field(None, description="Kopftext")
-    footer_text: str | None = Field(None, description="Fußtext")
-    internal_notes: str | None = Field(None, description="Interne Notizen")
+    header_text: Optional[str] = Field(None, description="Kopftext")
+    footer_text: Optional[str] = Field(None, description="Fußtext")
+    internal_notes: Optional[str] = Field(None, description="Interne Notizen")
 
     # DATEV
-    buchungskonto: str | None = Field(None, max_length=10, description="Erlöskonto")
+    buchungskonto: Optional[str] = Field(None, max_length=10, description="Erlöskonto")
 
     # Positionen
     lines: list[InvoiceLineCreate] = Field(default=[], description="Rechnungspositionen")
@@ -138,15 +139,15 @@ class InvoiceCreate(InvoiceBase):
 
 class InvoiceUpdate(BaseModel):
     """Schema zum Aktualisieren einer Rechnung"""
-    invoice_date: date | None = None
-    delivery_date: date | None = None
-    due_date: date | None = None
-    status: InvoiceStatus | None = None
-    discount_percent: Decimal | None = None
-    header_text: str | None = None
-    footer_text: str | None = None
-    internal_notes: str | None = None
-    buchungskonto: str | None = None
+    invoice_date: Optional[date] = None
+    delivery_date: Optional[date] = None
+    due_date: Optional[date] = None
+    status: Optional[InvoiceStatus] = None
+    discount_percent: Optional[Decimal] = None
+    header_text: Optional[str] = None
+    footer_text: Optional[str] = None
+    internal_notes: Optional[str] = None
+    buchungskonto: Optional[str] = None
 
 
 class InvoiceResponse(InvoiceBase):
@@ -156,13 +157,13 @@ class InvoiceResponse(InvoiceBase):
     id: UUID
     invoice_number: str
     customer_id: UUID
-    order_id: UUID | None
-    original_invoice_id: UUID | None
+    order_id: Optional[UUID]
+    original_invoice_id: Optional[UUID]
     status: InvoiceStatus
 
     # Adressen
-    billing_address: dict | None
-    shipping_address: dict | None
+    billing_address: Optional[dict]
+    shipping_address: Optional[dict]
 
     # Beträge
     subtotal: Decimal
@@ -175,43 +176,43 @@ class InvoiceResponse(InvoiceBase):
 
     # DATEV
     datev_exported: bool
-    datev_export_date: datetime | None
-    buchungskonto: str | None
+    datev_export_date: Optional[datetime]
+    buchungskonto: Optional[str]
 
     # Texte
-    header_text: str | None
-    footer_text: str | None
-    internal_notes: str | None
+    header_text: Optional[str]
+    footer_text: Optional[str]
+    internal_notes: Optional[str]
 
     # Timestamps
     created_at: datetime
     updated_at: datetime
-    sent_at: datetime | None
+    sent_at: Optional[datetime]
 
     # Berechnete Felder
-    remaining_amount: Decimal | None = None
-    is_paid: bool | None = None
-    is_overdue: bool | None = None
+    remaining_amount: Optional[Decimal] = None
+    is_paid: Optional[bool] = None
+    is_overdue: Optional[bool] = None
 
     # Expandierte Felder
-    customer_name: str | None = None
-    customer_number: str | None = None
+    customer_name: Optional[str] = None
+    customer_number: Optional[str] = None
 
 
 class InvoiceDetailResponse(InvoiceResponse):
     """Detailliertes Rechnungs-Schema mit Positionen und Zahlungen"""
     lines: list[InvoiceLineResponse] = []
     payments: list[PaymentResponse] = []
-    tax_summary: list[dict] | None = None
+    tax_summary: Optional[list[dict]] = None
 
 
 class InvoiceListResponse(BaseModel):
     """Schema für Rechnungs-Liste"""
     items: list[InvoiceResponse]
     total: int
-    total_amount: Decimal | None = None
-    total_paid: Decimal | None = None
-    total_open: Decimal | None = None
+    total_amount: Optional[Decimal] = None
+    total_paid: Optional[Decimal] = None
+    total_open: Optional[Decimal] = None
 
 
 # ============================================================
@@ -221,10 +222,10 @@ class InvoiceListResponse(BaseModel):
 class InvoiceSendRequest(BaseModel):
     """Request zum Versenden einer Rechnung"""
     send_email: bool = Field(default=True, description="Per E-Mail senden?")
-    email_to: str | None = Field(None, description="Empfänger-E-Mail (optional)")
-    email_cc: list[str] | None = Field(None, description="CC-Empfänger")
-    email_subject: str | None = Field(None, description="Betreff (optional)")
-    email_body: str | None = Field(None, description="E-Mail-Text (optional)")
+    email_to: Optional[str] = Field(None, description="Empfänger-E-Mail (optional)")
+    email_cc: Optional[list[str]] = Field(None, description="CC-Empfänger")
+    email_subject: Optional[str] = Field(None, description="Betreff (optional)")
+    email_body: Optional[str] = Field(None, description="E-Mail-Text (optional)")
 
 
 class InvoiceCancelRequest(BaseModel):
@@ -246,4 +247,4 @@ class DatevExportResponse(BaseModel):
     record_count: int
     total_amount: Decimal
     export_date: datetime
-    csv_content: str | None = None  # Optional, für direkten Download
+    csv_content: Optional[str] = None  # Optional, für direkten Download
