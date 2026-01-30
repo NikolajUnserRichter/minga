@@ -6,9 +6,13 @@ import type {
   Invoice, InvoiceLine, Payment, InvoiceStatus, InvoiceType,
   InventoryLocation, SeedInventory, FinishedGoodsInventory,
   PackagingInventory, InventoryMovement, StockOverview, TraceabilityInfo,
-  ArticleType, LocationType
+  ArticleType, LocationType, TraceabilityChain, Capacity,
+  RevenueStats, YieldStats
 } from '../types'
 
+import keycloak from './auth';
+
+// API Configuration
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
 const api = axios.create({
@@ -17,6 +21,24 @@ const api = axios.create({
     'Content-Type': 'application/json',
   },
 })
+
+// Add Auth Interceptor
+api.interceptors.request.use(async (config) => {
+  if (keycloak.token) {
+    try {
+      // Update token if it's about to expire (within 30 seconds)
+      await keycloak.updateToken(30);
+      config.headers.Authorization = `Bearer ${keycloak.token}`;
+    } catch (error) {
+      console.error('Failed to update token', error);
+      // Optional: Force login if update fails? 
+      // keycloak.login(); 
+    }
+  }
+  return config;
+}, (error) => {
+  return Promise.reject(error);
+});
 
 // Seeds API
 export const seedsApi = {
@@ -55,6 +77,9 @@ export const productionApi = {
 
   updateGrowBatchStatus: (id: string, status: string) =>
     api.post<GrowBatch>(`/production/grow-batches/${id}/status/${status}`).then(r => r.data),
+
+  downloadLabel: (id: string) =>
+    api.get(`/production/grow-batches/${id}/label`, { responseType: 'blob' }),
 
   listHarvests: (params?: { von_datum?: string; bis_datum?: string }) =>
     api.get<ListResponse<Harvest>>('/production/harvests', { params }).then(r => r.data),
@@ -405,6 +430,12 @@ export const inventoryApi = {
   recordLoss: (inventoryId: string, data: { quantity: number; reason: string }) =>
     api.post(`/inventory/finished-goods/${inventoryId}/loss`, null, { params: data }).then(r => r.data),
 
+  downloadLabel: (id: string) =>
+    api.get(`/inventory/finished-goods/${id}/label`, { responseType: 'blob' }),
+
+  getTraceability: (id: string) =>
+    api.get<TraceabilityChain>(`/inventory/traceability/${id}`).then(r => r.data),
+
   // Packaging
   listPackaging: (params?: { location_id?: string; low_stock_only?: boolean }) =>
     api.get<PackagingInventory[]>('/inventory/packaging', { params }).then(r => r.data),
@@ -426,9 +457,38 @@ export const inventoryApi = {
   getLowStockAlerts: () =>
     api.get('/inventory/low-stock-alerts').then(r => r.data),
 
-  // Traceability
-  getTraceability: (finishedGoodsId: string) =>
-    api.get<TraceabilityInfo>(`/inventory/traceability/${finishedGoodsId}`).then(r => r.data),
+
+
+}
+
+// Analytics API
+export const analyticsApi = {
+  getRevenue: (months: number = 12) =>
+    api.get<RevenueStats[]>('/analytics/revenue', { params: { months } }).then(r => r.data),
+
+  getYield: () =>
+    api.get<YieldStats[]>('/analytics/yield').then(r => r.data),
+}
+
+// Capacity API
+export const capacityApi = {
+  list: () =>
+    api.get<Capacity[]>('/capacity').then(r => r.data),
+
+  create: (data: Partial<Capacity>) =>
+    api.post<Capacity>('/capacity', data).then(r => r.data),
+
+  get: (id: string) =>
+    api.get<Capacity>(`/capacity/${id}`).then(r => r.data),
+
+  update: (id: string, data: Partial<Capacity>) =>
+    api.patch<Capacity>(`/capacity/${id}`, data).then(r => r.data),
+
+  delete: (id: string) =>
+    api.delete(`/capacity/${id}`),
+
+  getSummary: () =>
+    api.get('/capacity/summary/overview').then(r => r.data),
 }
 
 export default api

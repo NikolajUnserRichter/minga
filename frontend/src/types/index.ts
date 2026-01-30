@@ -122,6 +122,7 @@ export interface ProductionSuggestion {
   created_at: string
   genehmigt_am: string | null
   genehmigt_von: string | null
+  generated_batch_id?: string
 }
 
 export type SuggestionStatus = 'VORGESCHLAGEN' | 'GENEHMIGT' | 'ABGELEHNT' | 'UMGESETZT'
@@ -364,6 +365,7 @@ export interface Payment {
 // Inventory
 export type LocationType = 'LAGER' | 'KUEHLRAUM' | 'REGAL' | 'KEIMRAUM' | 'VERSAND'
 export type ArticleType = 'SAATGUT' | 'FERTIGWARE' | 'VERPACKUNG'
+export type InventoryType = ArticleType
 export type MovementType = 'EINGANG' | 'AUSGANG' | 'PRODUKTION' | 'ERNTE' | 'VERLUST' | 'KORREKTUR'
 
 export interface InventoryLocation {
@@ -456,7 +458,64 @@ export interface StockOverview {
   is_low_stock: boolean
 }
 
+// Traceability
+export interface TraceabilityChain {
+  finished_goods: {
+    id: string
+    batch: string
+    harvest_date: string
+    best_before: string
+  }
+  product?: {
+    id: string
+    name: string
+    sku: string
+  } | null
+  harvest?: {
+    id: string
+    date: string
+    quantity_g: number
+    quality: number | null
+  } | null
+  grow_batch?: {
+    id: string
+    sow_date: string
+    trays: number
+    position: string | null
+  } | null
+  seed_inventory?: {
+    id: string
+    batch: string
+    supplier: string | null
+    supplier_batch: string | null
+    received: string
+    is_organic: boolean
+    seed_name?: string
+  } | null
+  deliveries: Array<{
+    date: string
+    quantity_g: number
+    order_id?: string
+    customer?: string | null
+  }>
+}
+
+export interface RevenueStats {
+  month: string
+  customer_type: string
+  revenue: number
+}
+
+export interface YieldStats {
+  variety: string
+  total_harvest_kg: number
+  avg_yield_per_tray: number
+  expected_yield: number
+  efficiency_percent: number
+}
+
 export interface TraceabilityInfo {
+  // Legacy or simplified view if needed, otherwise deprecate
   finished_goods_id: string
   product_name: string
   batch_number: string
@@ -467,7 +526,24 @@ export interface TraceabilityInfo {
   grow_batch_id: string | null
   sow_date: string | null
   seed_inventory_id: string | null
-  seed_batch_number: string | null
   seed_supplier: string | null
+  seed_batch_number: string | null
+  seed_batch_id: string | null
   is_organic: boolean
+}
+
+// Capacity
+export type ResourceType = 'REGAL' | 'TRAY' | 'ARBEITSZEIT'
+
+export interface Capacity {
+  id: string
+  ressource_typ: ResourceType
+  name: string | null
+  max_kapazitaet: number
+  aktuell_belegt: number
+  verfuegbar: number
+  auslastung_prozent: number
+  ist_ueberlastet: boolean
+  created_at: string
+  updated_at: string
 }

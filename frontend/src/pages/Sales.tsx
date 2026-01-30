@@ -5,6 +5,7 @@ import { PageHeader, FilterBar } from '../components/common/Layout';
 import { StatCard } from '../components/domain/StatCard';
 import { CustomerCard } from '../components/domain/CustomerCard';
 import { OrderCard } from '../components/domain/OrderCard';
+import { CreateOrderModal } from '../components/domain/CreateOrderModal';
 import {
   Tabs,
   PageLoader,
@@ -35,6 +36,10 @@ export default function Sales() {
   const [statusFilter, setStatusFilter] = useState('');
   const [selectedOrder, setSelectedOrder] = useState<OrderWithCustomer | null>(null);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
+
+  // Create Order State
+  const [createOrderOpen, setCreateOrderOpen] = useState(false);
+  const [createOrderCustomer, setCreateOrderCustomer] = useState<Customer | undefined>(undefined);
 
   const { data: ordersData, isLoading: ordersLoading } = useQuery({
     queryKey: ['orders', statusFilter],
@@ -67,6 +72,11 @@ export default function Sales() {
       toast.error('Fehler beim Aktualisieren');
     },
   });
+
+  const handleOpenCreateOrder = (customer?: Customer) => {
+    setCreateOrderCustomer(customer);
+    setCreateOrderOpen(true);
+  };
 
   const orders = ordersData?.items || [];
   const customers = customersData?.items || [];
@@ -142,7 +152,10 @@ export default function Sales() {
               <Clock className="w-4 h-4" />
               Abo-Lauf heute
             </button>
-            <button className="btn btn-primary">
+            <button
+              className="btn btn-primary"
+              onClick={() => handleOpenCreateOrder()}
+            >
               <Plus className="w-4 h-4" />
               {activeTab === 'orders' ? 'Neue Bestellung' : 'Neuer Kunde'}
             </button>
@@ -210,7 +223,10 @@ export default function Sales() {
             description={search || statusFilter ? 'Versuche andere Suchkriterien.' : 'Erstelle die erste Bestellung.'}
             action={
               !search && !statusFilter && (
-                <button className="btn btn-primary">
+                <button
+                  className="btn btn-primary"
+                  onClick={() => handleOpenCreateOrder()}
+                >
                   <Plus className="w-4 h-4" />
                   Erste Bestellung
                 </button>
@@ -257,10 +273,7 @@ export default function Sales() {
                 customer={customer}
                 onClick={() => setSelectedCustomer(customer)}
                 onEdit={() => setSelectedCustomer(customer)}
-                onCreateOrder={() => {
-                  // TODO: Open create order modal with pre-selected customer
-                  toast.info('Bestellung erstellen...');
-                }}
+                onCreateOrder={() => handleOpenCreateOrder(customer)}
               />
             ))}
           </div>
@@ -441,13 +454,29 @@ export default function Sales() {
               >
                 Schließen
               </button>
-              <button className="btn btn-primary">
+              <button
+                className="btn btn-primary"
+                onClick={() => {
+                  handleOpenCreateOrder(selectedCustomer);
+                  setSelectedCustomer(null);
+                }}
+              >
                 Bestellung erstellen
               </button>
             </div>
           </div>
         )}
       </Modal>
+
+      {/* Create Order Modal */}
+      <CreateOrderModal
+        open={createOrderOpen}
+        onClose={() => {
+          setCreateOrderOpen(false);
+          setCreateOrderCustomer(undefined);
+        }}
+        preselectedCustomer={createOrderCustomer}
+      />
     </div>
   );
 }

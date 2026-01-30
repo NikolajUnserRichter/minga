@@ -47,9 +47,21 @@ export default function ProductionSuggestions() {
   // Approve mutation
   const approveMutation = useMutation({
     mutationFn: (id: string) => forecastingApi.approveSuggestion(id),
-    onSuccess: () => {
+    onSuccess: (data: ProductionSuggestion) => {
       queryClient.invalidateQueries({ queryKey: ['production-suggestions'] });
-      toast.success('Produktionsvorschlag genehmigt');
+
+      if (data.generated_batch_id) {
+        toast.success(
+          <span>
+            Produktionsvorschlag genehmigt.{' '}
+            <a href="/production" className="underline font-bold">
+              Zur Charge
+            </a>
+          </span>
+        );
+      } else {
+        toast.success('Produktionsvorschlag genehmigt');
+      }
       setApprovingId(null);
     },
     onError: () => {

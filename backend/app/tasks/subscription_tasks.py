@@ -4,6 +4,7 @@ from sqlalchemy import select
 from app.database import SessionLocal
 from app.models.customer import Subscription, SubscriptionInterval
 from app.models.order import Order, OrderLine, OrderStatus, TaxRate
+from app.models.product import Product, PriceList, PriceListItem
 from app.api.v1.sales import router
 from typing import List
 
@@ -116,15 +117,25 @@ def _create_order_from_subscription(db, sub: Subscription):
     # Order Line (Single Item Subscription Model assumed)
     # Holen des Preises - vereinfacht 0 oder aus Product/PriceList
     unit_price = 0
-    # TODO: Preislogik (aus PriceList oder Product Base Price)
-    # Wir nehmen Default 0 und erwarten, dass User im Entwurf korrigiert, oder wir holen Product Base Price
-    if sub.seed: # Seed als Product Proxy? Model sagt Seed ID.
-         # Subscription hat Seed ID, aber OrderLine braucht Product ID oder Text.
-         # Wir brauchen Mapping Seed -> Product oder Subscription auf Product ändern?
-         # Subscription Model hat seed_id (Step 39 Line 272).
-         # OrderLine hat product_id und seed_id (legacy).
-         pass
-         
+    product = db.execute(select(Product).where(Product.seed_id == sub.seed_id)).scalars().first()
+    
+    if product:
+        # 1. Price from Customer Price List
+        if customer.price_list_id:
+            price_item = db.execute(
+                select(PriceListItem)
+                .where(
+                    PriceListItem.price_list_id == customer.price_list_id,
+                    PriceListItem.product_id == product.id
+                )
+            ).scalars().first()
+            if price_item:
+                unit_price = float(price_item.price)
+        
+        # 2. Price from Base Price (if no list price found)
+        if unit_price == 0 and product.base_price:
+             unit_price = float(product.base_price)
+             
     # Erstelle Line
     line = OrderLine(
         order_id=order.id,
@@ -133,8 +144,8 @@ def _create_order_from_subscription(db, sub: Subscription):
         beschreibung=f"Abo-Lieferung: {sub.seed.name if sub.seed else 'Unknown'}",
         quantity=sub.menge,
         unit=sub.einheit,
-        unit_price=0, # Placeholder
-        tax_rate=TaxRate.REDUZIERT,
+        unit_price=unit_price,
+        tax_rate=product.tax_rate if product else TaxRate.REDUZIERT,
         requested_delivery_date=date.today()
     )
     _calculate_line_amounts(line)

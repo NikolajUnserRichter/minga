@@ -21,6 +21,8 @@ from app.models.forecast import (
     ForecastManualAdjustment, AdjustmentType
 )
 from app.models.capacity import Capacity, ResourceType
+from app.models.production import GrowBatch, GrowBatchStatus
+from app.models.seed import SeedBatch
 from app.schemas.forecast import (
     ForecastGenerateRequest, ForecastResponse, ForecastOverride,
     ForecastListResponse, ForecastAccuracyResponse, ForecastAccuracySummary,
@@ -869,12 +871,49 @@ async def approve_production_suggestion(
     if approval.angepasste_trays:
         suggestion.empfohlene_trays = approval.angepasste_trays
 
+    # Charge suchen (FIFO)
+    seed_batch = db.execute(
+        select(SeedBatch)
+        .where(SeedBatch.seed_id == suggestion.seed_id, SeedBatch.verbleibend_gramm > 0)
+        .order_by(SeedBatch.created_at)
+    ).scalars().first()
+
+    # Fallback: Wenn keine Charge, suche irgendeine (auch leere) oder erstelle Dummy?
+    # Wir nehmen "Neueste" wenn keine mit Bestand da ist, sonst Warnung
+    if not seed_batch:
+         seed_batch = db.execute(
+            select(SeedBatch)
+            .where(SeedBatch.seed_id == suggestion.seed_id)
+            .order_by(SeedBatch.created_at.desc())
+        ).scalars().first()
+    
+    # Wenn immer noch keine Charge -> Dummy erstellen? 
+    # Besser: Fehler werfen, da Produktion ohne Charge im System nicht sauber ist.
+    if not seed_batch:
+         # Optional: Dummy erstellen
+         raise HTTPException(status_code=400, detail="Keine Saatgut-Charge für dieses Produkt gefunden. Bitte erst Warenannahme buchen.")
+
+    # GrowBatch erstellen
+    grow_batch = GrowBatch(
+        seed_batch_id=seed_batch.id,
+        tray_anzahl=suggestion.empfohlene_trays,
+        aussaat_datum=suggestion.aussaat_datum,
+        erwartete_ernte_min=suggestion.erwartete_ernte_datum - timedelta(days=2), # Einfache Heuristik
+        erwartete_ernte_optimal=suggestion.erwartete_ernte_datum,
+        erwartete_ernte_max=suggestion.erwartete_ernte_datum + timedelta(days=2),
+        status=GrowBatchStatus.KEIMUNG,
+        notizen=f"Automatisch erstellt aus Produktionsvorschlag {suggestion.id}"
+    )
+    db.add(grow_batch)
+    db.flush() # ID generieren
+
     suggestion.status = SuggestionStatus.GENEHMIGT
     suggestion.genehmigt_am = datetime.utcnow()
     suggestion.genehmigt_von = UUID(user["id"])
 
     db.commit()
     db.refresh(suggestion)
+    db.refresh(grow_batch)
 
     return ProductionSuggestionResponse(
         id=suggestion.id,
@@ -887,7 +926,8 @@ async def approve_production_suggestion(
         status=suggestion.status,
         warnungen=suggestion.warnungen,
         benoetigte_menge_gramm=suggestion.benoetigte_menge_gramm,
-        erwartete_menge_gramm=suggestion.erwartete_menge_gramm
+        erwartete_menge_gramm=suggestion.erwartete_menge_gramm,
+        generated_batch_id=grow_batch.id
     )
 
 

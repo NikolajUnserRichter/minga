@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse
 
 from app.config import get_settings
 from app.database import engine, Base
-from app.api.v1 import seeds, production, sales, forecasting, products, invoices, inventory
+from app.api.v1 import seeds, production, sales, forecasting, products, invoices, inventory, analytics, capacity
 
 settings = get_settings()
 
@@ -131,6 +131,17 @@ app.include_router(
 app.include_router(
     inventory.router,
     prefix="/api/v1",
+)
+
+app.include_router(
+    capacity.router,
+    prefix="/api/v1",
+)
+
+app.include_router(
+    analytics.router,
+    prefix="/api/v1/analytics",
+    tags=["Analytics"]
 )
 
 

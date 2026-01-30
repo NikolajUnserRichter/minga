@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useSearchParams } from 'react-router-dom';
 import {
   Search, Package, Warehouse, Leaf, Box, AlertTriangle,
-  ArrowDownCircle, ArrowUpCircle, Thermometer
+  ArrowDownCircle, ArrowUpCircle, Thermometer, Printer, Link as LinkIcon, Edit
 } from 'lucide-react';
 import { inventoryApi, seedsApi } from '../services/api';
 import {
@@ -23,6 +24,9 @@ import {
   Tabs,
   Alert,
 } from '../components/ui';
+import { TraceabilityView } from '../components/domain/TraceabilityView';
+import { StockCorrectionModal } from '../components/domain/StockCorrectionModal';
+import { TraceabilityChain, InventoryType } from '../types';
 
 const LOCATION_TYPE_LABELS: Record<LocationType, string> = {
   LAGER: 'Lager',
@@ -49,6 +53,12 @@ export default function Inventory() {
   const [filterLocation, setFilterLocation] = useState<string>('all');
   const [showReceiveModal, setShowReceiveModal] = useState(false);
   const [showMovementModal, setShowMovementModal] = useState(false);
+  const [showTraceabilityModal, setShowTraceabilityModal] = useState(false);
+  const [selectedTraceItem, setSelectedTraceItem] = useState<TraceabilityChain | null>(null);
+  const [showCorrectionModal, setShowCorrectionModal] = useState(false);
+  const [correctionItem, setCorrectionItem] = useState<{ id: string, qty: number, unit: string, type: InventoryType, name: string } | null>(null);
+  const [searchParams] = useSearchParams();
+  const highlightId = searchParams.get('highlight');
 
   // Fetch data
   const { data: locations = [] } = useQuery({
@@ -71,6 +81,21 @@ export default function Inventory() {
         location_id: filterLocation === 'all' ? undefined : filterLocation,
       }),
   });
+
+  // Effect to handle scan redirect
+  useEffect(() => {
+    if (highlightId && finishedGoods.length > 0) {
+      const item = finishedGoods.find(i => i.id === highlightId);
+      if (item) {
+        setActiveTab('finished');
+        // Auto open traceability
+        inventoryApi.getTraceability(item.id).then(traceData => {
+          setSelectedTraceItem(traceData);
+          setShowTraceabilityModal(true);
+        });
+      }
+    }
+  }, [highlightId, finishedGoods]);
 
   const { data: packaging = [], isLoading: loadingPackaging } = useQuery({
     queryKey: ['packaging-inventory', filterLocation],
@@ -165,13 +190,62 @@ export default function Inventory() {
       )}
 
       {/* Seeds Tab */}
-      {activeTab === 'seeds' && <SeedInventoryTab inventory={seedInventory} search={search} />}
+      {activeTab === 'seeds' && (
+        <SeedInventoryTab
+          inventory={seedInventory}
+          search={search}
+          onCorrect={(item) => {
+            setCorrectionItem({
+              id: item.id,
+              qty: item.current_quantity,
+              unit: item.unit,
+              type: 'SAATGUT',
+              name: `${item.seed_name} (${item.batch_number})`
+            });
+            setShowCorrectionModal(true);
+          }}
+        />
+      )}
 
       {/* Finished Goods Tab */}
-      {activeTab === 'finished' && <FinishedGoodsTab inventory={finishedGoods} search={search} />}
+      {activeTab === 'finished' && (
+        <FinishedGoodsTab
+          inventory={finishedGoods}
+          search={search}
+          onShowTraceability={(data) => {
+            setSelectedTraceItem(data);
+            setShowTraceabilityModal(true);
+          }}
+          onCorrect={(item) => {
+            setCorrectionItem({
+              id: item.id,
+              qty: item.current_quantity,
+              unit: item.unit,
+              type: 'FERTIGWARE',
+              name: `${item.product_name} (${item.batch_number})`
+            });
+            setShowCorrectionModal(true);
+          }}
+        />
+      )}
 
       {/* Packaging Tab */}
-      {activeTab === 'packaging' && <PackagingTab inventory={packaging} search={search} />}
+      {activeTab === 'packaging' && (
+        <PackagingTab
+          inventory={packaging}
+          search={search}
+          onCorrect={(item) => {
+            setCorrectionItem({
+              id: item.id,
+              qty: item.current_quantity,
+              unit: item.unit,
+              type: 'VERPACKUNG',
+              name: `${item.name} (${item.article_number})`
+            });
+            setShowCorrectionModal(true);
+          }}
+        />
+      )}
 
       {/* Locations Tab */}
       {activeTab === 'locations' && <LocationsTab locations={locations} />}
@@ -206,6 +280,36 @@ export default function Inventory() {
           onCancel={() => setShowMovementModal(false)}
         />
       </Modal>
+
+      {/* Traceability Modal */}
+      <Modal
+        open={showTraceabilityModal}
+        onClose={() => setShowTraceabilityModal(false)}
+        title="Rückverfolgbarkeit"
+        size="lg"
+      >
+        {selectedTraceItem ? (
+          <TraceabilityView data={selectedTraceItem} />
+        ) : (
+          <div className="p-8 text-center text-gray-500">Lade Daten...</div>
+        )}
+      </Modal>
+
+      {/* Stock Correction Modal */}
+      {correctionItem && (
+        <StockCorrectionModal
+          open={showCorrectionModal}
+          onClose={() => {
+            setShowCorrectionModal(false);
+            setCorrectionItem(null);
+          }}
+          inventoryId={correctionItem.id}
+          currentQuantity={correctionItem.qty}
+          unit={correctionItem.unit}
+          itemType={correctionItem.type}
+          itemName={correctionItem.name}
+        />
+      )}
     </div>
   );
 }
@@ -331,7 +435,7 @@ function OverviewTab({
 }
 
 // Seed Inventory Tab
-function SeedInventoryTab({ inventory, search }: { inventory: SeedInventory[]; search: string }) {
+function SeedInventoryTab({ inventory, search, onCorrect }: { inventory: SeedInventory[]; search: string; onCorrect: (item: SeedInventory) => void }) {
   const filtered = inventory.filter(
     (item) =>
       item.batch_number.toLowerCase().includes(search.toLowerCase()) ||
@@ -371,6 +475,13 @@ function SeedInventoryTab({ inventory, search }: { inventory: SeedInventory[]; s
               </td>
               <td className="px-6 py-4">
                 {item.is_organic && <Badge variant="success">Bio</Badge>}
+                <button
+                  className="text-gray-400 hover:text-blue-600 ml-2"
+                  title="Bestand korrigieren"
+                  onClick={() => onCorrect(item)}
+                >
+                  <Edit className="w-4 h-4" />
+                </button>
               </td>
             </tr>
           ))}
@@ -381,7 +492,17 @@ function SeedInventoryTab({ inventory, search }: { inventory: SeedInventory[]; s
 }
 
 // Finished Goods Tab
-function FinishedGoodsTab({ inventory, search }: { inventory: FinishedGoodsInventory[]; search: string }) {
+function FinishedGoodsTab({
+  inventory,
+  search,
+  onShowTraceability,
+  onCorrect
+}: {
+  inventory: FinishedGoodsInventory[];
+  search: string;
+  onShowTraceability: (data: TraceabilityChain) => void;
+  onCorrect: (item: FinishedGoodsInventory) => void;
+}) {
   const filtered = inventory.filter(
     (item) =>
       item.batch_number.toLowerCase().includes(search.toLowerCase()) ||
@@ -403,6 +524,7 @@ function FinishedGoodsTab({ inventory, search }: { inventory: FinishedGoodsInven
             <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Verfügbar</th>
             <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Reserviert</th>
             <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">MHD</th>
+            <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Aktionen</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-200">
@@ -424,6 +546,56 @@ function FinishedGoodsTab({ inventory, search }: { inventory: FinishedGoodsInven
                     {new Date(item.mhd).toLocaleDateString('de-DE')}
                   </span>
                 </td>
+                <td className="px-6 py-4 text-right">
+                  <button
+                    className="text-gray-400 hover:text-minga-600 p-1"
+                    title="Etikett drucken"
+                    onClick={async (e) => {
+                      e.stopPropagation();
+                      try {
+                        const response = await inventoryApi.downloadLabel(item.id);
+                        const url = window.URL.createObjectURL(new Blob([response.data]));
+                        const link = document.createElement('a');
+                        link.href = url;
+                        link.setAttribute('download', `Label_Ware_${item.batch_number || item.id}.pdf`);
+                        document.body.appendChild(link);
+                        link.click();
+                        link.remove();
+                      } catch (err) {
+                        console.error(err);
+                        alert("Fehler beim Laden des Labels");
+                      }
+                    }}
+                  >
+                    <Printer className="w-4 h-4" />
+                  </button>
+                  <button
+                    className="text-gray-400 hover:text-blue-600 p-1 ml-1"
+                    title="Rückverfolgung"
+                    onClick={async (e) => {
+                      e.stopPropagation();
+                      try {
+                        const traceData = await inventoryApi.getTraceability(item.id);
+                        onShowTraceability(traceData);
+                      } catch (err) {
+                        console.error(err);
+                        alert("Fehler beim Laden der Rückverfolgung");
+                      }
+                    }}
+                  >
+                    <LinkIcon className="w-4 h-4" />
+                  </button>
+                  <button
+                    className="text-gray-400 hover:text-blue-600 p-1 ml-1"
+                    title="Bestand korrigieren"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onCorrect(item);
+                    }}
+                  >
+                    <Edit className="w-4 h-4" />
+                  </button>
+                </td>
               </tr>
             );
           })}
@@ -434,7 +606,7 @@ function FinishedGoodsTab({ inventory, search }: { inventory: FinishedGoodsInven
 }
 
 // Packaging Tab
-function PackagingTab({ inventory, search }: { inventory: PackagingInventory[]; search: string }) {
+function PackagingTab({ inventory, search, onCorrect }: { inventory: PackagingInventory[]; search: string; onCorrect: (item: PackagingInventory) => void }) {
   const filtered = inventory.filter(
     (item) =>
       item.article_number.toLowerCase().includes(search.toLowerCase()) ||
@@ -476,6 +648,13 @@ function PackagingTab({ inventory, search }: { inventory: PackagingInventory[]; 
                 </td>
                 <td className="px-6 py-4">
                   <Badge variant={isLow ? 'danger' : 'success'}>{isLow ? 'Niedrig' : 'OK'}</Badge>
+                  <button
+                    className="text-gray-400 hover:text-blue-600 ml-2"
+                    title="Bestand korrigieren"
+                    onClick={() => onCorrect(item)}
+                  >
+                    <Edit className="w-4 h-4" />
+                  </button>
                 </td>
               </tr>
             );

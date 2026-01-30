@@ -19,9 +19,15 @@ import {
   Warehouse,
   Receipt,
   Tag,
+  QrCode,
+  Moon,
+  Sun,
 } from 'lucide-react';
 import { useState, createContext, useContext, ReactNode } from 'react';
+import { useNavigate } from 'react-router-dom';
+import QRScanner from './QRScanner';
 import { UserRole, User } from '../../types';
+import { useTheme } from '../../context/ThemeContext';
 
 // Navigation configuration with role-based visibility
 interface NavItem {
@@ -45,6 +51,12 @@ const navigationSections: NavSection[] = [
         href: '/dashboard',
         icon: LayoutDashboard,
         roles: ['ADMIN', 'SALES', 'PRODUCTION_PLANNER', 'PRODUCTION_STAFF', 'ACCOUNTING'],
+      },
+      {
+        name: 'Analytics',
+        href: '/analytics',
+        icon: BarChart3,
+        roles: ['ADMIN', 'SALES', 'ACCOUNTING'],
       },
     ],
   },
@@ -196,6 +208,25 @@ export default function Layout() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [user, setUser] = useState<User>(mockUser);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [showScanner, setShowScanner] = useState(false);
+  const navigate = useNavigate();
+  const { theme, toggleTheme } = useTheme();
+
+  const handleScan = (data: string) => {
+    setShowScanner(false);
+    console.log("Scanned:", data);
+
+    // Format: BATCH:{id} or INV:{id}
+    if (data.startsWith('BATCH:')) {
+      const id = data.split(':')[1];
+      navigate(`/production?highlight=${id}`);
+    } else if (data.startsWith('INV:')) {
+      const id = data.split(':')[1];
+      navigate(`/inventory?highlight=${id}`);
+    } else {
+      alert("Unbekannter QRCode: " + data);
+    }
+  };
 
 
   // Filter navigation based on user role
@@ -215,7 +246,7 @@ export default function Layout() {
 
   return (
     <UserContext.Provider value={{ user, setUser }}>
-      <div className="min-h-screen bg-gray-50">
+      <div className="min-h-screen bg-gray-50 dark:bg-gray-900 transition-colors">
         {/* Mobile Sidebar Overlay */}
         {sidebarOpen && (
           <div
@@ -226,19 +257,19 @@ export default function Layout() {
 
         {/* Sidebar */}
         <aside
-          className={`fixed inset-y-0 left-0 z-50 w-64 bg-white border-r border-gray-200 transform transition-transform duration-200 lg:translate-x-0 flex flex-col ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'
+          className={`fixed inset-y-0 left-0 z-50 w-64 bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 transform transition-transform duration-200 lg:translate-x-0 flex flex-col ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'
             }`}
         >
           {/* Logo */}
-          <div className="flex items-center justify-between h-16 px-6 border-b border-gray-200 flex-shrink-0">
+          <div className="flex items-center justify-between h-16 px-6 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
             <NavLink to="/dashboard" className="flex items-center gap-3">
               <div className="w-8 h-8 bg-minga-500 rounded-lg flex items-center justify-center">
                 <Sprout className="w-5 h-5 text-white" />
               </div>
-              <span className="text-lg font-bold text-gray-900">Minga-Greens</span>
+              <span className="text-lg font-bold text-gray-900 dark:text-white">Minga-Greens</span>
             </NavLink>
             <button
-              className="lg:hidden p-2 text-gray-500 hover:text-gray-700 rounded-lg hover:bg-gray-100"
+              className="lg:hidden p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700"
               onClick={() => setSidebarOpen(false)}
             >
               <X className="w-5 h-5" />
@@ -272,21 +303,21 @@ export default function Layout() {
           </nav>
 
           {/* User Info */}
-          <div className="border-t border-gray-200 p-4 flex-shrink-0">
+          <div className="border-t border-gray-200 dark:border-gray-700 p-4 flex-shrink-0">
             <div className="relative">
               <button
                 onClick={() => setUserMenuOpen(!userMenuOpen)}
-                className="w-full flex items-center gap-3 p-2 rounded-lg hover:bg-gray-100 transition-colors"
+                className="w-full flex items-center gap-3 p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
               >
-                <div className="avatar avatar-md bg-minga-100 text-minga-700">
+                <div className="avatar avatar-md bg-minga-100 text-minga-700 dark:bg-minga-900/50 dark:text-minga-400">
                   {user.name
                     .split(' ')
                     .map((n) => n[0])
                     .join('')}
                 </div>
                 <div className="flex-1 text-left">
-                  <p className="text-sm font-medium text-gray-900">{user.name}</p>
-                  <p className="text-xs text-gray-500">{roleDisplayNames[user.role]}</p>
+                  <p className="text-sm font-medium text-gray-900 dark:text-white">{user.name}</p>
+                  <p className="text-xs text-gray-500 dark:text-gray-400">{roleDisplayNames[user.role]}</p>
                 </div>
                 <ChevronDown
                   className={`w-4 h-4 text-gray-400 transition-transform ${userMenuOpen ? 'rotate-180' : ''
@@ -296,9 +327,9 @@ export default function Layout() {
 
               {/* User Dropdown Menu */}
               {userMenuOpen && (
-                <div className="absolute bottom-full left-0 right-0 mb-2 bg-white rounded-lg shadow-lg border border-gray-200 py-1 animate-slide-up">
-                  <div className="px-3 py-2 border-b border-gray-100">
-                    <p className="text-xs text-gray-500">Rolle wechseln (Demo)</p>
+                <div className="absolute bottom-full left-0 right-0 mb-2 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 py-1 animate-slide-up">
+                  <div className="px-3 py-2 border-b border-gray-100 dark:border-gray-700">
+                    <p className="text-xs text-gray-500 dark:text-gray-400">Rolle wechseln (Demo)</p>
                   </div>
                   {(
                     ['ADMIN', 'SALES', 'PRODUCTION_PLANNER', 'PRODUCTION_STAFF', 'ACCOUNTING'] as UserRole[]
@@ -309,15 +340,15 @@ export default function Layout() {
                         setUser({ ...user, role });
                         setUserMenuOpen(false);
                       }}
-                      className={`w-full text-left px-3 py-2 text-sm hover:bg-gray-50 ${user.role === role ? 'text-minga-600 font-medium' : 'text-gray-700'
+                      className={`w-full text-left px-3 py-2 text-sm hover:bg-gray-50 dark:hover:bg-gray-700 ${user.role === role ? 'text-minga-600 dark:text-minga-400 font-medium' : 'text-gray-700 dark:text-gray-300'
                         }`}
                     >
                       {roleDisplayNames[role]}
                       {user.role === role && ' ✓'}
                     </button>
                   ))}
-                  <div className="border-t border-gray-100 mt-1 pt-1">
-                    <button className="w-full text-left px-3 py-2 text-sm text-red-600 hover:bg-red-50 flex items-center gap-2">
+                  <div className="border-t border-gray-100 dark:border-gray-700 mt-1 pt-1">
+                    <button className="w-full text-left px-3 py-2 text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 flex items-center gap-2">
                       <LogOut className="w-4 h-4" />
                       Abmelden
                     </button>
@@ -331,9 +362,9 @@ export default function Layout() {
         {/* Main Content */}
         <div className="lg:pl-64">
           {/* Top Bar */}
-          <header className="sticky top-0 z-30 h-16 bg-white border-b border-gray-200 flex items-center px-6">
+          <header className="sticky top-0 z-30 h-16 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 flex items-center px-6 transition-colors">
             <button
-              className="lg:hidden p-2 -ml-2 text-gray-500 hover:text-gray-700 rounded-lg hover:bg-gray-100"
+              className="lg:hidden p-2 -ml-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700"
               onClick={() => setSidebarOpen(true)}
             >
               <Menu className="w-6 h-6" />
@@ -341,16 +372,38 @@ export default function Layout() {
 
             {/* Greeting (Desktop) */}
             <div className="hidden lg:block">
-              <p className="text-gray-900">
+              <p className="text-gray-900 dark:text-white">
                 {getGreeting()}, <span className="font-medium">{user.name.split(' ')[0]}</span>!
               </p>
             </div>
 
             <div className="flex-1" />
 
-            {/* Date */}
+            {/* Header Actions */}
             <div className="flex items-center gap-4">
-              <div className="text-sm text-gray-500">
+              {/* Theme Toggle */}
+              <button
+                onClick={toggleTheme}
+                className="p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+                title={theme === 'dark' ? 'Light Mode' : 'Dark Mode'}
+              >
+                {theme === 'dark' ? (
+                  <Sun className="w-5 h-5" />
+                ) : (
+                  <Moon className="w-5 h-5" />
+                )}
+              </button>
+
+              <button
+                onClick={() => setShowScanner(true)}
+                className="hidden md:flex items-center gap-2 px-3 py-2 bg-minga-50 text-minga-700 hover:bg-minga-100 dark:bg-minga-900/30 dark:text-minga-400 dark:hover:bg-minga-900/50 rounded-lg transition-colors"
+                title="Code scannen"
+              >
+                <QrCode className="w-5 h-5" />
+                <span className="text-sm font-medium">Scannen</span>
+              </button>
+
+              <div className="text-sm text-gray-500 dark:text-gray-400">
                 {new Date().toLocaleDateString('de-DE', {
                   weekday: 'long',
                   day: 'numeric',
@@ -360,6 +413,14 @@ export default function Layout() {
               </div>
             </div>
           </header>
+
+          {/* Scanner Modal */}
+          {showScanner && (
+            <QRScanner
+              onScan={handleScan}
+              onClose={() => setShowScanner(false)}
+            />
+          )}
 
           {/* Page Content */}
           <main className="p-6">

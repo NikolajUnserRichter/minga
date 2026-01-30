@@ -60,7 +60,41 @@ def generate_weekly_accuracy_report():
 
         logger.info(f"Accuracy Report: Ø MAPE = {report['durchschnitt_mape']:.1f}%")
 
-        # TODO: Report per E-Mail versenden oder speichern
+        # Report per E-Mail versenden
+        from app.core.email import email_service
+        from app.config import get_settings
+        settings = get_settings()
+        
+        email_body = """
+        <h3>Wöchentlicher Forecast-Accuracy Report</h3>
+        <p>Zeitraum: {{ report.zeitraum.von }} bis {{ report.zeitraum.bis }}</p>
+        
+        <table border="1" cellpadding="5" style="border-collapse: collapse;">
+            <tr>
+                <td><strong>Anzahl Forecasts</strong></td>
+                <td>{{ report.anzahl_forecasts }}</td>
+            </tr>
+            <tr>
+                <td><strong>Durchschnitt MAPE</strong></td>
+                <td>{{ "%.1f"|format(report.durchschnitt_mape) }}%</td>
+            </tr>
+            <tr>
+                <td><strong>Median MAPE</strong></td>
+                <td>{{ "%.1f"|format(report.median_mape) }}%</td>
+            </tr>
+             <tr>
+                <td><strong>Beste Genauigkeit</strong></td>
+                <td>{{ "%.1f"|format(report.beste_genauigkeit) }}%</td>
+            </tr>
+        </table>
+        """
+        
+        email_service.send_email(
+            email_to=settings.emails_from_email,
+            subject=f"📊 Forecast Accuracy Report KW {date.today().isocalendar()[1]-1}",
+            template_str=email_body,
+            template_data={"report": report}
+        )
 
         return {
             "status": "success",

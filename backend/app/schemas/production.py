@@ -84,7 +84,16 @@ class HarvestResponse(HarvestBase):
     verlustquote: Decimal
 
 
+
 class HarvestListResponse(BaseModel):
     """Schema für Ernte-Liste"""
     items: list[HarvestResponse]
     total: int
+
+
+class DashboardSummary(BaseModel):
+    """Schema für Dashboard-Zusammenfassung"""
+    active_batches: int
+    harvest_ready: int
+    weekly_harvest_kg: Decimal
+

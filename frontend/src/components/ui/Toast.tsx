@@ -7,16 +7,16 @@ type ToastType = 'success' | 'error' | 'warning' | 'info';
 interface Toast {
   id: string;
   type: ToastType;
-  message: string;
+  message: ReactNode;
   duration?: number;
 }
 
 interface ToastContextType {
-  showToast: (type: ToastType, message: string, duration?: number) => void;
-  success: (message: string, duration?: number) => void;
-  error: (message: string, duration?: number) => void;
-  warning: (message: string, duration?: number) => void;
-  info: (message: string, duration?: number) => void;
+  showToast: (type: ToastType, message: ReactNode, duration?: number) => void;
+  success: (message: ReactNode, duration?: number) => void;
+  error: (message: ReactNode, duration?: number) => void;
+  warning: (message: ReactNode, duration?: number) => void;
+  info: (message: ReactNode, duration?: number) => void;
 }
 
 const ToastContext = createContext<ToastContextType | null>(null);
@@ -55,7 +55,7 @@ export function ToastProvider({ children }: ToastProviderProps) {
   }, []);
 
   const showToast = useCallback(
-    (type: ToastType, message: string, duration = 5000) => {
+    (type: ToastType, message: ReactNode, duration = 5000) => {
       const id = Math.random().toString(36).substring(7);
       const toast: Toast = { id, type, message, duration };
 

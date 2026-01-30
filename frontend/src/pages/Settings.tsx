@@ -1,6 +1,11 @@
+import { useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { capacityApi } from '../services/api';
 import { PageHeader } from '../components/common/Layout';
 import { CapacityIndicator, Input, Select, SelectOption } from '../components/ui';
-import { Database, Server, Key, Bell } from 'lucide-react';
+import { CapacityModal } from '../components/domain/CapacityModal';
+import { Database, Server, Key, Bell, Pencil } from 'lucide-react';
+import { Capacity } from '../types';
 
 const forecastModelOptions: SelectOption[] = [
   { value: 'PROPHET', label: 'Prophet (empfohlen)' },
@@ -9,6 +14,25 @@ const forecastModelOptions: SelectOption[] = [
 ];
 
 export default function Settings() {
+  const queryClient = useQueryClient();
+  const [capacityModalOpen, setCapacityModalOpen] = useState(false);
+  const [editingCapacity, setEditingCapacity] = useState<Capacity | null>(null);
+
+  const { data: capacities, isLoading: isLoadingCapacities } = useQuery({
+    queryKey: ['capacities'],
+    queryFn: () => capacityApi.list()
+  });
+
+  const handleEditCapacity = (cap: Capacity) => {
+    setEditingCapacity(cap);
+    setCapacityModalOpen(true);
+  };
+
+  const handleAddCapacity = () => {
+    setEditingCapacity(null);
+    setCapacityModalOpen(true);
+  };
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -49,22 +73,40 @@ export default function Settings() {
 
         {/* Kapazitäten */}
         <div className="card">
-          <div className="card-header">
+          <div className="card-header flex justify-between items-center">
             <h3 className="card-title">Kapazitäten</h3>
+            <button
+              className="text-sm text-minga-600 hover:text-minga-800"
+              onClick={handleAddCapacity}
+            >
+              + Hinzufügen
+            </button>
           </div>
           <div className="card-body space-y-4">
-            <CapacityIndicator
-              label="Regalplätze"
-              current={42}
-              max={50}
-              showValues
-            />
-            <CapacityIndicator
-              label="Trays verfügbar"
-              current={150}
-              max={200}
-              showValues
-            />
+            {isLoadingCapacities ? (
+              <p className="text-sm text-gray-500">Lade Kapazitäten...</p>
+            ) : capacities?.length === 0 ? (
+              <p className="text-sm text-gray-500">Keine Ressourcen definiert.</p>
+            ) : (
+              capacities?.map(cap => (
+                <div key={cap.id} className="relative group">
+                  <CapacityIndicator
+                    label={cap.name || cap.ressource_typ}
+                    current={cap.aktuell_belegt}
+                    max={cap.max_kapazitaet}
+                    showValues
+                  />
+                  <div className="absolute right-0 top-0 hidden group-hover:flex gap-2">
+                    <button
+                      className="text-xs text-blue-600 bg-white px-2 py-1 rounded shadow flex items-center gap-1"
+                      onClick={() => handleEditCapacity(cap)}
+                    >
+                      <Pencil className="w-3 h-3" /> Update
+                    </button>
+                  </div>
+                </div>
+              ))
+            )}
           </div>
         </div>
 
@@ -151,6 +193,13 @@ export default function Settings() {
           </div>
         </div>
       </div>
+
+      {/* Modals */}
+      <CapacityModal
+        open={capacityModalOpen}
+        onClose={() => setCapacityModalOpen(false)}
+        capacity={editingCapacity}
+      />
     </div>
   );
 }

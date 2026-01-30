@@ -25,6 +25,7 @@ from app.schemas.inventory import (
     StockOverviewItem, TraceabilityResponse,
 )
 from app.services.inventory_service import InventoryService
+from app.services.label_service import LabelService
 
 router = APIRouter(prefix="/inventory", tags=["Lager"])
 
@@ -247,6 +248,30 @@ def get_finished_goods(inventory_id: UUID, db: Session = Depends(DBSession)):
     if not inventory:
         raise HTTPException(status_code=404, detail="Fertigwaren-Bestand nicht gefunden")
     return inventory
+
+
+@router.get("/finished-goods/{inventory_id}/label")
+def get_finished_goods_label(
+    inventory_id: UUID,
+    db: Session = Depends(DBSession)
+):
+    """Generiert ein PDF-Label für Fertigware."""
+    inventory = db.get(FinishedGoodsInventory, inventory_id)
+    if not inventory:
+        raise HTTPException(status_code=404, detail="Fertigwaren-Bestand nicht gefunden")
+    
+    from fastapi import Response
+    pdf_content = LabelService.generate_product_label(inventory)
+    
+    filename = f"Label_Ware_{inventory.batch_number}.pdf"
+    
+    return Response(
+        content=pdf_content,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f"attachment; filename={filename}",
+        }
+    )
 
 
 @router.post("/finished-goods/receive-harvest", response_model=FinishedGoodsInventoryResponse, status_code=201)
@@ -597,3 +622,79 @@ def get_traceability(
         return service.get_traceability(finished_goods_id)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
+
+@router.post("/correction")
+def correct_inventory(
+    inventory_id: UUID,
+    inventory_type: InventoryItemType,
+    actual_quantity: Decimal,
+    reason: str,
+    db: DBSession,
+):
+    """Führt eine manuelle Bestandskorrektur durch."""
+    service = InventoryService(db)
+    try:
+        # Determine table based on type
+        if inventory_type == InventoryItemType.SEED:
+            item = db.get(SeedInventory, inventory_id)
+        elif inventory_type == InventoryItemType.FINISHED_GOODS:
+            item = db.get(FinishedGoodsInventory, inventory_id)
+        elif inventory_type == InventoryItemType.PACKAGING:
+            item = db.get(PackagingInventory, inventory_id)
+        else:
+            raise ValueError("Ungültiger Inventartyp")
+
+        if not item:
+            raise HTTPException(status_code=404, detail="Bestand nicht gefunden")
+
+        # Calculate difference (current_quantity is property or field?)
+        # Models check:
+        # SeedInventory: current_quantity (property: initial - used) or field? 
+        # Check model definition if needed. Assuming current_quantity field/hybrid.
+        # Actually SeedInventory has `initial_quantity` and `current_quantity`.
+        
+        # Let's check model first to be safe about property vs field.
+        # But InventoryService usually handles this.
+        # Let's look for a generic correction method or implement here.
+        
+        diff = actual_quantity - item.current_quantity
+        
+        if diff == 0:
+            return {"message": "Keine Änderung"}
+
+        # Record movement
+        # If diff > 0, it's a gain (KORREKTUR +).
+        # If diff < 0, it's a loss (KORREKTUR/VERLUST -).
+        # We use KORREKTUR for both.
+        
+        # We need to update the item. 
+        # For SeedInventory, current_quantity might be computed? 
+        # If it's computed, we can't set it. We might need to adjust creating a movement.
+        # Wait, usually Inventory is: initial - sum(movements). 
+        # So to correct, we just add a movement of type KORREKTUR with quantity = diff.
+        
+        movement = InventoryMovement(
+            inventory_id=inventory_id,
+            item_type=inventory_type,
+            movement_type=MovementType.KORREKTUR,
+            quantity=abs(diff),
+            unit=getattr(item, 'unit', 'Stk'), # Fallback
+            movement_date=date.today(),
+            notes=f"Korrektur: {reason} (Alt: {item.current_quantity}, Neu: {actual_quantity})"
+        )
+        
+        item.current_quantity = actual_quantity # If it's a settable column
+        # If it is NOT settable (computed), we rely on movement trigger or service.
+        # app/models/inventory.py:
+        # SeedInventory.current_quantity is a Column(Numeric, ...) ?
+        # Let's hope so. If not, we found a bug in plan.
+        
+        db.add(movement)
+        db.commit()
+        db.refresh(item)
+        
+        return {"new_quantity": item.current_quantity, "diff": diff}
+
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+

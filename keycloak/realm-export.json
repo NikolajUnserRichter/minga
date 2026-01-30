@@ -55,7 +55,12 @@
           "temporary": true
         }
       ],
-      "realmRoles": ["admin", "production_planner", "production_staff", "sales"]
+      "realmRoles": [
+        "admin",
+        "production_planner",
+        "production_staff",
+        "sales"
+      ]
     },
     {
       "username": "planner",
@@ -70,7 +75,10 @@
           "temporary": true
         }
       ],
-      "realmRoles": ["production_planner", "production_staff"]
+      "realmRoles": [
+        "production_planner",
+        "production_staff"
+      ]
     },
     {
       "username": "staff",
@@ -85,7 +93,9 @@
           "temporary": true
         }
       ],
-      "realmRoles": ["production_staff"]
+      "realmRoles": [
+        "production_staff"
+      ]
     }
   ],
   "clients": [
@@ -96,10 +106,12 @@
       "publicClient": true,
       "redirectUris": [
         "http://localhost:3000/*",
+        "http://localhost:3002/*",
         "http://localhost:8000/*"
       ],
       "webOrigins": [
         "http://localhost:3000",
+        "http://localhost:3002",
         "http://localhost:8000"
       ],
       "standardFlowEnabled": true,

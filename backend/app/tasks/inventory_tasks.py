@@ -84,7 +84,33 @@ def check_low_stock():
                 f"({alert['current_quantity']} / min {alert['min_quantity']})"
             )
 
-        # TODO: Alerts per E-Mail versenden oder in Notification-System speichern
+        # Alerts per E-Mail versenden
+        if alerts:
+            from app.core.email import email_service
+            from app.config import get_settings
+            
+            settings = get_settings()
+            
+            # Simple HTML list construction
+            items_html = ""
+            for alert in alerts:
+                items_html += f"<li><strong>{alert['article_name']}</strong> ({alert.get('batch_number', 'N/A')}): {alert['current_quantity']} {alert['unit']} (Min: {alert['min_quantity']} {alert['unit']})</li>"
+            
+            email_body = f"""
+            <h3>Niedriger Lagerbestand erkannt</h3>
+            <p>Folgende Artikel haben den Mindestbestand unterschritten:</p>
+            <ul>
+                {items_html}
+            </ul>
+            <p>Bitte Nachbestellung prüfen.</p>
+            """
+            
+            email_service.send_email(
+                email_to=settings.emails_from_email, # Send to self/admin for now
+                subject=f"⚠️ Lagerbestand Warnung ({len(alerts)} Artikel)",
+                template_str=email_body,
+                template_data={} # Already formatted
+            )
 
         return {
             "status": "success",

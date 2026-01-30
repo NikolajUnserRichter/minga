@@ -1,12 +1,13 @@
 import { GrowBatch, GrowBatchStatus, GrowBatchWithSeed } from '../../types';
 import { GrowBatchStatusBadge, formatDate, getRelativeDate } from '../ui';
-import { Layers, MapPin, Calendar, Scale, AlertCircle, Scissors } from 'lucide-react';
+import { Layers, MapPin, Calendar, Scale, AlertCircle, Scissors, Printer } from 'lucide-react';
 
 interface GrowBatchCardProps {
   batch: GrowBatchWithSeed;
   onHarvest?: () => void;
   onStatusChange?: (status: GrowBatchStatus) => void;
   onClick?: () => void;
+  onPrintLabel?: () => void;
   showActions?: boolean;
 }
 
@@ -14,6 +15,7 @@ export function GrowBatchCard({
   batch,
   onHarvest,
   onClick,
+  onPrintLabel,
   showActions = true,
 }: GrowBatchCardProps) {
   const isHarvestReady = batch.status === 'ERNTEREIF';
@@ -78,18 +80,33 @@ export function GrowBatchCard({
         </div>
 
         {/* Actions */}
-        {showActions && isHarvestReady && onHarvest && (
-          <div className="mt-4">
-            <button
-              className="btn btn-success w-full"
-              onClick={(e) => {
-                e.stopPropagation();
-                onHarvest();
-              }}
-            >
-              <Scissors className="w-4 h-4" />
-              Ernte erfassen
-            </button>
+        {showActions && (
+          <div className="mt-4 flex gap-2">
+            {isHarvestReady && onHarvest && (
+              <button
+                className="btn btn-success flex-1"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onHarvest();
+                }}
+              >
+                <Scissors className="w-4 h-4" />
+                Ernte erfassen
+              </button>
+            )}
+            {onPrintLabel && (
+              <button
+                className="btn btn-secondary flex-1"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onPrintLabel();
+                }}
+                title="Etikett drucken"
+              >
+                <Printer className="w-4 h-4" />
+                Label
+              </button>
+            )}
           </div>
         )}
       </div>

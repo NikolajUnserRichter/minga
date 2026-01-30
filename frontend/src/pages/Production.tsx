@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { productionApi, seedsApi } from '../services/api';
 import { PageHeader, FilterBar } from '../components/common/Layout';
@@ -39,6 +40,22 @@ export default function Production() {
   const [harvestingBatch, setHarvestingBatch] = useState<GrowBatch | null>(null);
   const [packagingDate, setPackagingDate] = useState(new Date().toISOString().split('T')[0]);
 
+  const [searchParams] = useSearchParams();
+  const highlightId = searchParams.get('highlight');
+
+  useEffect(() => {
+    if (highlightId) {
+      setSearch(highlightId); // Filter by ID (which is also searched usually, or we can make it stricter)
+      // Alternatively, if search doesn't support ID, we might need a specific filter.
+      // But our search filters by seed_name. Let's assume user searches by ID if passed.
+      // Actually, the current search only filters by name:
+      // const filteredBatches = batches.filter((batch: GrowBatch) =>
+      //    batch.seed_name?.toLowerCase().includes(search.toLowerCase())
+      // );
+      // We should update the filter logic to include ID.
+    }
+  }, [highlightId]);
+
   // Data Queries
   const { data: batchesData } = useQuery({
     queryKey: ['growBatches', statusFilter, showErntereif],
@@ -75,7 +92,8 @@ export default function Production() {
   // Derived State
   const batches = batchesData?.items || [];
   const filteredBatches = batches.filter((batch: GrowBatch) =>
-    batch.seed_name?.toLowerCase().includes(search.toLowerCase())
+    batch.seed_name?.toLowerCase().includes(search.toLowerCase()) ||
+    batch.id.toLowerCase().includes(search.toLowerCase())
   );
 
   const batchesByStatus = {
@@ -272,6 +290,20 @@ export default function Production() {
                     updateStatusMutation.mutate({ id: batch.id, status })
                   }
                   onHarvest={() => setHarvestingBatch(batch)}
+                  onPrintLabel={async () => {
+                    try {
+                      const response = await productionApi.downloadLabel(batch.id);
+                      const url = window.URL.createObjectURL(new Blob([response.data]));
+                      const link = document.createElement('a');
+                      link.href = url;
+                      link.setAttribute('download', `Label_${batch.id}.pdf`);
+                      document.body.appendChild(link);
+                      link.click();
+                      link.remove();
+                    } catch (e) {
+                      toast.error("Fehler beim Laden des Labels");
+                    }
+                  }}
                 />
               ))}
             </div>

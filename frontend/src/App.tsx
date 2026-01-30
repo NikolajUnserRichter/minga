@@ -12,6 +12,8 @@ import ProductionSuggestions from './pages/ProductionSuggestions';
 import Products from './pages/Products';
 import Invoices from './pages/Invoices';
 import Inventory from './pages/Inventory';
+import Analytics from './pages/Analytics';
+import Harvests from './pages/Harvests';
 
 function App() {
   return (
@@ -20,6 +22,7 @@ function App() {
         <Route path="/" element={<Layout />}>
           <Route index element={<Navigate to="/dashboard" replace />} />
           <Route path="dashboard" element={<Dashboard />} />
+          <Route path="analytics" element={<Analytics />} />
 
           {/* Stammdaten */}
           <Route path="seeds" element={<Seeds />} />
@@ -28,7 +31,7 @@ function App() {
 
           {/* Produktion */}
           <Route path="production" element={<Production />} />
-          <Route path="harvests" element={<NotImplemented title="Ernten" />} />
+          <Route path="harvests" element={<Harvests />} />
 
           {/* Vertrieb */}
           <Route path="customers" element={<Customers />} />
