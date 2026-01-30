@@ -1,9 +1,9 @@
-import { Order, OrderItem } from '../../types';
+import { OrderWithCustomer } from '../../types';
 import { OrderStatusBadge, formatDate, getRelativeDate } from '../ui';
-import { User, Calendar, Package, Check, Truck } from 'lucide-react';
+import { Calendar, Check, Truck } from 'lucide-react';
 
 interface OrderCardProps {
-  order: Order;
+  order: OrderWithCustomer;
   onMarkReady?: () => void;
   onMarkDelivered?: () => void;
   onClick?: () => void;
@@ -108,7 +108,7 @@ export function OrderCard({ order, onMarkReady, onMarkDelivered, onClick }: Orde
 
 // Compact row version for lists
 interface OrderRowProps {
-  order: Order;
+  order: OrderWithCustomer;
   onClick?: () => void;
 }
 
@@ -120,9 +120,8 @@ export function OrderRow({ order, onClick }: OrderRowProps) {
 
   return (
     <div
-      className={`flex items-center justify-between p-4 bg-white border border-gray-200 rounded-lg ${
-        onClick ? 'cursor-pointer hover:bg-gray-50' : ''
-      }`}
+      className={`flex items-center justify-between p-4 bg-white border border-gray-200 rounded-lg ${onClick ? 'cursor-pointer hover:bg-gray-50' : ''
+        }`}
       onClick={onClick}
     >
       <div className="flex items-center gap-4">

@@ -66,21 +66,19 @@ export default function Dashboard() {
     <div className="space-y-6">
       <PageHeader
         title="Dashboard"
-        subtitle={`Übersicht KW ${
-          dashboardData?.woche?.start
-            ? new Date(dashboardData.woche.start).toLocaleDateString('de-DE', {
-                day: '2-digit',
-                month: '2-digit',
-              })
-            : ''
-        } - ${
-          dashboardData?.woche?.ende
+        subtitle={`Übersicht KW ${dashboardData?.woche?.start
+          ? new Date(dashboardData.woche.start).toLocaleDateString('de-DE', {
+            day: '2-digit',
+            month: '2-digit',
+          })
+          : ''
+          } - ${dashboardData?.woche?.ende
             ? new Date(dashboardData.woche.ende).toLocaleDateString('de-DE', {
-                day: '2-digit',
-                month: '2-digit',
-              })
+              day: '2-digit',
+              month: '2-digit',
+            })
             : ''
-        }`}
+          }`}
       />
 
       {/* Stats Grid */}
@@ -117,7 +115,7 @@ export default function Dashboard() {
         <div className="card">
           <div className="card-header">
             <h3 className="card-title">Erntereife Chargen</h3>
-            {erntereifData?.items?.length > 0 && (
+            {erntereifData?.items && erntereifData.items.length > 0 && (
               <Badge variant="success">{erntereifData.items.length}</Badge>
             )}
           </div>
@@ -166,8 +164,8 @@ export default function Dashboard() {
         <div className="card">
           <div className="card-header">
             <h3 className="card-title">Produktionsvorschläge</h3>
-            {suggestionsData?.warnungen_gesamt > 0 && (
-              <Badge variant="warning">{suggestionsData.warnungen_gesamt} Warnungen</Badge>
+            {(suggestionsData?.warnungen_gesamt || 0) > 0 && (
+              <Badge variant="warning">{suggestionsData?.warnungen_gesamt} Warnungen</Badge>
             )}
           </div>
           <div className="card-body">
@@ -176,11 +174,10 @@ export default function Dashboard() {
                 {suggestionsData.items.slice(0, 5).map((suggestion: ProductionSuggestion) => (
                   <div
                     key={suggestion.id}
-                    className={`flex items-center justify-between p-3 rounded-lg border ${
-                      suggestion.warnungen?.length
-                        ? 'bg-amber-50 border-amber-200'
-                        : 'bg-gray-50 border-gray-200'
-                    }`}
+                    className={`flex items-center justify-between p-3 rounded-lg border ${suggestion.warnungen?.length
+                      ? 'bg-amber-50 border-amber-200'
+                      : 'bg-gray-50 border-gray-200'
+                      }`}
                   >
                     <div className="flex-1">
                       <p className="font-medium text-gray-900">{suggestion.seed_name}</p>
@@ -250,17 +247,18 @@ export default function Dashboard() {
             </div>
           </div>
         </div>
-      </div>
+      </div >
 
       {/* Harvest Modal */}
-      <Modal
-        open={!!harvestingBatch}
+      < Modal
+        open={!!harvestingBatch
+        }
         onClose={() => setHarvestingBatch(null)}
         title={`Ernte: ${harvestingBatch?.seed_name}`}
       >
         {harvestingBatch && (
           <HarvestForm
-            growBatch={harvestingBatch}
+            batch={harvestingBatch}
             onSubmit={() => {
               queryClient.invalidateQueries({ queryKey: ['growBatches'] });
               queryClient.invalidateQueries({ queryKey: ['dashboard'] });
@@ -270,7 +268,7 @@ export default function Dashboard() {
             onCancel={() => setHarvestingBatch(null)}
           />
         )}
-      </Modal>
-    </div>
+      </Modal >
+    </div >
   );
 }

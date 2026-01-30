@@ -22,6 +22,7 @@ from app.schemas.invoice import (
     DatevExportRequest, DatevExportResponse,
 )
 from app.services.invoice_service import InvoiceService
+from app.services.datev_service import DatevService
 
 router = APIRouter(prefix="/invoices", tags=["Rechnungen"])
 
@@ -312,8 +313,8 @@ def export_datev(
     db: Session = Depends(DBSession),
 ):
     """Exportiert Rechnungen im DATEV-Format."""
-    service = InvoiceService(db)
-    csv_content, record_count, total_amount = service.export_datev(
+    service = DatevService(db)
+    csv_content, record_count, total_amount = service.export_invoices_csv(
         from_date=data.from_date,
         to_date=data.to_date,
         include_payments=data.include_payments,
@@ -335,8 +336,8 @@ def download_datev_export(
     db: Session = Depends(DBSession),
 ):
     """Exportiert Rechnungen als DATEV CSV-Datei zum Download."""
-    service = InvoiceService(db)
-    csv_content, record_count, total_amount = service.export_datev(
+    service = DatevService(db)
+    csv_content, record_count, total_amount = service.export_invoices_csv(
         from_date=data.from_date,
         to_date=data.to_date,
         include_payments=data.include_payments,
@@ -348,6 +349,29 @@ def download_datev_export(
     return Response(
         content=csv_content,
         media_type="text/csv",
+        headers={
+            "Content-Disposition": f"attachment; filename={filename}",
+        }
+    )
+
+@router.get("/{invoice_id}/pdf")
+def get_invoice_pdf(
+    invoice_id: UUID,
+    db: DBSession,
+):
+    """Generiert ein PDF für die Rechnung."""
+    invoice = db.get(Invoice, invoice_id)
+    if not invoice:
+        raise HTTPException(status_code=404, detail="Rechnung nicht gefunden")
+        
+    from app.services.pdf_service import PDFService
+    pdf_content = PDFService.generate_invoice_pdf(invoice)
+    
+    filename = f"Rechnung_{invoice.invoice_number}.pdf"
+    
+    return Response(
+        content=pdf_content,
+        media_type="application/pdf",
         headers={
             "Content-Disposition": f"attachment; filename={filename}",
         }

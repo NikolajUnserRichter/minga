@@ -166,6 +166,7 @@ export interface GrowBatchWithSeed extends GrowBatch {
 
 export interface OrderWithCustomer extends Order {
   kunde?: Customer
+  positionen: OrderItemWithSeed[]
 }
 
 export interface OrderItemWithSeed extends OrderItem {

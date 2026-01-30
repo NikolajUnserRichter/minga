@@ -10,10 +10,20 @@ interface StatCardProps {
     positive?: boolean;
   };
   subtitle?: string;
+  variant?: 'default' | 'primary' | 'success' | 'warning' | 'danger' | 'info';
   className?: string;
 }
 
-export function StatCard({ title, value, icon, change, subtitle, className = '' }: StatCardProps) {
+export function StatCard({ title, value, icon, change, subtitle, variant = 'default', className = '' }: StatCardProps) {
+  const variantStyles = {
+    default: 'bg-gray-50 text-gray-600',
+    primary: 'bg-minga-50 text-minga-600',
+    success: 'bg-green-50 text-green-600',
+    warning: 'bg-amber-50 text-amber-600',
+    danger: 'bg-red-50 text-red-600',
+    info: 'bg-blue-50 text-blue-600',
+  };
+
   return (
     <div className={`stat-card ${className}`}>
       <div className="flex items-start justify-between">
@@ -22,9 +32,8 @@ export function StatCard({ title, value, icon, change, subtitle, className = '' 
           <p className="stat-card-value mt-1">{value}</p>
           {change && (
             <p
-              className={`stat-card-change flex items-center gap-1 ${
-                change.positive ? 'stat-card-change-positive' : 'stat-card-change-negative'
-              }`}
+              className={`stat-card-change flex items-center gap-1 ${change.positive ? 'stat-card-change-positive' : 'stat-card-change-negative'
+                }`}
             >
               {change.positive ? (
                 <TrendingUp className="w-4 h-4" />
@@ -37,7 +46,7 @@ export function StatCard({ title, value, icon, change, subtitle, className = '' 
           {subtitle && <p className="text-sm text-gray-500 mt-1">{subtitle}</p>}
         </div>
         {icon && (
-          <div className="p-3 bg-minga-50 rounded-lg text-minga-600">{icon}</div>
+          <div className={`p-3 rounded-lg ${variantStyles[variant]}`}>{icon}</div>
         )}
       </div>
     </div>

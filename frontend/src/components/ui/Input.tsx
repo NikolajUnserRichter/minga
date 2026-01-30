@@ -5,12 +5,12 @@ interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
   error?: string;
   hint?: string;
   required?: boolean;
-  suffix?: ReactNode;
-  prefix?: ReactNode;
+  startIcon?: ReactNode;
+  endIcon?: ReactNode;
 }
 
 export const Input = forwardRef<HTMLInputElement, InputProps>(
-  ({ label, error, hint, required, suffix, prefix, className = '', id, ...props }, ref) => {
+  ({ label, error, hint, required, startIcon, endIcon, className = '', id, ...props }, ref) => {
     const inputId = id || label?.toLowerCase().replace(/\s+/g, '-');
 
     return (
@@ -21,9 +21,9 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(
           </label>
         )}
         <div className="relative">
-          {prefix && (
+          {startIcon && (
             <div className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">
-              {prefix}
+              {startIcon}
             </div>
           )}
           <input
@@ -32,17 +32,17 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(
             className={`
               input
               ${error ? 'input-error' : ''}
-              ${prefix ? 'pl-10' : ''}
-              ${suffix ? 'pr-10' : ''}
+              ${startIcon ? 'pl-10' : ''}
+              ${endIcon ? 'pr-10' : ''}
               ${className}
             `}
             aria-invalid={error ? 'true' : 'false'}
             aria-describedby={error ? `${inputId}-error` : hint ? `${inputId}-hint` : undefined}
             {...props}
           />
-          {suffix && (
+          {endIcon && (
             <div className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400">
-              {suffix}
+              {endIcon}
             </div>
           )}
         </div>

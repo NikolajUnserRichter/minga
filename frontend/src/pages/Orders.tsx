@@ -4,7 +4,7 @@ import { Plus, Search, Calendar } from 'lucide-react';
 import { salesApi } from '../services/api';
 import { Order, OrderStatus } from '../types';
 import { PageHeader, FilterBar } from '../components/common/Layout';
-import { OrderCard, OrderRow } from '../components/domain/OrderCard';
+import { OrderCard } from '../components/domain/OrderCard';
 import {
   Button,
   Input,
@@ -39,7 +39,7 @@ export default function Orders() {
   const { data: ordersData, isLoading } = useQuery({
     queryKey: ['orders', { status: statusFilter }],
     queryFn: () =>
-      salesApi.getOrders({
+      salesApi.listOrders({
         status: statusFilter === 'all' ? undefined : (statusFilter as OrderStatus),
       }),
   });
@@ -64,7 +64,7 @@ export default function Orders() {
 
   const handleMarkReady = async (order: Order) => {
     try {
-      await salesApi.updateOrder(order.id, { status: 'BEREIT' });
+      await salesApi.updateOrderStatus(order.id, 'BEREIT');
       queryClient.invalidateQueries({ queryKey: ['orders'] });
       toast.success('Bestellung als bereit markiert');
     } catch (error) {
@@ -74,7 +74,7 @@ export default function Orders() {
 
   const handleMarkDelivered = async (order: Order) => {
     try {
-      await salesApi.updateOrder(order.id, { status: 'GELIEFERT' });
+      await salesApi.updateOrderStatus(order.id, 'GELIEFERT');
       queryClient.invalidateQueries({ queryKey: ['orders'] });
       toast.success('Bestellung als geliefert markiert');
     } catch (error) {
@@ -111,7 +111,7 @@ export default function Orders() {
             placeholder="Suchen nach Kunde oder Bestellnummer..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            prefix={<Search className="w-4 h-4" />}
+            startIcon={<Search className="w-4 h-4" />}
           />
         </div>
         <Select
@@ -167,7 +167,7 @@ interface OrderListProps {
   onMarkDelivered: (order: Order) => void;
 }
 
-function OrderList({ orders, title, onMarkReady, onMarkDelivered }: OrderListProps) {
+function OrderList({ orders, onMarkReady, onMarkDelivered }: OrderListProps) {
   if (orders.length === 0) {
     return (
       <EmptyState

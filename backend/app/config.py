@@ -28,8 +28,15 @@ class Settings(BaseSettings):
     keycloak_realm: str = "minga-greens"
     keycloak_client_id: str = "minga-backend"
 
-    # Forecasting Service
-    forecasting_service_url: str = "http://localhost:8001"
+    # E-Mail (SMTP)
+    smtp_host: str = "localhost"
+    smtp_port: int = 1025 # Mailpit default
+    smtp_user: str = ""
+    smtp_password: str = ""
+    emails_from_email: str = "info@minga-greens.de"
+    emails_from_name: str = "Minga Greens"
+
+
 
     # CORS
     cors_origins: list[str] = ["http://localhost:3000"]

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { forecastingApi, seedsApi } from '../services/api';
-import { PageHeader, FilterBar } from '../components/common/Layout';
+import { PageHeader } from '../components/common/Layout';
 import { StatCard } from '../components/domain/StatCard';
 import { ForecastOverrideForm } from '../components/domain/ForecastOverrideForm';
 import {
@@ -24,7 +24,6 @@ import {
   Edit2,
 } from 'lucide-react';
 import {
-  LineChart,
   Line,
   XAxis,
   YAxis,
@@ -45,7 +44,7 @@ export default function Forecasting() {
 
   const { data: seedsData } = useQuery({
     queryKey: ['seeds', 'active'],
-    queryFn: () => seedsApi.getSeeds({ aktiv: true }),
+    queryFn: () => seedsApi.list({ aktiv: true }),
   });
 
   const { data: suggestionsData, isLoading: suggestionsLoading } = useQuery({
@@ -194,8 +193,8 @@ export default function Forecasting() {
                         name === 'prognose'
                           ? 'Prognose'
                           : name === 'override'
-                          ? 'Override'
-                          : name,
+                            ? 'Override'
+                            : name,
                       ]}
                       labelFormatter={(label) => `Datum: ${label}`}
                     />
@@ -256,7 +255,7 @@ export default function Forecasting() {
       </div>
 
       {/* Forecasts Table with Override */}
-      {selectedSeed && forecastsData?.items?.length > 0 && (
+      {selectedSeed && (forecastsData?.items || []).length > 0 && (
         <div className="card">
           <div className="card-header">
             <h3 className="card-title">Forecast-Details</h3>
@@ -275,7 +274,7 @@ export default function Forecasting() {
                 </tr>
               </thead>
               <tbody>
-                {forecastsData.items.map((forecast: Forecast) => (
+                {(forecastsData?.items || []).map((forecast: Forecast) => (
                   <tr key={forecast.id} className={forecast.override_menge ? 'bg-amber-50' : ''}>
                     <td>{new Date(forecast.datum).toLocaleDateString('de-DE')}</td>
                     <td>{forecast.prognostizierte_menge?.toFixed(0)}g</td>
@@ -318,10 +317,10 @@ export default function Forecasting() {
       <div className="card">
         <div className="card-header">
           <h3 className="card-title">Produktionsvorschläge ({suggestionsData?.total || 0})</h3>
-          {suggestionsData?.warnungen_gesamt > 0 && (
+          {(suggestionsData?.warnungen_gesamt || 0) > 0 && (
             <Badge variant="warning">
               <AlertTriangle className="w-3 h-3 mr-1" />
-              {suggestionsData.warnungen_gesamt} Warnungen
+              {suggestionsData?.warnungen_gesamt || 0} Warnungen
             </Badge>
           )}
         </div>
@@ -358,8 +357,8 @@ export default function Forecasting() {
                             suggestion.status === 'GENEHMIGT'
                               ? 'success'
                               : suggestion.status === 'ABGELEHNT'
-                              ? 'danger'
-                              : 'gray'
+                                ? 'danger'
+                                : 'gray'
                           }
                         >
                           {suggestion.status}

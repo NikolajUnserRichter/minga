@@ -79,6 +79,9 @@ class Invoice(Base):
     # Bezahlt
     paid_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("0"))
 
+    # Pfand / Deposit (Teil von Total)
+    total_deposit: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("0"))
+
     # Währung
     currency: Mapped[str] = mapped_column(String(3), default="EUR")
 
@@ -150,6 +153,10 @@ class Invoice(Base):
         self.total = (self.subtotal + self.tax_amount).quantize(
             Decimal("0.01"), rounding=ROUND_HALF_UP
         )
+
+        # Pfand-Summe berechnen (Brutto)
+        deposit_sum = sum(line.gross_total for line in self.lines if line.is_deposit)
+        self.total_deposit = deposit_sum.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
     @property
     def remaining_amount(self) -> Decimal:
@@ -257,6 +264,9 @@ class InvoiceLine(Base):
 
     # DATEV
     buchungskonto: Mapped[Optional[str]] = mapped_column(String(10))  # Erlöskonto
+
+    # Pfand
+    is_deposit: Mapped[bool] = mapped_column(Boolean, default=False)
 
     # Beziehungen
     invoice: Mapped["Invoice"] = relationship("Invoice", back_populates="lines")

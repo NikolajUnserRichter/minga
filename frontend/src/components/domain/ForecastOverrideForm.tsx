@@ -1,10 +1,10 @@
 import { useState } from 'react';
-import { Forecast } from '../../types';
+import { ForecastWithSeed } from '../../types';
 import { Input, Textarea, Button, Alert, formatDate } from '../ui';
 import { AlertTriangle, TrendingUp, TrendingDown } from 'lucide-react';
 
 interface ForecastOverrideFormProps {
-  forecast: Forecast;
+  forecast: ForecastWithSeed;
   onSubmit: (data: ForecastOverrideData) => void;
   onCancel: () => void;
   loading?: boolean;
@@ -96,13 +96,12 @@ export function ForecastOverrideForm({
             setFormData({ ...formData, override_menge: Number(e.target.value) * 1000 })
           }
           error={errors.override_menge}
-          suffix="kg"
+          endIcon="kg"
         />
         {formData.override_menge !== originalValue && (
           <div
-            className={`mt-2 flex items-center gap-2 text-sm ${
-              deviation > 0 ? 'text-green-600' : 'text-red-600'
-            }`}
+            className={`mt-2 flex items-center gap-2 text-sm ${deviation > 0 ? 'text-green-600' : 'text-red-600'
+              }`}
           >
             {deviation > 0 ? (
               <TrendingUp className="w-4 h-4" />

@@ -22,8 +22,9 @@ import {
   TrendingUp,
   Calendar,
   Search,
+  Clock,
 } from 'lucide-react';
-import type { Order, Customer } from '../types';
+import type { Order, Customer, OrderWithCustomer } from '../types';
 
 export default function Sales() {
   const toast = useToast();
@@ -32,7 +33,7 @@ export default function Sales() {
   const [activeTab, setActiveTab] = useState('orders');
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
-  const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
+  const [selectedOrder, setSelectedOrder] = useState<OrderWithCustomer | null>(null);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
 
   const { data: ordersData, isLoading: ordersLoading } = useQuery({
@@ -70,8 +71,8 @@ export default function Sales() {
   const orders = ordersData?.items || [];
   const customers = customersData?.items || [];
 
-  const filteredOrders = orders.filter(
-    (order: Order) =>
+  const filteredOrders = (orders as OrderWithCustomer[]).filter(
+    (order: OrderWithCustomer) =>
       order.kunde?.name?.toLowerCase().includes(search.toLowerCase()) ||
       order.id.toLowerCase().includes(search.toLowerCase())
   );
@@ -129,10 +130,23 @@ export default function Sales() {
         title="Vertrieb"
         subtitle="Kunden und Bestellungen verwalten"
         actions={
-          <button className="btn btn-primary">
-            <Plus className="w-4 h-4" />
-            {activeTab === 'orders' ? 'Neue Bestellung' : 'Neuer Kunde'}
-          </button>
+          <div className="flex gap-2">
+            <button
+              className="btn btn-secondary"
+              onClick={() => {
+                salesApi.runDailySubscriptions()
+                  .then(() => toast.success('Abo-Lauf gestartet'))
+                  .catch(() => toast.error('Fehler beim Starten'));
+              }}
+            >
+              <Clock className="w-4 h-4" />
+              Abo-Lauf heute
+            </button>
+            <button className="btn btn-primary">
+              <Plus className="w-4 h-4" />
+              {activeTab === 'orders' ? 'Neue Bestellung' : 'Neuer Kunde'}
+            </button>
+          </div>
         }
       />
 
@@ -174,7 +188,7 @@ export default function Sales() {
             placeholder={activeTab === 'orders' ? 'Bestellung oder Kunde suchen...' : 'Kunde suchen...'}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            prefix={<Search className="w-4 h-4" />}
+            startIcon={<Search className="w-4 h-4" />}
           />
         </div>
         {activeTab === 'orders' && (
@@ -301,7 +315,7 @@ export default function Sales() {
                 <tbody>
                   {selectedOrder.positionen?.map((item, idx) => (
                     <tr key={idx}>
-                      <td>{item.seed?.name || 'Produkt'}</td>
+                      <td>{item.seed_name || 'Produkt'}</td>
                       <td>{item.menge} {item.einheit}</td>
                       <td>{item.preis_pro_einheit?.toFixed(2)} €</td>
                       <td className="font-medium">

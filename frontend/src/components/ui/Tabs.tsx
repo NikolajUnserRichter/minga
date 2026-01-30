@@ -17,21 +17,26 @@ const TabsContext = createContext<TabsContextType | null>(null);
 interface TabsProps {
   tabs: Tab[];
   defaultTab?: string;
+  activeTab?: string;
   onChange?: (tabId: string) => void;
-  children: ReactNode;
+  children?: ReactNode;
+  className?: string;
 }
 
-export function Tabs({ tabs, defaultTab, onChange, children }: TabsProps) {
-  const [activeTab, setActiveTab] = useState(defaultTab || tabs[0]?.id || '');
+export function Tabs({ tabs, defaultTab, activeTab: controlledTab, onChange, children, className = '' }: TabsProps) {
+  const [internalTab, setInternalTab] = useState(defaultTab || tabs[0]?.id || '');
+  const activeTab = controlledTab !== undefined ? controlledTab : internalTab;
 
   const handleTabChange = (tabId: string) => {
-    setActiveTab(tabId);
+    if (controlledTab === undefined) {
+      setInternalTab(tabId);
+    }
     onChange?.(tabId);
   };
 
   return (
     <TabsContext.Provider value={{ activeTab, setActiveTab: handleTabChange }}>
-      <div>
+      <div className={className}>
         <div className="tabs">
           {tabs.map((tab) => (
             <button

@@ -49,7 +49,7 @@ export default function Customers() {
   const { data: customersData, isLoading } = useQuery({
     queryKey: ['customers', { typ: typeFilter }],
     queryFn: () =>
-      salesApi.getCustomers({
+      salesApi.listCustomers({
         typ: typeFilter === 'all' ? undefined : (typeFilter as CustomerType),
       }),
   });
@@ -96,7 +96,7 @@ export default function Customers() {
             placeholder="Suchen nach Name oder E-Mail..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            prefix={<Search className="w-4 h-4" />}
+            startIcon={<Search className="w-4 h-4" />}
           />
         </div>
         <Select

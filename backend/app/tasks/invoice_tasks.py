@@ -11,6 +11,7 @@ from app.celery_app import celery_app
 from app.database import SessionLocal
 from app.models.invoice import Invoice, InvoiceStatus
 from app.models.customer import Customer
+from app.core.email import email_service, PAYMENT_REMINDER_TEMPLATE
 
 logger = logging.getLogger(__name__)
 
@@ -82,14 +83,37 @@ def send_payment_reminders():
 
         reminders_sent = 0
         for invoice in reminder_invoices:
-            # TODO: E-Mail versenden
-            # Hier würde die E-Mail-Integration kommen
-            logger.info(f"Zahlungserinnerung für {invoice.invoice_number} vorbereitet")
-            reminders_sent += 1
+            # E-Mail versenden
+            customer = db.get(Customer, invoice.customer_id)
+            if customer and customer.email:
+                open_amount = invoice.total - invoice.paid_amount
+                new_deadline = today + timedelta(days=7)
+                
+                success = email_service.send_email(
+                    email_to=customer.email,
+                    subject=f"Zahlungserinnerung Rechnung {invoice.invoice_number}",
+                    template_str=PAYMENT_REMINDER_TEMPLATE,
+                    template_data={
+                        "customer_name": customer.name,
+                        "invoice_number": invoice.invoice_number,
+                        "invoice_date": invoice.invoice_date.strftime("%d.%m.%Y"),
+                        "due_date": invoice.due_date.strftime("%d.%m.%Y"),
+                        "amount": f"{open_amount:.2f}",
+                        "new_deadline": new_deadline.strftime("%d.%m.%Y")
+                    }
+                )
+                
+                if success:
+                    logger.info(f"Zahlungserinnerung an {customer.email} versendet")
+                    reminders_sent += 1
+                else:
+                    logger.error(f"Fehler beim Versenden an {customer.email}")
+            else:
+                logger.warning(f"Keine E-Mail für Kunde {invoice.customer_id} gefunden")
 
         return {
             "status": "success",
-            "reminders_prepared": reminders_sent
+            "reminders_sent": reminders_sent
         }
 
     finally:

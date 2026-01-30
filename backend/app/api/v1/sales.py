@@ -6,7 +6,7 @@ Erweitert mit ERP-Standard Order Header-Line Architektur
 from datetime import date, datetime
 from uuid import UUID
 from decimal import Decimal
-from fastapi import APIRouter, HTTPException, status, Query
+from fastapi import APIRouter, HTTPException, status, Query, Response
 from sqlalchemy import select, func
 from sqlalchemy.orm import joinedload
 
@@ -26,6 +26,7 @@ from app.schemas.order import (
     BulkStatusUpdate
 )
 from app.tasks.forecast_tasks import update_forecast_from_order
+from app.services.datev_service import DatevService
 
 router = APIRouter()
 
@@ -160,6 +161,23 @@ async def reactivate_customer(customer_id: UUID, db: DBSession):
     return CustomerResponse.model_validate(customer)
 
 
+@router.get("/customers/export/datev")
+async def export_customers_datev(db: DBSession):
+    """Exportiert Kundenstammdaten im DATEV-Format."""
+    service = DatevService(db)
+    csv_content = service.export_customers_csv()
+    
+    filename = f"DATEV_Debitoren_{date.today()}.csv"
+    
+    return Response(
+        content=csv_content,
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": f"attachment; filename={filename}",
+        }
+    )
+
+
 # ============== Subscription Endpoints ==============
 
 @router.get("/subscriptions", response_model=SubscriptionListResponse)
@@ -256,6 +274,13 @@ async def update_subscription(sub_id: UUID, sub_data: SubscriptionUpdate, db: DB
     response.seed_name = subscription.seed.name
     return response
 
+@router.post("/subscriptions/process-today", status_code=status.HTTP_200_OK)
+async def process_today_subscriptions():
+    """Löst manuell den Subscription-Run für heute aus."""
+    from app.tasks.subscription_tasks import process_daily_subscriptions
+    # Synchron ausführen um Ergebnis zu sehen
+    result = process_daily_subscriptions()
+    return {"message": "Subscription run completed", "details": result}
 
 # ============== Order Endpoints (Header-Line Architecture) ==============
 

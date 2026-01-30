@@ -1,0 +1,74 @@
+
+=== PROCESSING PDF: MingaGreens_Adminprozess.drawio.pdf ===
+
+--- Page 1 ---
+KNUSPR
+DATEV
+Dokumente an Kunden versenden(E-Mail / Kundensystem)
+START
+BEDARF ANFRAGEN
+Kunde bestellt(E-Mail / System / WhatsApp / Anruf / Dauerauftrag)
+Bestellung in Verpackungsplan eintragen(manuell in XLS-Tabelle eintragen)
+Verpackungsplan ausdrucken
+Lieferschein erstellen (DATEV)
+Lieferschein als PDF exportieren(Ablage)
+Lieferschein ausdrucken
+Rechnung erstellen (DATEV)(Einzelrechnung / Monatsrechnung)Achtung: Pfandrücknahmen einbeziehen
+Rechnung als PDF exportieren(Ablage)
+Rechnung(E-Mail / Kundensystem)
+Rechnung zum Buchen bereitstellen (DATEV)
+Rechnung buchen (DATEV)
+Rechnungsbetrag einziehen(SEPA)
+Zahlungseingang ok?
+Information über offene Belege Ende
+JaNein
+Nachricht an Kunden schicken(E-Mail / Whatsapp / Anruf)
+Kunde bestellt nicht(kein Bedarf, keine Rückmeldung)
+Kontoauszug abrufen(Monatsanfang)
+Kontoauszug buchen
+Zahlungaufforderung(E-Mail) Zahlungseingang ok?
+Ja
+Orion öffnen
+MWSt Beträge für jeden Artikel eingeben
+Anzahl IFCO Kisten zufügen
+Lieferschein erstellen und absenden
+Lieferschein(E-Mail)
+IFCO Webclearing eintragen(Kistenverbrauch eintragen)
+Lieferschein und IFCO Dokument(E-Mail)
+Datenerstellung für Reporting
+Daten aus Verpackungsplan in Excel-Trackerüberführen
+Erstellung von Grafiken für Präsentationen
+
+
+
+=== PROCESSING EXCEL: 260128_Kunden-Adminprozess-Dokumente.xlsx ===
+
+--- Sheet: Kunden - Adminprozess ---
+    Unnamed: 0                            Unnamed: 1     Unnamed: 2          Unnamed: 3                     Unnamed: 4   Unnamed: 5 LIEFERSCHEIN Unnamed: 7 Unnamed: 8 Unnamed: 9 IFCO Webclearing Unnamed: 11 RECHNUNG Unnamed: 13 Unnamed: 14 Unnamed: 15      Unnamed: 16 Unnamed: 17
+0          NaN                                 Kunde        Anfrage  Kommunikationstool                     Bestellung   Liefertage        DATEV     Online   Ausdruck     E-Mail           Online      E-Mail    DATEV      Online      E-Mail    Ausdruck  Monatsrechnnung        SEPA
+1          1.0                  Großer Kern (Knuspr)           nein                 NaN   Kundensystem (automatisiert)            3         True       True       True      False            False       False     True        True       False       False            False       False
+2          2.0                              Oekoring  nein (selten)              E-Mail  Kundensystem (E-Mail Eingang)            2         True      False       True       True             True       False     True       False        True       False            False       False
+3          3.0                                 Bodan           nein              E-Mail  Kundensystem (E-Mail Eingang)            3         True      False       True       True             True        True     True       False        True       False            False       False
+4          4.0                                 Leipe             ja            Whatsapp                       Whatsapp  nach Bedarf         True      False      False      False            False       False     True       False       False       False            False       False
+5          5.0                         Resi am Markt             ja            Whatsapp                 Whatsapp/Anruf  nach Bedarf         True      False      False      False            False       False     True       False       False       False            False       False
+6          6.0                               Allianz           nein              E-Mail                   Dauerauftrag            1         True      False       True      False            False       False     True       False        True       False            False       False
+7          7.0                        LFA Förderbank           nein              E-Mail                   Dauerauftrag            1         True      False       True      False            False       False     True       False        True       False             True       False
+8          8.0  Bayer. Staatsministerium für Verkehr           nein              E-Mail                   Dauerauftrag            1         True      False       True      False            False       False     True       False        True       False             True       False
+9          9.0                              Lekkerei           nein              E-Mail                   Dauerauftrag            1         True      False       True      False            False       False     True       False        True       False             True        True
+10        10.0                              Broeding           nein              E-Mail                   Dauerauftrag   Zweiwöchig         True      False       True      False            False       False     True       False       False       False             True       False
+11        11.0                              Il Borgo           nein            Whatsapp                   Dauerauftrag   Zweiwöchig         True      False       True      False            False       False     True       False       False       False             True       False
+12        12.0                                Herzog             ja            Whatsapp                       Whatsapp  nach Bedarf         True      False      False      False            False       False     True       False       False       False             True       False
+13        13.0                          Das Weinheim             ja            Whatsapp                       Whatsapp  nach Bedarf         True      False       True      False            False       False     True       False       False       False             True       False
+14        14.0                 Augustiner Spieglwirt           nein            Whatsapp                   Dauerauftrag            1         True      False      False      False            False       False     True       False        True       False            False        True
+15        15.0         Gasthaus Gustl - Stiftungsgut           nein            Whatsapp                   Dauerauftrag            1         True      False       True      False            False       False     True       False        True       False             True       False
+16        16.0                          Schneiderhof             ja            Whatsapp                       Whatsapp            1         True      False      False      False            False       False     True       False        True       False             True       False
+17        17.0                            Ostermeier             ja            Whatsapp                       Whatsapp            1         True      False       True      False            False       False     True       False        True        True            False       False
+18        18.0                               Kiening             ja            Whatsapp                       Whatsapp            1         True      False      False      False            False       False     True       False        True       False             True       False
+19        19.0                        Naturkostinsel           nein              E-Mail                   Dauerauftrag            1         True      False       True      False            False       False     True       False        True       False            False        True
+20        20.0                              Dahlmann             ja            Whatsapp                       Whatsapp  nach Bedarf         True      False       True      False            False       False     True       False        True       False            False       False
+21        21.0                                Dorint           nein            Whatsapp                   Dauerauftrag            1         True      False       True      False            False       False     True       False        True       False            False       False
+22        22.0                                 Adler           nein              E-Mail                   Dauerauftrag            1         True      False      False      False            False       False     True       False        True       False            False       False
+23        23.0                       Eschenriederhof           nein              E-Mail                   Dauerauftrag            1         True      False      False      False            False       False     True       False        True       False            False       False
+24        24.0              Haderner Bräu (Girgbräu)             ja            Whatsapp                       Whatsapp  nach Bedarf         True      False       True      False            False       False     True       False        True       False            False       False
+
+

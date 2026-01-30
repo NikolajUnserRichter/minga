@@ -1,13 +1,13 @@
 import { useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  Plus, Search, Package, Warehouse, Leaf, Box, AlertTriangle,
-  ArrowDownCircle, ArrowUpCircle, MapPin, Thermometer
+  Search, Package, Warehouse, Leaf, Box, AlertTriangle,
+  ArrowDownCircle, ArrowUpCircle, Thermometer
 } from 'lucide-react';
-import { inventoryApi, seedsApi, productsApi } from '../services/api';
+import { inventoryApi, seedsApi } from '../services/api';
 import {
   SeedInventory, FinishedGoodsInventory, PackagingInventory,
-  InventoryLocation, InventoryMovement, LocationType, ArticleType, StockOverview
+  InventoryLocation, InventoryMovement, LocationType
 } from '../types';
 import { PageHeader, FilterBar } from '../components/common/Layout';
 import {
@@ -146,7 +146,7 @@ export default function Inventory() {
               placeholder="Suchen..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              prefix={<Search className="w-4 h-4" />}
+              startIcon={<Search className="w-4 h-4" />}
             />
           </div>
           <Select options={locationOptions} value={filterLocation} onChange={(e) => setFilterLocation(e.target.value)} />
@@ -370,7 +370,7 @@ function SeedInventoryTab({ inventory, search }: { inventory: SeedInventory[]; s
                 {item.mhd ? new Date(item.mhd).toLocaleDateString('de-DE') : '-'}
               </td>
               <td className="px-6 py-4">
-                {item.is_organic && <Badge color="green">Bio</Badge>}
+                {item.is_organic && <Badge variant="success">Bio</Badge>}
               </td>
             </tr>
           ))}
@@ -475,7 +475,7 @@ function PackagingTab({ inventory, search }: { inventory: PackagingInventory[]; 
                   {item.min_quantity} {item.unit}
                 </td>
                 <td className="px-6 py-4">
-                  <Badge color={isLow ? 'red' : 'green'}>{isLow ? 'Niedrig' : 'OK'}</Badge>
+                  <Badge variant={isLow ? 'danger' : 'success'}>{isLow ? 'Niedrig' : 'OK'}</Badge>
                 </td>
               </tr>
             );
@@ -533,13 +533,13 @@ function MovementsTab({ movements }: { movements: InventoryMovement[] }) {
     KORREKTUR: 'Korrektur',
   };
 
-  const typeColors: Record<string, 'green' | 'red' | 'blue' | 'yellow' | 'gray' | 'purple'> = {
-    EINGANG: 'green',
-    AUSGANG: 'red',
-    PRODUKTION: 'blue',
-    ERNTE: 'green',
-    VERLUST: 'red',
-    KORREKTUR: 'yellow',
+  const typeColors: Record<string, 'success' | 'danger' | 'info' | 'warning' | 'gray' | 'purple'> = {
+    EINGANG: 'success',
+    AUSGANG: 'danger',
+    PRODUKTION: 'info',
+    ERNTE: 'success',
+    VERLUST: 'danger',
+    KORREKTUR: 'warning',
   };
 
   return (
@@ -561,7 +561,7 @@ function MovementsTab({ movements }: { movements: InventoryMovement[] }) {
                 {new Date(movement.movement_date).toLocaleDateString('de-DE')}
               </td>
               <td className="px-6 py-4">
-                <Badge color={typeColors[movement.movement_type]}>{typeLabels[movement.movement_type]}</Badge>
+                <Badge variant={typeColors[movement.movement_type]}>{typeLabels[movement.movement_type]}</Badge>
               </td>
               <td className="px-6 py-4 text-sm text-gray-500">{movement.article_type}</td>
               <td className="px-6 py-4 text-sm font-medium">
@@ -591,10 +591,11 @@ function ReceiveForm({
   const [loading, setLoading] = useState(false);
   const [articleType, setArticleType] = useState<'SAATGUT' | 'VERPACKUNG'>('SAATGUT');
 
-  const { data: seeds = [] } = useQuery({
+  const { data: seedsData } = useQuery({
     queryKey: ['seeds'],
     queryFn: () => seedsApi.list(),
   });
+  const seeds = seedsData?.items || [];
 
   const [formData, setFormData] = useState({
     seed_id: '',
@@ -691,7 +692,7 @@ function ReceiveForm({
               min={0}
               value={formData.quantity}
               onChange={(e) => setFormData({ ...formData, quantity: Number(e.target.value) })}
-              suffix="g"
+              endIcon="g"
             />
             <Input
               label="MHD"
@@ -714,7 +715,7 @@ function ReceiveForm({
               min={0}
               value={formData.purchase_price}
               onChange={(e) => setFormData({ ...formData, purchase_price: Number(e.target.value) })}
-              suffix="€/g"
+              endIcon="€/g"
             />
           </div>
 
@@ -881,7 +882,7 @@ function MovementForm({
         min={0}
         value={formData.quantity}
         onChange={(e) => setFormData({ ...formData, quantity: Number(e.target.value) })}
-        suffix={movementType === 'consume' ? 'g' : 'Stk'}
+        endIcon={movementType === 'consume' ? 'g' : 'Stk'}
       />
 
       <div className="flex gap-3 pt-4 border-t">

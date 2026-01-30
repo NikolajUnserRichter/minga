@@ -138,23 +138,41 @@ async def generate_forecasts(request: ForecastGenerateRequest, db: DBSession):
         raise HTTPException(status_code=404, detail="Keine aktiven Produkte gefunden")
 
     today = date.today()
+    # Forecast Engine initialisieren
+    from app.services.forecast_engine import ForecastEngine
+    engine = ForecastEngine(db)
+    
     forecasts = []
 
     for seed in seeds:
-        for day_offset in range(request.horizont_tage):
+         # Vorhersage generieren (Training + Prediction)
+         predictions = engine.train_and_predict(str(seed.id), horizon_days=request.horizont_tage)
+         
+         # Map preds by date for easy lookup
+         pred_map = {d: val for d, val in predictions}
+         
+         for day_offset in range(request.horizont_tage):
             forecast_date = today + timedelta(days=day_offset)
-
-            # Basis-Forecast aus historischen Daten
-            base_demand = await _calculate_base_demand(db, seed.id, forecast_date)
-
-            # Abonnement-Beiträge
+            
+            # Basis-Nachfrage (aus Engine)
+            base_demand = pred_map.get(forecast_date, Decimal("0"))
+            
+            # Abonnement-Beiträge zusätzlich?
+            # ForecastEngine trainiert auf historischen Verkäufen.
+            # Abonnements sind "Zukunft".
+            # Normalerweise: Forecast = Baseline (Sales History) + Additional Known Demand (Subs)
+            # ABER: Wenn Subs auch in Vergangenheit waren, dann sind sie in History drin.
+            # Wenn wir "Zusatznachfrage" addieren, verdoppeln wir evtl.
+            # Der einfache Ansatz war: Base (History) + Subs.
+            # Lassen wir es dabei: ForecastEngine ist "History Trend". Subs sind "Fixed Future".
+            
             subscription_demand = await _calculate_subscription_demand(
                 db, seed.id, forecast_date, request.kunde_id
             )
-
+            
             total_demand = base_demand + subscription_demand
-
-            # Konfidenzintervall (einfache Schätzung: ±20%)
+            
+            # Konfidenzintervall
             confidence_margin = total_demand * Decimal("0.2")
 
             forecast = Forecast(
@@ -163,13 +181,13 @@ async def generate_forecasts(request: ForecastGenerateRequest, db: DBSession):
                 datum=forecast_date,
                 horizont_tage=request.horizont_tage,
                 prognostizierte_menge=total_demand,
-                effektive_menge=total_demand,  # Initial gleich automatisch
+                effektive_menge=total_demand,
                 konfidenz_untergrenze=max(Decimal("0"), total_demand - confidence_margin),
                 konfidenz_obergrenze=total_demand + confidence_margin,
-                modell_typ=request.modell_typ,
+                modell_typ=ForecastModelType.ENSEMBLE, # New internal type
                 basiert_auf_historisch=base_demand > 0,
                 basiert_auf_abonnements=subscription_demand > 0,
-                basiert_auf_saisonalitaet=False  # Basis-Impl. ohne Saisonalität
+                basiert_auf_saisonalitaet=True
             )
             db.add(forecast)
             forecasts.append(forecast)

@@ -1,22 +1,20 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Search, FileText, Download, Euro, AlertCircle, CheckCircle, Clock } from 'lucide-react';
+import { Plus, Search, FileText, Download, AlertCircle, CheckCircle, Clock } from 'lucide-react';
 import { invoicesApi, salesApi } from '../services/api';
-import { Invoice, InvoiceStatus, InvoiceType, Customer, Payment } from '../types';
+import { Invoice, InvoiceStatus, InvoiceType, Customer } from '../types';
 import { PageHeader, FilterBar } from '../components/common/Layout';
 import {
   Button,
   Input,
   Select,
   Modal,
-  ConfirmDialog,
   PageLoader,
   EmptyState,
   useToast,
   Badge,
   SelectOption,
   Tabs,
-  DatePicker,
 } from '../components/ui';
 
 const STATUS_LABELS: Record<InvoiceStatus, string> = {
@@ -28,12 +26,12 @@ const STATUS_LABELS: Record<InvoiceStatus, string> = {
   STORNIERT: 'Storniert',
 };
 
-const STATUS_COLORS: Record<InvoiceStatus, 'gray' | 'blue' | 'yellow' | 'green' | 'red' | 'purple'> = {
+const STATUS_COLORS: Record<InvoiceStatus, 'gray' | 'info' | 'warning' | 'success' | 'danger' | 'purple'> = {
   ENTWURF: 'gray',
-  OFFEN: 'blue',
-  TEILBEZAHLT: 'yellow',
-  BEZAHLT: 'green',
-  UEBERFAELLIG: 'red',
+  OFFEN: 'info',
+  TEILBEZAHLT: 'warning',
+  BEZAHLT: 'success',
+  UEBERFAELLIG: 'danger',
   STORNIERT: 'purple',
 };
 
@@ -211,7 +209,7 @@ export default function Invoices() {
             placeholder="Suchen nach Nummer oder Kunde..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            prefix={<Search className="w-4 h-4" />}
+            startIcon={<Search className="w-4 h-4" />}
           />
         </div>
         <Select options={statusOptions} value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} />
@@ -267,7 +265,7 @@ export default function Invoices() {
                     )}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
-                    <Badge color={STATUS_COLORS[invoice.status]}>{STATUS_LABELS[invoice.status]}</Badge>
+                    <Badge variant={STATUS_COLORS[invoice.status]}>{STATUS_LABELS[invoice.status]}</Badge>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                     {invoice.status === 'ENTWURF' && (
@@ -278,6 +276,29 @@ export default function Invoices() {
                         loading={finalizeMutation.isPending}
                       >
                         Finalisieren
+                      </Button>
+                    )}
+                    {['OFFEN', 'TEILBEZAHLT', 'UEBERFAELLIG', 'BEZAHLT'].includes(invoice.status) && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        icon={<Download className="w-4 h-4" />}
+                        onClick={async (e) => {
+                          e.stopPropagation();
+                          try {
+                            const response = await invoicesApi.downloadPdf(invoice.id);
+                            const url = window.URL.createObjectURL(new Blob([response.data]));
+                            const a = document.createElement('a');
+                            a.href = url;
+                            a.download = `Rechnung_${invoice.invoice_number}.pdf`;
+                            a.click();
+                            window.URL.revokeObjectURL(url);
+                          } catch (err) {
+                            toast.error('Fehler beim Laden des PDFs');
+                          }
+                        }}
+                      >
+                        PDF
                       </Button>
                     )}
                     {['OFFEN', 'TEILBEZAHLT', 'UEBERFAELLIG'].includes(invoice.status) && (
@@ -564,7 +585,7 @@ function PaymentForm({ invoice, onSubmit, onCancel }: PaymentFormProps) {
           max={openAmount}
           value={formData.amount}
           onChange={(e) => setFormData({ ...formData, amount: Number(e.target.value) })}
-          suffix="€"
+          endIcon="€"
         />
         <Input
           label="Datum"
@@ -684,7 +705,7 @@ function InvoiceDetail({ invoice }: { invoice: Invoice }) {
         </div>
         <div>
           <p className="text-sm text-gray-500">Status</p>
-          <Badge color={STATUS_COLORS[invoice.status]}>{STATUS_LABELS[invoice.status]}</Badge>
+          <Badge variant={STATUS_COLORS[invoice.status]}>{STATUS_LABELS[invoice.status]}</Badge>
         </div>
         <div>
           <p className="text-sm text-gray-500">Rechnungsdatum</p>

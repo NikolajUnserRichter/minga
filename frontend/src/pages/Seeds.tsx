@@ -14,7 +14,6 @@ import {
   PageLoader,
   EmptyState,
   useToast,
-  Textarea,
   SelectOption,
 } from '../components/ui';
 
@@ -32,14 +31,14 @@ export default function Seeds() {
   const { data: seedsData, isLoading } = useQuery({
     queryKey: ['seeds', { aktiv: filterAktiv }],
     queryFn: () =>
-      seedsApi.getSeeds({
+      seedsApi.list({
         aktiv: filterAktiv === 'all' ? undefined : filterAktiv === 'true',
       }),
   });
 
   // Delete mutation
   const deleteMutation = useMutation({
-    mutationFn: (id: string) => seedsApi.deleteSeed(id),
+    mutationFn: (id: string) => seedsApi.delete(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['seeds'] });
       toast.success('Saatgut gelöscht');
@@ -85,7 +84,7 @@ export default function Seeds() {
             placeholder="Suchen..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            prefix={<Search className="w-4 h-4" />}
+            startIcon={<Search className="w-4 h-4" />}
           />
         </div>
         <Select
@@ -190,9 +189,9 @@ function SeedForm({ seed, onSubmit, onCancel }: SeedFormProps) {
 
     try {
       if (seed) {
-        await seedsApi.updateSeed(seed.id, formData);
+        await seedsApi.update(seed.id, formData);
       } else {
-        await seedsApi.createSeed(formData);
+        await seedsApi.create(formData);
       }
       onSubmit();
     } catch (error) {
@@ -239,7 +238,7 @@ function SeedForm({ seed, onSubmit, onCancel }: SeedFormProps) {
           min={1}
           value={formData.keimdauer_tage}
           onChange={(e) => setFormData({ ...formData, keimdauer_tage: Number(e.target.value) })}
-          suffix="Tage"
+          endIcon="Tage"
         />
         <Input
           label="Wachstumsdauer"
@@ -248,7 +247,7 @@ function SeedForm({ seed, onSubmit, onCancel }: SeedFormProps) {
           min={1}
           value={formData.wachstumsdauer_tage}
           onChange={(e) => setFormData({ ...formData, wachstumsdauer_tage: Number(e.target.value) })}
-          suffix="Tage"
+          endIcon="Tage"
         />
         <Input
           label="Ertrag/Tray"
@@ -257,7 +256,7 @@ function SeedForm({ seed, onSubmit, onCancel }: SeedFormProps) {
           min={1}
           value={formData.ertrag_gramm_pro_tray}
           onChange={(e) => setFormData({ ...formData, ertrag_gramm_pro_tray: Number(e.target.value) })}
-          suffix="g"
+          endIcon="g"
         />
         <Input
           label="Verlustquote"
@@ -267,7 +266,7 @@ function SeedForm({ seed, onSubmit, onCancel }: SeedFormProps) {
           max={100}
           value={formData.verlustquote_prozent}
           onChange={(e) => setFormData({ ...formData, verlustquote_prozent: Number(e.target.value) })}
-          suffix="%"
+          endIcon="%"
         />
       </div>
 
@@ -279,7 +278,7 @@ function SeedForm({ seed, onSubmit, onCancel }: SeedFormProps) {
           min={1}
           value={formData.erntefenster_min_tage}
           onChange={(e) => setFormData({ ...formData, erntefenster_min_tage: Number(e.target.value) })}
-          suffix="Tage"
+          endIcon="Tage"
         />
         <Input
           label="Erntefenster Optimal"
@@ -288,7 +287,7 @@ function SeedForm({ seed, onSubmit, onCancel }: SeedFormProps) {
           min={1}
           value={formData.erntefenster_optimal_tage}
           onChange={(e) => setFormData({ ...formData, erntefenster_optimal_tage: Number(e.target.value) })}
-          suffix="Tage"
+          endIcon="Tage"
         />
         <Input
           label="Erntefenster Max"
@@ -297,7 +296,7 @@ function SeedForm({ seed, onSubmit, onCancel }: SeedFormProps) {
           min={1}
           value={formData.erntefenster_max_tage}
           onChange={(e) => setFormData({ ...formData, erntefenster_max_tage: Number(e.target.value) })}
-          suffix="Tage"
+          endIcon="Tage"
         />
       </div>
 

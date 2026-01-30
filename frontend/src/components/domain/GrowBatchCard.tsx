@@ -1,9 +1,9 @@
-import { GrowBatch, GrowBatchStatus } from '../../types';
+import { GrowBatch, GrowBatchStatus, GrowBatchWithSeed } from '../../types';
 import { GrowBatchStatusBadge, formatDate, getRelativeDate } from '../ui';
 import { Layers, MapPin, Calendar, Scale, AlertCircle, Scissors } from 'lucide-react';
 
 interface GrowBatchCardProps {
-  batch: GrowBatch;
+  batch: GrowBatchWithSeed;
   onHarvest?: () => void;
   onStatusChange?: (status: GrowBatchStatus) => void;
   onClick?: () => void;
@@ -13,7 +13,6 @@ interface GrowBatchCardProps {
 export function GrowBatchCard({
   batch,
   onHarvest,
-  onStatusChange,
   onClick,
   showActions = true,
 }: GrowBatchCardProps) {
@@ -23,9 +22,8 @@ export function GrowBatchCard({
 
   return (
     <div
-      className={`card ${isHarvestReady ? 'border-green-300 bg-green-50/30' : ''} ${
-        onClick ? 'cursor-pointer card-hover' : ''
-      }`}
+      className={`card ${isHarvestReady ? 'border-green-300 bg-green-50/30' : ''} ${onClick ? 'cursor-pointer card-hover' : ''
+        }`}
       onClick={onClick}
     >
       <div className="card-body">
@@ -101,7 +99,7 @@ export function GrowBatchCard({
 
 // Timeline component for grow batch progress
 interface GrowBatchTimelineProps {
-  batch: GrowBatch;
+  batch: GrowBatchWithSeed;
   className?: string;
 }
 
@@ -172,7 +170,7 @@ function calculateCurrentDay(batch: GrowBatch): number {
 
 // Compact row version for lists
 interface GrowBatchRowProps {
-  batch: GrowBatch;
+  batch: GrowBatchWithSeed;
   onHarvest?: () => void;
   onClick?: () => void;
 }
@@ -183,9 +181,8 @@ export function GrowBatchRow({ batch, onHarvest, onClick }: GrowBatchRowProps) {
 
   return (
     <div
-      className={`flex items-center justify-between p-4 bg-white border rounded-lg ${
-        isHarvestReady ? 'border-green-300 bg-green-50/30' : 'border-gray-200'
-      } ${onClick ? 'cursor-pointer hover:bg-gray-50' : ''}`}
+      className={`flex items-center justify-between p-4 bg-white border rounded-lg ${isHarvestReady ? 'border-green-300 bg-green-50/30' : 'border-gray-200'
+        } ${onClick ? 'cursor-pointer hover:bg-gray-50' : ''}`}
       onClick={onClick}
     >
       <div className="flex items-center gap-4">

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Search, Package, Tag, Euro, Filter } from 'lucide-react';
+import { Plus, Search, Package } from 'lucide-react';
 import { productsApi, growPlansApi, productGroupsApi } from '../services/api';
 import { Product, ProductCategory, GrowPlan, ProductGroup } from '../types';
 import { PageHeader, FilterBar } from '../components/common/Layout';
@@ -25,9 +25,9 @@ const CATEGORY_LABELS: Record<ProductCategory, string> = {
   BUNDLE: 'Bundle',
 };
 
-const CATEGORY_COLORS: Record<ProductCategory, 'green' | 'blue' | 'gray' | 'purple'> = {
-  MICROGREEN: 'green',
-  SEED: 'blue',
+const CATEGORY_COLORS: Record<ProductCategory, 'success' | 'info' | 'gray' | 'purple'> = {
+  MICROGREEN: 'success',
+  SEED: 'info',
   PACKAGING: 'gray',
   BUNDLE: 'purple',
 };
@@ -131,7 +131,7 @@ export default function Products() {
                 placeholder="Suchen nach Name oder SKU..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                prefix={<Search className="w-4 h-4" />}
+                startIcon={<Search className="w-4 h-4" />}
               />
             </div>
             <Select
@@ -198,7 +198,7 @@ export default function Products() {
                         </div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
-                        <Badge color={CATEGORY_COLORS[product.category]}>
+                        <Badge variant={CATEGORY_COLORS[product.category]}>
                           {CATEGORY_LABELS[product.category]}
                         </Badge>
                       </td>
@@ -209,7 +209,7 @@ export default function Products() {
                         {product.tax_rate === 'REDUZIERT' ? '7%' : product.tax_rate === 'STANDARD' ? '19%' : '0%'}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
-                        <Badge color={product.is_active ? 'green' : 'gray'}>
+                        <Badge variant={product.is_active ? 'success' : 'gray'}>
                           {product.is_active ? 'Aktiv' : 'Inaktiv'}
                         </Badge>
                       </td>
@@ -411,13 +411,13 @@ function ProductForm({ product, growPlans, productGroups, onSubmit, onCancel }: 
           min={0}
           value={formData.base_price}
           onChange={(e) => setFormData({ ...formData, base_price: Number(e.target.value) })}
-          suffix="€"
+          endIcon="€"
         />
         <Select
           label="Steuersatz"
           options={taxOptions}
           value={formData.tax_rate}
-          onChange={(e) => setFormData({ ...formData, tax_rate: e.target.value })}
+          onChange={(e) => setFormData({ ...formData, tax_rate: e.target.value as any })}
         />
         <Input
           label="Haltbarkeit"
@@ -425,7 +425,7 @@ function ProductForm({ product, growPlans, productGroups, onSubmit, onCancel }: 
           min={1}
           value={formData.shelf_life_days}
           onChange={(e) => setFormData({ ...formData, shelf_life_days: Number(e.target.value) })}
-          suffix="Tage"
+          endIcon="Tage"
         />
       </div>
 
@@ -525,7 +525,7 @@ function ProductGroupsTab({ groups }: { groups: ProductGroup[] }) {
               <td className="px-6 py-4 text-sm text-gray-900">{group.name}</td>
               <td className="px-6 py-4 text-sm text-gray-500">{group.description || '-'}</td>
               <td className="px-6 py-4">
-                <Badge color={group.is_active ? 'green' : 'gray'}>
+                <Badge variant={group.is_active ? 'success' : 'gray'}>
                   {group.is_active ? 'Aktiv' : 'Inaktiv'}
                 </Badge>
               </td>

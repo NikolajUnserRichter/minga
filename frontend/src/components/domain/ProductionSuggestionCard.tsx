@@ -1,9 +1,9 @@
-import { ProductionSuggestion } from '../../types';
-import { SuggestionStatusBadge, Badge, formatDate } from '../ui';
+import { ProductionSuggestionWithSeed } from '../../types';
+import { SuggestionStatusBadge, formatDate } from '../ui';
 import { Sprout, Calendar, Layers, AlertTriangle, Check, X, Scale } from 'lucide-react';
 
 interface ProductionSuggestionCardProps {
-  suggestion: ProductionSuggestion;
+  suggestion: ProductionSuggestionWithSeed;
   onApprove?: () => void;
   onReject?: () => void;
   onAdjust?: () => void;
@@ -18,13 +18,12 @@ export function ProductionSuggestionCard({
   onClick,
 }: ProductionSuggestionCardProps) {
   const isPending = suggestion.status === 'VORGESCHLAGEN';
-  const hasWarnings = suggestion.warnungen && suggestion.warnungen.length > 0;
+  const hasWarnings = (suggestion.warnungen || []).length > 0;
 
   return (
     <div
-      className={`card ${hasWarnings ? 'border-amber-300' : ''} ${
-        onClick ? 'cursor-pointer card-hover' : ''
-      }`}
+      className={`card ${hasWarnings ? 'border-amber-300' : ''} ${onClick ? 'cursor-pointer card-hover' : ''
+        }`}
       onClick={onClick}
     >
       <div className="card-body">
@@ -41,12 +40,12 @@ export function ProductionSuggestionCard({
         </div>
 
         {/* Warnings */}
-        {hasWarnings && (
+        {(suggestion.warnungen || []).length > 0 && (
           <div className="mt-4 space-y-2">
-            {suggestion.warnungen.map((warning, idx) => (
+            {(suggestion.warnungen || []).map((warning, idx) => (
               <div key={idx} className="flex items-start gap-2 p-2 bg-amber-50 rounded-lg text-sm">
                 <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
-                <span className="text-amber-800">{formatWarning(warning)}</span>
+                <span className="text-amber-800">{formatWarning(warning.typ)}</span>
               </div>
             ))}
           </div>
@@ -137,7 +136,7 @@ function formatWarning(warning: string): string {
 
 // Compact row version
 interface ProductionSuggestionRowProps {
-  suggestion: ProductionSuggestion;
+  suggestion: ProductionSuggestionWithSeed;
   onApprove?: () => void;
   onReject?: () => void;
 }
@@ -148,13 +147,12 @@ export function ProductionSuggestionRow({
   onReject,
 }: ProductionSuggestionRowProps) {
   const isPending = suggestion.status === 'VORGESCHLAGEN';
-  const hasWarnings = suggestion.warnungen && suggestion.warnungen.length > 0;
+  const hasWarnings = (suggestion.warnungen || []).length > 0;
 
   return (
     <div
-      className={`flex items-center justify-between p-4 bg-white border rounded-lg ${
-        hasWarnings ? 'border-amber-300 bg-amber-50/30' : 'border-gray-200'
-      }`}
+      className={`flex items-center justify-between p-4 bg-white border rounded-lg ${hasWarnings ? 'border-amber-300 bg-amber-50/30' : 'border-gray-200'
+        }`}
     >
       <div className="flex items-center gap-4">
         {hasWarnings && <AlertTriangle className="w-5 h-5 text-amber-500" />}

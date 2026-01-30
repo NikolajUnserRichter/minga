@@ -16,6 +16,7 @@ celery_app = Celery(
         "app.tasks.report_tasks",
         "app.tasks.invoice_tasks",
         "app.tasks.inventory_tasks",
+        "app.tasks.subscription_tasks",
     ]
 )
 
@@ -64,9 +65,9 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.invoice_tasks.send_payment_reminders",
         "schedule": crontab(hour=9, minute=0),
     },
-    # Abo-Rechnungen generieren (5:00)
-    "daily-recurring-invoices": {
-        "task": "app.tasks.invoice_tasks.generate_recurring_invoices",
+    # Abo-Bestellungen generieren (5:00)
+    "daily-recurring-orders": {
+        "task": "app.tasks.subscription_tasks.process_daily_subscriptions",
         "schedule": crontab(hour=5, minute=0),
     },
     # Monatliche Umsatzstatistik (1. des Monats, 2:00)

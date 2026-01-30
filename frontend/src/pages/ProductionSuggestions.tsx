@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Check, X, AlertTriangle, Calendar, Printer } from 'lucide-react';
+import { Check, AlertTriangle, Calendar, Printer } from 'lucide-react';
 import { forecastingApi } from '../services/api';
 import { ProductionSuggestion, SuggestionStatus } from '../types';
 import { PageHeader, FilterBar } from '../components/common/Layout';
@@ -39,7 +39,7 @@ export default function ProductionSuggestions() {
   const { data: suggestionsData, isLoading } = useQuery({
     queryKey: ['production-suggestions', { status: statusFilter }],
     queryFn: () =>
-      forecastingApi.getProductionSuggestions({
+      forecastingApi.listProductionSuggestions({
         status: statusFilter === 'all' ? undefined : (statusFilter as SuggestionStatus),
       }),
   });

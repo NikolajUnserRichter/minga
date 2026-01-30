@@ -156,6 +156,7 @@ class InvoiceService:
             order_item_id=order_item_id,
             harvest_batch_ids=[str(h) for h in harvest_batch_ids] if harvest_batch_ids else None,
             buchungskonto=buchungskonto,
+            is_deposit=True if (product_id and self.db.get(Product, product_id).is_deposit) else False
         )
 
         # Zeilenbetrag berechnen
@@ -339,120 +340,8 @@ class InvoiceService:
 
         return overdue
 
-    def export_datev(
-        self,
-        from_date: date,
-        to_date: date,
-        include_payments: bool = True
-    ) -> tuple[str, int, Decimal]:
-        """
-        Exportiert Rechnungen im DATEV-Format.
-        Gibt CSV-Content, Anzahl Records und Gesamtbetrag zurück.
-        """
-        invoices = self.db.execute(
-            select(Invoice)
-            .where(
-                Invoice.invoice_date.between(from_date, to_date),
-                Invoice.status != InvoiceStatus.ENTWURF,
-                Invoice.datev_exported == False
-            )
-        ).scalars().all()
+    # export_datev wurde in DatevService ausgelagert
 
-        output = StringIO()
-        writer = csv.writer(output, delimiter=';', quoting=csv.QUOTE_MINIMAL)
-
-        # DATEV Header (vereinfacht)
-        writer.writerow([
-            "Umsatz", "Soll/Haben", "WKZ", "Kurs", "Basisumsatz",
-            "Konto", "Gegenkonto", "BU-Schlüssel", "Belegdatum",
-            "Belegfeld 1", "Belegfeld 2", "Buchungstext"
-        ])
-
-        record_count = 0
-        total_amount = Decimal("0")
-
-        for invoice in invoices:
-            customer = self.db.get(Customer, invoice.customer_id)
-
-            # Hauptbuchung (Forderung)
-            writer.writerow([
-                str(invoice.total).replace('.', ','),
-                "S",  # Soll
-                "EUR",
-                "",
-                "",
-                STANDARD_ACCOUNTS["forderungen"],
-                customer.datev_account or "10000",
-                "",
-                invoice.invoice_date.strftime("%d%m"),
-                invoice.invoice_number,
-                "",
-                f"Rechnung {customer.name}"
-            ])
-            record_count += 1
-            total_amount += invoice.total
-
-            # Erlösbuchungen nach Steuersatz
-            for tax_data in invoice.get_tax_summary():
-                writer.writerow([
-                    str(tax_data["base"]).replace('.', ','),
-                    "H",  # Haben
-                    "EUR",
-                    "",
-                    "",
-                    customer.datev_account or "10000",
-                    tax_data["rate"].value == "REDUZIERT" and STANDARD_ACCOUNTS["erloes_7"] or STANDARD_ACCOUNTS["erloes_19"],
-                    str(tax_data["percent"]),
-                    invoice.invoice_date.strftime("%d%m"),
-                    invoice.invoice_number,
-                    "",
-                    f"Erlöse {tax_data['percent']}%"
-                ])
-                record_count += 1
-
-            # Als exportiert markieren
-            invoice.datev_exported = True
-            invoice.datev_export_date = datetime.utcnow()
-
-        # Zahlungen exportieren
-        if include_payments:
-            payments = self.db.execute(
-                select(Payment)
-                .join(Invoice)
-                .where(
-                    Payment.payment_date.between(from_date, to_date),
-                    Payment.datev_exported == False
-                )
-            ).scalars().all()
-
-            for payment in payments:
-                invoice = payment.invoice
-                customer = self.db.get(Customer, invoice.customer_id)
-
-                # Zahlungseingang
-                bank_account = STANDARD_ACCOUNTS["bank"]
-                if payment.payment_method == PaymentMethod.BAR:
-                    bank_account = STANDARD_ACCOUNTS["kasse"]
-
-                writer.writerow([
-                    str(payment.amount).replace('.', ','),
-                    "S",
-                    "EUR",
-                    "",
-                    "",
-                    bank_account,
-                    customer.datev_account or "10000",
-                    "",
-                    payment.payment_date.strftime("%d%m"),
-                    invoice.invoice_number,
-                    payment.reference or "",
-                    f"Zahlung {customer.name}"
-                ])
-                record_count += 1
-
-                payment.datev_exported = True
-
-        return output.getvalue(), record_count, total_amount
 
     def get_revenue_summary(self, from_date: date, to_date: date) -> dict:
         """

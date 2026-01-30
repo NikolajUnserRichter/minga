@@ -1,10 +1,10 @@
 import { useState } from 'react';
-import { GrowBatch } from '../../types';
-import { Input, Textarea, DatePicker, Button, Alert, formatDate } from '../ui';
+import { GrowBatchWithSeed } from '../../types';
+import { Input, Textarea, DatePicker, Button, Alert } from '../ui';
 import { Scale, AlertTriangle, Star } from 'lucide-react';
 
 interface HarvestFormProps {
-  batch: GrowBatch;
+  batch: GrowBatchWithSeed;
   onSubmit: (data: HarvestFormData) => void;
   onCancel: () => void;
   loading?: boolean;
@@ -100,7 +100,7 @@ export function HarvestForm({ batch, onSubmit, onCancel, loading = false }: Harv
           value={formData.menge_gramm || ''}
           onChange={(e) => setFormData({ ...formData, menge_gramm: Number(e.target.value) })}
           error={errors.menge_gramm}
-          suffix="g"
+          endIcon="g"
           hint={`Erwartet: ${expectedYield}g (±5%)`}
         />
         {formData.menge_gramm > 0 && (
@@ -128,7 +128,7 @@ export function HarvestForm({ batch, onSubmit, onCancel, loading = false }: Harv
           value={formData.verlust_gramm || ''}
           onChange={(e) => setFormData({ ...formData, verlust_gramm: Number(e.target.value) })}
           error={errors.verlust_gramm}
-          suffix="g"
+          endIcon="g"
         />
         {formData.verlust_gramm > 0 && (
           <p className="text-sm text-gray-500 mt-1">({lossPercent}% Verlust)</p>
@@ -144,16 +144,14 @@ export function HarvestForm({ batch, onSubmit, onCancel, loading = false }: Harv
               key={rating}
               type="button"
               onClick={() => setFormData({ ...formData, qualitaet_note: rating })}
-              className={`flex-1 p-3 rounded-lg border-2 transition-colors ${
-                formData.qualitaet_note === rating
-                  ? 'border-minga-500 bg-minga-50'
-                  : 'border-gray-200 hover:border-gray-300'
-              }`}
+              className={`flex-1 p-3 rounded-lg border-2 transition-colors ${formData.qualitaet_note === rating
+                ? 'border-minga-500 bg-minga-50'
+                : 'border-gray-200 hover:border-gray-300'
+                }`}
             >
               <Star
-                className={`w-5 h-5 mx-auto ${
-                  formData.qualitaet_note >= rating ? 'text-amber-400 fill-amber-400' : 'text-gray-300'
-                }`}
+                className={`w-5 h-5 mx-auto ${formData.qualitaet_note >= rating ? 'text-amber-400 fill-amber-400' : 'text-gray-300'
+                  }`}
               />
               <span className="text-xs text-gray-600 mt-1 block">{rating}</span>
             </button>

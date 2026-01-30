@@ -1,10 +1,9 @@
-import { Outlet, NavLink, useLocation } from 'react-router-dom';
+import { Outlet, NavLink } from 'react-router-dom';
 import {
   LayoutDashboard,
   Sprout,
   Layers,
   Scissors,
-  ShoppingCart,
   Users,
   FileText,
   RefreshCw,
@@ -13,7 +12,6 @@ import {
   BarChart3,
   Settings,
   UserCog,
-  Package,
   Menu,
   X,
   LogOut,
@@ -198,7 +196,7 @@ export default function Layout() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [user, setUser] = useState<User>(mockUser);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
-  const location = useLocation();
+
 
   // Filter navigation based on user role
   const filteredNavigation = navigationSections
@@ -228,12 +226,11 @@ export default function Layout() {
 
         {/* Sidebar */}
         <aside
-          className={`fixed inset-y-0 left-0 z-50 w-64 bg-white border-r border-gray-200 transform transition-transform duration-200 lg:translate-x-0 ${
-            sidebarOpen ? 'translate-x-0' : '-translate-x-full'
-          }`}
+          className={`fixed inset-y-0 left-0 z-50 w-64 bg-white border-r border-gray-200 transform transition-transform duration-200 lg:translate-x-0 flex flex-col ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'
+            }`}
         >
           {/* Logo */}
-          <div className="flex items-center justify-between h-16 px-6 border-b border-gray-200">
+          <div className="flex items-center justify-between h-16 px-6 border-b border-gray-200 flex-shrink-0">
             <NavLink to="/dashboard" className="flex items-center gap-3">
               <div className="w-8 h-8 bg-minga-500 rounded-lg flex items-center justify-center">
                 <Sprout className="w-5 h-5 text-white" />
@@ -275,7 +272,7 @@ export default function Layout() {
           </nav>
 
           {/* User Info */}
-          <div className="border-t border-gray-200 p-4">
+          <div className="border-t border-gray-200 p-4 flex-shrink-0">
             <div className="relative">
               <button
                 onClick={() => setUserMenuOpen(!userMenuOpen)}
@@ -292,9 +289,8 @@ export default function Layout() {
                   <p className="text-xs text-gray-500">{roleDisplayNames[user.role]}</p>
                 </div>
                 <ChevronDown
-                  className={`w-4 h-4 text-gray-400 transition-transform ${
-                    userMenuOpen ? 'rotate-180' : ''
-                  }`}
+                  className={`w-4 h-4 text-gray-400 transition-transform ${userMenuOpen ? 'rotate-180' : ''
+                    }`}
                 />
               </button>
 
@@ -313,9 +309,8 @@ export default function Layout() {
                         setUser({ ...user, role });
                         setUserMenuOpen(false);
                       }}
-                      className={`w-full text-left px-3 py-2 text-sm hover:bg-gray-50 ${
-                        user.role === role ? 'text-minga-600 font-medium' : 'text-gray-700'
-                      }`}
+                      className={`w-full text-left px-3 py-2 text-sm hover:bg-gray-50 ${user.role === role ? 'text-minga-600 font-medium' : 'text-gray-700'
+                        }`}
                     >
                       {roleDisplayNames[role]}
                       {user.role === role && ' ✓'}

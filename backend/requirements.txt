@@ -19,6 +19,7 @@ httpx==0.26.0
 
 # Background Tasks
 celery==5.3.6
+email-validator
 redis==5.0.1
 
 # Utilities
@@ -32,3 +33,11 @@ httpx==0.26.0
 
 # Linting
 ruff==0.1.13
+
+# PDF Generation
+reportlab==4.0.9
+
+# Data Science / Forecasting
+pandas==2.2.0
+scikit-learn==1.4.0
+numpy==1.26.3

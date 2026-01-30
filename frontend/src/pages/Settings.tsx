@@ -1,5 +1,5 @@
 import { PageHeader } from '../components/common/Layout';
-import { Progress, Input, Select, SelectOption } from '../components/ui';
+import { CapacityIndicator, Input, Select, SelectOption } from '../components/ui';
 import { Database, Server, Key, Bell } from 'lucide-react';
 
 const forecastModelOptions: SelectOption[] = [
@@ -53,19 +53,17 @@ export default function Settings() {
             <h3 className="card-title">Kapazitäten</h3>
           </div>
           <div className="card-body space-y-4">
-            <Progress
+            <CapacityIndicator
               label="Regalplätze"
-              value={42}
+              current={42}
               max={50}
-              showValue
-              color="primary"
+              showValues
             />
-            <Progress
+            <CapacityIndicator
               label="Trays verfügbar"
-              value={150}
+              current={150}
               max={200}
-              showValue
-              color="info"
+              showValues
             />
           </div>
         </div>

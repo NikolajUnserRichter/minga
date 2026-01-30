@@ -70,6 +70,9 @@ export const productionApi = {
 
   getDashboard: () =>
     api.get<DashboardSummary>('/production/dashboard/summary').then(r => r.data),
+
+  getPackagingPlan: (targetDate: string) =>
+    api.get<{ target_date: string; items: any[] }>(`/production/packaging-plan`, { params: { target_date: targetDate } }).then(r => r.data),
 }
 
 // Sales API
@@ -82,6 +85,12 @@ export const salesApi = {
 
   createCustomer: (data: Partial<Customer>) =>
     api.post<Customer>('/sales/customers', data).then(r => r.data),
+
+  updateCustomer: (id: string, data: Partial<Customer>) =>
+    api.patch<Customer>(`/sales/customers/${id}`, data).then(r => r.data),
+
+  deleteCustomer: (id: string) =>
+    api.delete(`/sales/customers/${id}`),
 
   listOrders: (params?: { status?: string; kunde_id?: string }) =>
     api.get<ListResponse<Order>>('/sales/orders', { params }).then(r => r.data),
@@ -104,6 +113,9 @@ export const salesApi = {
 
   updateOrderStatus: (id: string, status: string) =>
     api.post<Order>(`/sales/orders/${id}/status/${status}`).then(r => r.data),
+
+  runDailySubscriptions: () =>
+    api.post('/sales/subscriptions/process-today').then(r => r.data),
 }
 
 // Forecasting API
@@ -314,7 +326,22 @@ export const invoicesApi = {
 
   downloadDatev: (data: { from_date: string; to_date: string; include_payments?: boolean }) =>
     api.post('/invoices/datev-export/download', data, { responseType: 'blob' }),
+
+  downloadPdf: (id: string) =>
+    api.get(`/invoices/${id}/pdf`, { responseType: 'blob' }),
 }
+
+// ... existing code ...
+
+// Production API extensions
+// Note: I will append this to the existing productionApi object def, 
+// but since I can't easily insert into the middle of the file with search/replace reliably if similar lines exist,
+// I'll check where productionApi ends. It ends around line 73.
+// I will edit the productionApi block directly.
+
+// Sales API extensions
+// salesApi ends around line 107.
+
 
 // Inventory API
 export const inventoryApi = {

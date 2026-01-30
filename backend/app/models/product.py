@@ -247,6 +247,10 @@ class Product(Base):
     min_stock_level: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("0"))
     reorder_point: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("0"))
 
+    # Pfand / Deposit
+    is_deposit: Mapped[bool] = mapped_column(Boolean, default=False)
+    deposit_value: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 2))
+
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(

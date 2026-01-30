@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Seed } from '../../types';
-import { Input, Select, DatePicker, Button, Alert, SelectOption } from '../ui';
-import { Sprout, Calendar, Layers, MapPin, Scale } from 'lucide-react';
+import { Input, Select, DatePicker, Button, SelectOption } from '../ui';
+import { Sprout, Scale } from 'lucide-react';
 
 interface SowingFormProps {
   seeds: Seed[];
@@ -59,11 +59,11 @@ export function SowingForm({
 
   const harvestWindow = selectedSeed
     ? {
-        min: addDays(formData.aussaat_datum, selectedSeed.keimdauer_tage + selectedSeed.erntefenster_min_tage),
-        optimal: addDays(formData.aussaat_datum, selectedSeed.keimdauer_tage + selectedSeed.erntefenster_optimal_tage),
-        max: addDays(formData.aussaat_datum, selectedSeed.keimdauer_tage + selectedSeed.erntefenster_max_tage),
-        keimungEnds: addDays(formData.aussaat_datum, selectedSeed.keimdauer_tage),
-      }
+      min: addDays(formData.aussaat_datum, selectedSeed.keimdauer_tage + selectedSeed.erntefenster_min_tage),
+      optimal: addDays(formData.aussaat_datum, selectedSeed.keimdauer_tage + selectedSeed.erntefenster_optimal_tage),
+      max: addDays(formData.aussaat_datum, selectedSeed.keimdauer_tage + selectedSeed.erntefenster_max_tage),
+      keimungEnds: addDays(formData.aussaat_datum, selectedSeed.keimdauer_tage),
+    }
     : null;
 
   const hasEnoughSeed = selectedBatch ? selectedBatch.verbleibend_gramm >= seedRequired : true;
