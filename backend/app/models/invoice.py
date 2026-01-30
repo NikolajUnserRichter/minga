@@ -155,7 +155,7 @@ class Invoice(Base):
         )
 
         # Pfand-Summe berechnen (Brutto)
-        deposit_sum = sum(line.gross_total for line in self.lines if line.is_deposit)
+        deposit_sum = sum((line.gross_total for line in self.lines if line.is_deposit), Decimal("0.00"))
         self.total_deposit = deposit_sum.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
     @property

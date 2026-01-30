@@ -15,7 +15,9 @@ pydantic-settings==2.1.0
 # Authentication
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
+passlib[bcrypt]==1.7.4
 httpx==0.26.0
+python-keycloak==3.6.0
 
 # Background Tasks
 celery==5.3.6

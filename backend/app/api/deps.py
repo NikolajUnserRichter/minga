@@ -7,20 +7,37 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 
+from fastapi.security import OAuth2PasswordBearer
+from app.core.security import verify_token
 # Type Alias für DB Session Dependency
 DBSession = Annotated[Session, Depends(get_db)]
 
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token") # URL is just for Swagger UI hint
 
-async def get_current_user():
+async def get_current_user(token: Annotated[str, Depends(oauth2_scheme)]):
     """
     Dependency für authentifizierten Benutzer.
-    TODO: Keycloak Integration implementieren
+    Verifiziert das JWT Token gegen Keycloak.
     """
-    # Placeholder für Keycloak-Integration
+    payload = verify_token(token)
+    
+    # Extrahiere Rollen aus Keycloak Token
+    # Struktur: realm_access: { roles: [...] } oder resource_access: { client: { roles: [...] } }
+    roles = []
+    
+    # Realm Roles
+    if "realm_access" in payload and "roles" in payload["realm_access"]:
+        roles.extend(payload["realm_access"]["roles"])
+        
+    # Resource (Client) Roles - optional, falls wir client-spezifische Rollen nutzen
+    # Für Einfachheit nehmen wir erstmal Realm Roles
+    
     return {
-        "id": "00000000-0000-0000-0000-000000000001",
-        "username": "admin",
-        "roles": ["admin", "production_planner"]
+        "id": payload.get("sub"), # Keycloak User ID
+        "username": payload.get("preferred_username"),
+        "email": payload.get("email"),
+        "roles": roles,
+        "raw": payload
     }
 
 

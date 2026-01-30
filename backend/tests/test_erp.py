@@ -41,9 +41,24 @@ app.dependency_overrides[get_db] = override_get_db
 @pytest.fixture(scope="function")
 def client():
     """Test Client mit frischer Datenbank"""
+    # Auth Override
+    from app.api.deps import get_current_user
+    async def override_auth():
+        return {
+            "id": "123e4567-e89b-12d3-a456-426614174000",
+            "username": "testuser",
+            "email": "test@example.com",
+            "roles": ["admin", "production_planner"]
+        }
+    
+    app.dependency_overrides[get_current_user] = override_auth
+
     Base.metadata.create_all(bind=engine)
     yield TestClient(app)
     Base.metadata.drop_all(bind=engine)
+    
+    # Cleanup
+    app.dependency_overrides.pop(get_current_user, None)
 
 
 @pytest.fixture
