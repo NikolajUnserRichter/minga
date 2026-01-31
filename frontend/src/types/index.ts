@@ -200,18 +200,57 @@ export interface ForecastAccuracyMetrics {
 }
 
 // Subscription
+export type SubscriptionInterval = 'TAEGLICH' | 'WOECHENTLICH' | 'ZWEIWOECHENTLICH' | 'MONATLICH'
+
 export interface Subscription {
   id: string
   kunde_id: string
   seed_id: string
   menge: number
   einheit: string
-  intervall: 'TAEGLICH' | 'WOECHENTLICH'
-  liefertage: number[]
+  intervall: SubscriptionInterval
+  liefertage: number[] | null
   gueltig_von: string
   gueltig_bis: string | null
   aktiv: boolean
+  ist_aktiv: boolean
+  kunde_name?: string
+  seed_name?: string
   created_at: string
+  updated_at: string
+}
+
+// Accuracy Reports
+export interface AccuracySummary {
+  durchschnittliche_mape: number
+  median_mape: number
+  beste_genauigkeit: number
+  schlechteste_genauigkeit: number
+  anzahl_forecasts: number
+  anzahl_mit_anpassung: number
+  verbesserung_durch_anpassung: number
+  zeitraum: {
+    von: string
+    bis: string
+  }
+}
+
+export interface AccuracyDetail {
+  id: string
+  forecast_id: string
+  seed_id: string
+  seed_name: string
+  datum: string
+  prognostizierte_menge: number
+  effektive_menge: number
+  ist_menge: number
+  abweichung_absolut: number
+  abweichung_prozent: number
+  mape: number
+  hatte_manuelle_anpassung: boolean
+  urspruengliche_prognose: number | null
+  abweichung_ohne_anpassung: number | null
+  ausgewertet_am: string
 }
 
 // ============== ERP TYPES ==============

@@ -14,6 +14,9 @@ import Invoices from './pages/Invoices';
 import Inventory from './pages/Inventory';
 import Analytics from './pages/Analytics';
 import Harvests from './pages/Harvests';
+import Users from './pages/Users';
+import Abonnements from './pages/Abonnements';
+import AccuracyReports from './pages/AccuracyReports';
 
 function App() {
   return (
@@ -36,18 +39,18 @@ function App() {
           {/* Vertrieb */}
           <Route path="customers" element={<Customers />} />
           <Route path="orders" element={<Orders />} />
-          <Route path="subscriptions" element={<NotImplemented title="Abonnements" />} />
+          <Route path="subscriptions" element={<Abonnements />} />
           <Route path="invoices" element={<Invoices />} />
           <Route path="sales" element={<Sales />} />
 
           {/* Forecasting */}
           <Route path="forecasting" element={<Forecasting />} />
           <Route path="suggestions" element={<ProductionSuggestions />} />
-          <Route path="accuracy" element={<NotImplemented title="Accuracy Reports" />} />
+          <Route path="accuracy" element={<AccuracyReports />} />
 
           {/* Admin */}
           <Route path="settings" element={<Settings />} />
-          <Route path="users" element={<NotImplemented title="Benutzerverwaltung" />} />
+          <Route path="users" element={<Users />} />
 
           {/* Catch all */}
           <Route path="*" element={<NotFound />} />

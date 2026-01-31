@@ -28,12 +28,21 @@ export function ThemeProvider({ children }: ThemeProviderProps) {
         if (typeof window !== 'undefined') {
             const stored = localStorage.getItem('minga-theme');
             if (stored === 'dark' || stored === 'light') {
+                // Apply the class immediately during initialization to prevent race condition
+                if (stored === 'dark') {
+                    document.documentElement.classList.add('dark');
+                } else {
+                    document.documentElement.classList.remove('dark');
+                }
                 return stored;
             }
             // Default to system preference
             if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
+                document.documentElement.classList.add('dark');
                 return 'dark';
             }
+            // Ensure dark class is removed for light mode
+            document.documentElement.classList.remove('dark');
         }
         return 'light';
     });

@@ -7,7 +7,7 @@ import type {
   InventoryLocation, SeedInventory, FinishedGoodsInventory,
   PackagingInventory, InventoryMovement, StockOverview, TraceabilityInfo,
   ArticleType, LocationType, TraceabilityChain, Capacity,
-  RevenueStats, YieldStats
+  RevenueStats, YieldStats, Subscription, AccuracySummary, AccuracyDetail
 } from '../types'
 
 import keycloak from './auth';
@@ -470,6 +470,55 @@ export const analyticsApi = {
     api.get<YieldStats[]>('/analytics/yield').then(r => r.data),
 }
 
+// Subscriptions API
+export const subscriptionsApi = {
+  list: (params?: { kunde_id?: string; aktiv?: boolean }) =>
+    api.get<{ items: Subscription[]; total: number }>('/sales/subscriptions', { params }).then(r => r.data),
+
+  get: (id: string) =>
+    api.get<Subscription>(`/sales/subscriptions/${id}`).then(r => r.data),
+
+  create: (data: {
+    kunde_id: string
+    seed_id: string
+    menge: number
+    einheit: string
+    intervall: 'TAEGLICH' | 'WOECHENTLICH' | 'ZWEIWOECHENTLICH' | 'MONATLICH'
+    liefertage?: number[]
+    gueltig_von: string
+    gueltig_bis?: string
+  }) =>
+    api.post<Subscription>('/sales/subscriptions', data).then(r => r.data),
+
+  update: (id: string, data: Partial<{
+    menge: number
+    einheit: string
+    intervall: 'TAEGLICH' | 'WOECHENTLICH' | 'ZWEIWOECHENTLICH' | 'MONATLICH'
+    liefertage: number[]
+    gueltig_bis: string
+    aktiv: boolean
+  }>) =>
+    api.patch<Subscription>(`/sales/subscriptions/${id}`, data).then(r => r.data),
+
+  delete: (id: string) =>
+    api.delete(`/sales/subscriptions/${id}`),
+
+  processToday: () =>
+    api.post('/sales/subscriptions/process-today').then(r => r.data),
+}
+
+// Accuracy Reports API
+export const accuracyApi = {
+  getSummary: (params?: { von_datum?: string; bis_datum?: string }) =>
+    api.get<AccuracySummary>('/forecasting/forecasts/accuracy/summary', { params }).then(r => r.data),
+
+  getDetails: (params?: { von_datum?: string; bis_datum?: string; seed_id?: string }) =>
+    api.get<{ items: AccuracyDetail[]; total: number }>('/forecasting/accuracy/details', { params }).then(r => r.data),
+
+  getByForecast: (forecastId: string) =>
+    api.get<AccuracyDetail>(`/forecasting/accuracy/${forecastId}`).then(r => r.data),
+}
+
 // Capacity API
 export const capacityApi = {
   list: () =>
@@ -489,6 +538,112 @@ export const capacityApi = {
 
   getSummary: () =>
     api.get('/capacity/summary/overview').then(r => r.data),
+}
+
+// ============== Users API (Mock Data) ==============
+import type { User, UserRole } from '../types'
+
+// Mock users with localStorage persistence
+const MOCK_USERS_KEY = 'minga-mock-users'
+
+const defaultMockUsers: User[] = [
+  { id: '1', name: 'Max Mustermann', email: 'max@minga-greens.de', role: 'ADMIN' },
+  { id: '2', name: 'Anna Schmidt', email: 'anna@minga-greens.de', role: 'SALES' },
+  { id: '3', name: 'Peter Müller', email: 'peter@minga-greens.de', role: 'PRODUCTION_PLANNER' },
+  { id: '4', name: 'Lisa Weber', email: 'lisa@minga-greens.de', role: 'PRODUCTION_STAFF' },
+  { id: '5', name: 'Thomas Becker', email: 'thomas@minga-greens.de', role: 'ACCOUNTING' },
+]
+
+function getMockUsers(): User[] {
+  const stored = localStorage.getItem(MOCK_USERS_KEY)
+  if (stored) {
+    return JSON.parse(stored)
+  }
+  localStorage.setItem(MOCK_USERS_KEY, JSON.stringify(defaultMockUsers))
+  return defaultMockUsers
+}
+
+function saveMockUsers(users: User[]): void {
+  localStorage.setItem(MOCK_USERS_KEY, JSON.stringify(users))
+}
+
+export const usersApi = {
+  list: (params?: { role?: UserRole; search?: string }): Promise<{ items: User[]; total: number }> => {
+    return new Promise((resolve) => {
+      setTimeout(() => {
+        let users = getMockUsers()
+        if (params?.role) {
+          users = users.filter(u => u.role === params.role)
+        }
+        if (params?.search) {
+          const search = params.search.toLowerCase()
+          users = users.filter(u =>
+            u.name.toLowerCase().includes(search) ||
+            u.email.toLowerCase().includes(search)
+          )
+        }
+        resolve({ items: users, total: users.length })
+      }, 200)
+    })
+  },
+
+  get: (id: string): Promise<User> => {
+    return new Promise((resolve, reject) => {
+      setTimeout(() => {
+        const users = getMockUsers()
+        const user = users.find(u => u.id === id)
+        if (user) {
+          resolve(user)
+        } else {
+          reject(new Error('User not found'))
+        }
+      }, 100)
+    })
+  },
+
+  create: (data: Partial<User>): Promise<User> => {
+    return new Promise((resolve) => {
+      setTimeout(() => {
+        const users = getMockUsers()
+        const newUser: User = {
+          id: String(Date.now()),
+          name: data.name || '',
+          email: data.email || '',
+          role: data.role || 'PRODUCTION_STAFF',
+          avatar: data.avatar,
+        }
+        users.push(newUser)
+        saveMockUsers(users)
+        resolve(newUser)
+      }, 200)
+    })
+  },
+
+  update: (id: string, data: Partial<User>): Promise<User> => {
+    return new Promise((resolve, reject) => {
+      setTimeout(() => {
+        const users = getMockUsers()
+        const index = users.findIndex(u => u.id === id)
+        if (index !== -1) {
+          users[index] = { ...users[index], ...data }
+          saveMockUsers(users)
+          resolve(users[index])
+        } else {
+          reject(new Error('User not found'))
+        }
+      }, 200)
+    })
+  },
+
+  delete: (id: string): Promise<void> => {
+    return new Promise((resolve) => {
+      setTimeout(() => {
+        const users = getMockUsers().filter(u => u.id !== id)
+        saveMockUsers(users)
+        resolve()
+      }, 200)
+    })
+  },
 }
 
 export default api

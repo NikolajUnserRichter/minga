@@ -654,6 +654,67 @@ async def get_forecast_accuracy_summary(
     )
 
 
+@router.get("/accuracy/details")
+async def get_forecast_accuracy_details(
+    db: DBSession,
+    pagination: Pagination,
+    von_datum: Optional[date] = None,
+    bis_datum: Optional[date] = None,
+    seed_id: Optional[UUID] = None
+):
+    """
+    Detaillierte Forecast-Genauigkeit pro Forecast.
+
+    Gibt alle evaluierten Forecasts mit Ist-Werten zurück.
+    """
+    if not von_datum:
+        von_datum = date.today() - timedelta(days=30)
+    if not bis_datum:
+        bis_datum = date.today()
+
+    query = (
+        select(ForecastAccuracy)
+        .join(Forecast)
+        .options(joinedload(ForecastAccuracy.forecast).joinedload(Forecast.seed))
+        .where(Forecast.datum.between(von_datum, bis_datum))
+    )
+
+    if seed_id:
+        query = query.where(Forecast.seed_id == seed_id)
+
+    # Total Count
+    count_query = select(func.count()).select_from(query.subquery())
+    total = db.execute(count_query).scalar() or 0
+
+    # Paginated Results
+    query = query.order_by(Forecast.datum.desc())
+    query = query.offset(pagination.offset).limit(pagination.page_size)
+    accuracies = db.execute(query).scalars().unique().all()
+
+    items = []
+    for acc in accuracies:
+        fc = acc.forecast
+        items.append({
+            "id": str(acc.id),
+            "forecast_id": str(acc.forecast_id),
+            "seed_id": str(fc.seed_id) if fc else None,
+            "seed_name": fc.seed.name if fc and fc.seed else None,
+            "datum": fc.datum.isoformat() if fc else None,
+            "prognostizierte_menge": float(fc.prognostizierte_menge) if fc else 0,
+            "effektive_menge": float(fc.effektive_menge) if fc else 0,
+            "ist_menge": float(acc.ist_menge),
+            "abweichung_absolut": float(acc.abweichung_absolut) if acc.abweichung_absolut else 0,
+            "abweichung_prozent": float(acc.abweichung_prozent) if acc.abweichung_prozent else 0,
+            "mape": float(acc.mape) if acc.mape else 0,
+            "hatte_manuelle_anpassung": acc.hatte_manuelle_anpassung,
+            "urspruengliche_prognose": float(acc.urspruengliche_prognose) if acc.urspruengliche_prognose else None,
+            "abweichung_ohne_anpassung": float(acc.abweichung_ohne_anpassung) if acc.abweichung_ohne_anpassung else None,
+            "ausgewertet_am": acc.ausgewertet_am.isoformat() if acc.ausgewertet_am else None,
+        })
+
+    return {"items": items, "total": total}
+
+
 # ============== Production Suggestions ==============
 
 @router.get("/production-suggestions", response_model=ProductionSuggestionListResponse)
