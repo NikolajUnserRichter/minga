@@ -6,6 +6,7 @@ import { PageHeader, FilterBar } from '../components/common/Layout';
 import { GrowBatchCard } from '../components/domain/GrowBatchCard';
 import { SowingForm } from '../components/domain/SowingForm';
 import { HarvestForm } from '../components/domain/HarvestForm';
+import { KanbanBoard } from '../components/domain/KanbanBoard';
 import {
   Select,
   Modal,
@@ -15,7 +16,7 @@ import {
   SelectOption,
   Input,
 } from '../components/ui';
-import { Plus, Sprout, Search, LayoutGrid, List } from 'lucide-react';
+import { Plus, Sprout, Search, LayoutGrid, List, Columns3 } from 'lucide-react';
 import type { GrowBatch, GrowBatchStatus, Seed } from '../types';
 
 const statusOptions: SelectOption[] = [
@@ -34,7 +35,7 @@ export default function Production() {
   const [statusFilter, setStatusFilter] = useState<string>('');
   const [showErntereif, setShowErntereif] = useState(false);
   const [search, setSearch] = useState('');
-  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
+  const [viewMode, setViewMode] = useState<'grid' | 'list' | 'kanban'>('grid');
   const [activeTab, setActiveTab] = useState('all');
   const [isCreating, setIsCreating] = useState(false);
   const [harvestingBatch, setHarvestingBatch] = useState<GrowBatch | null>(null);
@@ -254,14 +255,23 @@ export default function Production() {
               <button
                 className={`p-2 ${viewMode === 'grid' ? 'bg-minga-100 text-minga-600' : 'bg-white text-gray-400'}`}
                 onClick={() => setViewMode('grid')}
+                title="Kachelansicht"
               >
                 <LayoutGrid className="w-4 h-4" />
               </button>
               <button
                 className={`p-2 ${viewMode === 'list' ? 'bg-minga-100 text-minga-600' : 'bg-white text-gray-400'}`}
                 onClick={() => setViewMode('list')}
+                title="Listenansicht"
               >
                 <List className="w-4 h-4" />
+              </button>
+              <button
+                className={`p-2 ${viewMode === 'kanban' ? 'bg-minga-100 text-minga-600' : 'bg-white text-gray-400'}`}
+                onClick={() => setViewMode('kanban')}
+                title="Kanban-Board"
+              >
+                <Columns3 className="w-4 h-4" />
               </button>
             </div>
           </FilterBar>
@@ -279,6 +289,12 @@ export default function Production() {
                   </button>
                 )
               }
+            />
+          ) : viewMode === 'kanban' ? (
+            <KanbanBoard
+              batches={filteredBatches}
+              onStatusChange={(id, status) => updateStatusMutation.mutate({ id, status })}
+              onHarvest={(batch) => setHarvestingBatch(batch)}
             />
           ) : viewMode === 'grid' ? (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
