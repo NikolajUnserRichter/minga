@@ -783,6 +783,9 @@ function ReceiveForm({
     location_id: '',
     supplier: '',
     mhd: '',
+    lieferdatum: new Date().toISOString().split('T')[0],
+    lieferschein_nr: '',
+    kontrollstelle: '',
     purchase_price: 0,
     is_organic: false,
   });
@@ -796,11 +799,19 @@ function ReceiveForm({
         await inventoryApi.receiveSeedBatch({
           ...formData,
           mhd: formData.mhd || undefined,
+          lieferdatum: formData.lieferdatum || undefined,
+          lieferschein_nr: formData.lieferschein_nr || undefined,
+          kontrollstelle: formData.is_organic ? (formData.kontrollstelle || undefined) : undefined,
         });
+        toast.success('Wareneingang erfasst (inkl. Saatgut-Charge)');
+      } else if (articleType === 'VERPACKUNG') {
+        toast.error('Wareneingang Verpackung ist noch nicht implementiert');
+        return;
       }
       onSubmit();
-    } catch (error) {
-      toast.error('Fehler beim Erfassen');
+    } catch (error: any) {
+      const detail = error?.response?.data?.detail || 'Fehler beim Erfassen';
+      toast.error(detail);
     } finally {
       setLoading(false);
     }
@@ -882,6 +893,21 @@ function ReceiveForm({
 
           <div className="grid grid-cols-2 gap-4">
             <Input
+              label="Lieferdatum"
+              type="date"
+              value={formData.lieferdatum}
+              onChange={(e) => setFormData({ ...formData, lieferdatum: e.target.value })}
+            />
+            <Input
+              label="Lieferschein-Nr."
+              value={formData.lieferschein_nr}
+              onChange={(e) => setFormData({ ...formData, lieferschein_nr: e.target.value })}
+              placeholder="z.B. LS-2026-0123"
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <Input
               label="Lieferant"
               value={formData.supplier}
               onChange={(e) => setFormData({ ...formData, supplier: e.target.value })}
@@ -897,15 +923,25 @@ function ReceiveForm({
             />
           </div>
 
-          <label className="flex items-center gap-2">
-            <input
-              type="checkbox"
-              checked={formData.is_organic}
-              onChange={(e) => setFormData({ ...formData, is_organic: e.target.checked })}
-              className="w-4 h-4 rounded border-gray-300 dark:border-gray-600 text-minga-600 dark:text-minga-400 focus:ring-minga-500"
-            />
-            <span className="text-sm text-gray-700 dark:text-gray-300">Bio-zertifiziert</span>
-          </label>
+          <div className="space-y-2">
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={formData.is_organic}
+                onChange={(e) => setFormData({ ...formData, is_organic: e.target.checked })}
+                className="w-4 h-4 rounded border-gray-300 dark:border-gray-600 text-minga-600 dark:text-minga-400 focus:ring-minga-500"
+              />
+              <span className="text-sm text-gray-700 dark:text-gray-300">BIO-zertifiziert (für Kontrollstelle dokumentieren)</span>
+            </label>
+            {formData.is_organic && (
+              <Input
+                label="Kontrollstelle"
+                value={formData.kontrollstelle}
+                onChange={(e) => setFormData({ ...formData, kontrollstelle: e.target.value })}
+                placeholder="z.B. DE-ÖKO-006"
+              />
+            )}
+          </div>
         </>
       )}
 

@@ -466,6 +466,9 @@ export const inventoryApi = {
     location_id: string
     supplier?: string
     mhd?: string
+    lieferdatum?: string
+    lieferschein_nr?: string
+    kontrollstelle?: string
     purchase_price?: number
     is_organic?: boolean
     organic_certification?: string

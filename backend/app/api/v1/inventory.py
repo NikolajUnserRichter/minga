@@ -137,12 +137,17 @@ def receive_seed_batch(
     location_id: UUID,
     supplier: Optional[str] = None,
     mhd: Optional[date] = None,
+    lieferdatum: Optional[date] = None,
+    lieferschein_nr: Optional[str] = None,
+    kontrollstelle: Optional[str] = None,
     purchase_price: Optional[Decimal] = None,
     is_organic: bool = False,
     organic_certification: Optional[str] = None,
     notes: Optional[str] = None,
 ):
-    """Erfasst einen neuen Saatgut-Wareneingang."""
+    """Erfasst einen neuen Saatgut-Wareneingang inkl. SeedBatch (Traceability)."""
+    from app.models.seed import SeedBatch
+
     service = InventoryService(db)
     try:
         inventory = service.receive_seed_batch(
@@ -151,11 +156,27 @@ def receive_seed_batch(
             quantity_kg=quantity,
             location_id=location_id,
             supplier_name=supplier,
+            received_date=lieferdatum,
             best_before_date=mhd,
             purchase_price_per_kg=purchase_price,
             is_organic=is_organic,
             organic_certificate=organic_certification,
         )
+
+        # Spiegel-SeedBatch für BIO-/Lieferschein-/Kontrollstellen-Doku.
+        # Mengen werden in g geführt (SeedBatch.menge_gramm). 1 kg = 1000 g.
+        seed_batch = SeedBatch(
+            seed_id=seed_id,
+            charge_nummer=batch_number,
+            menge_gramm=quantity * Decimal("1000"),
+            verbleibend_gramm=quantity * Decimal("1000"),
+            mhd=mhd,
+            lieferdatum=lieferdatum,
+            lieferschein_nr=lieferschein_nr,
+            bio_zertifiziert=is_organic,
+            kontrollstelle=kontrollstelle,
+        )
+        db.add(seed_batch)
         # Note: service.receive_seed_batch signature in 1015 has explicit args.
         # Check argument names carefully!
         # Step 1015: supplier_name (not supplier), best_before_date (not mhd),
