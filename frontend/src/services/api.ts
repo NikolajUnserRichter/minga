@@ -57,6 +57,23 @@ export const seedsApi = {
 
   delete: (id: string) =>
     api.delete(`/seeds/${id}`),
+
+  // Batches per Seed (Saatgutchargen)
+  listBatches: (seedId: string) =>
+    api.get<Array<{
+      id: string
+      seed_id: string
+      charge_nummer: string
+      menge_gramm: number
+      verbleibend_gramm: number
+      mhd: string | null
+      lieferdatum: string | null
+      in_production_at: string | null
+      lieferschein_nr: string | null
+      bio_zertifiziert: boolean
+      kontrollstelle: string | null
+      created_at: string
+    }>>(`/seeds/${seedId}/batches`).then(r => r.data),
 }
 
 // Production API

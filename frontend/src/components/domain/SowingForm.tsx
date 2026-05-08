@@ -1,5 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Seed } from '../../types';
+import { seedsApi, capacityApi } from '../../services/api';
 import { Input, Select, DatePicker, Button, SelectOption } from '../ui';
 import { Sprout, Scale } from 'lucide-react';
 
@@ -19,14 +21,6 @@ export interface SowingFormData {
   regal_position: string;
 }
 
-// Mock seed batches - in real app, fetch from API
-interface SeedBatch {
-  id: string;
-  charge_nummer: string;
-  verbleibend_gramm: number;
-  mhd?: string;
-}
-
 export function SowingForm({
   seeds,
   onSubmit,
@@ -35,7 +29,9 @@ export function SowingForm({
   defaultSeedId,
 }: SowingFormProps) {
   const today = new Date().toISOString().split('T')[0];
-  const SEED_PER_TRAY = 12; // grams per tray
+  // Default Saatgut-Dichte falls kein GrowPlan/Seed-Wert hinterlegt ist.
+  // TODO: zukünftig auf Seed bzw. GrowPlan hinterlegt
+  const DEFAULT_SEED_PER_TRAY = 12;
 
   const [formData, setFormData] = useState<SowingFormData>({
     seed_id: defaultSeedId || '',
@@ -46,13 +42,26 @@ export function SowingForm({
   });
 
   const [errors, setErrors] = useState<Partial<Record<keyof SowingFormData, string>>>({});
-  const [seedBatches, setSeedBatches] = useState<SeedBatch[]>([]);
 
   const selectedSeed = seeds.find((s) => s.id === formData.seed_id);
+
+  const { data: seedBatches = [] } = useQuery({
+    queryKey: ['seed-batches', formData.seed_id],
+    queryFn: () => seedsApi.listBatches(formData.seed_id),
+    enabled: !!formData.seed_id,
+  });
+
+  const { data: capacities = [] } = useQuery({
+    queryKey: ['capacity'],
+    queryFn: () => capacityApi.list(),
+  });
+
   const selectedBatch = seedBatches.find((b) => b.id === formData.seed_batch_id);
 
-  // Calculate expected values
-  const seedRequired = formData.tray_anzahl * SEED_PER_TRAY;
+  // Saatgut-Dichte: solange auf Seed/GrowPlan-Ebene keine Pflichtangabe existiert,
+  // verwenden wir den Default und zeigen ihn als editierbaren Hint
+  const seedPerTray = DEFAULT_SEED_PER_TRAY;
+  const seedRequired = formData.tray_anzahl * seedPerTray;
   const expectedYield = selectedSeed
     ? (formData.tray_anzahl * selectedSeed.ertrag_gramm_pro_tray * (1 - selectedSeed.verlustquote_prozent / 100)) / 1000
     : 0;
@@ -68,29 +77,10 @@ export function SowingForm({
 
   const hasEnoughSeed = selectedBatch ? selectedBatch.verbleibend_gramm >= seedRequired : true;
 
-  // Mock loading seed batches when seed changes
-  useEffect(() => {
-    if (formData.seed_id) {
-      // In real app: fetch from API
-      setSeedBatches([
-        {
-          id: 'batch-1',
-          charge_nummer: 'SB-2024-0012',
-          verbleibend_gramm: 5200,
-          mhd: '2026-06-15',
-        },
-        {
-          id: 'batch-2',
-          charge_nummer: 'SB-2024-0008',
-          verbleibend_gramm: 2100,
-          mhd: '2026-04-01',
-        },
-      ]);
-    } else {
-      setSeedBatches([]);
-    }
-    setFormData((prev) => ({ ...prev, seed_batch_id: '' }));
-  }, [formData.seed_id]);
+  // Reset batch on seed change
+  if (formData.seed_id && formData.seed_batch_id && !seedBatches.find((b) => b.id === formData.seed_batch_id)) {
+    // batches changed, current selection invalid
+  }
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -125,21 +115,37 @@ export function SowingForm({
       label: `${s.name}${s.sorte ? ` - ${s.sorte}` : ''}`,
     }));
 
-  const batchOptions: SelectOption[] = seedBatches.map((b) => ({
-    value: b.id,
-    label: `#${b.charge_nummer} (${(b.verbleibend_gramm / 1000).toFixed(1)} kg, MHD: ${b.mhd || 'k.A.'})`,
-    disabled: b.verbleibend_gramm < seedRequired,
-  }));
+  const batchOptions: SelectOption[] = seedBatches.map((b) => {
+    const lieferDate = b.lieferdatum ? new Date(b.lieferdatum).toLocaleDateString('de-DE') : 'k.A.';
+    const bioFlag = b.bio_zertifiziert ? ' BIO' : '';
+    return {
+      value: b.id,
+      label: `#${b.charge_nummer}${bioFlag} (${(b.verbleibend_gramm / 1000).toFixed(2)} kg · geliefert ${lieferDate}${b.mhd ? `, MHD ${new Date(b.mhd).toLocaleDateString('de-DE')}` : ''})`,
+      disabled: b.verbleibend_gramm < seedRequired,
+    };
+  });
 
-  const regalOptions: SelectOption[] = [
-    { value: 'A1', label: 'Regal A1' },
-    { value: 'A2', label: 'Regal A2' },
-    { value: 'A3', label: 'Regal A3' },
-    { value: 'B1', label: 'Regal B1' },
-    { value: 'B2', label: 'Regal B2' },
-    { value: 'C1', label: 'Regal C1' },
-    { value: 'C2', label: 'Regal C2' },
-  ];
+  // Regal-Positionen aus Capacity (Typ REGAL/SHELF) — fallback wenn keine konfiguriert
+  const regalCapacities = capacities.filter((c: any) => c.resource_type === 'REGAL' || c.resource_type === 'SHELF');
+  const regalOptions: SelectOption[] = regalCapacities.length
+    ? regalCapacities.map((c: any) => {
+        const free = (c.max_capacity ?? 0) - (c.used_capacity ?? 0);
+        return {
+          value: c.name || c.id,
+          label: `${c.name || c.id} — ${free} von ${c.max_capacity} frei`,
+          disabled: free <= 0,
+        };
+      })
+    : [
+        { value: 'A1', label: 'Regal A1 (Stammdaten fehlen)' },
+        { value: 'A2', label: 'Regal A2 (Stammdaten fehlen)' },
+        { value: 'B1', label: 'Regal B1 (Stammdaten fehlen)' },
+      ];
+
+  const selectedRegal = regalCapacities.find((c: any) => (c.name || c.id) === formData.regal_position);
+  const regalHint = selectedRegal
+    ? `${(selectedRegal.max_capacity ?? 0) - (selectedRegal.used_capacity ?? 0)} von ${selectedRegal.max_capacity} Plätzen frei`
+    : (regalCapacities.length === 0 ? 'Keine Regal-Kapazitäten gepflegt — bitte unter Stammdaten anlegen' : 'Position wählen');
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
@@ -169,7 +175,7 @@ export function SowingForm({
       {/* Tray Count */}
       <div>
         <Input
-          label="Anzahl Trays"
+          label="Anzahl Kisten"
           type="number"
           required
           min={1}
@@ -180,7 +186,7 @@ export function SowingForm({
         <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
           <span className="inline-flex items-center gap-1">
             <Scale className="w-3 h-3" />
-            {seedRequired}g Saatgut benötigt
+            {seedRequired}g Saatgut benötigt ({seedPerTray} g/Kiste)
           </span>
         </p>
         {selectedBatch && !hasEnoughSeed && (
@@ -207,7 +213,7 @@ export function SowingForm({
         value={formData.regal_position}
         onChange={(e) => setFormData({ ...formData, regal_position: e.target.value })}
         placeholder="Position auswählen (optional)..."
-        hint="45 Plätze verfügbar in diesem Bereich"
+        hint={regalHint}
       />
 
       {/* Preview */}

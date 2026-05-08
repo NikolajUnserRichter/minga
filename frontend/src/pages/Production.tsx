@@ -78,6 +78,27 @@ export default function Production() {
     enabled: activeTab === 'PACKAGING',
   });
 
+  const createSowingMutation = useMutation({
+    mutationFn: (data: { seed_id: string; seed_batch_id?: string; tray_anzahl: number; aussaat_datum: string; regal_position?: string }) =>
+      productionApi.createGrowBatch({
+        seed_batch_id: data.seed_batch_id || data.seed_id,
+        tray_anzahl: data.tray_anzahl,
+        aussaat_datum: data.aussaat_datum,
+        regal_position: data.regal_position || undefined,
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['growBatches'] });
+      queryClient.invalidateQueries({ queryKey: ['capacity'] });
+      queryClient.invalidateQueries({ queryKey: ['seed-batches'] });
+      setIsCreating(false);
+      toast.success('Aussaat angelegt');
+    },
+    onError: (err: any) => {
+      const detail = err?.response?.data?.detail || 'Fehler beim Anlegen der Aussaat';
+      toast.error(detail);
+    },
+  });
+
   const updateStatusMutation = useMutation({
     mutationFn: ({ id, status }: { id: string; status: GrowBatchStatus }) =>
       productionApi.updateGrowBatchStatus(id, status),
@@ -408,11 +429,8 @@ export default function Production() {
       <Modal open={isCreating} onClose={() => setIsCreating(false)} title="Neue Aussaat" size="lg">
         <SowingForm
           seeds={seedsData?.items || []}
-          onSubmit={() => {
-            queryClient.invalidateQueries({ queryKey: ['growBatches'] });
-            setIsCreating(false);
-            toast.success('Aussaat angelegt');
-          }}
+          loading={createSowingMutation.isPending}
+          onSubmit={(data) => createSowingMutation.mutate(data)}
           onCancel={() => setIsCreating(false)}
         />
       </Modal>

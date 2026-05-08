@@ -48,23 +48,48 @@ def list_grow_batches(
 
 @router.post("/grow-batches", response_model=GrowBatchResponse, status_code=201)
 def create_grow_batch(data: GrowBatchCreate, db: DBSession):
-    """Erstellt eine neue Wachstumscharge."""
-    # Einfache Logik ohne Service für jetzt
-    # Erntedaten berechnen (simuliert, idealerweise aus GrowPlan/Seed)
-    from app.models.seed import Seed
-    seed = db.get(Seed, data.seed_id) # Schema might use seed_id, model uses seed_batch_id? Only if we have SeedBatch implemented.
-    # User Request said "Seed -> GrowBatch". 
-    # Let's assume schema expects seed_id and we find/create a SeedBatch or just map it?
-    # backend/app/models/production.py uses seed_batch_id foreign key.
-    # backend/app/models/seed.py likely has SeedBatch.
-    # If I don't have logic to create seed_batch, I might fail.
-    # For now, I'll assumme I need to fix this properly later if it fails, but I'll write "placeholder" logic or look for SeedBatch.
-    
-    # Fallback if no SeedBatch: Create one on the fly?
-    # Or maybe data has seed_batch_id?
-    # Let's check schema details next tool call if needed. 
-    # For now, I will Comment out complex creation logic and focus on endpoints existing.
-    raise HTTPException(status_code=501, detail="Not implemented yet in this restoration step")
+    """Erstellt eine neue Wachstumscharge.
+
+    Berechnet das Erntefenster aus den Sortenparametern (Seed) und legt die
+    GrowBatch im Status KEIMUNG an.
+    """
+    from datetime import timedelta
+    from app.models.seed import SeedBatch
+
+    seed_batch = db.get(SeedBatch, data.seed_batch_id)
+    if not seed_batch:
+        raise HTTPException(status_code=404, detail="Saatgut-Charge nicht gefunden")
+
+    seed = seed_batch.seed
+    if not seed:
+        raise HTTPException(status_code=400, detail="Saatgut-Charge hat keine Sorte zugeordnet")
+
+    # Erntefenster ab Aussaatdatum
+    erwartete_ernte_min = data.aussaat_datum + timedelta(
+        days=seed.keimdauer_tage + seed.erntefenster_min_tage
+    )
+    erwartete_ernte_optimal = data.aussaat_datum + timedelta(
+        days=seed.keimdauer_tage + seed.erntefenster_optimal_tage
+    )
+    erwartete_ernte_max = data.aussaat_datum + timedelta(
+        days=seed.keimdauer_tage + seed.erntefenster_max_tage
+    )
+
+    grow_batch = GrowBatch(
+        seed_batch_id=data.seed_batch_id,
+        tray_anzahl=data.tray_anzahl,
+        aussaat_datum=data.aussaat_datum,
+        erwartete_ernte_min=erwartete_ernte_min,
+        erwartete_ernte_optimal=erwartete_ernte_optimal,
+        erwartete_ernte_max=erwartete_ernte_max,
+        regal_position=data.regal_position,
+        notizen=data.notizen,
+        status=GrowBatchStatus.KEIMUNG,
+    )
+    db.add(grow_batch)
+    db.commit()
+    db.refresh(grow_batch)
+    return grow_batch
 
 @router.get("/grow-batches/{batch_id}", response_model=GrowBatchResponse)
 def get_grow_batch(batch_id: UUID, db: DBSession):

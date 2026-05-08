@@ -55,26 +55,32 @@ async def list_forecasts(
     - **von_datum** / **bis_datum**: Prognosezeitraum
     - **has_adjustments**: Nur Forecasts mit manuellen Anpassungen
     """
+    # Eager-load only what _build_forecast_response uses (seed + customer).
+    # manual_adjustments was previously joinedload'ed but unused, which created
+    # a cartesian product (one Forecast row × N adjustment rows) and made the
+    # frontend hang once any forecast accumulated adjustments.
     query = select(Forecast).options(
         joinedload(Forecast.seed),
         joinedload(Forecast.customer),
-        joinedload(Forecast.manual_adjustments)
     )
 
+    filter_clauses = []
     if seed_id:
-        query = query.where(Forecast.seed_id == seed_id)
+        filter_clauses.append(Forecast.seed_id == seed_id)
     if von_datum:
-        query = query.where(Forecast.datum >= von_datum)
+        filter_clauses.append(Forecast.datum >= von_datum)
     if bis_datum:
-        query = query.where(Forecast.datum <= bis_datum)
+        filter_clauses.append(Forecast.datum <= bis_datum)
     if has_adjustments is not None:
-        if has_adjustments:
-            query = query.where(Forecast.hat_manuelle_anpassung == True)
-        else:
-            query = query.where(Forecast.hat_manuelle_anpassung == False)
+        filter_clauses.append(Forecast.hat_manuelle_anpassung == has_adjustments)
 
-    # Total Count
-    count_query = select(func.count()).select_from(query.subquery())
+    for clause in filter_clauses:
+        query = query.where(clause)
+
+    # Direct count on Forecast.id — avoids running the subquery with joins
+    count_query = select(func.count(Forecast.id))
+    for clause in filter_clauses:
+        count_query = count_query.where(clause)
     total = db.execute(count_query).scalar() or 0
 
     # Paginated Results
