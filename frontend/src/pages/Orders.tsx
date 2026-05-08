@@ -1,17 +1,20 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Plus, Search, Calendar } from 'lucide-react';
+import { Plus, Search, Calendar, CheckCircle, Truck } from 'lucide-react';
 import { salesApi } from '../services/api';
 import { Order, OrderStatus } from '../types';
 import { PageHeader, FilterBar } from '../components/common/Layout';
+import BulkActionBar from '../components/common/BulkActionBar';
+import { useBulkSelection } from '../hooks/useBulkSelection';
 import { OrderCard } from '../components/domain/OrderCard';
+import { CreateOrderModal } from '../components/domain/CreateOrderModal';
+import { ListPageSkeleton } from '../components/ui/Skeleton';
 import {
   Button,
   Input,
   Select,
   Tabs,
   TabPanel,
-  PageLoader,
   EmptyState,
   useToast,
   SelectOption,
@@ -34,9 +37,10 @@ export default function Orders() {
 
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [search, setSearch] = useState('');
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
 
   // Fetch orders
-  const { data: ordersData, isLoading } = useQuery({
+  const { data: ordersData, isLoading, isError } = useQuery({
     queryKey: ['orders', { status: statusFilter }],
     queryFn: () =>
       salesApi.listOrders({
@@ -82,8 +86,51 @@ export default function Orders() {
     }
   };
 
+  // Bulk selection
+  const bulk = useBulkSelection(orders);
+
+  const handleBulkReady = async () => {
+    try {
+      await Promise.all(
+        bulk.selectedItems
+          .filter((o) => o.status === 'IN_PRODUKTION' || o.status === 'BESTAETIGT')
+          .map((o) => salesApi.updateOrderStatus(o.id, 'BEREIT')),
+      );
+      queryClient.invalidateQueries({ queryKey: ['orders'] });
+      bulk.clearSelection();
+      toast.success('Bestellungen als bereit markiert');
+    } catch (error) {
+      toast.error('Fehler beim Aktualisieren');
+    }
+  };
+
+  const handleBulkDelivered = async () => {
+    try {
+      await Promise.all(
+        bulk.selectedItems
+          .filter((o) => o.status === 'BEREIT')
+          .map((o) => salesApi.updateOrderStatus(o.id, 'GELIEFERT')),
+      );
+      queryClient.invalidateQueries({ queryKey: ['orders'] });
+      bulk.clearSelection();
+      toast.success('Bestellungen als geliefert markiert');
+    } catch (error) {
+      toast.error('Fehler beim Aktualisieren');
+    }
+  };
+
   if (isLoading) {
-    return <PageLoader />;
+    return <ListPageSkeleton />;
+  }
+
+  if (isError) {
+    return (
+      <div className="p-8 text-center">
+        <div className="w-12 h-12 text-red-400 mx-auto mb-4">⚠️</div>
+        <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">Bestellungen konnten nicht geladen werden</h2>
+        <p className="text-gray-500 dark:text-gray-400">Bitte prüfe die Verbindung zum Server und versuche es erneut.</p>
+      </div>
+    );
   }
 
   const tabs = [
@@ -99,7 +146,7 @@ export default function Orders() {
         title="Bestellungen"
         subtitle={`${orders.length} Bestellungen`}
         actions={
-          <Button icon={<Plus className="w-4 h-4" />} onClick={() => toast.info('Neue Bestellung noch nicht implementiert')}>
+          <Button icon={<Plus className="w-4 h-4" />} onClick={() => setIsCreateModalOpen(true)}>
             Neue Bestellung
           </Button>
         }
@@ -128,6 +175,7 @@ export default function Orders() {
             title="Heutige Lieferungen"
             onMarkReady={handleMarkReady}
             onMarkDelivered={handleMarkDelivered}
+            bulk={bulk}
           />
         </TabPanel>
         <TabPanel id="tomorrow">
@@ -136,6 +184,7 @@ export default function Orders() {
             title="Morgen"
             onMarkReady={handleMarkReady}
             onMarkDelivered={handleMarkDelivered}
+            bulk={bulk}
           />
         </TabPanel>
         <TabPanel id="upcoming">
@@ -144,6 +193,7 @@ export default function Orders() {
             title="Kommende Bestellungen"
             onMarkReady={handleMarkReady}
             onMarkDelivered={handleMarkDelivered}
+            bulk={bulk}
           />
         </TabPanel>
         <TabPanel id="all">
@@ -152,9 +202,34 @@ export default function Orders() {
             title="Alle Bestellungen"
             onMarkReady={handleMarkReady}
             onMarkDelivered={handleMarkDelivered}
+            bulk={bulk}
           />
         </TabPanel>
       </Tabs>
+
+      {/* Bulk Action Bar */}
+      <BulkActionBar count={bulk.count} onClear={bulk.clearSelection}>
+        <button
+          onClick={handleBulkReady}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium bg-minga-600 hover:bg-minga-700 text-white rounded-lg transition-colors"
+        >
+          <CheckCircle className="w-4 h-4" />
+          Bereit
+        </button>
+        <button
+          onClick={handleBulkDelivered}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors"
+        >
+          <Truck className="w-4 h-4" />
+          Geliefert
+        </button>
+      </BulkActionBar>
+
+      {/* Create Order Modal */}
+      <CreateOrderModal
+        open={isCreateModalOpen}
+        onClose={() => setIsCreateModalOpen(false)}
+      />
     </div>
   );
 }
@@ -165,9 +240,10 @@ interface OrderListProps {
   title: string;
   onMarkReady: (order: Order) => void;
   onMarkDelivered: (order: Order) => void;
+  bulk: ReturnType<typeof useBulkSelection<Order>>;
 }
 
-function OrderList({ orders, onMarkReady, onMarkDelivered }: OrderListProps) {
+function OrderList({ orders, onMarkReady, onMarkDelivered, bulk }: OrderListProps) {
   if (orders.length === 0) {
     return (
       <EmptyState
@@ -193,14 +269,24 @@ function OrderList({ orders, onMarkReady, onMarkDelivered }: OrderListProps) {
         <div key={date}>
           <div className="flex items-center gap-2 mb-3">
             <Calendar className="w-4 h-4 text-gray-400" />
-            <h3 className="font-medium text-gray-900">
+            <h3 className="font-medium text-gray-900 dark:text-white">
               {formatDate(date)} - {getRelativeDate(date)}
             </h3>
             <span className="badge badge-gray">{dateOrders.length}</span>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {dateOrders.map((order) => (
-              <OrderCard
+              <div key={order.id} className="relative group">
+                <div className="absolute top-3 left-3 z-10">
+                  <input
+                    type="checkbox"
+                    checked={bulk.isSelected(order.id)}
+                    onChange={() => bulk.toggle(order.id)}
+                    className="w-4 h-4 rounded border-gray-300 dark:border-gray-600 text-minga-600 dark:text-minga-400 focus:ring-minga-500 cursor-pointer opacity-0 group-hover:opacity-100 transition-opacity data-[checked=true]:opacity-100"
+                    data-checked={bulk.isSelected(order.id)}
+                  />
+                </div>
+                <OrderCard
                 key={order.id}
                 order={{
                   ...order,
@@ -215,6 +301,7 @@ function OrderList({ orders, onMarkReady, onMarkDelivered }: OrderListProps) {
                   order.status === 'BEREIT' ? () => onMarkDelivered(order) : undefined
                 }
               />
+              </div>
             ))}
           </div>
         </div>

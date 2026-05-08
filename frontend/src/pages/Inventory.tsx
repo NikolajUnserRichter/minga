@@ -291,7 +291,7 @@ export default function Inventory() {
         {selectedTraceItem ? (
           <TraceabilityView data={selectedTraceItem} />
         ) : (
-          <div className="p-8 text-center text-gray-500">Lade Daten...</div>
+          <div className="p-8 text-center text-gray-500 dark:text-gray-400">Lade Daten...</div>
         )}
       </Modal>
 
@@ -335,51 +335,51 @@ function OverviewTab({
     <div className="space-y-6">
       {/* Summary Cards */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <div className="bg-white rounded-lg shadow p-4">
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-4">
           <div className="flex items-center gap-3">
-            <div className="p-2 bg-green-100 rounded-lg">
-              <Leaf className="w-5 h-5 text-green-600" />
+            <div className="p-2 bg-green-100 dark:bg-green-900/30 rounded-lg">
+              <Leaf className="w-5 h-5 text-green-600 dark:text-green-400" />
             </div>
             <div>
-              <p className="text-sm text-gray-500">Saatgut</p>
+              <p className="text-sm text-gray-500 dark:text-gray-400">Saatgut</p>
               <p className="text-xl font-semibold">{(totalSeedWeight / 1000).toFixed(1)} kg</p>
               <p className="text-xs text-gray-400">{seedInventory.length} Chargen</p>
             </div>
           </div>
         </div>
 
-        <div className="bg-white rounded-lg shadow p-4">
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-4">
           <div className="flex items-center gap-3">
-            <div className="p-2 bg-blue-100 rounded-lg">
-              <Package className="w-5 h-5 text-blue-600" />
+            <div className="p-2 bg-blue-100 dark:bg-blue-900/30 rounded-lg">
+              <Package className="w-5 h-5 text-blue-600 dark:text-blue-400" />
             </div>
             <div>
-              <p className="text-sm text-gray-500">Fertigware</p>
+              <p className="text-sm text-gray-500 dark:text-gray-400">Fertigware</p>
               <p className="text-xl font-semibold">{(totalFinishedWeight / 1000).toFixed(1)} kg</p>
               <p className="text-xs text-gray-400">{finishedGoods.length} Chargen</p>
             </div>
           </div>
         </div>
 
-        <div className="bg-white rounded-lg shadow p-4">
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-4">
           <div className="flex items-center gap-3">
-            <div className="p-2 bg-gray-100 rounded-lg">
-              <Box className="w-5 h-5 text-gray-600" />
+            <div className="p-2 bg-gray-100 dark:bg-gray-700 rounded-lg">
+              <Box className="w-5 h-5 text-gray-600 dark:text-gray-400" />
             </div>
             <div>
-              <p className="text-sm text-gray-500">Verpackung</p>
+              <p className="text-sm text-gray-500 dark:text-gray-400">Verpackung</p>
               <p className="text-xl font-semibold">{packaging.length} Artikel</p>
             </div>
           </div>
         </div>
 
-        <div className="bg-white rounded-lg shadow p-4">
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-4">
           <div className="flex items-center gap-3">
-            <div className="p-2 bg-yellow-100 rounded-lg">
-              <AlertTriangle className="w-5 h-5 text-yellow-600" />
+            <div className="p-2 bg-yellow-100 dark:bg-yellow-900/30 rounded-lg">
+              <AlertTriangle className="w-5 h-5 text-yellow-600 dark:text-yellow-400" />
             </div>
             <div>
-              <p className="text-sm text-gray-500">Niedrig</p>
+              <p className="text-sm text-gray-500 dark:text-gray-400">Niedrig</p>
               <p className="text-xl font-semibold">{lowStockAlerts.length}</p>
               <p className="text-xs text-gray-400">unter Mindestbestand</p>
             </div>
@@ -389,22 +389,22 @@ function OverviewTab({
 
       {/* Low Stock List */}
       {lowStockAlerts.length > 0 && (
-        <div className="bg-white rounded-lg shadow">
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow">
           <div className="px-6 py-4 border-b">
-            <h3 className="font-medium text-gray-900">Niedriger Bestand</h3>
+            <h3 className="font-medium text-gray-900 dark:text-white">Niedriger Bestand</h3>
           </div>
           <div className="divide-y">
             {lowStockAlerts.slice(0, 5).map((item: any, index: number) => (
               <div key={index} className="px-6 py-3 flex justify-between items-center">
                 <div>
-                  <p className="font-medium text-gray-900">{item.name || item.article_number}</p>
-                  <p className="text-sm text-gray-500">{item.location_name}</p>
+                  <p className="font-medium text-gray-900 dark:text-white">{item.name || item.article_number}</p>
+                  <p className="text-sm text-gray-500 dark:text-gray-400">{item.location_name}</p>
                 </div>
                 <div className="text-right">
-                  <p className="font-medium text-red-600">
+                  <p className="font-medium text-red-600 dark:text-red-400">
                     {item.current_quantity} {item.unit}
                   </p>
-                  <p className="text-xs text-gray-500">Min: {item.min_quantity}</p>
+                  <p className="text-xs text-gray-500 dark:text-gray-400">Min: {item.min_quantity}</p>
                 </div>
               </div>
             ))}
@@ -413,18 +413,18 @@ function OverviewTab({
       )}
 
       {/* Locations Grid */}
-      <div className="bg-white rounded-lg shadow">
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow">
         <div className="px-6 py-4 border-b">
-          <h3 className="font-medium text-gray-900">Lagerorte</h3>
+          <h3 className="font-medium text-gray-900 dark:text-white">Lagerorte</h3>
         </div>
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 p-6">
           {locations.map((location) => {
             const Icon = LOCATION_ICONS[location.location_type];
             return (
-              <div key={location.id} className="text-center p-4 border rounded-lg hover:bg-gray-50">
+              <div key={location.id} className="text-center p-4 border rounded-lg hover:bg-gray-50 dark:bg-gray-700/50">
                 <Icon className="w-8 h-8 mx-auto text-gray-400 mb-2" />
                 <p className="font-medium text-sm">{location.name}</p>
-                <p className="text-xs text-gray-500">{LOCATION_TYPE_LABELS[location.location_type]}</p>
+                <p className="text-xs text-gray-500 dark:text-gray-400">{LOCATION_TYPE_LABELS[location.location_type]}</p>
               </div>
             );
           })}
@@ -447,36 +447,36 @@ function SeedInventoryTab({ inventory, search, onCorrect }: { inventory: SeedInv
   }
 
   return (
-    <div className="bg-white rounded-lg shadow overflow-hidden">
-      <table className="min-w-full divide-y divide-gray-200">
-        <thead className="bg-gray-50">
+    <div className="bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden">
+      <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+        <thead className="bg-gray-50 dark:bg-gray-700/50">
           <tr>
-            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Charge</th>
-            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Sorte</th>
-            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Lagerort</th>
-            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Bestand</th>
-            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">MHD</th>
-            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Bio</th>
+            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Charge</th>
+            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Sorte</th>
+            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Lagerort</th>
+            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Bestand</th>
+            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">MHD</th>
+            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Bio</th>
           </tr>
         </thead>
-        <tbody className="divide-y divide-gray-200">
+        <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
           {filtered.map((item) => (
-            <tr key={item.id} className="hover:bg-gray-50">
+            <tr key={item.id} className="hover:bg-gray-50 dark:bg-gray-700/50">
               <td className="px-6 py-4 text-sm font-mono">{item.batch_number}</td>
               <td className="px-6 py-4 text-sm">{item.seed_name}</td>
-              <td className="px-6 py-4 text-sm text-gray-500">{item.location_name}</td>
+              <td className="px-6 py-4 text-sm text-gray-500 dark:text-gray-400">{item.location_name}</td>
               <td className="px-6 py-4">
-                <span className={item.current_quantity <= (item.min_quantity || 0) ? 'text-red-600 font-medium' : ''}>
+                <span className={item.current_quantity <= (item.min_quantity || 0) ? 'text-red-600 dark:text-red-400 font-medium' : ''}>
                   {item.current_quantity} {item.unit}
                 </span>
               </td>
-              <td className="px-6 py-4 text-sm text-gray-500">
+              <td className="px-6 py-4 text-sm text-gray-500 dark:text-gray-400">
                 {item.mhd ? new Date(item.mhd).toLocaleDateString('de-DE') : '-'}
               </td>
               <td className="px-6 py-4">
                 {item.is_organic && <Badge variant="success">Bio</Badge>}
                 <button
-                  className="text-gray-400 hover:text-blue-600 ml-2"
+                  className="text-gray-400 hover:text-blue-600 dark:text-blue-400 ml-2"
                   title="Bestand korrigieren"
                   onClick={() => onCorrect(item)}
                 >
@@ -503,6 +503,7 @@ function FinishedGoodsTab({
   onShowTraceability: (data: TraceabilityChain) => void;
   onCorrect: (item: FinishedGoodsInventory) => void;
 }) {
+  const fgToast = useToast();
   const filtered = inventory.filter(
     (item) =>
       item.batch_number.toLowerCase().includes(search.toLowerCase()) ||
@@ -514,41 +515,41 @@ function FinishedGoodsTab({
   }
 
   return (
-    <div className="bg-white rounded-lg shadow overflow-hidden">
-      <table className="min-w-full divide-y divide-gray-200">
-        <thead className="bg-gray-50">
+    <div className="bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden">
+      <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+        <thead className="bg-gray-50 dark:bg-gray-700/50">
           <tr>
-            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Charge</th>
-            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Produkt</th>
-            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Lagerort</th>
-            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Verfügbar</th>
-            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Reserviert</th>
-            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">MHD</th>
-            <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Aktionen</th>
+            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Charge</th>
+            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Produkt</th>
+            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Lagerort</th>
+            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Verfügbar</th>
+            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Reserviert</th>
+            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">MHD</th>
+            <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Aktionen</th>
           </tr>
         </thead>
-        <tbody className="divide-y divide-gray-200">
+        <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
           {filtered.map((item) => {
             const isExpiringSoon = item.mhd && new Date(item.mhd) < new Date(Date.now() + 3 * 24 * 60 * 60 * 1000);
             return (
-              <tr key={item.id} className="hover:bg-gray-50">
+              <tr key={item.id} className="hover:bg-gray-50 dark:bg-gray-700/50">
                 <td className="px-6 py-4 text-sm font-mono">{item.batch_number}</td>
                 <td className="px-6 py-4 text-sm">{item.product_name}</td>
-                <td className="px-6 py-4 text-sm text-gray-500">{item.location_name}</td>
+                <td className="px-6 py-4 text-sm text-gray-500 dark:text-gray-400">{item.location_name}</td>
                 <td className="px-6 py-4 text-sm font-medium">
                   {item.available_quantity} {item.unit}
                 </td>
-                <td className="px-6 py-4 text-sm text-gray-500">
+                <td className="px-6 py-4 text-sm text-gray-500 dark:text-gray-400">
                   {item.reserved_quantity} {item.unit}
                 </td>
                 <td className="px-6 py-4">
-                  <span className={isExpiringSoon ? 'text-red-600 font-medium' : 'text-sm text-gray-500'}>
+                  <span className={isExpiringSoon ? 'text-red-600 dark:text-red-400 font-medium' : 'text-sm text-gray-500 dark:text-gray-400'}>
                     {new Date(item.mhd).toLocaleDateString('de-DE')}
                   </span>
                 </td>
                 <td className="px-6 py-4 text-right">
                   <button
-                    className="text-gray-400 hover:text-minga-600 p-1"
+                    className="text-gray-400 hover:text-minga-600 dark:text-minga-400 p-1"
                     title="Etikett drucken"
                     onClick={async (e) => {
                       e.stopPropagation();
@@ -562,15 +563,14 @@ function FinishedGoodsTab({
                         link.click();
                         link.remove();
                       } catch (err) {
-                        console.error(err);
-                        alert("Fehler beim Laden des Labels");
+                        fgToast.error('Fehler beim Laden des Labels');
                       }
                     }}
                   >
                     <Printer className="w-4 h-4" />
                   </button>
                   <button
-                    className="text-gray-400 hover:text-blue-600 p-1 ml-1"
+                    className="text-gray-400 hover:text-blue-600 dark:text-blue-400 p-1 ml-1"
                     title="Rückverfolgung"
                     onClick={async (e) => {
                       e.stopPropagation();
@@ -578,15 +578,14 @@ function FinishedGoodsTab({
                         const traceData = await inventoryApi.getTraceability(item.id);
                         onShowTraceability(traceData);
                       } catch (err) {
-                        console.error(err);
-                        alert("Fehler beim Laden der Rückverfolgung");
+                        fgToast.error('Fehler beim Laden der Rückverfolgung');
                       }
                     }}
                   >
                     <LinkIcon className="w-4 h-4" />
                   </button>
                   <button
-                    className="text-gray-400 hover:text-blue-600 p-1 ml-1"
+                    className="text-gray-400 hover:text-blue-600 dark:text-blue-400 p-1 ml-1"
                     title="Bestand korrigieren"
                     onClick={(e) => {
                       e.stopPropagation();
@@ -618,38 +617,38 @@ function PackagingTab({ inventory, search, onCorrect }: { inventory: PackagingIn
   }
 
   return (
-    <div className="bg-white rounded-lg shadow overflow-hidden">
-      <table className="min-w-full divide-y divide-gray-200">
-        <thead className="bg-gray-50">
+    <div className="bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden">
+      <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+        <thead className="bg-gray-50 dark:bg-gray-700/50">
           <tr>
-            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Artikelnr.</th>
-            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Name</th>
-            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Lagerort</th>
-            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Bestand</th>
-            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Mindest</th>
-            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Artikelnr.</th>
+            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Name</th>
+            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Lagerort</th>
+            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Bestand</th>
+            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Mindest</th>
+            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Status</th>
           </tr>
         </thead>
-        <tbody className="divide-y divide-gray-200">
+        <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
           {filtered.map((item) => {
             const isLow = item.current_quantity <= (item.min_quantity || 0);
             return (
-              <tr key={item.id} className="hover:bg-gray-50">
+              <tr key={item.id} className="hover:bg-gray-50 dark:bg-gray-700/50">
                 <td className="px-6 py-4 text-sm font-mono">{item.article_number}</td>
                 <td className="px-6 py-4 text-sm">{item.name}</td>
-                <td className="px-6 py-4 text-sm text-gray-500">{item.location_name}</td>
+                <td className="px-6 py-4 text-sm text-gray-500 dark:text-gray-400">{item.location_name}</td>
                 <td className="px-6 py-4">
-                  <span className={isLow ? 'text-red-600 font-medium' : ''}>
+                  <span className={isLow ? 'text-red-600 dark:text-red-400 font-medium' : ''}>
                     {item.current_quantity} {item.unit}
                   </span>
                 </td>
-                <td className="px-6 py-4 text-sm text-gray-500">
+                <td className="px-6 py-4 text-sm text-gray-500 dark:text-gray-400">
                   {item.min_quantity} {item.unit}
                 </td>
                 <td className="px-6 py-4">
                   <Badge variant={isLow ? 'danger' : 'success'}>{isLow ? 'Niedrig' : 'OK'}</Badge>
                   <button
-                    className="text-gray-400 hover:text-blue-600 ml-2"
+                    className="text-gray-400 hover:text-blue-600 dark:text-blue-400 ml-2"
                     title="Bestand korrigieren"
                     onClick={() => onCorrect(item)}
                   >
@@ -668,31 +667,31 @@ function PackagingTab({ inventory, search, onCorrect }: { inventory: PackagingIn
 // Locations Tab
 function LocationsTab({ locations }: { locations: InventoryLocation[] }) {
   return (
-    <div className="bg-white rounded-lg shadow overflow-hidden">
-      <table className="min-w-full divide-y divide-gray-200">
-        <thead className="bg-gray-50">
+    <div className="bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden">
+      <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+        <thead className="bg-gray-50 dark:bg-gray-700/50">
           <tr>
-            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Code</th>
-            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Name</th>
-            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Typ</th>
-            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Temperatur</th>
-            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Beschreibung</th>
+            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Code</th>
+            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Name</th>
+            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Typ</th>
+            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Temperatur</th>
+            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Beschreibung</th>
           </tr>
         </thead>
-        <tbody className="divide-y divide-gray-200">
+        <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
           {locations.map((location) => (
-            <tr key={location.id} className="hover:bg-gray-50">
+            <tr key={location.id} className="hover:bg-gray-50 dark:bg-gray-700/50">
               <td className="px-6 py-4 text-sm font-mono">{location.code}</td>
               <td className="px-6 py-4 text-sm font-medium">{location.name}</td>
               <td className="px-6 py-4">
                 <Badge>{LOCATION_TYPE_LABELS[location.location_type]}</Badge>
               </td>
-              <td className="px-6 py-4 text-sm text-gray-500">
+              <td className="px-6 py-4 text-sm text-gray-500 dark:text-gray-400">
                 {location.temperature_min && location.temperature_max
                   ? `${location.temperature_min}°C - ${location.temperature_max}°C`
                   : '-'}
               </td>
-              <td className="px-6 py-4 text-sm text-gray-500">{location.description || '-'}</td>
+              <td className="px-6 py-4 text-sm text-gray-500 dark:text-gray-400">{location.description || '-'}</td>
             </tr>
           ))}
         </tbody>
@@ -722,32 +721,32 @@ function MovementsTab({ movements }: { movements: InventoryMovement[] }) {
   };
 
   return (
-    <div className="bg-white rounded-lg shadow overflow-hidden">
-      <table className="min-w-full divide-y divide-gray-200">
-        <thead className="bg-gray-50">
+    <div className="bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden">
+      <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+        <thead className="bg-gray-50 dark:bg-gray-700/50">
           <tr>
-            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Datum</th>
-            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Typ</th>
-            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Artikeltyp</th>
-            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Menge</th>
-            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Notizen</th>
+            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Datum</th>
+            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Typ</th>
+            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Artikeltyp</th>
+            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Menge</th>
+            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Notizen</th>
           </tr>
         </thead>
-        <tbody className="divide-y divide-gray-200">
+        <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
           {movements.map((movement) => (
-            <tr key={movement.id} className="hover:bg-gray-50">
+            <tr key={movement.id} className="hover:bg-gray-50 dark:bg-gray-700/50">
               <td className="px-6 py-4 text-sm">
                 {new Date(movement.movement_date).toLocaleDateString('de-DE')}
               </td>
               <td className="px-6 py-4">
                 <Badge variant={typeColors[movement.movement_type]}>{typeLabels[movement.movement_type]}</Badge>
               </td>
-              <td className="px-6 py-4 text-sm text-gray-500">{movement.article_type}</td>
+              <td className="px-6 py-4 text-sm text-gray-500 dark:text-gray-400">{movement.article_type}</td>
               <td className="px-6 py-4 text-sm font-medium">
                 {movement.movement_type === 'AUSGANG' || movement.movement_type === 'VERLUST' ? '-' : '+'}
                 {movement.quantity} {movement.unit}
               </td>
-              <td className="px-6 py-4 text-sm text-gray-500">{movement.notes || '-'}</td>
+              <td className="px-6 py-4 text-sm text-gray-500 dark:text-gray-400">{movement.notes || '-'}</td>
             </tr>
           ))}
         </tbody>
@@ -903,9 +902,9 @@ function ReceiveForm({
               type="checkbox"
               checked={formData.is_organic}
               onChange={(e) => setFormData({ ...formData, is_organic: e.target.checked })}
-              className="w-4 h-4 rounded border-gray-300 text-minga-600 focus:ring-minga-500"
+              className="w-4 h-4 rounded border-gray-300 dark:border-gray-600 text-minga-600 dark:text-minga-400 focus:ring-minga-500"
             />
-            <span className="text-sm text-gray-700">Bio-zertifiziert</span>
+            <span className="text-sm text-gray-700 dark:text-gray-300">Bio-zertifiziert</span>
           </label>
         </>
       )}

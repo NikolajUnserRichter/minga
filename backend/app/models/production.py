@@ -3,7 +3,7 @@ from typing import Optional
 Produktions-Models: GrowBatch und Harvest
 """
 import uuid
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 from decimal import Decimal
 from enum import Enum
 from sqlalchemy import String, Integer, Numeric, DateTime, Date, ForeignKey, Text, Enum as SQLEnum
@@ -56,9 +56,9 @@ class GrowBatch(Base):
     notizen: Mapped[Optional[str]] = mapped_column(Text)
 
     # Timestamps
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+        DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc)
     )
 
     # Beziehungen
@@ -104,8 +104,12 @@ class Harvest(Base):
     # Qualität (1-5 Sterne)
     qualitaet_note: Mapped[Optional[int]] = mapped_column(Integer)
 
+    # Quality control
+    quality_approved: Mapped[bool] = mapped_column(Integer, default=True)  # Freigegeben?
+    quality_notes: Mapped[Optional[str]] = mapped_column(Text)
+
     # Timestamp
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     # Beziehungen
     grow_batch: Mapped["GrowBatch"] = relationship("GrowBatch", back_populates="harvests")

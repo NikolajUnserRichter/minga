@@ -9,13 +9,14 @@ import {
   Input,
   Select,
   Modal,
-  PageLoader,
   EmptyState,
   useToast,
   Badge,
   SelectOption,
   Tabs,
+  Pagination,
 } from '../components/ui';
+import { ListPageSkeleton } from '../components/ui/Skeleton';
 
 const STATUS_LABELS: Record<InvoiceStatus, string> = {
   ENTWURF: 'Entwurf',
@@ -53,9 +54,11 @@ export default function Invoices() {
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [showDatevExport, setShowDatevExport] = useState(false);
   const [activeTab, setActiveTab] = useState('all');
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 20;
 
   // Fetch invoices
-  const { data: invoices = [], isLoading } = useQuery({
+  const { data: invoices = [], isLoading, isError } = useQuery({
     queryKey: ['invoices', { status: filterStatus, invoice_type: filterType }],
     queryFn: () =>
       invoicesApi.list({
@@ -129,7 +132,17 @@ export default function Invoices() {
           : filteredInvoices;
 
   if (isLoading) {
-    return <PageLoader />;
+    return <ListPageSkeleton />;
+  }
+
+  if (isError) {
+    return (
+      <div className="p-8 text-center">
+        <AlertCircle className="w-12 h-12 text-red-400 mx-auto mb-4" />
+        <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">Rechnungen konnten nicht geladen werden</h2>
+        <p className="text-gray-500 dark:text-gray-400">Bitte prüfe die Verbindung zum Server und versuche es erneut.</p>
+      </div>
+    );
   }
 
   const totalOpen = invoices
@@ -155,47 +168,47 @@ export default function Invoices() {
 
       {/* Summary Cards */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-        <div className="bg-white rounded-lg shadow p-4">
+        <div className="card p-4">
           <div className="flex items-center gap-3">
-            <div className="p-2 bg-blue-100 rounded-lg">
-              <FileText className="w-5 h-5 text-blue-600" />
+            <div className="p-2 bg-blue-100 dark:bg-blue-900/30 rounded-lg">
+              <FileText className="w-5 h-5 text-blue-600 dark:text-blue-400" />
             </div>
             <div>
-              <p className="text-sm text-gray-500">Offene Forderungen</p>
-              <p className="text-xl font-semibold">{totalOpen.toFixed(2)} €</p>
+              <p className="text-sm text-gray-500 dark:text-gray-400">Offene Forderungen</p>
+              <p className="text-xl font-semibold text-gray-900 dark:text-white">{totalOpen.toFixed(2)} €</p>
             </div>
           </div>
         </div>
-        <div className="bg-white rounded-lg shadow p-4">
+        <div className="card p-4">
           <div className="flex items-center gap-3">
-            <div className="p-2 bg-red-100 rounded-lg">
-              <AlertCircle className="w-5 h-5 text-red-600" />
+            <div className="p-2 bg-red-100 dark:bg-red-900/30 rounded-lg">
+              <AlertCircle className="w-5 h-5 text-red-600 dark:text-red-400" />
             </div>
             <div>
-              <p className="text-sm text-gray-500">Überfällig</p>
-              <p className="text-xl font-semibold">{overdueInvoices.length}</p>
+              <p className="text-sm text-gray-500 dark:text-gray-400">Überfällig</p>
+              <p className="text-xl font-semibold text-gray-900 dark:text-white">{overdueInvoices.length}</p>
             </div>
           </div>
         </div>
-        <div className="bg-white rounded-lg shadow p-4">
+        <div className="card p-4">
           <div className="flex items-center gap-3">
-            <div className="p-2 bg-yellow-100 rounded-lg">
-              <Clock className="w-5 h-5 text-yellow-600" />
+            <div className="p-2 bg-yellow-100 dark:bg-yellow-900/30 rounded-lg">
+              <Clock className="w-5 h-5 text-yellow-600 dark:text-yellow-400" />
             </div>
             <div>
-              <p className="text-sm text-gray-500">Entwürfe</p>
-              <p className="text-xl font-semibold">{invoices.filter((i) => i.status === 'ENTWURF').length}</p>
+              <p className="text-sm text-gray-500 dark:text-gray-400">Entwürfe</p>
+              <p className="text-xl font-semibold text-gray-900 dark:text-white">{invoices.filter((i) => i.status === 'ENTWURF').length}</p>
             </div>
           </div>
         </div>
-        <div className="bg-white rounded-lg shadow p-4">
+        <div className="card p-4">
           <div className="flex items-center gap-3">
-            <div className="p-2 bg-green-100 rounded-lg">
-              <CheckCircle className="w-5 h-5 text-green-600" />
+            <div className="p-2 bg-green-100 dark:bg-green-900/30 rounded-lg">
+              <CheckCircle className="w-5 h-5 text-green-600 dark:text-green-400" />
             </div>
             <div>
-              <p className="text-sm text-gray-500">Bezahlt (Monat)</p>
-              <p className="text-xl font-semibold">{invoices.filter((i) => i.status === 'BEZAHLT').length}</p>
+              <p className="text-sm text-gray-500 dark:text-gray-400">Bezahlt (Monat)</p>
+              <p className="text-xl font-semibold text-gray-900 dark:text-white">{invoices.filter((i) => i.status === 'BEZAHLT').length}</p>
             </div>
           </div>
         </div>
@@ -229,39 +242,39 @@ export default function Invoices() {
           }
         />
       ) : (
-        <div className="bg-white rounded-lg shadow overflow-hidden">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
+        <div className="card overflow-hidden">
+          <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+            <thead className="bg-gray-50 dark:bg-gray-800">
               <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Nummer</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Kunde</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Datum</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Fällig</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Betrag</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
-                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Aktionen</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Nummer</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Kunde</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Datum</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Fällig</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Betrag</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Status</th>
+                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Aktionen</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-200">
-              {displayInvoices.map((invoice) => (
-                <tr key={invoice.id} className="hover:bg-gray-50">
+            <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
+              {displayInvoices.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage).map((invoice) => (
+                <tr key={invoice.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/50">
                   <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="text-sm font-medium text-gray-900">{invoice.invoice_number}</div>
-                    <div className="text-xs text-gray-500">{TYPE_LABELS[invoice.invoice_type]}</div>
+                    <div className="text-sm font-medium text-gray-900 dark:text-white">{invoice.invoice_number}</div>
+                    <div className="text-xs text-gray-500 dark:text-gray-400">{TYPE_LABELS[invoice.invoice_type]}</div>
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white">
                     {invoice.customer_name || '-'}
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
                     {new Date(invoice.invoice_date).toLocaleDateString('de-DE')}
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
                     {new Date(invoice.due_date).toLocaleDateString('de-DE')}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="text-sm font-medium text-gray-900">{invoice.total.toFixed(2)} €</div>
+                    <div className="text-sm font-medium text-gray-900 dark:text-white">{invoice.total.toFixed(2)} €</div>
                     {invoice.paid_amount > 0 && invoice.paid_amount < invoice.total && (
-                      <div className="text-xs text-gray-500">Bezahlt: {invoice.paid_amount.toFixed(2)} €</div>
+                      <div className="text-xs text-gray-500 dark:text-gray-400">Bezahlt: {invoice.paid_amount.toFixed(2)} €</div>
                     )}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
@@ -321,6 +334,15 @@ export default function Invoices() {
               ))}
             </tbody>
           </table>
+          {displayInvoices.length > itemsPerPage && (
+            <Pagination
+              currentPage={currentPage}
+              totalPages={Math.ceil(displayInvoices.length / itemsPerPage)}
+              totalItems={displayInvoices.length}
+              itemsPerPage={itemsPerPage}
+              onPageChange={setCurrentPage}
+            />
+          )}
         </div>
       )}
 
@@ -561,18 +583,18 @@ function PaymentForm({ invoice, onSubmit, onCancel }: PaymentFormProps) {
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
-      <div className="bg-gray-50 p-4 rounded-lg">
+      <div className="bg-gray-50 dark:bg-gray-700/50 p-4 rounded-lg">
         <div className="flex justify-between text-sm">
-          <span className="text-gray-500">Rechnungsbetrag:</span>
+          <span className="text-gray-500 dark:text-gray-400">Rechnungsbetrag:</span>
           <span className="font-medium">{invoice.total.toFixed(2)} €</span>
         </div>
         <div className="flex justify-between text-sm">
-          <span className="text-gray-500">Bereits bezahlt:</span>
+          <span className="text-gray-500 dark:text-gray-400">Bereits bezahlt:</span>
           <span className="font-medium">{invoice.paid_amount.toFixed(2)} €</span>
         </div>
         <div className="flex justify-between text-sm font-semibold mt-2 pt-2 border-t">
           <span>Offen:</span>
-          <span className="text-red-600">{openAmount.toFixed(2)} €</span>
+          <span className="text-red-600 dark:text-red-400">{openAmount.toFixed(2)} €</span>
         </div>
       </div>
 
@@ -677,9 +699,9 @@ function DatevExportForm({ onClose }: { onClose: () => void }) {
           type="checkbox"
           checked={formData.include_payments}
           onChange={(e) => setFormData({ ...formData, include_payments: e.target.checked })}
-          className="w-4 h-4 rounded border-gray-300 text-minga-600 focus:ring-minga-500"
+          className="w-4 h-4 rounded border-gray-300 dark:border-gray-600 text-minga-600 dark:text-minga-400 focus:ring-minga-500"
         />
-        <span className="text-sm text-gray-700">Zahlungen einschließen</span>
+        <span className="text-sm text-gray-700 dark:text-gray-300">Zahlungen einschließen</span>
       </label>
 
       <div className="flex gap-3 pt-4 border-t">
@@ -700,19 +722,19 @@ function InvoiceDetail({ invoice }: { invoice: Invoice }) {
     <div className="space-y-6">
       <div className="grid grid-cols-2 gap-4">
         <div>
-          <p className="text-sm text-gray-500">Kunde</p>
+          <p className="text-sm text-gray-500 dark:text-gray-400">Kunde</p>
           <p className="font-medium">{invoice.customer_name}</p>
         </div>
         <div>
-          <p className="text-sm text-gray-500">Status</p>
+          <p className="text-sm text-gray-500 dark:text-gray-400">Status</p>
           <Badge variant={STATUS_COLORS[invoice.status]}>{STATUS_LABELS[invoice.status]}</Badge>
         </div>
         <div>
-          <p className="text-sm text-gray-500">Rechnungsdatum</p>
+          <p className="text-sm text-gray-500 dark:text-gray-400">Rechnungsdatum</p>
           <p className="font-medium">{new Date(invoice.invoice_date).toLocaleDateString('de-DE')}</p>
         </div>
         <div>
-          <p className="text-sm text-gray-500">Fällig am</p>
+          <p className="text-sm text-gray-500 dark:text-gray-400">Fällig am</p>
           <p className="font-medium">{new Date(invoice.due_date).toLocaleDateString('de-DE')}</p>
         </div>
       </div>
@@ -743,17 +765,17 @@ function InvoiceDetail({ invoice }: { invoice: Invoice }) {
             </tbody>
           </table>
         ) : (
-          <p className="text-gray-500 text-sm">Keine Positionen</p>
+          <p className="text-gray-500 dark:text-gray-400 text-sm">Keine Positionen</p>
         )}
       </div>
 
       <div className="border-t pt-4">
         <div className="flex justify-between text-sm">
-          <span className="text-gray-500">Zwischensumme:</span>
+          <span className="text-gray-500 dark:text-gray-400">Zwischensumme:</span>
           <span>{invoice.subtotal.toFixed(2)} €</span>
         </div>
         <div className="flex justify-between text-sm">
-          <span className="text-gray-500">MwSt:</span>
+          <span className="text-gray-500 dark:text-gray-400">MwSt:</span>
           <span>{invoice.tax_amount.toFixed(2)} €</span>
         </div>
         <div className="flex justify-between font-semibold mt-2 pt-2 border-t">
@@ -761,7 +783,7 @@ function InvoiceDetail({ invoice }: { invoice: Invoice }) {
           <span>{invoice.total.toFixed(2)} €</span>
         </div>
         {invoice.paid_amount > 0 && (
-          <div className="flex justify-between text-sm text-green-600 mt-1">
+          <div className="flex justify-between text-sm text-green-600 dark:text-green-400 mt-1">
             <span>Bezahlt:</span>
             <span>{invoice.paid_amount.toFixed(2)} €</span>
           </div>

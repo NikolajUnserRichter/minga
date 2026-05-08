@@ -5,15 +5,17 @@ import type {
   Product, ProductGroup, GrowPlan, PriceList, PriceListItem,
   Invoice, InvoiceLine, Payment, InvoiceStatus, InvoiceType,
   InventoryLocation, SeedInventory, FinishedGoodsInventory,
-  PackagingInventory, InventoryMovement, StockOverview, TraceabilityInfo,
+  PackagingInventory, InventoryMovement, StockOverview,
   ArticleType, LocationType, TraceabilityChain, Capacity,
   RevenueStats, YieldStats, Subscription, AccuracySummary, AccuracyDetail
 } from '../types'
 
 import keycloak from './auth';
 
+const AUTH_DISABLED = import.meta.env.VITE_AUTH_DISABLED === 'true';
+
 // API Configuration
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+const API_URL = import.meta.env.VITE_API_URL ?? (import.meta.env.DEV ? 'http://localhost:8000' : '')
 
 const api = axios.create({
   baseURL: `${API_URL}/api/v1`,
@@ -24,15 +26,13 @@ const api = axios.create({
 
 // Add Auth Interceptor
 api.interceptors.request.use(async (config) => {
+  if (AUTH_DISABLED) return config;
   if (keycloak.token) {
     try {
-      // Update token if it's about to expire (within 30 seconds)
       await keycloak.updateToken(30);
       config.headers.Authorization = `Bearer ${keycloak.token}`;
-    } catch (error) {
-      console.error('Failed to update token', error);
-      // Optional: Force login if update fails? 
-      // keycloak.login(); 
+    } catch (_error) {
+      // Token refresh failed — silently continue without auth
     }
   }
   return config;
@@ -124,15 +124,18 @@ export const salesApi = {
     api.get<Order>(`/sales/orders/${id}`).then(r => r.data),
 
   createOrder: (data: {
-    kunde_id: string
-    liefer_datum: string
-    positionen: Array<{
-      seed_id: string
-      menge: number
-      einheit: string
-      preis_pro_einheit?: number
+    customer_id: string
+    requested_delivery_date: string
+    lines: Array<{
+      product_id?: string
+      product_name: string
+      quantity: number
+      unit: string
+      unit_price: number
+      tax_rate?: 'STANDARD' | 'REDUZIERT' | 'STEUERFREI'
     }>
-    notizen?: string
+    notes?: string
+    customer_reference?: string
   }) =>
     api.post<Order>('/sales/orders', data).then(r => r.data),
 
@@ -457,7 +460,13 @@ export const inventoryApi = {
   getLowStockAlerts: () =>
     api.get('/inventory/low-stock-alerts').then(r => r.data),
 
-
+  correctInventory: (data: {
+    inventory_id: string;
+    inventory_type: string;
+    actual_quantity: number;
+    reason: string;
+  }) =>
+    api.post('/inventory/correction', null, { params: data }).then(r => r.data),
 
 }
 
@@ -547,11 +556,13 @@ import type { User, UserRole } from '../types'
 const MOCK_USERS_KEY = 'minga-mock-users'
 
 const defaultMockUsers: User[] = [
-  { id: '1', name: 'Max Mustermann', email: 'max@minga-greens.de', role: 'ADMIN' },
-  { id: '2', name: 'Anna Schmidt', email: 'anna@minga-greens.de', role: 'SALES' },
-  { id: '3', name: 'Peter Müller', email: 'peter@minga-greens.de', role: 'PRODUCTION_PLANNER' },
-  { id: '4', name: 'Lisa Weber', email: 'lisa@minga-greens.de', role: 'PRODUCTION_STAFF' },
-  { id: '5', name: 'Thomas Becker', email: 'thomas@minga-greens.de', role: 'ACCOUNTING' },
+  { id: '1', name: 'Max Mustermann', email: 'max@minga-greens.de', role: 'ADMIN', is_active: true, last_login: '2026-04-08T08:14:00Z', created_at: '2024-11-01T10:00:00Z', phone: '+49 89 123 4560' },
+  { id: '2', name: 'Anna Schmidt', email: 'anna@minga-greens.de', role: 'SALES', is_active: true, last_login: '2026-04-08T09:32:00Z', created_at: '2025-01-15T09:00:00Z', phone: '+49 89 123 4561' },
+  { id: '3', name: 'Peter Müller', email: 'peter@minga-greens.de', role: 'PRODUCTION_PLANNER', is_active: true, last_login: '2026-04-07T16:50:00Z', created_at: '2025-02-10T08:30:00Z', phone: '+49 89 123 4562' },
+  { id: '4', name: 'Lisa Weber', email: 'lisa@minga-greens.de', role: 'PRODUCTION_STAFF', is_active: true, last_login: '2026-04-08T06:45:00Z', created_at: '2025-03-20T07:00:00Z' },
+  { id: '5', name: 'Thomas Becker', email: 'thomas@minga-greens.de', role: 'ACCOUNTING', is_active: true, last_login: '2026-04-07T14:20:00Z', created_at: '2025-04-01T11:00:00Z', phone: '+49 89 123 4564' },
+  { id: '6', name: 'Julia Hoffmann', email: 'julia@minga-greens.de', role: 'SALES', is_active: true, last_login: '2026-04-08T10:05:00Z', created_at: '2025-06-15T09:00:00Z' },
+  { id: '7', name: 'Markus Klein', email: 'markus@minga-greens.de', role: 'PRODUCTION_STAFF', is_active: false, last_login: '2026-02-14T11:30:00Z', created_at: '2025-05-01T08:00:00Z' },
 ]
 
 function getMockUsers(): User[] {

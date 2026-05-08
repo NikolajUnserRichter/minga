@@ -1,6 +1,8 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import keycloak from '../services/auth';
 
+const AUTH_DISABLED = import.meta.env.VITE_AUTH_DISABLED === 'true';
+
 interface AuthContextType {
     authenticated: boolean;
     token?: string;
@@ -17,35 +19,38 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+const DEV_USER = {
+    username: 'admin',
+    email: 'admin@minga-greens.de',
+    firstName: 'Admin',
+    lastName: 'Minga',
+    roles: ['admin', 'sales', 'production_planner', 'production_staff', 'accounting'],
+};
+
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-    const [authenticated, setAuthenticated] = useState(false);
-    const [loading, setLoading] = useState(true);
+    const [authenticated, setAuthenticated] = useState(AUTH_DISABLED);
+    const [loading, setLoading] = useState(!AUTH_DISABLED);
 
     useEffect(() => {
-        // Check if auth is enabled via env var, otherwise bypass for dev comfort
-        // But since we installed Keycloak, let's try to initialize it.
-        // Making initialization idempotent
+        if (AUTH_DISABLED) return;
+
         const initKeycloak = async () => {
             try {
                 const auth = await keycloak.init({
-                    onLoad: 'login-required', // or 'check-sso'
+                    onLoad: 'login-required',
                     pkceMethod: 'S256',
-                    // silentCheckSsoRedirectUri: window.location.origin + '/silent-check-sso.html'
                 });
 
                 if (auth) {
                     setAuthenticated(true);
                 }
-            } catch (error) {
-                console.error("Keycloak Init Failed", error);
-                // Fallback for dev if Keycloak isn't running?
-                // setAuthenticated(true); // UNSAFE default
+            } catch (_error) {
+                // Keycloak init failed
             } finally {
                 setLoading(false);
             }
         };
 
-        // Safety check to prevent double init in React 18 Strict Mode
         if (!keycloak.didInitialize) {
             initKeycloak();
         }
@@ -53,30 +58,33 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     if (loading) {
         return (
-            <div className="flex items-center justify-center h-screen bg-gray-50">
+            <div className="flex items-center justify-center h-screen bg-gray-50 dark:bg-gray-900">
                 <div className="text-center">
+                    <img src="/logo.png" alt="Minga Greens" className="w-24 h-24 mx-auto mb-4 object-contain invert dark:invert-0" />
                     <div className="text-2xl font-semibold text-emerald-600 mb-2">Minga Greens ERP</div>
-                    <div className="text-gray-500">Authentifizierung läuft...</div>
+                    <div className="text-gray-500 dark:text-gray-400">Authentifizierung läuft...</div>
                 </div>
             </div>
         )
     }
 
-    const user = authenticated ? {
-        username: keycloak.tokenParsed?.preferred_username,
-        email: keycloak.tokenParsed?.email,
-        firstName: keycloak.tokenParsed?.given_name,
-        lastName: keycloak.tokenParsed?.family_name,
-        roles: keycloak.realmAccess?.roles
-    } : undefined;
+    const user = AUTH_DISABLED
+        ? DEV_USER
+        : authenticated ? {
+            username: keycloak.tokenParsed?.preferred_username,
+            email: keycloak.tokenParsed?.email,
+            firstName: keycloak.tokenParsed?.given_name,
+            lastName: keycloak.tokenParsed?.family_name,
+            roles: keycloak.realmAccess?.roles
+        } : undefined;
 
     return (
         <AuthContext.Provider value={{
             authenticated,
-            token: keycloak.token,
+            token: AUTH_DISABLED ? 'dev-bypass-token' : keycloak.token,
             user,
-            login: keycloak.login,
-            logout: keycloak.logout
+            login: AUTH_DISABLED ? () => {} : keycloak.login,
+            logout: AUTH_DISABLED ? () => { window.location.href = '/'; } : keycloak.logout
         }}>
             {children}
         </AuthContext.Provider>

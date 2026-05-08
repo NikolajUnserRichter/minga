@@ -3,7 +3,7 @@ from typing import Optional
 Rechnungs-Service - Business Logic für Rechnungen
 Mit deutscher MwSt-Berechnung und DATEV-Export
 """
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from uuid import UUID
 from io import StringIO
@@ -180,27 +180,27 @@ class InvoiceService:
 
         # Rechnung erstellen
         invoice = self.create_invoice(
-            customer_id=order.kunde_id,
+            customer_id=order.customer_id,
             order_id=order_id,
-            delivery_date=order.liefer_datum,
+            delivery_date=order.requested_delivery_date,
         )
 
         # Positionen aus Bestellung übernehmen
-        for item in order.items:
+        for line in order.lines:
             # Produkt laden für Beschreibung und MwSt
-            product = self.db.get(Product, item.seed_id) if item.seed_id else None
+            product = self.db.get(Product, line.product_id) if line.product_id else None
 
             self.add_line(
                 invoice_id=invoice.id,
-                description=product.name if product else f"Position {item.id}",
-                quantity=item.menge,
-                unit=item.einheit,
-                unit_price=item.preis_pro_einheit or Decimal("0"),
+                description=product.name if product else (line.beschreibung or f"Position {line.id}"),
+                quantity=line.quantity,
+                unit=line.unit,
+                unit_price=line.unit_price or Decimal("0"),
                 product_id=product.id if product else None,
                 sku=product.sku if product else None,
-                tax_rate=TaxRate.REDUZIERT,  # Lebensmittel
-                order_item_id=item.id,
-                harvest_batch_ids=[item.harvest_id] if item.harvest_id else None,
+                tax_rate=line.tax_rate or TaxRate.REDUZIERT,
+                order_item_id=line.id,
+                harvest_batch_ids=[line.harvest_id] if line.harvest_id else None,
             )
 
         return invoice
@@ -224,7 +224,7 @@ class InvoiceService:
 
         # Status ändern
         invoice.status = InvoiceStatus.OFFEN
-        invoice.sent_at = datetime.utcnow()
+        invoice.sent_at = datetime.now(timezone.utc)
 
         return invoice
 
@@ -318,7 +318,7 @@ class InvoiceService:
 
             # Gutschrift sofort finalisieren
             credit_note.status = InvoiceStatus.OFFEN
-            credit_note.sent_at = datetime.utcnow()
+            credit_note.sent_at = datetime.now(timezone.utc)
 
         return invoice, credit_note
 
@@ -377,17 +377,24 @@ class InvoiceService:
         """
         Generiert die nächste Rechnungsnummer.
         Format: RE-2026-00001 oder GS-2026-00001 (Gutschrift)
+
+        Uses SELECT ... FOR UPDATE to prevent duplicate numbers under
+        concurrent access.
         """
         year = date.today().year
         prefix = "GS" if invoice_type == InvoiceType.GUTSCHRIFT else "RE"
 
-        last_number = self.db.execute(
-            select(func.max(Invoice.invoice_number))
+        # Lock the latest invoice row to prevent concurrent duplicates
+        last_invoice = self.db.execute(
+            select(Invoice)
             .where(Invoice.invoice_number.like(f"{prefix}-{year}-%"))
-        ).scalar()
+            .order_by(Invoice.invoice_number.desc())
+            .with_for_update()
+            .limit(1)
+        ).scalar_one_or_none()
 
-        if last_number:
-            sequence = int(last_number.split("-")[-1]) + 1
+        if last_invoice:
+            sequence = int(last_invoice.invoice_number.split("-")[-1]) + 1
         else:
             sequence = 1
 

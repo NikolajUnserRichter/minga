@@ -127,24 +127,24 @@ export default function Harvests() {
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                 <div className="card">
                     <div className="card-body flex items-center gap-4">
-                        <div className="p-3 bg-green-100 rounded-lg">
-                            <Scale className="w-6 h-6 text-green-600" />
+                        <div className="p-3 bg-green-100 dark:bg-green-900/30 rounded-lg">
+                            <Scale className="w-6 h-6 text-green-600 dark:text-green-400" />
                         </div>
                         <div>
-                            <p className="text-sm text-gray-500">Gesamtertrag</p>
-                            <p className="text-2xl font-bold text-green-600">{totalHarvestKg.toFixed(1)} kg</p>
+                            <p className="text-sm text-gray-500 dark:text-gray-400">Gesamtertrag</p>
+                            <p className="text-2xl font-bold text-green-600 dark:text-green-400">{totalHarvestKg.toFixed(1)} kg</p>
                         </div>
                     </div>
                 </div>
 
                 <div className="card">
                     <div className="card-body flex items-center gap-4">
-                        <div className="p-3 bg-red-100 rounded-lg">
-                            <TrendingDown className="w-6 h-6 text-red-600" />
+                        <div className="p-3 bg-red-100 dark:bg-red-900/30 rounded-lg">
+                            <TrendingDown className="w-6 h-6 text-red-600 dark:text-red-400" />
                         </div>
                         <div>
-                            <p className="text-sm text-gray-500">Gesamtverlust</p>
-                            <p className="text-2xl font-bold text-red-600">{totalLossKg.toFixed(2)} kg</p>
+                            <p className="text-sm text-gray-500 dark:text-gray-400">Gesamtverlust</p>
+                            <p className="text-2xl font-bold text-red-600 dark:text-red-400">{totalLossKg.toFixed(2)} kg</p>
                             <p className="text-xs text-gray-400">{avgLossPercent.toFixed(1)}%</p>
                         </div>
                     </div>
@@ -152,12 +152,12 @@ export default function Harvests() {
 
                 <div className="card">
                     <div className="card-body flex items-center gap-4">
-                        <div className="p-3 bg-amber-100 rounded-lg">
-                            <Star className="w-6 h-6 text-amber-600" />
+                        <div className="p-3 bg-amber-100 dark:bg-amber-900/30 rounded-lg">
+                            <Star className="w-6 h-6 text-amber-600 dark:text-amber-400" />
                         </div>
                         <div>
-                            <p className="text-sm text-gray-500">Ø Qualität</p>
-                            <p className="text-2xl font-bold text-amber-600">{avgQuality.toFixed(1)}</p>
+                            <p className="text-sm text-gray-500 dark:text-gray-400">Ø Qualität</p>
+                            <p className="text-2xl font-bold text-amber-600 dark:text-amber-400">{avgQuality.toFixed(1)}</p>
                             <div className="flex gap-0.5 mt-1">
                                 {renderStars(Math.round(avgQuality))}
                             </div>
@@ -167,12 +167,12 @@ export default function Harvests() {
 
                 <div className="card">
                     <div className="card-body flex items-center gap-4">
-                        <div className="p-3 bg-blue-100 rounded-lg">
-                            <Scissors className="w-6 h-6 text-blue-600" />
+                        <div className="p-3 bg-blue-100 dark:bg-blue-900/30 rounded-lg">
+                            <Scissors className="w-6 h-6 text-blue-600 dark:text-blue-400" />
                         </div>
                         <div>
-                            <p className="text-sm text-gray-500">Anzahl Ernten</p>
-                            <p className="text-2xl font-bold text-blue-600">{(Array.isArray(harvests) ? harvests : []).length}</p>
+                            <p className="text-sm text-gray-500 dark:text-gray-400">Anzahl Ernten</p>
+                            <p className="text-2xl font-bold text-blue-600 dark:text-blue-400">{(Array.isArray(harvests) ? harvests : []).length}</p>
                         </div>
                     </div>
                 </div>
@@ -182,7 +182,7 @@ export default function Harvests() {
             <FilterBar>
                 <div className="flex items-center gap-2">
                     <Calendar className="w-4 h-4 text-gray-400" />
-                    <span className="text-sm text-gray-600">Von:</span>
+                    <span className="text-sm text-gray-600 dark:text-gray-400">Von:</span>
                     <Input
                         type="date"
                         value={fromDate}
@@ -191,7 +191,7 @@ export default function Harvests() {
                     />
                 </div>
                 <div className="flex items-center gap-2">
-                    <span className="text-sm text-gray-600">Bis:</span>
+                    <span className="text-sm text-gray-600 dark:text-gray-400">Bis:</span>
                     <Input
                         type="date"
                         value={toDate}
@@ -245,7 +245,7 @@ export default function Harvests() {
                         </thead>
                         <tbody>
                             {(Array.isArray(harvests) ? harvests : []).map((harvest: Harvest) => (
-                                <tr key={harvest.id} className="hover:bg-gray-50">
+                                <tr key={harvest.id} className="hover:bg-gray-50 dark:bg-gray-700/50">
                                     <td className="font-medium">
                                         {new Date(harvest.ernte_datum).toLocaleDateString('de-DE', {
                                             weekday: 'short',
@@ -257,15 +257,15 @@ export default function Harvests() {
                                     <td>
                                         <a
                                             href={`/production?highlight=${harvest.grow_batch_id}`}
-                                            className="text-minga-600 hover:text-minga-700 hover:underline font-mono text-sm"
+                                            className="text-minga-600 dark:text-minga-400 hover:text-minga-700 hover:underline font-mono text-sm"
                                         >
                                             {harvest.grow_batch_id.slice(0, 8)}...
                                         </a>
                                     </td>
-                                    <td className="text-right font-semibold text-green-600">
+                                    <td className="text-right font-semibold text-green-600 dark:text-green-400">
                                         {(harvest.menge_gramm / 1000).toFixed(2)} kg
                                     </td>
-                                    <td className="text-right text-red-600">
+                                    <td className="text-right text-red-600 dark:text-red-400">
                                         {harvest.verlust_gramm > 0
                                             ? `${(harvest.verlust_gramm / 1000).toFixed(3)} kg`
                                             : '-'}
@@ -273,7 +273,7 @@ export default function Harvests() {
                                     <td className="text-right">
                                         {harvest.verlustquote > 0 ? (
                                             <span
-                                                className={`${harvest.verlustquote > 10 ? 'text-red-600' : 'text-gray-600'
+                                                className={`${harvest.verlustquote > 10 ? 'text-red-600 dark:text-red-400' : 'text-gray-600 dark:text-gray-400'
                                                     }`}
                                             >
                                                 {Number(harvest.verlustquote).toFixed(1)}%
@@ -283,7 +283,7 @@ export default function Harvests() {
                                         )}
                                     </td>
                                     <td>{renderStars(harvest.qualitaet_note)}</td>
-                                    <td className="text-gray-500 text-sm">
+                                    <td className="text-gray-500 dark:text-gray-400 text-sm">
                                         {new Date(harvest.created_at).toLocaleString('de-DE', {
                                             day: '2-digit',
                                             month: '2-digit',
@@ -306,7 +306,7 @@ export default function Harvests() {
                 size="lg"
             >
                 <div className="space-y-4">
-                    <p className="text-gray-600">
+                    <p className="text-gray-600 dark:text-gray-400">
                         Wähle eine erntereife Charge aus:
                     </p>
 
@@ -321,17 +321,17 @@ export default function Harvests() {
                                 <button
                                     key={batch.id}
                                     onClick={() => setSelectedBatch(batch)}
-                                    className="p-4 border border-gray-200 rounded-lg hover:border-minga-300 hover:bg-minga-50 transition-colors text-left"
+                                    className="p-4 border border-gray-200 dark:border-gray-700 rounded-lg hover:border-minga-300 hover:bg-minga-50 dark:bg-minga-900/30 transition-colors text-left"
                                 >
                                     <div className="flex justify-between items-start">
                                         <div>
-                                            <p className="font-semibold text-gray-900">{batch.seed_name || 'Unbekannt'}</p>
-                                            <p className="text-sm text-gray-500">
+                                            <p className="font-semibold text-gray-900 dark:text-white">{batch.seed_name || 'Unbekannt'}</p>
+                                            <p className="text-sm text-gray-500 dark:text-gray-400">
                                                 {batch.tray_anzahl} Trays | Position: {batch.regal_position || '-'}
                                             </p>
                                         </div>
                                         <div className="text-right">
-                                            <p className="text-sm font-medium text-green-600">
+                                            <p className="text-sm font-medium text-green-600 dark:text-green-400">
                                                 Erntereif
                                             </p>
                                             <p className="text-xs text-gray-400">

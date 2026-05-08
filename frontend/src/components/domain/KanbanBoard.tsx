@@ -36,9 +36,9 @@ const VALID_TRANSITIONS: Record<GrowBatchStatus, GrowBatchStatus[]> = {
 
 export function KanbanBoard({ batches, onStatusChange, onHarvest }: KanbanBoardProps) {
     const columns: { status: GrowBatchStatus; title: string; color: string; allowedFrom: GrowBatchStatus[] }[] = [
-        { status: 'KEIMUNG', title: 'Keimung', color: 'bg-amber-500', allowedFrom: [] },
+        { status: 'KEIMUNG', title: 'Keimung', color: 'bg-amber-50 dark:bg-amber-900/200', allowedFrom: [] },
         { status: 'WACHSTUM', title: 'Wachstum', color: 'bg-lime-500', allowedFrom: ['KEIMUNG'] },
-        { status: 'ERNTEREIF', title: 'Erntereif', color: 'bg-green-500', allowedFrom: ['WACHSTUM'] },
+        { status: 'ERNTEREIF', title: 'Erntereif', color: 'bg-green-50 dark:bg-green-900/200', allowedFrom: ['WACHSTUM'] },
     ];
 
     const handleDrop = (batchId: string, newStatus: GrowBatchStatus) => {
@@ -110,22 +110,22 @@ function KanbanColumn({
         <div
             className={`flex-1 min-w-[300px] max-w-[400px] rounded-lg transition-all ${isDragOver
                 ? isValidDrop
-                    ? 'ring-2 ring-minga-500 bg-minga-50'
-                    : 'ring-2 ring-red-400 bg-red-50'
-                : 'bg-gray-50'
+                    ? 'ring-2 ring-minga-500 bg-minga-50 dark:bg-minga-900/30'
+                    : 'ring-2 ring-red-400 bg-red-50 dark:bg-red-900/20'
+                : 'bg-gray-50 dark:bg-gray-700/50'
                 }`}
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
             onDrop={handleDrop}
         >
             {/* Column Header */}
-            <div className="p-4 border-b border-gray-200">
+            <div className="p-4 border-b border-gray-200 dark:border-gray-700">
                 <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
                         <div className={`w-3 h-3 rounded-full ${color}`} />
-                        <h3 className="font-semibold text-gray-900">{title}</h3>
+                        <h3 className="font-semibold text-gray-900 dark:text-white">{title}</h3>
                     </div>
-                    <span className="text-sm text-gray-500 bg-white px-2 py-0.5 rounded-full">
+                    <span className="text-sm text-gray-500 dark:text-gray-400 bg-white dark:bg-gray-800 px-2 py-0.5 rounded-full">
                         {batches.length}
                     </span>
                 </div>
@@ -175,14 +175,14 @@ function KanbanCard({ batch, onHarvest }: KanbanCardProps) {
             draggable={canDrag}
             onDragStart={handleDragStart}
             onDragEnd={handleDragEnd}
-            className={`bg-white rounded-lg border border-gray-200 p-3 transition-all ${isDragging ? 'opacity-50 shadow-lg ring-2 ring-minga-500' : 'hover:shadow-md'
+            className={`bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-3 transition-all ${isDragging ? 'opacity-50 shadow-lg ring-2 ring-minga-500' : 'hover:shadow-md'
                 } ${canDrag ? 'cursor-grab active:cursor-grabbing' : ''}`}
         >
             {/* Header */}
             <div className="flex items-start justify-between gap-2">
                 <div className="flex-1 min-w-0">
                     <span className="text-xs font-mono text-gray-400">#{batch.id.slice(0, 8)}</span>
-                    <h4 className="font-medium text-gray-900 truncate">{batch.seed?.name || 'Unbekannt'}</h4>
+                    <h4 className="font-medium text-gray-900 dark:text-white truncate">{batch.seed?.name || 'Unbekannt'}</h4>
                 </div>
                 {canDrag && (
                     <GripVertical className="w-4 h-4 text-gray-300 flex-shrink-0" />
@@ -190,7 +190,7 @@ function KanbanCard({ batch, onHarvest }: KanbanCardProps) {
             </div>
 
             {/* Info Row */}
-            <div className="flex items-center gap-3 mt-2 text-xs text-gray-500">
+            <div className="flex items-center gap-3 mt-2 text-xs text-gray-500 dark:text-gray-400">
                 <div className="flex items-center gap-1">
                     <Layers className="w-3 h-3" />
                     <span>{batch.tray_anzahl} Trays</span>
@@ -208,10 +208,10 @@ function KanbanCard({ batch, onHarvest }: KanbanCardProps) {
             </div>
 
             {/* Dates */}
-            <div className="mt-2 pt-2 border-t border-gray-100 text-xs">
-                <div className="flex justify-between text-gray-500">
+            <div className="mt-2 pt-2 border-t border-gray-100 dark:border-gray-700 text-xs">
+                <div className="flex justify-between text-gray-500 dark:text-gray-400">
                     <span>Ernte:</span>
-                    <span className="font-medium text-gray-700">
+                    <span className="font-medium text-gray-700 dark:text-gray-300">
                         {formatDate(batch.erwartete_ernte_optimal)}
                     </span>
                 </div>

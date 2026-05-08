@@ -358,7 +358,7 @@ export default function Abonnements() {
                                             <span className="text-gray-400">-</span>
                                         )}
                                     </td>
-                                    <td className="text-sm text-gray-500">
+                                    <td className="text-sm text-gray-500 dark:text-gray-400">
                                         <div className="flex items-center gap-1">
                                             <Calendar className="w-3 h-3" />
                                             {new Date(sub.gueltig_von).toLocaleDateString('de-DE')}
@@ -375,14 +375,14 @@ export default function Abonnements() {
                                     <td className="text-right">
                                         <div className="flex justify-end gap-1">
                                             <button
-                                                className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded"
+                                                className="p-1.5 text-gray-500 dark:text-gray-400 hover:text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded"
                                                 onClick={() => openEditModal(sub)}
                                                 title="Bearbeiten"
                                             >
                                                 <Edit2 className="w-4 h-4" />
                                             </button>
                                             <button
-                                                className="p-1.5 text-gray-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/30 rounded"
+                                                className="p-1.5 text-gray-500 dark:text-gray-400 hover:text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 rounded"
                                                 onClick={() => setDeletingSub(sub)}
                                                 title="Deaktivieren"
                                             >
@@ -510,7 +510,7 @@ export default function Abonnements() {
                                     onClick={() => toggleLiefertag(index)}
                                     className={`px-3 py-1.5 text-sm rounded-md border transition-colors ${
                                         formData.liefertage.includes(index)
-                                            ? 'bg-minga-500 text-white border-minga-500'
+                                            ? 'bg-minga-50 dark:bg-minga-900/300 text-white border-minga-500'
                                             : 'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600 hover:border-minga-300'
                                     }`}
                                 >

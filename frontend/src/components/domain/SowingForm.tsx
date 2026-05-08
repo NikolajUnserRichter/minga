@@ -177,14 +177,14 @@ export function SowingForm({
           onChange={(e) => setFormData({ ...formData, tray_anzahl: Number(e.target.value) })}
           error={errors.tray_anzahl}
         />
-        <p className="text-sm text-gray-500 mt-1">
+        <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
           <span className="inline-flex items-center gap-1">
             <Scale className="w-3 h-3" />
             {seedRequired}g Saatgut benötigt
           </span>
         </p>
         {selectedBatch && !hasEnoughSeed && (
-          <p className="text-sm text-red-600 mt-1">
+          <p className="text-sm text-red-600 dark:text-red-400 mt-1">
             Nicht genügend Saatgut in dieser Charge ({selectedBatch.verbleibend_gramm}g verfügbar)
           </p>
         )}
@@ -212,25 +212,25 @@ export function SowingForm({
 
       {/* Preview */}
       {selectedSeed && harvestWindow && (
-        <div className="p-4 bg-minga-50 rounded-lg border border-minga-200">
+        <div className="p-4 bg-minga-50 dark:bg-minga-900/30 rounded-lg border border-minga-200">
           <h4 className="font-medium text-minga-800 mb-3">Vorschau</h4>
           <div className="space-y-2 text-sm">
             <div className="flex justify-between">
-              <span className="text-gray-600">Keimung endet:</span>
+              <span className="text-gray-600 dark:text-gray-400">Keimung endet:</span>
               <span className="font-medium">{formatDateDE(harvestWindow.keimungEnds)}</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-gray-600">Erntefenster:</span>
+              <span className="text-gray-600 dark:text-gray-400">Erntefenster:</span>
               <span className="font-medium">
                 {formatDateDE(harvestWindow.min)} - {formatDateDE(harvestWindow.max)}
               </span>
             </div>
             <div className="flex justify-between">
-              <span className="text-gray-600">Optimale Ernte:</span>
+              <span className="text-gray-600 dark:text-gray-400">Optimale Ernte:</span>
               <span className="font-medium text-minga-700">{formatDateDE(harvestWindow.optimal)}</span>
             </div>
             <div className="flex justify-between pt-2 border-t border-minga-200">
-              <span className="text-gray-600">Erwarteter Ertrag:</span>
+              <span className="text-gray-600 dark:text-gray-400">Erwarteter Ertrag:</span>
               <span className="font-medium">~{expectedYield.toFixed(2)} kg (±5%)</span>
             </div>
           </div>

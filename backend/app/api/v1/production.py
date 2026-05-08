@@ -27,7 +27,9 @@ def list_grow_batches(
     erntereif: Optional[bool] = None,
 ):
     """Listet Wachstumschargen."""
-    query = select(GrowBatch).order_by(desc(GrowBatch.aussaat_datum))
+    query = select(GrowBatch).options(
+        joinedload(GrowBatch.seed_batch)
+    ).order_by(desc(GrowBatch.aussaat_datum))
     
     if status:
         query = query.where(GrowBatch.status == status)
@@ -41,7 +43,7 @@ def list_grow_batches(
              # GrowBatch.erwartete_ernte_max >= today # Optional: auch überfällige anzeigen
          )
 
-    batches = db.execute(query).scalars().all()
+    batches = db.execute(query).scalars().unique().all()
     return batches
 
 @router.post("/grow-batches", response_model=GrowBatchResponse, status_code=201)

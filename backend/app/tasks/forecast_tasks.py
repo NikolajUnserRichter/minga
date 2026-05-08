@@ -20,7 +20,15 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 
 
-@celery_app.task(name="app.tasks.forecast_tasks.generate_daily_forecasts")
+@celery_app.task(
+    name="app.tasks.forecast_tasks.generate_daily_forecasts",
+    autoretry_for=(Exception,),
+    retry_kwargs={"max_retries": 3},
+    retry_backoff=True,
+    retry_backoff_max=600,
+    time_limit=600,
+    soft_time_limit=540,
+)
 def generate_daily_forecasts():
     """
     Generiert tägliche Forecasts für alle aktiven Produkte.

@@ -59,6 +59,18 @@ class ProductService:
         if existing:
             raise ValueError(f"SKU '{sku}' existiert bereits")
 
+        # Default-Basiseinheit, falls nicht angegeben (Spalte ist NOT NULL).
+        if base_unit_id is None:
+            default_unit = self.db.execute(
+                select(UnitOfMeasure).where(UnitOfMeasure.code == "G")
+            ).scalar_one_or_none()
+            if not default_unit:
+                raise ValueError(
+                    "Keine Basiseinheit angegeben und Standard 'G' existiert nicht — "
+                    "Stammdaten initialisieren."
+                )
+            base_unit_id = default_unit.id
+
         product = Product(
             sku=sku,
             name=name,

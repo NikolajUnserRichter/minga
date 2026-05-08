@@ -3,7 +3,7 @@ from typing import Optional
 API Endpoints für Forecasting und Produktionsplanung
 Erweitert mit Manual Adjustment Capability
 """
-from datetime import date, timedelta, datetime
+from datetime import date, timedelta, datetime, timezone
 from decimal import Decimal
 from uuid import UUID
 import math
@@ -471,7 +471,7 @@ async def revert_manual_adjustment(
 
     # Anpassung als reverted markieren
     adjustment.is_active = False
-    adjustment.reverted_at = datetime.utcnow()
+    adjustment.reverted_at = datetime.now(timezone.utc)
     adjustment.reverted_by = UUID(user["id"]) if user else None
     adjustment.revert_reason = revert_data.reason
 
@@ -969,7 +969,7 @@ async def approve_production_suggestion(
     db.flush() # ID generieren
 
     suggestion.status = SuggestionStatus.GENEHMIGT
-    suggestion.genehmigt_am = datetime.utcnow()
+    suggestion.genehmigt_am = datetime.now(timezone.utc)
     suggestion.genehmigt_von = UUID(user["id"])
 
     db.commit()
@@ -1016,7 +1016,7 @@ async def reject_production_suggestion(
         )
 
     suggestion.status = SuggestionStatus.ABGELEHNT
-    suggestion.abgelehnt_am = datetime.utcnow()
+    suggestion.abgelehnt_am = datetime.now(timezone.utc)
     suggestion.abgelehnt_von = UUID(user["id"])
     suggestion.ablehnungsgrund = rejection.reason
 

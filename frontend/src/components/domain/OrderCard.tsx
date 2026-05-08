@@ -26,39 +26,39 @@ export function OrderCard({ order, onMarkReady, onMarkDelivered, onClick }: Orde
       <div className="card-body">
         <div className="flex items-start justify-between">
           <div>
-            <span className="text-sm font-mono text-gray-500">#{order.id.slice(0, 8)}</span>
-            <h3 className="font-semibold text-gray-900 mt-1">{order.kunde?.name || 'Unbekannt'}</h3>
+            <span className="text-sm font-mono text-gray-500 dark:text-gray-400">#{order.id.slice(0, 8)}</span>
+            <h3 className="font-semibold text-gray-900 dark:text-white mt-1">{order.kunde?.name || 'Unbekannt'}</h3>
           </div>
           <OrderStatusBadge status={order.status} />
         </div>
 
         <div className="mt-4 space-y-2">
-          <div className="flex items-center gap-2 text-sm text-gray-600">
+          <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
             <Calendar className="w-4 h-4 text-gray-400" />
             <span>Lieferung: {formatDate(order.liefer_datum)}</span>
-            <span className="text-minga-600 font-medium">({getRelativeDate(order.liefer_datum)})</span>
+            <span className="text-minga-600 dark:text-minga-400 font-medium">({getRelativeDate(order.liefer_datum)})</span>
           </div>
         </div>
 
         {/* Order Items */}
         {order.positionen && order.positionen.length > 0 && (
-          <div className="mt-4 pt-4 border-t border-gray-100">
-            <p className="text-sm font-medium text-gray-700 mb-2">Positionen:</p>
+          <div className="mt-4 pt-4 border-t border-gray-100 dark:border-gray-700">
+            <p className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Positionen:</p>
             <div className="space-y-1">
               {order.positionen.slice(0, 3).map((item, idx) => (
                 <div key={idx} className="flex justify-between text-sm">
-                  <span className="text-gray-600">
+                  <span className="text-gray-600 dark:text-gray-400">
                     {item.seed?.name || 'Produkt'} {item.menge} {item.einheit}
                   </span>
                   {item.preis_pro_einheit && (
-                    <span className="text-gray-900">
+                    <span className="text-gray-900 dark:text-white">
                       {(item.menge * item.preis_pro_einheit).toFixed(2)}
                     </span>
                   )}
                 </div>
               ))}
               {order.positionen.length > 3 && (
-                <p className="text-sm text-gray-500">
+                <p className="text-sm text-gray-500 dark:text-gray-400">
                   +{order.positionen.length - 3} weitere Positionen
                 </p>
               )}
@@ -67,9 +67,9 @@ export function OrderCard({ order, onMarkReady, onMarkDelivered, onClick }: Orde
         )}
 
         {/* Total */}
-        <div className="mt-4 pt-4 border-t border-gray-100 flex justify-between">
-          <span className="font-medium text-gray-700">Gesamt:</span>
-          <span className="font-bold text-gray-900">{totalValue.toFixed(2)}</span>
+        <div className="mt-4 pt-4 border-t border-gray-100 dark:border-gray-700 flex justify-between">
+          <span className="font-medium text-gray-700 dark:text-gray-300">Gesamt:</span>
+          <span className="font-bold text-gray-900 dark:text-white">{totalValue.toFixed(2)}</span>
         </div>
 
         {/* Actions */}
@@ -120,17 +120,17 @@ export function OrderRow({ order, onClick }: OrderRowProps) {
 
   return (
     <div
-      className={`flex items-center justify-between p-4 bg-white border border-gray-200 rounded-lg ${onClick ? 'cursor-pointer hover:bg-gray-50' : ''
+      className={`flex items-center justify-between p-4 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg ${onClick ? 'cursor-pointer hover:bg-gray-50 dark:bg-gray-700/50' : ''
         }`}
       onClick={onClick}
     >
       <div className="flex items-center gap-4">
         <div>
           <div className="flex items-center gap-2">
-            <span className="font-mono text-sm text-gray-500">#{order.id.slice(0, 8)}</span>
+            <span className="font-mono text-sm text-gray-500 dark:text-gray-400">#{order.id.slice(0, 8)}</span>
             <span className="font-medium">{order.kunde?.name}</span>
           </div>
-          <p className="text-sm text-gray-500">
+          <p className="text-sm text-gray-500 dark:text-gray-400">
             {order.positionen?.length || 0} Position(en) | {formatDate(order.liefer_datum)}
           </p>
         </div>

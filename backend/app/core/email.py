@@ -95,3 +95,68 @@ PAYMENT_REMINDER_TEMPLATE = """
 </body>
 </html>
 """
+
+DUNNING_LEVEL2_TEMPLATE = """
+<!DOCTYPE html>
+<html>
+<head></head>
+<body>
+    <p>Hallo {{ customer_name }},</p>
+
+    <p>trotz unserer ersten Zahlungserinnerung konnten wir leider noch keinen Zahlungseingang
+    für folgende Rechnung verzeichnen:</p>
+
+    <p>
+        <strong>Rechnungsnummer:</strong> {{ invoice_number }}<br>
+        <strong>Datum:</strong> {{ invoice_date }}<br>
+        <strong>Fälligkeit:</strong> {{ due_date }}<br>
+        <strong>Offener Betrag:</strong> {{ amount }} EUR<br>
+        <strong>Mahngebühr:</strong> {{ fee }} EUR<br>
+        <strong>Gesamtbetrag:</strong> {{ total_with_fee }} EUR
+    </p>
+
+    <p>Bitte überweisen Sie den Gesamtbetrag von <strong>{{ total_with_fee }} EUR</strong>
+    bis zum <strong>{{ new_deadline }}</strong> auf unser Konto.</p>
+
+    <p>Sollte bis zu diesem Datum kein Zahlungseingang erfolgen, sehen wir uns
+    gezwungen, weitere Maßnahmen einzuleiten.</p>
+
+    <p>Mit freundlichen Grüßen,<br>
+    Ihr Minga Greens Team</p>
+</body>
+</html>
+"""
+
+DUNNING_LEVEL3_TEMPLATE = """
+<!DOCTYPE html>
+<html>
+<head></head>
+<body>
+    <p>Hallo {{ customer_name }},</p>
+
+    <p><strong>Letzte Mahnung</strong></p>
+
+    <p>Trotz zweimaliger Erinnerung ist die folgende Rechnung weiterhin unbeglichen:</p>
+
+    <p>
+        <strong>Rechnungsnummer:</strong> {{ invoice_number }}<br>
+        <strong>Datum:</strong> {{ invoice_date }}<br>
+        <strong>Fälligkeit:</strong> {{ due_date }}<br>
+        <strong>Offener Betrag:</strong> {{ amount }} EUR<br>
+        <strong>Mahngebühr:</strong> {{ fee }} EUR<br>
+        <strong>Gesamtbetrag:</strong> {{ total_with_fee }} EUR
+    </p>
+
+    <p>Wir fordern Sie hiermit letztmalig auf, den Betrag von
+    <strong>{{ total_with_fee }} EUR</strong> bis spätestens
+    <strong>{{ new_deadline }}</strong> zu begleichen.</p>
+
+    <p>Sollte bis zu diesem Datum kein Zahlungseingang erfolgen, werden wir
+    ohne weitere Ankündigung ein gerichtliches Mahnverfahren bzw.
+    ein Inkassoverfahren einleiten.</p>
+
+    <p>Mit freundlichen Grüßen,<br>
+    Ihr Minga Greens Team</p>
+</body>
+</html>
+"""

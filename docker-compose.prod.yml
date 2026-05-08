@@ -1,0 +1,108 @@
+# docker-compose.prod.yml
+# Production overrides — usage:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#
+# Requires a .env file at the project root with real secrets.
+# See .env.example for all required variables.
+
+services:
+  # --- Frontend: nginx serving static build ---
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.prod
+      args:
+        VITE_API_URL: ""
+        VITE_KEYCLOAK_URL: https://auth.${DOMAIN:-localhost}
+        VITE_KEYCLOAK_REALM: minga-greens
+        VITE_KEYCLOAK_CLIENT_ID: minga-frontend
+    environment: {}
+    volumes: []
+    restart: unless-stopped
+
+  # --- Backend: gunicorn with uvicorn workers ---
+  backend:
+    command: >
+      gunicorn app.main:app
+        --workers 4
+        --worker-class uvicorn.workers.UvicornWorker
+        --bind 0.0.0.0:8000
+        --timeout 120
+        --access-logfile -
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379/0
+      FORECASTING_SERVICE_URL: http://forecasting:8001
+      SECRET_KEY: ${SECRET_KEY}
+      KEYCLOAK_URL: http://keycloak:8080
+      KEYCLOAK_REALM: minga-greens
+      CORS_ORIGINS: '["https://${DOMAIN:-localhost}"]'
+    volumes: []
+    restart: unless-stopped
+
+  # --- Keycloak: production mode ---
+  keycloak:
+    command: start --hostname=auth.${DOMAIN:-localhost} --proxy-headers=xforwarded --http-enabled=true
+    ports: []
+    environment:
+      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB}
+      KC_DB_USERNAME: ${POSTGRES_USER}
+      KC_DB_PASSWORD: ${POSTGRES_PASSWORD}
+      KC_HOSTNAME: auth.${DOMAIN:-localhost}
+      KC_PROXY_HEADERS: xforwarded
+    volumes:
+      - ./keycloak/realm-export.json:/opt/keycloak/data/import/realm-export.json
+    restart: unless-stopped
+
+  # --- Celery: more concurrency ---
+  celery-worker:
+    command: celery -A app.celery_app worker --loglevel=warning --concurrency=4
+    volumes: []
+    restart: unless-stopped
+
+  celery-beat:
+    command: celery -A app.celery_app beat --loglevel=warning
+    volumes: []
+    restart: unless-stopped
+
+  # --- Forecasting ---
+  forecasting:
+    volumes:
+      - forecast_models:/app/models_cache
+    restart: unless-stopped
+
+  # --- Caddy reverse proxy (HTTPS) ---
+  caddy:
+    image: caddy:2-alpine
+    container_name: minga-caddy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - frontend
+      - keycloak
+    restart: unless-stopped
+
+  # --- Postgres: no exposed port in production ---
+  postgres:
+    ports: []
+
+  # --- Redis: no exposed port in production ---
+  redis:
+    ports: []
+
+  # --- Remove Metabase in production (optional, enable if needed) ---
+  metabase:
+    profiles:
+      - metabase
+
+volumes:
+  caddy_data:
+  caddy_config:

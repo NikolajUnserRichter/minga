@@ -3,7 +3,7 @@ from typing import Optional
 Lager-Service - Business Logic für Lagerverwaltung
 Mit vollständiger Rückverfolgbarkeit
 """
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from uuid import UUID
 from sqlalchemy.orm import Session
@@ -793,7 +793,7 @@ class InventoryService:
                     inv.current_quantity = int(item.counted_quantity)
 
         count.status = "ABGESCHLOSSEN"
-        count.completed_at = datetime.utcnow()
+        count.completed_at = datetime.now(timezone.utc)
 
         return count
 
@@ -844,7 +844,7 @@ class InventoryService:
             created_by=created_by,
             reason=reason,
             reference_number=reference_number,
-            movement_date=datetime.utcnow(),
+            movement_date=datetime.now(timezone.utc),
         )
 
         self.db.add(movement)

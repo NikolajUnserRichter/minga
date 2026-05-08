@@ -78,8 +78,8 @@ export default function AccuracyReports() {
     return (
         <div className="space-y-6">
             <PageHeader
-                title="Accuracy Reports"
-                subtitle="Forecast-Genauigkeit und Abweichungsanalyse"
+                title="Forecast-Genauigkeit"
+                subtitle="Genauigkeit und Abweichungsanalyse"
             />
 
             {/* Summary Cards */}
@@ -242,7 +242,7 @@ export default function AccuracyReports() {
                                             {detail.seed_name || '-'}
                                         </div>
                                     </td>
-                                    <td className="text-right text-gray-500">
+                                    <td className="text-right text-gray-500 dark:text-gray-400">
                                         {detail.prognostizierte_menge.toFixed(0)}g
                                     </td>
                                     <td className="text-right font-medium">
@@ -258,7 +258,7 @@ export default function AccuracyReports() {
                                                     ? 'text-red-600 dark:text-red-400'
                                                     : detail.abweichung_absolut < 0
                                                     ? 'text-green-600 dark:text-green-400'
-                                                    : 'text-gray-500'
+                                                    : 'text-gray-500 dark:text-gray-400'
                                             }
                                         >
                                             {detail.abweichung_absolut > 0 ? '+' : ''}

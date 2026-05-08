@@ -24,7 +24,7 @@ export function GrowBatchCard({
 
   return (
     <div
-      className={`card ${isHarvestReady ? 'border-green-300 bg-green-50/30' : ''} ${onClick ? 'cursor-pointer card-hover' : ''
+      className={`card ${isHarvestReady ? 'border-green-300 dark:border-green-700 bg-green-50/30' : ''} ${onClick ? 'cursor-pointer card-hover' : ''
         }`}
       onClick={onClick}
     >
@@ -32,10 +32,10 @@ export function GrowBatchCard({
         <div className="flex items-start justify-between">
           <div>
             <div className="flex items-center gap-2">
-              <span className="text-sm font-mono text-gray-500">#{batch.id.slice(0, 8)}</span>
-              {isHarvestReady && <AlertCircle className="w-4 h-4 text-green-600" />}
+              <span className="text-sm font-mono text-gray-500 dark:text-gray-400">#{batch.id.slice(0, 8)}</span>
+              {isHarvestReady && <AlertCircle className="w-4 h-4 text-green-600 dark:text-green-400" />}
             </div>
-            <h3 className="font-semibold text-gray-900 mt-1">{batch.seed?.name || 'Unbekannt'}</h3>
+            <h3 className="font-semibold text-gray-900 dark:text-white mt-1">{batch.seed?.name || 'Unbekannt'}</h3>
           </div>
           <GrowBatchStatusBadge status={batch.status} />
         </div>
@@ -45,35 +45,35 @@ export function GrowBatchCard({
 
         {/* Info Grid */}
         <div className="grid grid-cols-2 gap-3 mt-4">
-          <div className="flex items-center gap-2 text-sm text-gray-600">
+          <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
             <Layers className="w-4 h-4 text-gray-400" />
             <span>{batch.tray_anzahl} Trays</span>
           </div>
-          <div className="flex items-center gap-2 text-sm text-gray-600">
+          <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
             <Calendar className="w-4 h-4 text-gray-400" />
             <span>Tag {currentDay}</span>
           </div>
           {batch.regal_position && (
-            <div className="flex items-center gap-2 text-sm text-gray-600">
+            <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
               <MapPin className="w-4 h-4 text-gray-400" />
               <span>Regal {batch.regal_position}</span>
             </div>
           )}
-          <div className="flex items-center gap-2 text-sm text-gray-600">
+          <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
             <Scale className="w-4 h-4 text-gray-400" />
             <span>~{(expectedYield / 1000).toFixed(1)} kg</span>
           </div>
         </div>
 
         {/* Dates */}
-        <div className="mt-4 pt-4 border-t border-gray-100 text-sm">
+        <div className="mt-4 pt-4 border-t border-gray-100 dark:border-gray-700 text-sm">
           <div className="flex justify-between">
-            <span className="text-gray-500">Aussaat:</span>
+            <span className="text-gray-500 dark:text-gray-400">Aussaat:</span>
             <span>{formatDate(batch.aussaat_datum)}</span>
           </div>
           <div className="flex justify-between mt-1">
-            <span className="text-gray-500">Ernte (optimal):</span>
-            <span className="text-minga-600 font-medium">
+            <span className="text-gray-500 dark:text-gray-400">Ernte (optimal):</span>
+            <span className="text-minga-600 dark:text-minga-400 font-medium">
               {formatDate(batch.erwartete_ernte_optimal)}
             </span>
           </div>
@@ -164,7 +164,7 @@ export function GrowBatchTimeline({ batch, className = '' }: GrowBatchTimelinePr
         </div>
       </div>
 
-      <div className="flex justify-between mt-1 text-xs text-gray-500">
+      <div className="flex justify-between mt-1 text-xs text-gray-500 dark:text-gray-400">
         <span>Tag {currentDay}/{totalDays}</span>
         <span>
           {isKeimung && 'Keimung'}
@@ -198,17 +198,17 @@ export function GrowBatchRow({ batch, onHarvest, onClick }: GrowBatchRowProps) {
 
   return (
     <div
-      className={`flex items-center justify-between p-4 bg-white border rounded-lg ${isHarvestReady ? 'border-green-300 bg-green-50/30' : 'border-gray-200'
-        } ${onClick ? 'cursor-pointer hover:bg-gray-50' : ''}`}
+      className={`flex items-center justify-between p-4 bg-white dark:bg-gray-800 border rounded-lg ${isHarvestReady ? 'border-green-300 dark:border-green-700 bg-green-50/30' : 'border-gray-200 dark:border-gray-700'
+        } ${onClick ? 'cursor-pointer hover:bg-gray-50 dark:bg-gray-700/50' : ''}`}
       onClick={onClick}
     >
       <div className="flex items-center gap-4">
         <div>
           <div className="flex items-center gap-2">
-            <span className="font-mono text-sm text-gray-500">#{batch.id.slice(0, 8)}</span>
+            <span className="font-mono text-sm text-gray-500 dark:text-gray-400">#{batch.id.slice(0, 8)}</span>
             <span className="font-medium">{batch.seed?.name}</span>
           </div>
-          <p className="text-sm text-gray-500">
+          <p className="text-sm text-gray-500 dark:text-gray-400">
             {batch.tray_anzahl} Trays | Tag {currentDay} | Regal {batch.regal_position || '-'}
           </p>
         </div>
@@ -216,7 +216,7 @@ export function GrowBatchRow({ batch, onHarvest, onClick }: GrowBatchRowProps) {
 
       <div className="flex items-center gap-4">
         <div className="text-right">
-          <p className="text-sm text-gray-500">Ernte</p>
+          <p className="text-sm text-gray-500 dark:text-gray-400">Ernte</p>
           <p className="text-sm font-medium">{getRelativeDate(batch.erwartete_ernte_optimal)}</p>
         </div>
         <GrowBatchStatusBadge status={batch.status} />

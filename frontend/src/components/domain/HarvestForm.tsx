@@ -73,10 +73,10 @@ export function HarvestForm({ batch, onSubmit, onCancel, loading = false }: Harv
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
       {/* Batch Info */}
-      <div className="p-4 bg-gray-50 rounded-lg">
-        <p className="text-sm text-gray-500">Charge</p>
+      <div className="p-4 bg-gray-50 dark:bg-gray-700/50 rounded-lg">
+        <p className="text-sm text-gray-500 dark:text-gray-400">Charge</p>
         <p className="font-semibold">{batch.seed?.name || 'Unbekannt'}</p>
-        <p className="text-sm text-gray-500 mt-1">
+        <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
           #{batch.id.slice(0, 8)} | {batch.tray_anzahl} Trays | Regal {batch.regal_position || '-'}
         </p>
       </div>
@@ -104,7 +104,7 @@ export function HarvestForm({ batch, onSubmit, onCancel, loading = false }: Harv
           hint={`Erwartet: ${expectedYield}g (±5%)`}
         />
         {formData.menge_gramm > 0 && (
-          <div className={`mt-2 text-sm ${isWithinExpectation ? 'text-green-600' : 'text-amber-600'}`}>
+          <div className={`mt-2 text-sm ${isWithinExpectation ? 'text-green-600 dark:text-green-400' : 'text-amber-600 dark:text-amber-400'}`}>
             {isWithinExpectation ? (
               <span className="flex items-center gap-1">
                 <Scale className="w-4 h-4" />
@@ -131,7 +131,7 @@ export function HarvestForm({ batch, onSubmit, onCancel, loading = false }: Harv
           endIcon="g"
         />
         {formData.verlust_gramm > 0 && (
-          <p className="text-sm text-gray-500 mt-1">({lossPercent}% Verlust)</p>
+          <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">({lossPercent}% Verlust)</p>
         )}
       </div>
 
@@ -145,19 +145,19 @@ export function HarvestForm({ batch, onSubmit, onCancel, loading = false }: Harv
               type="button"
               onClick={() => setFormData({ ...formData, qualitaet_note: rating })}
               className={`flex-1 p-3 rounded-lg border-2 transition-colors ${formData.qualitaet_note === rating
-                ? 'border-minga-500 bg-minga-50'
-                : 'border-gray-200 hover:border-gray-300'
+                ? 'border-minga-500 bg-minga-50 dark:bg-minga-900/30'
+                : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:border-gray-600'
                 }`}
             >
               <Star
                 className={`w-5 h-5 mx-auto ${formData.qualitaet_note >= rating ? 'text-amber-400 fill-amber-400' : 'text-gray-300'
                   }`}
               />
-              <span className="text-xs text-gray-600 mt-1 block">{rating}</span>
+              <span className="text-xs text-gray-600 dark:text-gray-400 mt-1 block">{rating}</span>
             </button>
           ))}
         </div>
-        <p className="text-sm text-gray-500 mt-2">
+        <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">
           {qualityLabels[formData.qualitaet_note - 1]}
         </p>
       </div>

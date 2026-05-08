@@ -58,25 +58,25 @@ export function ForecastOverrideForm({
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
       {/* Forecast Info */}
-      <div className="p-4 bg-gray-50 rounded-lg">
+      <div className="p-4 bg-gray-50 dark:bg-gray-700/50 rounded-lg">
         <div className="flex justify-between mb-2">
-          <span className="text-sm text-gray-500">Produkt:</span>
+          <span className="text-sm text-gray-500 dark:text-gray-400">Produkt:</span>
           <span className="font-medium">{forecast.seed?.name || 'Unbekannt'}</span>
         </div>
         <div className="flex justify-between">
-          <span className="text-sm text-gray-500">Datum:</span>
+          <span className="text-sm text-gray-500 dark:text-gray-400">Datum:</span>
           <span className="font-medium">{formatDate(forecast.datum)}</span>
         </div>
       </div>
 
       {/* Current Forecast */}
-      <div className="p-4 border border-gray-200 rounded-lg">
-        <p className="text-sm font-medium text-gray-700 mb-2">Aktuelle Prognose</p>
-        <p className="text-2xl font-bold text-gray-900">
+      <div className="p-4 border border-gray-200 dark:border-gray-700 rounded-lg">
+        <p className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Aktuelle Prognose</p>
+        <p className="text-2xl font-bold text-gray-900 dark:text-white">
           {(originalValue / 1000).toFixed(2)} kg
         </p>
         {forecast.konfidenz_untergrenze && forecast.konfidenz_obergrenze && (
-          <p className="text-sm text-gray-500 mt-1">
+          <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
             Konfidenzintervall: {(forecast.konfidenz_untergrenze / 1000).toFixed(2)} -{' '}
             {(forecast.konfidenz_obergrenze / 1000).toFixed(2)} kg
           </p>
@@ -100,7 +100,7 @@ export function ForecastOverrideForm({
         />
         {formData.override_menge !== originalValue && (
           <div
-            className={`mt-2 flex items-center gap-2 text-sm ${deviation > 0 ? 'text-green-600' : 'text-red-600'
+            className={`mt-2 flex items-center gap-2 text-sm ${deviation > 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'
               }`}
           >
             {deviation > 0 ? (
@@ -139,7 +139,7 @@ export function ForecastOverrideForm({
 
       {/* Current override info */}
       {currentOverride && currentOverride !== originalValue && (
-        <div className="p-3 bg-blue-50 rounded-lg text-sm text-blue-800">
+        <div className="p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg text-sm text-blue-800">
           <p className="font-medium">Bestehender Override:</p>
           <p>
             {(currentOverride / 1000).toFixed(2)} kg

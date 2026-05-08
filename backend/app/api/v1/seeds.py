@@ -38,7 +38,8 @@ async def list_seeds(
         query = query.where(Seed.aktiv == aktiv)
 
     if search:
-        query = query.where(Seed.name.ilike(f"%{search}%"))
+        safe_search = search.replace("%", "\\%").replace("_", "\\_")
+        query = query.where(Seed.name.ilike(f"%{safe_search}%"))
 
     # Total Count
     count_query = select(func.count()).select_from(query.subquery())

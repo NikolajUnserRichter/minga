@@ -60,28 +60,15 @@ function App() {
   );
 }
 
-// Placeholder for not yet implemented pages
-function NotImplemented({ title }: { title: string }) {
-  return (
-    <div className="flex flex-col items-center justify-center min-h-[400px] text-center">
-      <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mb-4">
-        <span className="text-3xl">🚧</span>
-      </div>
-      <h1 className="text-2xl font-bold text-gray-900">{title}</h1>
-      <p className="text-gray-500 mt-2">Diese Seite wird noch implementiert.</p>
-    </div>
-  );
-}
-
 // 404 Not Found page
 function NotFound() {
   return (
     <div className="flex flex-col items-center justify-center min-h-[400px] text-center">
-      <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mb-4">
+      <div className="w-16 h-16 bg-red-100 dark:bg-red-900/30 rounded-full flex items-center justify-center mb-4">
         <span className="text-3xl">🔍</span>
       </div>
-      <h1 className="text-2xl font-bold text-gray-900">Seite nicht gefunden</h1>
-      <p className="text-gray-500 mt-2">Die angeforderte Seite existiert nicht.</p>
+      <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Seite nicht gefunden</h1>
+      <p className="text-gray-500 dark:text-gray-400 mt-2">Die angeforderte Seite existiert nicht.</p>
       <a href="/dashboard" className="btn btn-primary mt-4">
         Zum Dashboard
       </a>

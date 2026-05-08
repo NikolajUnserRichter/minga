@@ -1,0 +1,24 @@
+# Caddyfile — automatic HTTPS via Let's Encrypt
+# Set DOMAIN in .env (e.g. DOMAIN=erp.minga-greens.de)
+#
+# DNS requirements:
+#   erp.minga-greens.de   → VPS IP
+#   auth.minga-greens.de  → VPS IP
+
+{$DOMAIN:localhost} {
+	# API calls go directly to backend (bypass nginx proxy)
+	reverse_proxy /api/* backend:8000
+	# Health check
+	reverse_proxy /health backend:8000
+	# API docs
+	reverse_proxy /docs backend:8000
+	reverse_proxy /redoc backend:8000
+	reverse_proxy /openapi.json backend:8000
+	# Everything else → frontend
+	reverse_proxy frontend:80
+}
+
+auth.{$DOMAIN:localhost} {
+	# Keycloak
+	reverse_proxy keycloak:8080
+}

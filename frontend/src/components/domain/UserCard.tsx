@@ -1,6 +1,6 @@
 import { User, UserRole } from '../../types';
 import { Badge } from '../ui';
-import { Mail, Edit2, Trash2, Shield } from 'lucide-react';
+import { Mail, Edit2, Trash2, Shield, Clock, Phone } from 'lucide-react';
 
 // Role display names and colors (using valid BadgeVariant types)
 const roleConfig: Record<UserRole, { label: string; variant: 'success' | 'info' | 'warning' | 'purple' | 'gray' | 'danger' }> = {
@@ -28,20 +28,29 @@ export function UserCard({ user, onEdit, onDelete }: UserCardProps) {
         .toUpperCase();
 
     return (
-        <div className="card card-hover">
+        <div className={`card card-hover ${user.is_active === false ? 'opacity-60' : ''}`}>
             <div className="card-body">
                 <div className="flex items-start gap-4">
                     {/* Avatar */}
-                    <div className="w-12 h-12 rounded-full bg-minga-100 dark:bg-minga-900/50 flex items-center justify-center text-minga-700 dark:text-minga-400 font-semibold text-lg flex-shrink-0">
-                        {user.avatar ? (
-                            <img src={user.avatar} alt={user.name} className="w-full h-full rounded-full object-cover" />
-                        ) : (
-                            initials
-                        )}
+                    <div className="relative">
+                        <div className="w-12 h-12 rounded-full bg-minga-100 dark:bg-minga-900/50 flex items-center justify-center text-minga-700 dark:text-minga-400 font-semibold text-lg flex-shrink-0">
+                            {user.avatar ? (
+                                <img src={user.avatar} alt={user.name} className="w-full h-full rounded-full object-cover" />
+                            ) : (
+                                initials
+                            )}
+                        </div>
+                        {/* Online indicator */}
+                        <div className={`absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full border-2 border-white dark:border-gray-800 ${user.is_active !== false ? 'bg-green-50 dark:bg-green-900/200' : 'bg-gray-400'}`} />
                     </div>
 
                     <div className="flex-1 min-w-0">
-                        <h3 className="font-semibold text-gray-900 dark:text-white truncate">{user.name}</h3>
+                        <div className="flex items-center gap-2">
+                            <h3 className="font-semibold text-gray-900 dark:text-white truncate">{user.name}</h3>
+                            {user.is_active === false && (
+                                <span className="text-xs text-gray-400 font-normal">Inaktiv</span>
+                            )}
+                        </div>
                         <div className="flex items-center gap-2 mt-1">
                             <Badge variant={config.variant}>
                                 <Shield className="w-3 h-3 mr-1" />
@@ -54,10 +63,26 @@ export function UserCard({ user, onEdit, onDelete }: UserCardProps) {
                 <div className="mt-4 space-y-2">
                     <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
                         <Mail className="w-4 h-4 text-gray-400" />
-                        <a href={`mailto:${user.email}`} className="hover:text-minga-600 truncate">
+                        <a href={`mailto:${user.email}`} className="hover:text-minga-600 dark:text-minga-400 truncate">
                             {user.email}
                         </a>
                     </div>
+                    {user.phone && (
+                        <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
+                            <Phone className="w-4 h-4 text-gray-400" />
+                            <span>{user.phone}</span>
+                        </div>
+                    )}
+                    {user.last_login && (
+                        <div className="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-500 dark:text-gray-400">
+                            <Clock className="w-4 h-4 text-gray-400" />
+                            <span>
+                                Zuletzt aktiv: {new Date(user.last_login).toLocaleDateString('de-DE', {
+                                    day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
+                                })}
+                            </span>
+                        </div>
+                    )}
                 </div>
 
                 {(onEdit || onDelete) && (
@@ -76,7 +101,7 @@ export function UserCard({ user, onEdit, onDelete }: UserCardProps) {
                         )}
                         {onDelete && (
                             <button
-                                className="btn btn-ghost btn-sm text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-900/20"
+                                className="btn btn-ghost btn-sm text-red-600 dark:text-red-400 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-900/20"
                                 onClick={(e) => {
                                     e.stopPropagation();
                                     onDelete();

@@ -6,19 +6,40 @@ from fastapi import Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.config import get_settings
 
 from fastapi.security import OAuth2PasswordBearer
 from app.core.security import verify_token
 # Type Alias für DB Session Dependency
 DBSession = Annotated[Session, Depends(get_db)]
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token") # URL is just for Swagger UI hint
+settings = get_settings()
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token", auto_error=False) # URL is just for Swagger UI hint
 
-async def get_current_user(token: Annotated[str, Depends(oauth2_scheme)]):
+async def get_current_user(token: Annotated[str | None, Depends(oauth2_scheme)]):
     """
     Dependency für authentifizierten Benutzer.
     Verifiziert das JWT Token gegen Keycloak.
     """
+    if settings.auth_disabled:
+        # Sentinel UUID so callers that wrap user["id"] in UUID(...) don't crash.
+        # Order/Invoice.created_by has no FK constraint, so any valid UUID is fine.
+        dev_user_id = "00000000-0000-0000-0000-000000000001"
+        return {
+            "id": dev_user_id,
+            "username": "admin",
+            "email": "admin@minga-greens.de",
+            "roles": ["admin", "sales", "production_planner", "production_staff", "accounting"],
+            "raw": {"sub": dev_user_id},
+        }
+
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
     payload = verify_token(token)
     
     # Extrahiere Rollen aus Keycloak Token

@@ -158,6 +158,10 @@ export interface User {
   email: string
   role: UserRole
   avatar?: string
+  is_active?: boolean
+  last_login?: string
+  created_at?: string
+  phone?: string
 }
 
 // Extended types with nested relations

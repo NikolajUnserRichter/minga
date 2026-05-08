@@ -22,18 +22,18 @@ export function ProductionSuggestionCard({
 
   return (
     <div
-      className={`card ${hasWarnings ? 'border-amber-300' : ''} ${onClick ? 'cursor-pointer card-hover' : ''
+      className={`card ${hasWarnings ? 'border-amber-300 dark:border-amber-700' : ''} ${onClick ? 'cursor-pointer card-hover' : ''
         }`}
       onClick={onClick}
     >
       <div className="card-body">
         <div className="flex items-start justify-between">
           <div className="flex items-center gap-3">
-            <div className="p-2 bg-minga-50 rounded-lg">
-              <Sprout className="w-5 h-5 text-minga-600" />
+            <div className="p-2 bg-minga-50 dark:bg-minga-900/30 rounded-lg">
+              <Sprout className="w-5 h-5 text-minga-600 dark:text-minga-400" />
             </div>
             <div>
-              <h3 className="font-semibold text-gray-900">{suggestion.seed?.name || 'Unbekannt'}</h3>
+              <h3 className="font-semibold text-gray-900 dark:text-white">{suggestion.seed?.name || 'Unbekannt'}</h3>
               <SuggestionStatusBadge status={suggestion.status} />
             </div>
           </div>
@@ -43,9 +43,9 @@ export function ProductionSuggestionCard({
         {(suggestion.warnungen || []).length > 0 && (
           <div className="mt-4 space-y-2">
             {(suggestion.warnungen || []).map((warning, idx) => (
-              <div key={idx} className="flex items-start gap-2 p-2 bg-amber-50 rounded-lg text-sm">
-                <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
-                <span className="text-amber-800">{formatWarning(warning.typ)}</span>
+              <div key={idx} className="flex items-start gap-2 p-2 bg-amber-50 dark:bg-amber-900/20 rounded-lg text-sm">
+                <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5" />
+                <span className="text-amber-800 dark:text-amber-200">{formatWarning(warning.typ)}</span>
               </div>
             ))}
           </div>
@@ -53,19 +53,19 @@ export function ProductionSuggestionCard({
 
         {/* Details */}
         <div className="mt-4 grid grid-cols-2 gap-3">
-          <div className="flex items-center gap-2 text-sm text-gray-600">
+          <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
             <Layers className="w-4 h-4 text-gray-400" />
             <span>{suggestion.empfohlene_trays} Trays</span>
           </div>
-          <div className="flex items-center gap-2 text-sm text-gray-600">
+          <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
             <Scale className="w-4 h-4 text-gray-400" />
             <span>~{((suggestion.empfohlene_trays * 350) / 1000).toFixed(1)} kg</span>
           </div>
-          <div className="flex items-center gap-2 text-sm text-gray-600">
+          <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
             <Calendar className="w-4 h-4 text-gray-400" />
             <span>Aussaat: {formatDate(suggestion.aussaat_datum)}</span>
           </div>
-          <div className="flex items-center gap-2 text-sm text-gray-600">
+          <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
             <Calendar className="w-4 h-4 text-gray-400" />
             <span>Ernte: {formatDate(suggestion.erwartete_ernte_datum)}</span>
           </div>
@@ -73,14 +73,14 @@ export function ProductionSuggestionCard({
 
         {/* Forecast reference */}
         {suggestion.forecast_id && (
-          <p className="text-xs text-gray-500 mt-3">
+          <p className="text-xs text-gray-500 dark:text-gray-400 mt-3">
             Basierend auf Forecast-Prognose
           </p>
         )}
 
         {/* Actions */}
         {isPending && (onApprove || onReject || onAdjust) && (
-          <div className="mt-4 pt-4 border-t border-gray-100 flex gap-2">
+          <div className="mt-4 pt-4 border-t border-gray-100 dark:border-gray-700 flex gap-2">
             {onApprove && (
               <button
                 className="btn btn-success btn-sm flex-1"
@@ -106,7 +106,7 @@ export function ProductionSuggestionCard({
             )}
             {onReject && (
               <button
-                className="btn btn-ghost btn-sm text-red-600 hover:bg-red-50"
+                className="btn btn-ghost btn-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:bg-red-900/20"
                 onClick={(e) => {
                   e.stopPropagation();
                   onReject();
@@ -151,21 +151,21 @@ export function ProductionSuggestionRow({
 
   return (
     <div
-      className={`flex items-center justify-between p-4 bg-white border rounded-lg ${hasWarnings ? 'border-amber-300 bg-amber-50/30' : 'border-gray-200'
+      className={`flex items-center justify-between p-4 bg-white dark:bg-gray-800 border rounded-lg ${hasWarnings ? 'border-amber-300 dark:border-amber-700 bg-amber-50/30' : 'border-gray-200 dark:border-gray-700'
         }`}
     >
       <div className="flex items-center gap-4">
         {hasWarnings && <AlertTriangle className="w-5 h-5 text-amber-500" />}
         <div>
           <p className="font-medium">{suggestion.seed?.name}</p>
-          <p className="text-sm text-gray-500">
+          <p className="text-sm text-gray-500 dark:text-gray-400">
             {suggestion.empfohlene_trays} Trays | Aussaat: {formatDate(suggestion.aussaat_datum)}
           </p>
         </div>
       </div>
 
       <div className="flex items-center gap-3">
-        <span className="text-sm text-gray-500">
+        <span className="text-sm text-gray-500 dark:text-gray-400">
           Ernte: {formatDate(suggestion.erwartete_ernte_datum)}
         </span>
         <SuggestionStatusBadge status={suggestion.status} />
@@ -183,7 +183,7 @@ export function ProductionSuggestionRow({
             )}
             {onReject && (
               <button
-                className="btn btn-ghost btn-sm btn-icon text-red-600"
+                className="btn btn-ghost btn-sm btn-icon text-red-600 dark:text-red-400"
                 onClick={onReject}
                 aria-label="Ablehnen"
               >

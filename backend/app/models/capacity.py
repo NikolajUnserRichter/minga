@@ -3,7 +3,7 @@ from typing import Optional
 Kapazitäts-Model für Ressourcenplanung
 """
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from sqlalchemy import String, Integer, DateTime, Enum as SQLEnum
 from sqlalchemy.types import Uuid, JSON
@@ -41,9 +41,9 @@ class Capacity(Base):
     aktuell_belegt: Mapped[int] = mapped_column(Integer, default=0)
 
     # Timestamps
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+        DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc)
     )
 
     @property

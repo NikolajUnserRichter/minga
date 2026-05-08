@@ -6,7 +6,7 @@ from datetime import date
 from decimal import Decimal
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import select
 
 from app.api.deps import DBSession, Pagination
@@ -42,7 +42,7 @@ def list_invoices(
     to_date: Optional[date] = None,
 ):
     """Listet alle Rechnungen mit optionaler Filterung."""
-    query = select(Invoice)
+    query = select(Invoice).options(joinedload(Invoice.lines))
 
     if status:
         query = query.where(Invoice.status == status)
@@ -62,7 +62,7 @@ def list_invoices(
     query = query.order_by(Invoice.invoice_date.desc())
     query = query.offset(pagination.offset).limit(pagination.page_size)
 
-    invoices = db.execute(query).scalars().all()
+    invoices = db.execute(query).scalars().unique().all()
     return invoices
 
 

@@ -4,7 +4,7 @@ Saatgut-Models: Seed und SeedBatch
 """
 
 import uuid
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 from decimal import Decimal
 from sqlalchemy import String, Integer, Numeric, Boolean, DateTime, Date, ForeignKey, Text
 from sqlalchemy.types import Uuid, JSON
@@ -49,9 +49,9 @@ class Seed(Base):
     aktiv: Mapped[bool] = mapped_column(Boolean, default=True)
 
     # Timestamps
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+        DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc)
     )
 
     # Beziehungen
@@ -92,7 +92,7 @@ class SeedBatch(Base):
     lieferdatum: Mapped[Optional[date]] = mapped_column(Date)
 
     # Timestamp
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     # Beziehungen
     seed: Mapped["Seed"] = relationship("Seed", back_populates="batches")

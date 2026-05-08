@@ -99,6 +99,36 @@ npm install
 npm run dev
 ```
 
+## Temporäres Hosting (kostenlos für ein paar Tage)
+
+Für schnelle Demos kann das Projekt als **Single-Service** auf Railway (Trial Credits) deployed werden.
+
+### Was dabei läuft
+
+- Frontend + Backend in **einem Container**
+- SQLite für temporäre Demo-Daten
+- Auth-Bypass aktiv (für Demo-Zwecke)
+
+### Deploy-Schritte (Railway)
+
+1. Neues Projekt auf Railway erstellen und dieses Git-Repo verbinden
+2. Root `Dockerfile` verwenden (wird automatisch erkannt)
+3. In den Service-Variablen setzen:
+
+```bash
+AUTH_DISABLED=true
+DATABASE_URL=sqlite:////data/minga_demo.db
+VITE_AUTH_DISABLED=true
+```
+
+4. Optional: Persistent Volume auf `/data` anlegen, damit Daten nach Redeploy erhalten bleiben
+5. Deploy starten und die erzeugte Railway-URL öffnen
+
+### Wichtige Hinweise
+
+- Diese Variante ist **nur für temporäre Tests/Demos** gedacht.
+- Für Produktion weiter die Docker-Compose-Architektur mit Postgres/Redis/Keycloak verwenden.
+
 ## Lizenz
 
 MIT License - siehe [LICENSE](LICENSE)

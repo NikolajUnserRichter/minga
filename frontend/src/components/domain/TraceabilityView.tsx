@@ -10,53 +10,53 @@ export function TraceabilityView({ data }: TraceabilityViewProps) {
     return (
         <div className="space-y-8 p-4">
             {/* Header Info */}
-            <div className="bg-gray-50 p-4 rounded-lg flex justify-between items-start">
+            <div className="bg-gray-50 dark:bg-gray-700/50 p-4 rounded-lg flex justify-between items-start">
                 <div>
-                    <h3 className="text-lg font-bold text-gray-900">{data.product?.name || 'Unbekanntes Produkt'}</h3>
-                    <p className="text-sm text-gray-500 font-mono">Charge: {data.finished_goods.batch}</p>
+                    <h3 className="text-lg font-bold text-gray-900 dark:text-white">{data.product?.name || 'Unbekanntes Produkt'}</h3>
+                    <p className="text-sm text-gray-500 dark:text-gray-400 font-mono">Charge: {data.finished_goods.batch}</p>
                 </div>
                 <div className="text-right">
-                    <p className="text-sm text-gray-500">MHD</p>
-                    <p className="font-medium text-gray-900">{formatDate(data.finished_goods.best_before)}</p>
+                    <p className="text-sm text-gray-500 dark:text-gray-400">MHD</p>
+                    <p className="font-medium text-gray-900 dark:text-white">{formatDate(data.finished_goods.best_before)}</p>
                 </div>
             </div>
 
             <div className="relative">
-                <div className="absolute left-8 top-0 bottom-0 w-0.5 bg-gray-200" />
+                <div className="absolute left-8 top-0 bottom-0 w-0.5 bg-gray-200 dark:bg-gray-600" />
 
                 {/* 1. SEED */}
                 <div className="relative pl-16 pb-8">
-                    <div className={`absolute left-0 w-16 h-16 rounded-full border-4 flex items-center justify-center bg-white z-10 ${data.seed_inventory ? 'border-minga-500 text-minga-600' : 'border-gray-200 text-gray-300'}`}>
+                    <div className={`absolute left-0 w-16 h-16 rounded-full border-4 flex items-center justify-center bg-white dark:bg-gray-800 z-10 ${data.seed_inventory ? 'border-minga-500 text-minga-600 dark:text-minga-400' : 'border-gray-200 dark:border-gray-700 text-gray-300'}`}>
                         <Sprout className="w-8 h-8" />
                     </div>
-                    <div className="bg-white border rounded-lg p-4 ml-4">
-                        <h4 className="font-semibold text-gray-900 mb-2">Saatgut & Herkunft</h4>
+                    <div className="bg-white dark:bg-gray-800 border rounded-lg p-4 ml-4">
+                        <h4 className="font-semibold text-gray-900 dark:text-white mb-2">Saatgut & Herkunft</h4>
                         {data.seed_inventory ? (
                             <div className="grid grid-cols-2 gap-4 text-sm">
                                 <div>
-                                    <p className="text-gray-500">Sorte</p>
+                                    <p className="text-gray-500 dark:text-gray-400">Sorte</p>
                                     <p>{data.seed_inventory.seed_name || 'Unbekannt'}</p>
                                 </div>
                                 <div>
-                                    <p className="text-gray-500">Lieferant</p>
+                                    <p className="text-gray-500 dark:text-gray-400">Lieferant</p>
                                     <p>{data.seed_inventory.supplier || '-'}</p>
                                 </div>
                                 <div>
-                                    <p className="text-gray-500">Orig. Charge</p>
+                                    <p className="text-gray-500 dark:text-gray-400">Orig. Charge</p>
                                     <p className="font-mono">{data.seed_inventory.supplier_batch || data.seed_inventory.batch}</p>
                                 </div>
                                 <div>
-                                    <p className="text-gray-500">Bio-Status</p>
+                                    <p className="text-gray-500 dark:text-gray-400">Bio-Status</p>
                                     {data.seed_inventory.is_organic ? (
-                                        <span className="flex items-center gap-1 text-green-700 font-medium">
+                                        <span className="flex items-center gap-1 text-green-700 dark:text-green-400 font-medium">
                                             <ShieldCheck className="w-4 h-4" /> Zertifiziert
                                         </span>
                                     ) : (
-                                        <span className="text-gray-700">Konventionell</span>
+                                        <span className="text-gray-700 dark:text-gray-300">Konventionell</span>
                                     )}
                                 </div>
                                 <div>
-                                    <p className="text-gray-500">Eingang</p>
+                                    <p className="text-gray-500 dark:text-gray-400">Eingang</p>
                                     <p>{formatDate(data.seed_inventory.received)}</p>
                                 </div>
                             </div>
@@ -71,27 +71,27 @@ export function TraceabilityView({ data }: TraceabilityViewProps) {
 
                 {/* 2. PRODUCTION */}
                 <div className="relative pl-16 pb-8">
-                    <div className={`absolute left-0 w-16 h-16 rounded-full border-4 flex items-center justify-center bg-white z-10 ${data.grow_batch ? 'border-blue-500 text-blue-600' : 'border-gray-200 text-gray-300'}`}>
+                    <div className={`absolute left-0 w-16 h-16 rounded-full border-4 flex items-center justify-center bg-white dark:bg-gray-800 z-10 ${data.grow_batch ? 'border-blue-500 text-blue-600 dark:text-blue-400' : 'border-gray-200 dark:border-gray-700 text-gray-300'}`}>
                         <Package className="w-8 h-8" />
                     </div>
-                    <div className="bg-white border rounded-lg p-4 ml-4">
-                        <h4 className="font-semibold text-gray-900 mb-2">Anbau (Produktion)</h4>
+                    <div className="bg-white dark:bg-gray-800 border rounded-lg p-4 ml-4">
+                        <h4 className="font-semibold text-gray-900 dark:text-white mb-2">Anbau (Produktion)</h4>
                         {data.grow_batch ? (
                             <div className="grid grid-cols-2 gap-4 text-sm">
                                 <div>
-                                    <p className="text-gray-500">Aussaat</p>
+                                    <p className="text-gray-500 dark:text-gray-400">Aussaat</p>
                                     <p>{formatDate(data.grow_batch.sow_date)}</p>
                                 </div>
                                 <div>
-                                    <p className="text-gray-500">Menge</p>
+                                    <p className="text-gray-500 dark:text-gray-400">Menge</p>
                                     <p>{data.grow_batch.trays} Trays</p>
                                 </div>
                                 <div>
-                                    <p className="text-gray-500">Position</p>
+                                    <p className="text-gray-500 dark:text-gray-400">Position</p>
                                     <p>{data.grow_batch.position || 'Standard'}</p>
                                 </div>
                                 <div>
-                                    <p className="text-gray-500">Interne Charge</p>
+                                    <p className="text-gray-500 dark:text-gray-400">Interne Charge</p>
                                     <p className="font-mono text-xs">{data.grow_batch.id.slice(0, 8)}...</p>
                                 </div>
                             </div>
@@ -103,23 +103,23 @@ export function TraceabilityView({ data }: TraceabilityViewProps) {
 
                 {/* 3. HARVEST */}
                 <div className="relative pl-16 pb-8">
-                    <div className={`absolute left-0 w-16 h-16 rounded-full border-4 flex items-center justify-center bg-white z-10 ${data.harvest ? 'border-orange-400 text-orange-500' : 'border-gray-200 text-gray-300'}`}>
+                    <div className={`absolute left-0 w-16 h-16 rounded-full border-4 flex items-center justify-center bg-white dark:bg-gray-800 z-10 ${data.harvest ? 'border-orange-400 text-orange-500' : 'border-gray-200 dark:border-gray-700 text-gray-300'}`}>
                         <Scissors className="w-8 h-8" />
                     </div>
-                    <div className="bg-white border rounded-lg p-4 ml-4">
-                        <h4 className="font-semibold text-gray-900 mb-2">Ernte & Verarbeitung</h4>
+                    <div className="bg-white dark:bg-gray-800 border rounded-lg p-4 ml-4">
+                        <h4 className="font-semibold text-gray-900 dark:text-white mb-2">Ernte & Verarbeitung</h4>
                         {data.harvest ? (
                             <div className="grid grid-cols-2 gap-4 text-sm">
                                 <div>
-                                    <p className="text-gray-500">Datum</p>
+                                    <p className="text-gray-500 dark:text-gray-400">Datum</p>
                                     <p>{formatDate(data.harvest.date)}</p>
                                 </div>
                                 <div>
-                                    <p className="text-gray-500">Erntemenge</p>
+                                    <p className="text-gray-500 dark:text-gray-400">Erntemenge</p>
                                     <p>{data.harvest.quantity_g} g</p>
                                 </div>
                                 <div>
-                                    <p className="text-gray-500">Qualität</p>
+                                    <p className="text-gray-500 dark:text-gray-400">Qualität</p>
                                     <div className="flex text-yellow-500">
                                         {[...Array(5)].map((_, i) => (
                                             <span key={i} className={i < (data.harvest?.quality || 0) ? 'fill-current' : 'text-gray-300'}>★</span>
@@ -135,18 +135,18 @@ export function TraceabilityView({ data }: TraceabilityViewProps) {
 
                 {/* 4. OUTBOUND */}
                 <div className="relative pl-16">
-                    <div className={`absolute left-0 w-16 h-16 rounded-full border-4 flex items-center justify-center bg-white z-10 ${data.deliveries.length > 0 ? 'border-purple-500 text-purple-600' : 'border-gray-200 text-gray-300'}`}>
+                    <div className={`absolute left-0 w-16 h-16 rounded-full border-4 flex items-center justify-center bg-white dark:bg-gray-800 z-10 ${data.deliveries.length > 0 ? 'border-purple-500 text-purple-600' : 'border-gray-200 dark:border-gray-700 text-gray-300'}`}>
                         <Truck className="w-8 h-8" />
                     </div>
-                    <div className="bg-white border rounded-lg p-4 ml-4">
-                        <h4 className="font-semibold text-gray-900 mb-2">Ausgang & Lieferung</h4>
+                    <div className="bg-white dark:bg-gray-800 border rounded-lg p-4 ml-4">
+                        <h4 className="font-semibold text-gray-900 dark:text-white mb-2">Ausgang & Lieferung</h4>
                         {data.deliveries.length > 0 ? (
                             <div className="space-y-3">
                                 {data.deliveries.map((del, idx) => (
                                     <div key={idx} className="flex justify-between items-center text-sm border-b pb-2 last:border-0 last:pb-0">
                                         <div>
-                                            <p className="font-medium text-gray-900">{del.customer || 'Unbekannter Kunde'}</p>
-                                            <p className="text-gray-500 text-xs">{formatDate(del.date)}</p>
+                                            <p className="font-medium text-gray-900 dark:text-white">{del.customer || 'Unbekannter Kunde'}</p>
+                                            <p className="text-gray-500 dark:text-gray-400 text-xs">{formatDate(del.date)}</p>
                                         </div>
                                         <div className="text-right">
                                             <p className="font-medium">{del.quantity_g} g</p>
@@ -156,8 +156,8 @@ export function TraceabilityView({ data }: TraceabilityViewProps) {
                                 ))}
                             </div>
                         ) : (
-                            <div className="text-gray-500 flex items-center gap-2">
-                                <span className="w-2 h-2 rounded-full bg-green-500"></span>
+                            <div className="text-gray-500 dark:text-gray-400 flex items-center gap-2">
+                                <span className="w-2 h-2 rounded-full bg-green-50 dark:bg-green-900/200"></span>
                                 Noch im Lagerbestand
                             </div>
                         )}

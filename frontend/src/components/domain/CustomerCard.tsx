@@ -32,7 +32,7 @@ export function CustomerCard({
       <div className="card-body">
         <div className="flex items-start justify-between">
           <div>
-            <h3 className="font-semibold text-gray-900">{customer.name}</h3>
+            <h3 className="font-semibold text-gray-900 dark:text-white">{customer.name}</h3>
             <div className="flex items-center gap-2 mt-1">
               <CustomerTypeBadge type={customer.typ} />
               {!customer.aktiv && <Badge variant="gray">Inaktiv</Badge>}
@@ -42,29 +42,29 @@ export function CustomerCard({
 
         <div className="mt-4 space-y-2">
           {customer.email && (
-            <div className="flex items-center gap-2 text-sm text-gray-600">
+            <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
               <Mail className="w-4 h-4 text-gray-400" />
-              <a href={`mailto:${customer.email}`} className="hover:text-minga-600">
+              <a href={`mailto:${customer.email}`} className="hover:text-minga-600 dark:text-minga-400">
                 {customer.email}
               </a>
             </div>
           )}
           {customer.telefon && (
-            <div className="flex items-center gap-2 text-sm text-gray-600">
+            <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
               <Phone className="w-4 h-4 text-gray-400" />
-              <a href={`tel:${customer.telefon}`} className="hover:text-minga-600">
+              <a href={`tel:${customer.telefon}`} className="hover:text-minga-600 dark:text-minga-400">
                 {customer.telefon}
               </a>
             </div>
           )}
           {customer.adresse && (
-            <div className="flex items-center gap-2 text-sm text-gray-600">
+            <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
               <MapPin className="w-4 h-4 text-gray-400" />
               <span>{customer.adresse}</span>
             </div>
           )}
           {customer.liefertage && customer.liefertage.length > 0 && (
-            <div className="flex items-center gap-2 text-sm text-gray-600">
+            <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
               <Calendar className="w-4 h-4 text-gray-400" />
               <span>
                 Liefertage: {customer.liefertage.map((d) => WEEKDAYS[d]).join(', ')}
@@ -74,16 +74,16 @@ export function CustomerCard({
         </div>
 
         {stats && (
-          <div className="mt-4 pt-4 border-t border-gray-100 grid grid-cols-2 gap-4">
+          <div className="mt-4 pt-4 border-t border-gray-100 dark:border-gray-700 grid grid-cols-2 gap-4">
             {stats.activeSubscriptions !== undefined && (
               <div>
-                <p className="text-sm text-gray-500">Aktive Abos</p>
+                <p className="text-sm text-gray-500 dark:text-gray-400">Aktive Abos</p>
                 <p className="font-semibold">{stats.activeSubscriptions}</p>
               </div>
             )}
             {stats.monthlyRevenue !== undefined && (
               <div>
-                <p className="text-sm text-gray-500">Umsatz MTD</p>
+                <p className="text-sm text-gray-500 dark:text-gray-400">Umsatz MTD</p>
                 <p className="font-semibold">{stats.monthlyRevenue.toFixed(2)}</p>
               </div>
             )}
@@ -91,7 +91,7 @@ export function CustomerCard({
         )}
 
         {(onEdit || onCreateOrder || onManageSubscriptions) && (
-          <div className="mt-4 pt-4 border-t border-gray-100 flex flex-wrap gap-2">
+          <div className="mt-4 pt-4 border-t border-gray-100 dark:border-gray-700 flex flex-wrap gap-2">
             {onEdit && (
               <button
                 className="btn btn-ghost btn-sm"
@@ -144,20 +144,20 @@ interface CustomerRowProps {
 export function CustomerRow({ customer, onClick }: CustomerRowProps) {
   return (
     <div
-      className={`flex items-center justify-between p-4 bg-white border border-gray-200 rounded-lg ${
-        onClick ? 'cursor-pointer hover:bg-gray-50' : ''
+      className={`flex items-center justify-between p-4 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg ${
+        onClick ? 'cursor-pointer hover:bg-gray-50 dark:bg-gray-700/50' : ''
       }`}
       onClick={onClick}
     >
       <div>
-        <p className="font-medium text-gray-900">{customer.name}</p>
-        <p className="text-sm text-gray-500">
+        <p className="font-medium text-gray-900 dark:text-white">{customer.name}</p>
+        <p className="text-sm text-gray-500 dark:text-gray-400">
           {customer.email} {customer.telefon && `| ${customer.telefon}`}
         </p>
       </div>
       <div className="flex items-center gap-3">
         {customer.liefertage && customer.liefertage.length > 0 && (
-          <span className="text-sm text-gray-500">
+          <span className="text-sm text-gray-500 dark:text-gray-400">
             {customer.liefertage.map((d) => WEEKDAYS[d]).join(', ')}
           </span>
         )}

@@ -159,41 +159,41 @@ export default function Products() {
               }
             />
           ) : (
-            <div className="bg-white rounded-lg shadow overflow-hidden">
-              <table className="min-w-full divide-y divide-gray-200">
-                <thead className="bg-gray-50">
+            <div className="bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden">
+              <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+                <thead className="bg-gray-50 dark:bg-gray-700/50">
                   <tr>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
                       Produkt
                     </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
                       Kategorie
                     </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
                       Preis
                     </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
                       MwSt
                     </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
                       Status
                     </th>
-                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
                       Aktionen
                     </th>
                   </tr>
                 </thead>
-                <tbody className="bg-white divide-y divide-gray-200">
+                <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
                   {filteredProducts.map((product) => (
-                    <tr key={product.id} className="hover:bg-gray-50">
+                    <tr key={product.id} className="hover:bg-gray-50 dark:bg-gray-700/50">
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className="flex items-center">
-                          <div className="flex-shrink-0 h-10 w-10 bg-gray-100 rounded-lg flex items-center justify-center">
-                            <Package className="h-5 w-5 text-gray-500" />
+                          <div className="flex-shrink-0 h-10 w-10 bg-gray-100 dark:bg-gray-700 rounded-lg flex items-center justify-center">
+                            <Package className="h-5 w-5 text-gray-500 dark:text-gray-400" />
                           </div>
                           <div className="ml-4">
-                            <div className="text-sm font-medium text-gray-900">{product.name}</div>
-                            <div className="text-sm text-gray-500">{product.sku}</div>
+                            <div className="text-sm font-medium text-gray-900 dark:text-white">{product.name}</div>
+                            <div className="text-sm text-gray-500 dark:text-gray-400">{product.sku}</div>
                           </div>
                         </div>
                       </td>
@@ -202,10 +202,10 @@ export default function Products() {
                           {CATEGORY_LABELS[product.category]}
                         </Badge>
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white">
                         {product.base_price ? `${product.base_price.toFixed(2)} €` : '-'}
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
                         {product.tax_rate === 'REDUZIERT' ? '7%' : product.tax_rate === 'STANDARD' ? '19%' : '0%'}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
@@ -225,7 +225,7 @@ export default function Products() {
                           variant="ghost"
                           size="sm"
                           onClick={() => setDeletingProduct(product)}
-                          className="text-red-600 hover:text-red-900"
+                          className="text-red-600 dark:text-red-400 hover:text-red-900"
                         >
                           Deaktivieren
                         </Button>
@@ -444,18 +444,18 @@ function ProductForm({ product, growPlans, productGroups, onSubmit, onCancel }: 
             type="checkbox"
             checked={formData.is_active}
             onChange={(e) => setFormData({ ...formData, is_active: e.target.checked })}
-            className="w-4 h-4 rounded border-gray-300 text-minga-600 focus:ring-minga-500"
+            className="w-4 h-4 rounded border-gray-300 dark:border-gray-600 text-minga-600 dark:text-minga-400 focus:ring-minga-500"
           />
-          <span className="text-sm text-gray-700">Aktiv</span>
+          <span className="text-sm text-gray-700 dark:text-gray-300">Aktiv</span>
         </label>
         <label className="flex items-center gap-2">
           <input
             type="checkbox"
             checked={formData.is_sellable}
             onChange={(e) => setFormData({ ...formData, is_sellable: e.target.checked })}
-            className="w-4 h-4 rounded border-gray-300 text-minga-600 focus:ring-minga-500"
+            className="w-4 h-4 rounded border-gray-300 dark:border-gray-600 text-minga-600 dark:text-minga-400 focus:ring-minga-500"
           />
-          <span className="text-sm text-gray-700">Verkäuflich</span>
+          <span className="text-sm text-gray-700 dark:text-gray-300">Verkäuflich</span>
         </label>
       </div>
 
@@ -474,29 +474,29 @@ function ProductForm({ product, growPlans, productGroups, onSubmit, onCancel }: 
 // Grow Plans Tab
 function GrowPlansTab({ growPlans }: { growPlans: GrowPlan[] }) {
   return (
-    <div className="bg-white rounded-lg shadow overflow-hidden">
-      <table className="min-w-full divide-y divide-gray-200">
-        <thead className="bg-gray-50">
+    <div className="bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden">
+      <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+        <thead className="bg-gray-50 dark:bg-gray-700/50">
           <tr>
-            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Code</th>
-            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Name</th>
-            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Keimung</th>
-            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Wachstum</th>
-            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Erntefenster</th>
-            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Ertrag/Tray</th>
+            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Code</th>
+            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Name</th>
+            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Keimung</th>
+            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Wachstum</th>
+            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Erntefenster</th>
+            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Ertrag/Tray</th>
           </tr>
         </thead>
-        <tbody className="divide-y divide-gray-200">
+        <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
           {growPlans.map((plan) => (
-            <tr key={plan.id} className="hover:bg-gray-50">
-              <td className="px-6 py-4 text-sm font-mono text-gray-900">{plan.code}</td>
-              <td className="px-6 py-4 text-sm text-gray-900">{plan.name}</td>
-              <td className="px-6 py-4 text-sm text-gray-500">{plan.germination_days} Tage</td>
-              <td className="px-6 py-4 text-sm text-gray-500">{plan.growth_days} Tage</td>
-              <td className="px-6 py-4 text-sm text-gray-500">
+            <tr key={plan.id} className="hover:bg-gray-50 dark:bg-gray-700/50">
+              <td className="px-6 py-4 text-sm font-mono text-gray-900 dark:text-white">{plan.code}</td>
+              <td className="px-6 py-4 text-sm text-gray-900 dark:text-white">{plan.name}</td>
+              <td className="px-6 py-4 text-sm text-gray-500 dark:text-gray-400">{plan.germination_days} Tage</td>
+              <td className="px-6 py-4 text-sm text-gray-500 dark:text-gray-400">{plan.growth_days} Tage</td>
+              <td className="px-6 py-4 text-sm text-gray-500 dark:text-gray-400">
                 {plan.harvest_window_start_days}-{plan.harvest_window_end_days} Tage
               </td>
-              <td className="px-6 py-4 text-sm text-gray-500">{plan.expected_yield_grams_per_tray}g</td>
+              <td className="px-6 py-4 text-sm text-gray-500 dark:text-gray-400">{plan.expected_yield_grams_per_tray}g</td>
             </tr>
           ))}
         </tbody>
@@ -508,22 +508,22 @@ function GrowPlansTab({ growPlans }: { growPlans: GrowPlan[] }) {
 // Product Groups Tab
 function ProductGroupsTab({ groups }: { groups: ProductGroup[] }) {
   return (
-    <div className="bg-white rounded-lg shadow overflow-hidden">
-      <table className="min-w-full divide-y divide-gray-200">
-        <thead className="bg-gray-50">
+    <div className="bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden">
+      <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+        <thead className="bg-gray-50 dark:bg-gray-700/50">
           <tr>
-            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Code</th>
-            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Name</th>
-            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Beschreibung</th>
-            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Code</th>
+            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Name</th>
+            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Beschreibung</th>
+            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Status</th>
           </tr>
         </thead>
-        <tbody className="divide-y divide-gray-200">
+        <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
           {groups.map((group) => (
-            <tr key={group.id} className="hover:bg-gray-50">
-              <td className="px-6 py-4 text-sm font-mono text-gray-900">{group.code}</td>
-              <td className="px-6 py-4 text-sm text-gray-900">{group.name}</td>
-              <td className="px-6 py-4 text-sm text-gray-500">{group.description || '-'}</td>
+            <tr key={group.id} className="hover:bg-gray-50 dark:bg-gray-700/50">
+              <td className="px-6 py-4 text-sm font-mono text-gray-900 dark:text-white">{group.code}</td>
+              <td className="px-6 py-4 text-sm text-gray-900 dark:text-white">{group.name}</td>
+              <td className="px-6 py-4 text-sm text-gray-500 dark:text-gray-400">{group.description || '-'}</td>
               <td className="px-6 py-4">
                 <Badge variant={group.is_active ? 'success' : 'gray'}>
                   {group.is_active ? 'Aktiv' : 'Inaktiv'}

@@ -11,6 +11,17 @@ export { Badge, GrowBatchStatusBadge, OrderStatusBadge, SuggestionStatusBadge, C
 export { Alert } from './Alert';
 export { ToastProvider, useToast } from './Toast';
 export { Spinner, PageLoader, InlineLoader } from './Spinner';
+export {
+  Skeleton,
+  SkeletonText,
+  SkeletonStatCard,
+  SkeletonRow,
+  SkeletonCard,
+  SkeletonChart,
+  DashboardSkeleton,
+  ListPageSkeleton,
+  SkeletonGate,
+} from './Skeleton';
 export { EmptyState } from './EmptyState';
 export { Progress, CapacityIndicator } from './Progress';
 

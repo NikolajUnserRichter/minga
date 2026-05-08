@@ -81,11 +81,21 @@ export default function Production() {
   const updateStatusMutation = useMutation({
     mutationFn: ({ id, status }: { id: string; status: GrowBatchStatus }) =>
       productionApi.updateGrowBatchStatus(id, status),
+    onMutate: async ({ id, status }) => {
+      await queryClient.cancelQueries({ queryKey: ['growBatches'] });
+      const prev = queryClient.getQueryData(['growBatches']);
+      queryClient.setQueryData(['growBatches'], (old: any) => {
+        if (!old?.items) return old;
+        return { ...old, items: old.items.map((b: GrowBatch) => b.id === id ? { ...b, status } : b) };
+      });
+      return { prev };
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['growBatches'] });
       toast.success('Status aktualisiert');
     },
-    onError: () => {
+    onError: (_err, _vars, context) => {
+      if (context?.prev) queryClient.setQueryData(['growBatches'], context.prev);
       toast.error('Fehler beim Aktualisieren');
     },
   });
@@ -159,14 +169,14 @@ export default function Production() {
               {seedsData?.items?.map((seed: Seed) => (
                 <div
                   key={seed.id}
-                  className="p-4 bg-gray-50 rounded-lg text-center hover:bg-minga-50 transition-colors cursor-pointer"
+                  className="p-4 bg-gray-50 dark:bg-gray-700/50 rounded-lg text-center hover:bg-minga-50 dark:bg-minga-900/30 transition-colors cursor-pointer"
                   onClick={() => setIsCreating(true)}
                 >
-                  <div className="w-10 h-10 bg-minga-100 rounded-full flex items-center justify-center mx-auto mb-2">
-                    <Sprout className="w-5 h-5 text-minga-600" />
+                  <div className="w-10 h-10 bg-minga-100 dark:bg-minga-900/50 rounded-full flex items-center justify-center mx-auto mb-2">
+                    <Sprout className="w-5 h-5 text-minga-600 dark:text-minga-400" />
                   </div>
-                  <p className="font-medium text-gray-900">{seed.name}</p>
-                  <p className="text-xs text-gray-500">
+                  <p className="font-medium text-gray-900 dark:text-white">{seed.name}</p>
+                  <p className="text-xs text-gray-500 dark:text-gray-400">
                     {seed.keimdauer_tage + seed.wachstumsdauer_tage} Tage | {seed.ertrag_gramm_pro_tray}g
                   </p>
                 </div>
@@ -180,8 +190,8 @@ export default function Production() {
       <Tabs tabs={tabs} activeTab={activeTab} onChange={setActiveTab} />
 
       {activeTab === 'PACKAGING' ? (
-        <div className="bg-white rounded-lg shadow overflow-hidden">
-          <div className="p-4 border-b bg-gray-50 flex justify-between items-center">
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden">
+          <div className="p-4 border-b bg-gray-50 dark:bg-gray-700/50 flex justify-between items-center">
             <h3 className="font-medium">Packliste für {new Date(packagingDate).toLocaleDateString('de-DE')}</h3>
           </div>
           {!packagingPlan?.items || packagingPlan.items.length === 0 ? (
@@ -190,28 +200,28 @@ export default function Production() {
               description="Für dieses Datum gibt es keine offenen Bestellungen."
             />
           ) : (
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
+            <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+              <thead className="bg-gray-50 dark:bg-gray-700/50">
                 <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Produkt</th>
-                  <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Gesamtmenge</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Details (Kunden)</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Produkt</th>
+                  <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Gesamtmenge</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Details (Kunden)</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-200">
+              <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
                 {packagingPlan.items.map((item: any, idx: number) => (
-                  <tr key={idx} className="hover:bg-gray-50">
-                    <td className="px-6 py-4 whitespace-nowrap font-medium text-gray-900">{item.product_name}</td>
-                    <td className="px-6 py-4 whitespace-nowrap text-right font-bold text-minga-600">
+                  <tr key={idx} className="hover:bg-gray-50 dark:bg-gray-700/50">
+                    <td className="px-6 py-4 whitespace-nowrap font-medium text-gray-900 dark:text-white">{item.product_name}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-right font-bold text-minga-600 dark:text-minga-400">
                       {item.total_quantity} {item.unit}
                     </td>
                     <td className="px-6 py-4">
                       <div className="space-y-1">
                         {item.orders.map((o: any, oIdx: number) => (
-                          <div key={oIdx} className="text-sm text-gray-600 flex justify-between border-b border-gray-100 last:border-0 pb-1 last:pb-0">
+                          <div key={oIdx} className="text-sm text-gray-600 dark:text-gray-400 flex justify-between border-b border-gray-100 dark:border-gray-700 last:border-0 pb-1 last:pb-0">
                             <span>{o.customer_name}</span>
                             <div className="flex gap-2 text-xs">
-                              <span className="font-medium text-gray-900">{o.quantity} {item.unit}</span>
+                              <span className="font-medium text-gray-900 dark:text-white">{o.quantity} {item.unit}</span>
                               <span className="text-gray-400">({o.status})</span>
                             </div>
                           </div>
@@ -247,27 +257,27 @@ export default function Production() {
                 type="checkbox"
                 checked={showErntereif}
                 onChange={(e) => setShowErntereif(e.target.checked)}
-                className="w-4 h-4 rounded border-gray-300 text-minga-600 focus:ring-minga-500"
+                className="w-4 h-4 rounded border-gray-300 dark:border-gray-600 text-minga-600 dark:text-minga-400 focus:ring-minga-500"
               />
-              <span className="text-sm text-gray-700">Nur Erntereife</span>
+              <span className="text-sm text-gray-700 dark:text-gray-300">Nur Erntereife</span>
             </label>
-            <div className="flex border border-gray-200 rounded-lg overflow-hidden">
+            <div className="flex border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
               <button
-                className={`p-2 ${viewMode === 'grid' ? 'bg-minga-100 text-minga-600' : 'bg-white text-gray-400'}`}
+                className={`p-2 ${viewMode === 'grid' ? 'bg-minga-100 dark:bg-minga-900/50 text-minga-600 dark:text-minga-400' : 'bg-white dark:bg-gray-800 text-gray-400'}`}
                 onClick={() => setViewMode('grid')}
                 title="Kachelansicht"
               >
                 <LayoutGrid className="w-4 h-4" />
               </button>
               <button
-                className={`p-2 ${viewMode === 'list' ? 'bg-minga-100 text-minga-600' : 'bg-white text-gray-400'}`}
+                className={`p-2 ${viewMode === 'list' ? 'bg-minga-100 dark:bg-minga-900/50 text-minga-600 dark:text-minga-400' : 'bg-white dark:bg-gray-800 text-gray-400'}`}
                 onClick={() => setViewMode('list')}
                 title="Listenansicht"
               >
                 <List className="w-4 h-4" />
               </button>
               <button
-                className={`p-2 ${viewMode === 'kanban' ? 'bg-minga-100 text-minga-600' : 'bg-white text-gray-400'}`}
+                className={`p-2 ${viewMode === 'kanban' ? 'bg-minga-100 dark:bg-minga-900/50 text-minga-600 dark:text-minga-400' : 'bg-white dark:bg-gray-800 text-gray-400'}`}
                 onClick={() => setViewMode('kanban')}
                 title="Kanban-Board"
               >
@@ -342,7 +352,7 @@ export default function Production() {
                   {displayedBatches.map((batch: GrowBatch) => (
                     <tr
                       key={batch.id}
-                      className={batch.ist_erntereif ? 'bg-green-50' : ''}
+                      className={batch.ist_erntereif ? 'bg-green-50 dark:bg-green-900/20' : ''}
                     >
                       <td className="font-medium">{batch.seed_name}</td>
                       <td>{batch.tray_anzahl}</td>
@@ -360,7 +370,7 @@ export default function Production() {
                               onClick={() =>
                                 updateStatusMutation.mutate({ id: batch.id, status: 'WACHSTUM' })
                               }
-                              className="text-sm text-minga-600 hover:text-minga-700"
+                              className="text-sm text-minga-600 dark:text-minga-400 hover:text-minga-700"
                             >
                               Wachstum
                             </button>
@@ -370,7 +380,7 @@ export default function Production() {
                               onClick={() =>
                                 updateStatusMutation.mutate({ id: batch.id, status: 'ERNTEREIF' })
                               }
-                              className="text-sm text-minga-600 hover:text-minga-700"
+                              className="text-sm text-minga-600 dark:text-minga-400 hover:text-minga-700"
                             >
                               Erntereif
                             </button>
@@ -378,7 +388,7 @@ export default function Production() {
                           {(batch.status === 'WACHSTUM' || batch.status === 'ERNTEREIF') && (
                             <button
                               onClick={() => setHarvestingBatch(batch)}
-                              className="text-sm text-green-600 hover:text-green-700"
+                              className="text-sm text-green-600 dark:text-green-400 hover:text-green-700 dark:text-green-400"
                             >
                               Ernten
                             </button>

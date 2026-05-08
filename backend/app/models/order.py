@@ -4,7 +4,7 @@ Bestell-Models: Order (Header) und OrderLine (Positionen)
 Implementiert nach ERP-Standard mit vollständiger Header-Line Architektur.
 """
 import uuid
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 from decimal import Decimal
 from enum import Enum
 from sqlalchemy import String, Integer, Numeric, DateTime, Date, ForeignKey, Text, Enum as SQLEnum, Boolean, event
@@ -55,7 +55,7 @@ class Order(Base):
 
     # ==================== DATUM ====================
     order_date: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, nullable=False
+        DateTime, default=lambda: datetime.now(timezone.utc), nullable=False
     )
     requested_delivery_date: Mapped[date] = mapped_column(
         Date, nullable=False, index=True
@@ -97,9 +97,9 @@ class Order(Base):
     internal_notes: Mapped[Optional[str]] = mapped_column(Text)
 
     # ==================== AUDIT FIELDS ====================
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+        DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc)
     )
     created_by: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid)
     updated_by: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid)
@@ -246,9 +246,9 @@ class OrderLine(Base):
     batch_number: Mapped[Optional[str]] = mapped_column(String(50))
 
     # ==================== AUDIT ====================
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+        DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc)
     )
 
     # ==================== BEZIEHUNGEN ====================
@@ -295,7 +295,7 @@ class OrderLine(Base):
         return self.line_gross
 
     def __repr__(self) -> str:
-        return f"<OrderLine(pos={self.position}, product='{self.product_name}', qty={self.quantity})>"
+        return f"<OrderLine(pos={self.position}, product='{self.beschreibung}', qty={self.quantity})>"
 
 
 class OrderAuditLog(Base):
@@ -332,7 +332,7 @@ class OrderAuditLog(Base):
     user_name: Mapped[Optional[str]] = mapped_column(String(200))
 
     # Wann
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     # Grund/Kommentar
     reason: Mapped[Optional[str]] = mapped_column(Text)

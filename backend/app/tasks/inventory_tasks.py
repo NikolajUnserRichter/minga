@@ -18,7 +18,15 @@ from app.models.seed import Seed
 logger = logging.getLogger(__name__)
 
 
-@celery_app.task(name="app.tasks.inventory_tasks.check_low_stock")
+@celery_app.task(
+    name="app.tasks.inventory_tasks.check_low_stock",
+    autoretry_for=(Exception,),
+    retry_kwargs={"max_retries": 3},
+    retry_backoff=True,
+    retry_backoff_max=600,
+    time_limit=300,
+    soft_time_limit=240,
+)
 def check_low_stock():
     """
     Prüft Lagerbestände und erstellt Warnungen für niedrige Bestände.

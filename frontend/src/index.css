@@ -180,7 +180,7 @@
   }
 
   .btn-secondary {
-    @apply bg-gray-100 text-gray-700 hover:bg-gray-200 focus:ring-gray-500;
+    @apply bg-gray-100 text-gray-700 hover:bg-gray-200 focus:ring-gray-500 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600;
   }
 
   .btn-danger {
@@ -196,11 +196,11 @@
   }
 
   .btn-ghost {
-    @apply bg-transparent text-gray-700 hover:bg-gray-100 focus:ring-gray-500;
+    @apply bg-transparent text-gray-700 hover:bg-gray-100 focus:ring-gray-500 dark:text-gray-300 dark:hover:bg-gray-700;
   }
 
   .btn-outline {
-    @apply border-2 border-minga-600 text-minga-600 bg-transparent hover:bg-minga-50 focus:ring-minga-500;
+    @apply border-2 border-minga-600 text-minga-600 bg-transparent hover:bg-minga-50 focus:ring-minga-500 dark:border-minga-400 dark:text-minga-400 dark:hover:bg-minga-900/30;
   }
 
   .btn-icon {
@@ -292,48 +292,48 @@
   }
 
   .badge-success {
-    @apply bg-green-100 text-green-800;
+    @apply bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300;
   }
 
   .badge-warning {
-    @apply bg-amber-100 text-amber-800;
+    @apply bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300;
   }
 
   .badge-danger {
-    @apply bg-red-100 text-red-800;
+    @apply bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300;
   }
 
   .badge-info {
-    @apply bg-blue-100 text-blue-800;
+    @apply bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300;
   }
 
   .badge-gray {
-    @apply bg-gray-100 text-gray-800;
+    @apply bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300;
   }
 
   .badge-purple {
-    @apply bg-purple-100 text-purple-800;
+    @apply bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-300;
   }
 
   /* Status-specific badges */
   .badge-keimung {
-    @apply bg-amber-100 text-amber-800;
+    @apply bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300;
   }
 
   .badge-wachstum {
-    @apply bg-emerald-100 text-emerald-800;
+    @apply bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300;
   }
 
   .badge-erntereif {
-    @apply bg-green-100 text-green-800;
+    @apply bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300;
   }
 
   .badge-geerntet {
-    @apply bg-gray-100 text-gray-600;
+    @apply bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300;
   }
 
   .badge-verlust {
-    @apply bg-red-100 text-red-800;
+    @apply bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300;
   }
 
   /* Tables */
@@ -346,7 +346,7 @@
   }
 
   .table th {
-    @apply px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-300 uppercase tracking-wider bg-gray-50 dark:bg-gray-800;
+    @apply px-4 py-3 text-left text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider bg-gray-50 dark:bg-gray-800;
   }
 
   .table td {
@@ -367,11 +367,11 @@
   }
 
   .stat-card-value {
-    @apply text-3xl font-bold text-gray-900;
+    @apply text-3xl font-bold text-gray-900 dark:text-white;
   }
 
   .stat-card-label {
-    @apply text-sm font-medium text-gray-500 uppercase tracking-wide;
+    @apply text-sm font-medium text-gray-600 dark:text-gray-400 tracking-wide;
   }
 
   .stat-card-change {
@@ -426,20 +426,20 @@
 
   /* Tabs */
   .tabs {
-    @apply flex border-b border-gray-200;
+    @apply flex border-b border-gray-200 dark:border-gray-700;
   }
 
   .tab {
-    @apply px-4 py-2 text-sm font-medium text-gray-500 border-b-2 border-transparent hover:text-gray-700 hover:border-gray-300 transition-colors cursor-pointer;
+    @apply px-4 py-2 text-sm font-medium text-gray-500 dark:text-gray-400 border-b-2 border-transparent hover:text-gray-700 dark:hover:text-gray-200 hover:border-gray-300 dark:hover:border-gray-500 transition-colors cursor-pointer;
   }
 
   .tab-active {
-    @apply text-minga-600 border-minga-600;
+    @apply text-minga-600 border-minga-600 dark:text-minga-400 dark:border-minga-400;
   }
 
   /* Progress Bar */
   .progress {
-    @apply w-full bg-gray-200 rounded-full overflow-hidden;
+    @apply w-full bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden;
   }
 
   .progress-bar {
@@ -487,19 +487,19 @@
   }
 
   .alert-info {
-    @apply bg-blue-50 text-blue-800;
+    @apply bg-blue-50 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300;
   }
 
   .alert-success {
-    @apply bg-green-50 text-green-800;
+    @apply bg-green-50 text-green-800 dark:bg-green-900/30 dark:text-green-300;
   }
 
   .alert-warning {
-    @apply bg-amber-50 text-amber-800;
+    @apply bg-amber-50 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300;
   }
 
   .alert-danger {
-    @apply bg-red-50 text-red-800;
+    @apply bg-red-50 text-red-800 dark:bg-red-900/30 dark:text-red-300;
   }
 
   /* Dropdown */
@@ -508,7 +508,7 @@
   }
 
   .dropdown-menu {
-    @apply absolute right-0 mt-2 w-56 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-[1000] opacity-0 invisible transition-all duration-200;
+    @apply absolute right-0 mt-2 w-56 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 py-1 z-[1000] opacity-0 invisible transition-all duration-200;
   }
 
   .dropdown-menu-open {
@@ -516,7 +516,7 @@
   }
 
   .dropdown-item {
-    @apply block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 cursor-pointer;
+    @apply block px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer;
   }
 
   /* Toast */
@@ -567,15 +567,15 @@
   }
 
   .empty-state-icon {
-    @apply mx-auto w-16 h-16 text-gray-300;
+    @apply mx-auto w-16 h-16 text-gray-300 dark:text-gray-600;
   }
 
   .empty-state-title {
-    @apply mt-4 text-lg font-medium text-gray-900;
+    @apply mt-4 text-lg font-medium text-gray-900 dark:text-white;
   }
 
   .empty-state-text {
-    @apply mt-2 text-sm text-gray-500;
+    @apply mt-2 text-sm text-gray-500 dark:text-gray-400;
   }
 
   /* Page Header */
@@ -602,7 +602,7 @@
   }
 
   .nav-section-title {
-    @apply px-4 text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2;
+    @apply px-4 text-[11px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2;
   }
 
   .nav-item {
@@ -699,11 +699,11 @@
 
   /* Divider */
   .divider {
-    @apply border-t border-gray-200 my-4;
+    @apply border-t border-gray-200 dark:border-gray-700 my-4;
   }
 
   .divider-vertical {
-    @apply border-l border-gray-200 mx-4 h-full;
+    @apply border-l border-gray-200 dark:border-gray-700 mx-4 h-full;
   }
 }
 

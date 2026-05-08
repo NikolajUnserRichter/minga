@@ -122,7 +122,7 @@ export default function ProductionSuggestions() {
             <Button
               variant="secondary"
               icon={<Printer className="w-4 h-4" />}
-              onClick={() => toast.info('Druckfunktion noch nicht implementiert')}
+              onClick={() => window.print()}
             >
               Aussaat-Liste drucken
             </Button>
@@ -149,7 +149,7 @@ export default function ProductionSuggestions() {
           title="Mit Warnungen"
           value={totalWarnings}
           icon={<AlertTriangle className="w-6 h-6" />}
-          className={totalWarnings > 0 ? 'border-amber-300 bg-amber-50/30' : ''}
+          className={totalWarnings > 0 ? 'border-amber-300 dark:border-amber-700 bg-amber-50/30' : ''}
         />
         <StatCard
           title="Diese Woche umgesetzt"
@@ -184,7 +184,7 @@ export default function ProductionSuggestions() {
             <div key={date}>
               <div className="flex items-center gap-3 mb-4">
                 <Calendar className="w-5 h-5 text-gray-400" />
-                <h2 className="text-lg font-semibold text-gray-900">
+                <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
                   Aussaat: {formatDate(date, 'long')}
                 </h2>
                 <Badge variant="gray">{groupedBySowDate[date].length} Vorschläge</Badge>

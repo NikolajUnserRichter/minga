@@ -17,7 +17,15 @@ from app.models.forecast import Forecast, ForecastAccuracy
 logger = logging.getLogger(__name__)
 
 
-@celery_app.task(name="app.tasks.report_tasks.generate_weekly_accuracy_report")
+@celery_app.task(
+    name="app.tasks.report_tasks.generate_weekly_accuracy_report",
+    autoretry_for=(Exception,),
+    retry_kwargs={"max_retries": 3},
+    retry_backoff=True,
+    retry_backoff_max=600,
+    time_limit=300,
+    soft_time_limit=240,
+)
 def generate_weekly_accuracy_report():
     """
     Generiert wöchentlichen Forecast-Accuracy Report.

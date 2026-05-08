@@ -3,7 +3,7 @@ from typing import Optional
 Maßeinheiten-Models: UnitOfMeasure und UnitConversion
 """
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 from enum import Enum
 from sqlalchemy import String, Numeric, Boolean, DateTime, ForeignKey, Enum as SQLEnum
@@ -63,9 +63,9 @@ class UnitOfMeasure(Base):
     sort_order: Mapped[int] = mapped_column(default=0)
 
     # Timestamps
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+        DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc)
     )
 
     # Self-Reference für Basiseinheit
@@ -121,7 +121,7 @@ class UnitConversion(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
     # Timestamps
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     # Relationships
     from_unit: Mapped["UnitOfMeasure"] = relationship(

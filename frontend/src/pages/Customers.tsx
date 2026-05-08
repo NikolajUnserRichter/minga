@@ -1,10 +1,12 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, Search } from 'lucide-react';
 import { salesApi } from '../services/api';
 import { Customer, CustomerType } from '../types';
 import { PageHeader, FilterBar } from '../components/common/Layout';
 import { CustomerCard } from '../components/domain/CustomerCard';
+import { CreateOrderModal } from '../components/domain/CreateOrderModal';
 import {
   Button,
   Input,
@@ -37,6 +39,7 @@ const weekdayOptions: SelectOption[] = [
 
 export default function Customers() {
   const toast = useToast();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
 
   const [search, setSearch] = useState('');
@@ -44,6 +47,7 @@ export default function Customers() {
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [deletingCustomer, setDeletingCustomer] = useState<Customer | null>(null);
+  const [orderForCustomer, setOrderForCustomer] = useState<Customer | null>(null);
 
   // Fetch customers
   const { data: customersData, isLoading } = useQuery({
@@ -125,8 +129,8 @@ export default function Customers() {
               key={customer.id}
               customer={customer}
               onEdit={() => setEditingCustomer(customer)}
-              onCreateOrder={() => toast.info('Bestellung anlegen noch nicht implementiert')}
-              onManageSubscriptions={() => toast.info('Abos verwalten noch nicht implementiert')}
+              onCreateOrder={() => setOrderForCustomer(customer)}
+              onManageSubscriptions={() => navigate('/subscriptions')}
             />
           ))}
         </div>
@@ -156,6 +160,13 @@ export default function Customers() {
           }}
         />
       </Modal>
+
+      {/* Create Order Modal */}
+      <CreateOrderModal
+        open={!!orderForCustomer}
+        onClose={() => setOrderForCustomer(null)}
+        preselectedCustomer={orderForCustomer}
+      />
 
       {/* Delete Confirmation */}
       <ConfirmDialog
@@ -275,9 +286,9 @@ function CustomerForm({ customer, onSubmit, onCancel }: CustomerFormProps) {
           type="checkbox"
           checked={formData.aktiv}
           onChange={(e) => setFormData({ ...formData, aktiv: e.target.checked })}
-          className="w-4 h-4 rounded border-gray-300 text-minga-600 focus:ring-minga-500"
+          className="w-4 h-4 rounded border-gray-300 dark:border-gray-600 text-minga-600 dark:text-minga-400 focus:ring-minga-500"
         />
-        <span className="text-sm text-gray-700">Aktiv</span>
+        <span className="text-sm text-gray-700 dark:text-gray-300">Aktiv</span>
       </label>
 
       <div className="flex gap-3 pt-4 border-t">

@@ -247,7 +247,7 @@ export default function Forecasting() {
               />
             )
           ) : (
-            <div className="flex items-center justify-center h-80 text-gray-500">
+            <div className="flex items-center justify-center h-80 text-gray-500 dark:text-gray-400">
               Wählen Sie ein Produkt um die Prognose anzuzeigen
             </div>
           )}
@@ -275,16 +275,16 @@ export default function Forecasting() {
               </thead>
               <tbody>
                 {(forecastsData?.items || []).map((forecast: Forecast) => (
-                  <tr key={forecast.id} className={forecast.override_menge ? 'bg-amber-50' : ''}>
+                  <tr key={forecast.id} className={forecast.override_menge ? 'bg-amber-50 dark:bg-amber-900/20' : ''}>
                     <td>{new Date(forecast.datum).toLocaleDateString('de-DE')}</td>
                     <td>{forecast.prognostizierte_menge?.toFixed(0)}g</td>
-                    <td className="text-gray-500 text-sm">
+                    <td className="text-gray-500 dark:text-gray-400 text-sm">
                       {forecast.konfidenz_untergrenze?.toFixed(0)} -{' '}
                       {forecast.konfidenz_obergrenze?.toFixed(0)}g
                     </td>
                     <td>
                       {forecast.override_menge ? (
-                        <span className="text-amber-600 font-medium">
+                        <span className="text-amber-600 dark:text-amber-400 font-medium">
                           {forecast.override_menge.toFixed(0)}g
                         </span>
                       ) : (
@@ -300,7 +300,7 @@ export default function Forecasting() {
                     <td>
                       <button
                         onClick={() => setOverrideForecast(forecast)}
-                        className="text-minga-600 hover:text-minga-700"
+                        className="text-minga-600 dark:text-minga-400 hover:text-minga-700"
                       >
                         <Edit2 className="w-4 h-4" />
                       </button>
@@ -345,7 +345,7 @@ export default function Forecasting() {
                   {suggestionsData.items.map((suggestion: ProductionSuggestion) => (
                     <tr
                       key={suggestion.id}
-                      className={suggestion.warnungen?.length ? 'bg-amber-50' : ''}
+                      className={suggestion.warnungen?.length ? 'bg-amber-50 dark:bg-amber-900/20' : ''}
                     >
                       <td className="font-medium">{suggestion.seed_name}</td>
                       <td>{suggestion.empfohlene_trays}</td>
@@ -379,7 +379,7 @@ export default function Forecasting() {
                             <button
                               onClick={() => approveMutation.mutate(suggestion.id)}
                               disabled={approveMutation.isPending}
-                              className="p-1 text-green-600 hover:bg-green-100 rounded"
+                              className="p-1 text-green-600 dark:text-green-400 hover:bg-green-100 dark:bg-green-900/30 rounded"
                               title="Genehmigen"
                             >
                               <Check className="w-4 h-4" />
@@ -387,7 +387,7 @@ export default function Forecasting() {
                             <button
                               onClick={() => rejectMutation.mutate(suggestion.id)}
                               disabled={rejectMutation.isPending}
-                              className="p-1 text-red-600 hover:bg-red-100 rounded"
+                              className="p-1 text-red-600 dark:text-red-400 hover:bg-red-100 dark:bg-red-900/30 rounded"
                               title="Ablehnen"
                             >
                               <X className="w-4 h-4" />

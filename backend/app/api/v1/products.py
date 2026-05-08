@@ -45,9 +45,10 @@ def list_products(
         query = query.where(Product.category == category)
 
     if search:
+        safe_search = search.replace("%", "\\%").replace("_", "\\_")
         query = query.where(
-            Product.name.ilike(f"%{search}%") |
-            Product.sku.ilike(f"%{search}%")
+            Product.name.ilike(f"%{safe_search}%") |
+            Product.sku.ilike(f"%{safe_search}%")
         )
 
     query = query.offset(pagination.offset).limit(pagination.page_size)

@@ -16,7 +16,15 @@ from app.core.email import email_service, PAYMENT_REMINDER_TEMPLATE
 logger = logging.getLogger(__name__)
 
 
-@celery_app.task(name="app.tasks.invoice_tasks.check_overdue_invoices")
+@celery_app.task(
+    name="app.tasks.invoice_tasks.check_overdue_invoices",
+    autoretry_for=(Exception,),
+    retry_kwargs={"max_retries": 3},
+    retry_backoff=True,
+    retry_backoff_max=600,
+    time_limit=300,
+    soft_time_limit=240,
+)
 def check_overdue_invoices():
     """
     Prüft offene Rechnungen auf Überfälligkeit.
@@ -61,55 +69,115 @@ def check_overdue_invoices():
         db.close()
 
 
-@celery_app.task(name="app.tasks.invoice_tasks.send_payment_reminders")
+@celery_app.task(
+    name="app.tasks.invoice_tasks.send_payment_reminders",
+    autoretry_for=(Exception,),
+    retry_kwargs={"max_retries": 3},
+    retry_backoff=True,
+    retry_backoff_max=600,
+    time_limit=300,
+    soft_time_limit=240,
+)
 def send_payment_reminders():
     """
-    Sendet Zahlungserinnerungen für überfällige Rechnungen.
+    Mehrstufiges Mahnwesen (3 Stufen).
+
+    Stufe 1: Freundliche Zahlungserinnerung (nach dunning_level1_days)
+    Stufe 2: 2. Mahnung mit Mahngebühr (nach dunning_level2_days)
+    Stufe 3: Letzte Mahnung / Inkasso-Androhung (nach dunning_level3_days)
     """
-    logger.info("Sende Zahlungserinnerungen")
+    from app.config import get_settings
+    from app.core.email import (
+        PAYMENT_REMINDER_TEMPLATE,
+        DUNNING_LEVEL2_TEMPLATE,
+        DUNNING_LEVEL3_TEMPLATE,
+    )
+
+    settings = get_settings()
+    logger.info("Starte mehrstufiges Mahnverfahren")
 
     db = SessionLocal()
     try:
         today = date.today()
+        from datetime import datetime as dt_cls
+        from datetime import timezone as tz
 
-        # Rechnungen die seit 3 Tagen überfällig sind
+        # Überfällige Rechnungen die noch gemahnt werden können (< Stufe 3 erreicht)
         reminder_invoices = db.execute(
             select(Invoice)
             .where(
-                Invoice.status == InvoiceStatus.UEBERFAELLIG,
-                Invoice.due_date <= today - timedelta(days=3)
+                Invoice.status.in_([InvoiceStatus.UEBERFAELLIG, InvoiceStatus.MAHNVERFAHREN]),
+                Invoice.reminder_level < 3,
+                # Nächste Mahnung fällig ODER noch nie gemahnt
+                (Invoice.next_reminder_date <= today) | (Invoice.next_reminder_date == None),
             )
         ).scalars().all()
 
         reminders_sent = 0
         for invoice in reminder_invoices:
-            # E-Mail versenden
+            days_overdue = (today - invoice.due_date).days
             customer = db.get(Customer, invoice.customer_id)
-            if customer and customer.email:
-                open_amount = invoice.total - invoice.paid_amount
-                new_deadline = today + timedelta(days=7)
-                
-                success = email_service.send_email(
-                    email_to=customer.email,
-                    subject=f"Zahlungserinnerung Rechnung {invoice.invoice_number}",
-                    template_str=PAYMENT_REMINDER_TEMPLATE,
-                    template_data={
-                        "customer_name": customer.name,
-                        "invoice_number": invoice.invoice_number,
-                        "invoice_date": invoice.invoice_date.strftime("%d.%m.%Y"),
-                        "due_date": invoice.due_date.strftime("%d.%m.%Y"),
-                        "amount": f"{open_amount:.2f}",
-                        "new_deadline": new_deadline.strftime("%d.%m.%Y")
-                    }
-                )
-                
-                if success:
-                    logger.info(f"Zahlungserinnerung an {customer.email} versendet")
-                    reminders_sent += 1
-                else:
-                    logger.error(f"Fehler beim Versenden an {customer.email}")
+            if not customer or not customer.email:
+                logger.warning(f"Keine E-Mail für Kunde {invoice.customer_id}")
+                continue
+
+            open_amount = invoice.total - invoice.paid_amount
+
+            # Bestimme nächste Mahnstufe
+            current_level = invoice.reminder_level
+            if current_level == 0 and days_overdue >= settings.dunning_level1_days:
+                next_level = 1
+                template = PAYMENT_REMINDER_TEMPLATE
+                subject = f"Zahlungserinnerung — Rechnung {invoice.invoice_number}"
+                new_deadline = today + timedelta(days=settings.dunning_level2_days - settings.dunning_level1_days)
+                fee = Decimal("0")
+            elif current_level == 1 and days_overdue >= settings.dunning_level2_days:
+                next_level = 2
+                template = DUNNING_LEVEL2_TEMPLATE
+                subject = f"2. Mahnung — Rechnung {invoice.invoice_number}"
+                new_deadline = today + timedelta(days=settings.dunning_level3_days - settings.dunning_level2_days)
+                fee = Decimal(str(settings.dunning_fee_level2))
+            elif current_level == 2 and days_overdue >= settings.dunning_level3_days:
+                next_level = 3
+                template = DUNNING_LEVEL3_TEMPLATE
+                subject = f"Letzte Mahnung — Rechnung {invoice.invoice_number}"
+                new_deadline = today + timedelta(days=14)
+                fee = Decimal(str(settings.dunning_fee_level3))
             else:
-                logger.warning(f"Keine E-Mail für Kunde {invoice.customer_id} gefunden")
+                continue  # Noch nicht fällig für nächste Stufe
+
+            success = email_service.send_email(
+                email_to=customer.email,
+                subject=subject,
+                template_str=template,
+                template_data={
+                    "customer_name": customer.name,
+                    "invoice_number": invoice.invoice_number,
+                    "invoice_date": invoice.invoice_date.strftime("%d.%m.%Y"),
+                    "due_date": invoice.due_date.strftime("%d.%m.%Y"),
+                    "amount": f"{open_amount:.2f}",
+                    "fee": f"{fee:.2f}",
+                    "total_with_fee": f"{open_amount + fee:.2f}",
+                    "new_deadline": new_deadline.strftime("%d.%m.%Y"),
+                    "reminder_level": next_level,
+                }
+            )
+
+            if success:
+                invoice.reminder_level = next_level
+                invoice.last_reminder_sent_at = dt_cls.now(tz.utc)
+                invoice.next_reminder_date = new_deadline
+                if next_level >= 2:
+                    invoice.status = InvoiceStatus.MAHNVERFAHREN
+                logger.info(
+                    f"Mahnstufe {next_level} an {customer.email} "
+                    f"für Rechnung {invoice.invoice_number} versendet"
+                )
+                reminders_sent += 1
+            else:
+                logger.error(f"Fehler beim Versenden an {customer.email}")
+
+        db.commit()
 
         return {
             "status": "success",
@@ -120,7 +188,15 @@ def send_payment_reminders():
         db.close()
 
 
-@celery_app.task(name="app.tasks.invoice_tasks.generate_recurring_invoices")
+@celery_app.task(
+    name="app.tasks.invoice_tasks.generate_recurring_invoices",
+    autoretry_for=(Exception,),
+    retry_kwargs={"max_retries": 3},
+    retry_backoff=True,
+    retry_backoff_max=600,
+    time_limit=300,
+    soft_time_limit=240,
+)
 def generate_recurring_invoices():
     """
     Generiert Rechnungen aus Abonnements.

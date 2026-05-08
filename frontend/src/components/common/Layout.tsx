@@ -22,12 +22,15 @@ import {
   QrCode,
   Moon,
   Sun,
+  Search,
 } from 'lucide-react';
-import { useState, createContext, useContext, ReactNode } from 'react';
+import { useState, useEffect, createContext, useContext, ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import QRScanner from './QRScanner';
+import CommandPalette from './CommandPalette';
 import { UserRole, User } from '../../types';
 import { useTheme } from '../../context/ThemeContext';
+import { useToast } from '../ui';
 
 // Navigation configuration with role-based visibility
 interface NavItem {
@@ -53,7 +56,7 @@ const navigationSections: NavSection[] = [
         roles: ['ADMIN', 'SALES', 'PRODUCTION_PLANNER', 'PRODUCTION_STAFF', 'ACCOUNTING'],
       },
       {
-        name: 'Analytics',
+        name: 'Auswertungen',
         href: '/analytics',
         icon: BarChart3,
         roles: ['ADMIN', 'SALES', 'ACCOUNTING'],
@@ -145,7 +148,7 @@ const navigationSections: NavSection[] = [
         roles: ['ADMIN', 'PRODUCTION_PLANNER'],
       },
       {
-        name: 'Accuracy Reports',
+        name: 'Forecast-Genauigkeit',
         href: '/accuracy',
         icon: BarChart3,
         roles: ['ADMIN', 'PRODUCTION_PLANNER', 'ACCOUNTING'],
@@ -201,7 +204,7 @@ const mockUser: User = {
   id: '1',
   name: 'Max Mustermann',
   email: 'max@minga-greens.de',
-  role: 'PRODUCTION_PLANNER',
+  role: 'ADMIN',
 };
 
 export default function Layout() {
@@ -209,12 +212,25 @@ export default function Layout() {
   const [user, setUser] = useState<User>(mockUser);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [showScanner, setShowScanner] = useState(false);
+  const [showCommandPalette, setShowCommandPalette] = useState(false);
   const navigate = useNavigate();
   const { theme, toggleTheme } = useTheme();
+  const toast = useToast();
+
+  // Cmd+K / Ctrl+K global shortcut
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault();
+        setShowCommandPalette((prev) => !prev);
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   const handleScan = (data: string) => {
     setShowScanner(false);
-    console.log("Scanned:", data);
 
     // Format: BATCH:{id} or INV:{id}
     if (data.startsWith('BATCH:')) {
@@ -224,7 +240,7 @@ export default function Layout() {
       const id = data.split(':')[1];
       navigate(`/inventory?highlight=${id}`);
     } else {
-      alert("Unbekannter QRCode: " + data);
+      toast.warning(`Unbekannter QR-Code: ${data}`);
     }
   };
 
@@ -263,9 +279,7 @@ export default function Layout() {
           {/* Logo */}
           <div className="flex items-center justify-between h-16 px-6 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
             <NavLink to="/dashboard" className="flex items-center gap-3">
-              <div className="w-8 h-8 bg-minga-500 rounded-lg flex items-center justify-center">
-                <Sprout className="w-5 h-5 text-white" />
-              </div>
+              <img src="/logo.png" alt="Minga Greens" className="w-8 h-8 rounded-lg object-contain invert dark:invert-0" />
               <span className="text-lg font-bold text-gray-900 dark:text-white">Minga-Greens</span>
             </NavLink>
             <button
@@ -348,7 +362,10 @@ export default function Layout() {
                     </button>
                   ))}
                   <div className="border-t border-gray-100 dark:border-gray-700 mt-1 pt-1">
-                    <button className="w-full text-left px-3 py-2 text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 flex items-center gap-2">
+                    <button
+                      className="w-full text-left px-3 py-2 text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 flex items-center gap-2"
+                      onClick={() => { window.location.href = '/'; }}
+                    >
                       <LogOut className="w-4 h-4" />
                       Abmelden
                     </button>
@@ -381,11 +398,23 @@ export default function Layout() {
 
             {/* Header Actions */}
             <div className="flex items-center gap-4">
+              {/* Search Trigger */}
+              <button
+                onClick={() => setShowCommandPalette(true)}
+                className="flex items-center gap-2 px-3 py-1.5 text-sm text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-lg transition-colors"
+              >
+                <Search className="w-4 h-4" />
+                <span className="hidden sm:inline">Suchen…</span>
+                <kbd className="hidden sm:inline-flex items-center gap-0.5 px-1.5 py-0.5 text-xs text-gray-400 border border-gray-300 dark:border-gray-500 rounded ml-2">
+                  Strg+K
+                </kbd>
+              </button>
+
               {/* Theme Toggle */}
               <button
                 onClick={toggleTheme}
                 className="p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
-                title={theme === 'dark' ? 'Light Mode' : 'Dark Mode'}
+                title={theme === 'dark' ? 'Helles Design' : 'Dunkles Design'}
               >
                 {theme === 'dark' ? (
                   <Sun className="w-5 h-5" />
@@ -427,6 +456,9 @@ export default function Layout() {
             <Outlet />
           </main>
         </div>
+
+        {/* Command Palette */}
+        <CommandPalette open={showCommandPalette} onClose={() => setShowCommandPalette(false)} />
       </div>
     </UserContext.Provider>
   );

@@ -94,7 +94,7 @@ export function MultiSelect({ label, options, value, onChange, error, required }
               disabled={option.disabled}
               className="w-4 h-4 rounded border-gray-300 text-minga-600 focus:ring-minga-500"
             />
-            <span className="text-sm text-gray-700">{option.label}</span>
+            <span className="text-sm text-gray-700 dark:text-gray-300">{option.label}</span>
           </label>
         ))}
       </div>

@@ -75,14 +75,41 @@ class ProductionService:
         ernte_datum: date,
         menge_gramm: Decimal,
         verlust_gramm: Decimal = Decimal("0"),
-        qualitaet_note: Optional[int] = None
+        qualitaet_note: Optional[int] = None,
+        quality_notes: Optional[str] = None,
     ) -> Harvest:
         """
         Erfasst eine Ernte und aktualisiert den Chargen-Status.
+        Automatische Qualitätskontrolle: Prüft Note und Verlustquote.
         """
+        from app.config import get_settings
+        settings = get_settings()
+
         grow_batch = self.db.get(GrowBatch, grow_batch_id)
         if not grow_batch:
             raise ValueError("Wachstumscharge nicht gefunden")
+
+        # Quality control: Automatische Freigabe-Entscheidung
+        quality_approved = True
+        qc_reasons = []
+
+        if qualitaet_note is not None and qualitaet_note < settings.quality_min_note:
+            quality_approved = False
+            qc_reasons.append(
+                f"Qualitätsnote {qualitaet_note} unter Mindestanforderung {settings.quality_min_note}"
+            )
+
+        total_harvest = menge_gramm + verlust_gramm
+        if total_harvest > 0:
+            loss_pct = float(verlust_gramm / total_harvest * 100)
+            if loss_pct > settings.quality_max_loss_percent:
+                quality_approved = False
+                qc_reasons.append(
+                    f"Verlustquote {loss_pct:.1f}% über Maximum {settings.quality_max_loss_percent}%"
+                )
+
+        auto_notes = "; ".join(qc_reasons) if qc_reasons else None
+        combined_notes = "\n".join(filter(None, [quality_notes, auto_notes]))
 
         harvest = Harvest(
             grow_batch_id=grow_batch_id,
@@ -90,6 +117,8 @@ class ProductionService:
             menge_gramm=menge_gramm,
             verlust_gramm=verlust_gramm,
             qualitaet_note=qualitaet_note,
+            quality_approved=quality_approved,
+            quality_notes=combined_notes or None,
         )
 
         self.db.add(harvest)

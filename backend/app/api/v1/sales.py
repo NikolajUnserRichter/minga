@@ -3,7 +3,7 @@ from typing import Optional
 API Endpoints für Vertrieb (Kunden, Bestellungen, Abonnements)
 Erweitert mit ERP-Standard Order Header-Line Architektur
 """
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from uuid import UUID
 from decimal import Decimal
 from fastapi import APIRouter, HTTPException, status, Query, Response
@@ -56,7 +56,8 @@ async def list_customers(
     if aktiv is not None:
         query = query.where(Customer.aktiv == aktiv)
     if search:
-        query = query.where(Customer.name.ilike(f"%{search}%"))
+        safe_search = search.replace("%", "\\%").replace("_", "\\_")
+        query = query.where(Customer.name.ilike(f"%{safe_search}%"))
 
     # Total Count
     count_query = select(func.count()).select_from(query.subquery())
@@ -285,15 +286,21 @@ async def process_today_subscriptions():
 # ============== Order Endpoints (Header-Line Architecture) ==============
 
 def _generate_order_number(db: DBSession) -> str:
-    """Generiert sequenzielle Bestellnummer im Format BE-YYYYMMDD-NNNN."""
+    """Generiert sequenzielle Bestellnummer im Format BE-YYYYMMDD-NNNN.
+
+    Uses SELECT ... FOR UPDATE to prevent duplicate numbers under
+    concurrent access.
+    """
     today = date.today()
     prefix = f"BE-{today.strftime('%Y%m%d')}"
 
-    # Höchste Nummer des Tages finden
+    # Lock matching rows to prevent concurrent duplicates
     last_order = db.execute(
         select(Order)
         .where(Order.order_number.like(f"{prefix}-%"))
         .order_by(Order.order_number.desc())
+        .with_for_update()
+        .limit(1)
     ).scalar_one_or_none()
 
     if last_order:
@@ -494,6 +501,38 @@ async def create_order(order_data: OrderCreate, db: DBSession, user: CurrentUser
     if not customer.aktiv:
         raise HTTPException(status_code=400, detail="Kunde ist deaktiviert")
 
+    # Kreditlimit prüfen
+    if customer.credit_limit is not None:
+        # Offene Bestellungen des Kunden summieren
+        open_order_total = db.execute(
+            select(func.coalesce(func.sum(Order.total_gross), Decimal("0")))
+            .where(
+                Order.customer_id == customer.id,
+                Order.status.in_([
+                    OrderStatus.ENTWURF, OrderStatus.BESTAETIGT, OrderStatus.IN_PRODUKTION
+                ])
+            )
+        ).scalar() or Decimal("0")
+
+        # Neuen Bestellwert schätzen (Summe aller Positionen)
+        estimated_total = Decimal("0")
+        for ld in order_data.lines:
+            line_net = ld.quantity * ld.unit_price
+            if ld.discount_percent:
+                line_net = line_net * (1 - ld.discount_percent / 100)
+            tax_rate = (ld.tax_rate or TaxRate.REDUZIERT).rate
+            estimated_total += line_net + (line_net * tax_rate)
+
+        if open_order_total + estimated_total > customer.credit_limit:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Kreditlimit überschritten: Limit {customer.credit_limit:.2f} EUR, "
+                    f"offene Bestellungen {open_order_total:.2f} EUR, "
+                    f"neue Bestellung ~{estimated_total:.2f} EUR"
+                )
+            )
+
     # Mindestens eine Position erforderlich
     if not order_data.lines or len(order_data.lines) == 0:
         raise HTTPException(
@@ -634,7 +673,7 @@ async def update_order(
             setattr(order, field, value)
 
     order.updated_by = UUID(user["id"]) if user else None
-    order.updated_at = datetime.utcnow()
+    order.updated_at = datetime.now(timezone.utc)
 
     # Audit-Log für bestätigte Bestellungen
     if order.status != OrderStatus.ENTWURF and old_values:
@@ -693,7 +732,7 @@ async def confirm_order(
     order.status = OrderStatus.BESTAETIGT
     order.confirmed_delivery_date = confirmed_delivery_date or order.requested_delivery_date
     order.updated_by = UUID(user["id"]) if user else None
-    order.updated_at = datetime.utcnow()
+    order.updated_at = datetime.now(timezone.utc)
 
     _create_audit_log(
         db, order,
@@ -752,7 +791,7 @@ async def update_order_status(
 
     order.status = new_status
     order.updated_by = UUID(user["id"]) if user else None
-    order.updated_at = datetime.utcnow()
+    order.updated_at = datetime.now(timezone.utc)
 
     _create_audit_log(
         db, order,
@@ -860,7 +899,7 @@ async def add_order_line(
     order.lines.append(line)
     _calculate_order_totals(order)
     order.updated_by = UUID(user["id"]) if user else None
-    order.updated_at = datetime.utcnow()
+    order.updated_at = datetime.now(timezone.utc)
 
     # Audit-Log für bestätigte Bestellungen
     if order.status != OrderStatus.ENTWURF:
@@ -932,7 +971,7 @@ async def update_order_line(
     _calculate_line_amounts(line)
     _calculate_order_totals(order)
     order.updated_by = UUID(user["id"]) if user else None
-    order.updated_at = datetime.utcnow()
+    order.updated_at = datetime.now(timezone.utc)
 
     # Audit-Log für bestätigte Bestellungen
     if order.status != OrderStatus.ENTWURF:
@@ -1014,7 +1053,7 @@ async def delete_order_line(
 
     _calculate_order_totals(order)
     order.updated_by = UUID(user["id"]) if user else None
-    order.updated_at = datetime.utcnow()
+    order.updated_at = datetime.now(timezone.utc)
 
     db.commit()
     return None
@@ -1062,7 +1101,7 @@ async def bulk_update_status(
         old_status = order.status
         order.status = bulk_update.status
         order.updated_by = UUID(user["id"]) if user else None
-        order.updated_at = datetime.utcnow()
+        order.updated_at = datetime.now(timezone.utc)
 
         _create_audit_log(
             db, order,

@@ -3,7 +3,7 @@ Rechnungs-Models: Invoice, InvoiceLine und Payment
 Mit deutscher MwSt-Berechnung und DATEV-Export-Feldern
 """
 import uuid
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from enum import Enum
 from typing import Optional
@@ -95,10 +95,15 @@ class Invoice(Base):
     footer_text: Mapped[Optional[str]] = mapped_column(Text)  # Text nach Positionen
     internal_notes: Mapped[Optional[str]] = mapped_column(Text)  # Interne Notizen
 
+    # Mahnwesen / Dunning
+    reminder_level: Mapped[int] = mapped_column(Integer, default=0)  # 0=keine, 1-3=Mahnstufe
+    last_reminder_sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    next_reminder_date: Mapped[Optional[date]] = mapped_column(Date)
+
     # Timestamps
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+        DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc)
     )
     sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime)  # Wann versendet
 
@@ -327,7 +332,7 @@ class Payment(Base):
     datev_exported: Mapped[bool] = mapped_column(Boolean, default=False)
 
     # Timestamps
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     # Beziehungen
     invoice: Mapped["Invoice"] = relationship("Invoice", back_populates="payments")

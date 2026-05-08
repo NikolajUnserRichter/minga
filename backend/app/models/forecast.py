@@ -4,7 +4,7 @@ Forecast-Models: Forecast, ForecastManualAdjustment, ForecastAccuracy, Productio
 Erweitert um vollständige Manual-Input-Funktionalität nach ERP-Anforderungen.
 """
 import uuid
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 from decimal import Decimal
 from enum import Enum
 from sqlalchemy import String, Integer, Numeric, DateTime, Date, ForeignKey, Text, Enum as SQLEnum, Boolean
@@ -114,9 +114,9 @@ class Forecast(Base):
     override_timestamp: Mapped[Optional[datetime]] = mapped_column(DateTime)
 
     # Timestamps
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+        DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc)
     )
 
     # ==================== BEZIEHUNGEN ====================
@@ -231,7 +231,7 @@ class ForecastManualAdjustment(Base):
     # ==================== AUDIT ====================
     user_id: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid)
     user_name: Mapped[Optional[str]] = mapped_column(String(200))
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     # Beziehung
     forecast: Mapped["Forecast"] = relationship("Forecast", back_populates="manual_adjustments")
@@ -270,7 +270,7 @@ class ForecastManualAdjustment(Base):
         Macht diese Anpassung rückgängig.
         """
         self.is_active = False
-        self.reverted_at = datetime.utcnow()
+        self.reverted_at = datetime.now(timezone.utc)
         self.reverted_by = user_id
         self.revert_reason = reason
 
@@ -309,7 +309,7 @@ class ForecastAccuracy(Base):
     abweichung_ohne_anpassung: Mapped[Optional[Decimal]] = mapped_column(Numeric(5, 2))
 
     # Timestamp
-    ausgewertet_am: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    ausgewertet_am: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     # Beziehung
     forecast: Mapped["Forecast"] = relationship("Forecast", back_populates="accuracy")
@@ -379,7 +379,7 @@ class ProductionSuggestion(Base):
     warnungen: Mapped[Optional[dict]] = mapped_column(JSON, default=list)
 
     # Timestamps
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
     genehmigt_am: Mapped[Optional[datetime]] = mapped_column(DateTime)
     genehmigt_von: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid)
     genehmigt_von_name: Mapped[Optional[str]] = mapped_column(String(200))

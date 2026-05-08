@@ -291,23 +291,23 @@ export default function Sales() {
           <div className="space-y-6">
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <p className="text-sm text-gray-500">Kunde</p>
+                <p className="text-sm text-gray-500 dark:text-gray-400">Kunde</p>
                 <p className="font-medium">{selectedOrder.kunde?.name || 'Unbekannt'}</p>
               </div>
               <div>
-                <p className="text-sm text-gray-500">Lieferdatum</p>
+                <p className="text-sm text-gray-500 dark:text-gray-400">Lieferdatum</p>
                 <p className="font-medium">
                   {new Date(selectedOrder.liefer_datum).toLocaleDateString('de-DE')}
                 </p>
               </div>
               <div>
-                <p className="text-sm text-gray-500">Status</p>
+                <p className="text-sm text-gray-500 dark:text-gray-400">Status</p>
                 <span className={`badge badge-${selectedOrder.status.toLowerCase()}`}>
                   {selectedOrder.status}
                 </span>
               </div>
               <div>
-                <p className="text-sm text-gray-500">Erstellt am</p>
+                <p className="text-sm text-gray-500 dark:text-gray-400">Erstellt am</p>
                 <p className="font-medium">
                   {new Date(selectedOrder.bestell_datum).toLocaleDateString('de-DE')}
                 </p>
@@ -353,7 +353,7 @@ export default function Sales() {
             {selectedOrder.notizen && (
               <div className="border-t pt-4">
                 <h4 className="font-medium mb-2">Notizen</h4>
-                <p className="text-gray-600">{selectedOrder.notizen}</p>
+                <p className="text-gray-600 dark:text-gray-400">{selectedOrder.notizen}</p>
               </div>
             )}
 
@@ -402,42 +402,42 @@ export default function Sales() {
           <div className="space-y-6">
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <p className="text-sm text-gray-500">Typ</p>
+                <p className="text-sm text-gray-500 dark:text-gray-400">Typ</p>
                 <span className={`badge badge-${selectedCustomer.typ.toLowerCase()}`}>
                   {selectedCustomer.typ}
                 </span>
               </div>
               <div>
-                <p className="text-sm text-gray-500">Status</p>
+                <p className="text-sm text-gray-500 dark:text-gray-400">Status</p>
                 <span className={`badge ${selectedCustomer.aktiv ? 'badge-success' : 'badge-gray'}`}>
                   {selectedCustomer.aktiv ? 'Aktiv' : 'Inaktiv'}
                 </span>
               </div>
               {selectedCustomer.email && (
                 <div>
-                  <p className="text-sm text-gray-500">E-Mail</p>
-                  <a href={`mailto:${selectedCustomer.email}`} className="text-minga-600 hover:text-minga-700">
+                  <p className="text-sm text-gray-500 dark:text-gray-400">E-Mail</p>
+                  <a href={`mailto:${selectedCustomer.email}`} className="text-minga-600 dark:text-minga-400 hover:text-minga-700">
                     {selectedCustomer.email}
                   </a>
                 </div>
               )}
               {selectedCustomer.telefon && (
                 <div>
-                  <p className="text-sm text-gray-500">Telefon</p>
-                  <a href={`tel:${selectedCustomer.telefon}`} className="text-minga-600 hover:text-minga-700">
+                  <p className="text-sm text-gray-500 dark:text-gray-400">Telefon</p>
+                  <a href={`tel:${selectedCustomer.telefon}`} className="text-minga-600 dark:text-minga-400 hover:text-minga-700">
                     {selectedCustomer.telefon}
                   </a>
                 </div>
               )}
               {selectedCustomer.adresse && (
                 <div className="col-span-2">
-                  <p className="text-sm text-gray-500">Adresse</p>
+                  <p className="text-sm text-gray-500 dark:text-gray-400">Adresse</p>
                   <p>{selectedCustomer.adresse}</p>
                 </div>
               )}
               {selectedCustomer.liefertage && selectedCustomer.liefertage.length > 0 && (
                 <div className="col-span-2">
-                  <p className="text-sm text-gray-500">Liefertage</p>
+                  <p className="text-sm text-gray-500 dark:text-gray-400">Liefertage</p>
                   <p>
                     {selectedCustomer.liefertage
                       .map((d) => ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'][d])

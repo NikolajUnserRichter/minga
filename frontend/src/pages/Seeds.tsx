@@ -228,7 +228,7 @@ function SeedForm({ seed, onSubmit, onCancel }: SeedFormProps) {
 
       <div className="divider" />
 
-      <h4 className="font-medium text-gray-900">Wachstumsparameter</h4>
+      <h4 className="font-medium text-gray-900 dark:text-white">Wachstumsparameter</h4>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <Input
@@ -305,9 +305,9 @@ function SeedForm({ seed, onSubmit, onCancel }: SeedFormProps) {
           type="checkbox"
           checked={formData.aktiv}
           onChange={(e) => setFormData({ ...formData, aktiv: e.target.checked })}
-          className="w-4 h-4 rounded border-gray-300 text-minga-600 focus:ring-minga-500"
+          className="w-4 h-4 rounded border-gray-300 dark:border-gray-600 text-minga-600 dark:text-minga-400 focus:ring-minga-500"
         />
-        <span className="text-sm text-gray-700">Aktiv</span>
+        <span className="text-sm text-gray-700 dark:text-gray-300">Aktiv</span>
       </label>
 
       <div className="flex gap-3 pt-4 border-t">

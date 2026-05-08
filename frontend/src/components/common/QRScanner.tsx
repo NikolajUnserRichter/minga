@@ -35,18 +35,17 @@ const QRScanner = ({ onScan, onClose }: QRScannerProps) => {
                     if (scannerRef.current) {
                         try {
                             scannerRef.current.clear();
-                        } catch (e) {
-                            console.error("Failed to clear scanner", e);
+                        } catch (_e) {
+                            // scanner already cleared
                         }
                     }
                 },
-                (errorMessage) => {
+                (_errorMessage) => {
                     // Error callback (called constantly when no QR found, ignore mostly)
                     // console.log(errorMessage);
                 }
             );
-        } catch (err) {
-            console.error("Failed to initialize scanner", err);
+        } catch (_err) {
             setError("Kamera konnte nicht gestartet werden. Bitte Berechtigungen prüfen.");
         }
 
@@ -54,8 +53,8 @@ const QRScanner = ({ onScan, onClose }: QRScannerProps) => {
             if (scannerRef.current) {
                 try {
                     scannerRef.current.clear();
-                } catch (e) {
-                    console.error("Failed to clear scanner on unmount", e);
+                } catch (_e) {
+                    // scanner already cleared on unmount
                 }
             }
         };

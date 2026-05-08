@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Optional
 import csv
@@ -165,7 +165,7 @@ class DatevService:
             
             # Updating Update status
             invoice.datev_exported = True
-            invoice.datev_export_date = datetime.utcnow()
+            invoice.datev_export_date = datetime.now(timezone.utc)
 
         # Payments Export
         if include_payments:

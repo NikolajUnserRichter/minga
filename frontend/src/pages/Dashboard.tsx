@@ -1,8 +1,9 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { productionApi, salesApi, forecastingApi } from '../services/api';
-import { PageHeader } from '../components/common/Layout';
+import { productionApi, salesApi, forecastingApi, invoicesApi } from '../services/api';
+import { PageHeader, useUser } from '../components/common/Layout';
 import { StatCard } from '../components/domain/StatCard';
-import { GrowBatchStatusBadge, PageLoader, EmptyState, Badge, Modal, useToast } from '../components/ui';
+import { GrowBatchStatusBadge, EmptyState, Badge, Modal, useToast } from '../components/ui';
+import { DashboardSkeleton } from '../components/ui/Skeleton';
 import { HarvestForm } from '../components/domain/HarvestForm';
 import {
   Sprout,
@@ -13,6 +14,8 @@ import {
   Scale,
   Check,
   ArrowRight,
+  Receipt,
+  Users,
 } from 'lucide-react';
 import { useState } from 'react';
 import type { GrowBatch, ProductionSuggestion } from '../types';
@@ -21,25 +24,54 @@ export default function Dashboard() {
   const toast = useToast();
   const queryClient = useQueryClient();
   const [harvestingBatch, setHarvestingBatch] = useState<GrowBatch | null>(null);
+  const { user } = useUser();
+  const role = user.role;
 
-  const { data: dashboardData, isLoading: dashboardLoading } = useQuery({
+  // Mock data for demo mode (no backend)
+  const MOCK_DASHBOARD = {
+    chargen_nach_status: { KEIMUNG: 8, WACHSTUM: 12, ERNTEREIF: 3, GEERNTET: 45 },
+    erntereife_chargen: 3,
+    ernten_diese_woche_gramm: 14200,
+    verluste_diese_woche_gramm: 800,
+    woche: {
+      start: new Date(Date.now() - 3 * 86400000).toISOString(),
+      ende: new Date(Date.now() + 4 * 86400000).toISOString(),
+    },
+  };
+
+  const { data: rawDashboard, isLoading: dashboardLoading } = useQuery({
     queryKey: ['dashboard'],
     queryFn: productionApi.getDashboard,
+    retry: 1,
   });
+  const isDemo = !rawDashboard && !dashboardLoading;
+  const dashboardData = rawDashboard || MOCK_DASHBOARD;
 
   const { data: ordersData } = useQuery({
     queryKey: ['orders', 'open'],
     queryFn: () => salesApi.listOrders({ status: 'OFFEN' }),
+    retry: 0,
   });
 
   const { data: suggestionsData } = useQuery({
     queryKey: ['suggestions', 'pending'],
     queryFn: () => forecastingApi.listProductionSuggestions({ status: 'VORGESCHLAGEN' }),
+    retry: 0,
   });
 
   const { data: erntereifData } = useQuery({
     queryKey: ['growBatches', 'erntereif'],
     queryFn: () => productionApi.listGrowBatches({ erntereif: true }),
+    retry: 0,
+  });
+
+  // Sales / Accounting role: invoice stats
+  const showSalesSection = ['ADMIN', 'SALES', 'ACCOUNTING'].includes(role);
+  const { data: invoicesData } = useQuery({
+    queryKey: ['invoices', 'open'],
+    queryFn: () => invoicesApi.list({ status: 'OFFEN' }),
+    enabled: showSalesSection,
+    retry: 0,
   });
 
   const approveMutation = useMutation({
@@ -54,8 +86,10 @@ export default function Dashboard() {
   });
 
   if (dashboardLoading) {
-    return <PageLoader />;
+    return <DashboardSkeleton />;
   }
+
+
 
   const totalChargen = Object.values(dashboardData?.chargen_nach_status || {}).reduce(
     (a: number, b: number) => a + b,
@@ -64,6 +98,12 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-6">
+      {isDemo && (
+        <div className="flex items-center gap-3 p-3 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-300 text-sm">
+          <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+          <span>Backend nicht erreichbar — es werden Demo-Daten angezeigt.</span>
+        </div>
+      )}
       <PageHeader
         title="Dashboard"
         subtitle={`Übersicht KW ${dashboardData?.woche?.start
@@ -125,11 +165,11 @@ export default function Dashboard() {
                 {erntereifData.items.slice(0, 5).map((batch: GrowBatch) => (
                   <div
                     key={batch.id}
-                    className="flex items-center justify-between p-3 bg-green-50 rounded-lg border border-green-200"
+                    className="flex items-center justify-between p-3 bg-green-50 dark:bg-green-900/20 rounded-lg border border-green-200 dark:border-green-700"
                   >
                     <div className="flex-1">
-                      <p className="font-medium text-gray-900">{batch.seed_name}</p>
-                      <p className="text-sm text-gray-500">
+                      <p className="font-medium text-gray-900 dark:text-white">{batch.seed_name}</p>
+                      <p className="text-sm text-gray-500 dark:text-gray-400">
                         {batch.tray_anzahl} Trays | Optimal:{' '}
                         {new Date(batch.erwartete_ernte_optimal).toLocaleDateString('de-DE')}
                       </p>
@@ -146,7 +186,7 @@ export default function Dashboard() {
                   </div>
                 ))}
                 {erntereifData.items.length > 5 && (
-                  <a href="/production" className="flex items-center gap-1 text-sm text-minga-600 hover:text-minga-700">
+                  <a href="/production" className="flex items-center gap-1 text-sm text-minga-600 dark:text-minga-400 hover:text-minga-700">
                     Alle {erntereifData.items.length} anzeigen <ArrowRight className="w-4 h-4" />
                   </a>
                 )}
@@ -175,18 +215,18 @@ export default function Dashboard() {
                   <div
                     key={suggestion.id}
                     className={`flex items-center justify-between p-3 rounded-lg border ${suggestion.warnungen?.length
-                      ? 'bg-amber-50 border-amber-200'
-                      : 'bg-gray-50 border-gray-200'
+                      ? 'bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-700'
+                      : 'bg-gray-50 dark:bg-gray-700/50 border-gray-200 dark:border-gray-700'
                       }`}
                   >
                     <div className="flex-1">
-                      <p className="font-medium text-gray-900">{suggestion.seed_name}</p>
-                      <p className="text-sm text-gray-500">
+                      <p className="font-medium text-gray-900 dark:text-white">{suggestion.seed_name}</p>
+                      <p className="text-sm text-gray-500 dark:text-gray-400">
                         {suggestion.empfohlene_trays} Trays | Aussaat:{' '}
                         {new Date(suggestion.aussaat_datum).toLocaleDateString('de-DE')}
                       </p>
                       {suggestion.warnungen?.map((w, i) => (
-                        <p key={i} className="text-xs text-amber-600 mt-1">
+                        <p key={i} className="text-xs text-amber-600 dark:text-amber-400 mt-1">
                           {w.nachricht}
                         </p>
                       ))}
@@ -202,7 +242,7 @@ export default function Dashboard() {
                   </div>
                 ))}
                 {suggestionsData.items.length > 5 && (
-                  <a href="/suggestions" className="flex items-center gap-1 text-sm text-minga-600 hover:text-minga-700">
+                  <a href="/suggestions" className="flex items-center gap-1 text-sm text-minga-600 dark:text-minga-400 hover:text-minga-700">
                     Alle {suggestionsData.items.length} anzeigen <ArrowRight className="w-4 h-4" />
                   </a>
                 )}
@@ -223,31 +263,69 @@ export default function Dashboard() {
           </div>
           <div className="card-body">
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
-              <div className="text-center p-4 bg-minga-50 rounded-lg">
-                <Scale className="w-8 h-8 text-minga-600 mx-auto mb-2" />
-                <p className="text-2xl font-bold text-gray-900">
+              <div className="text-center p-4 bg-minga-50 dark:bg-minga-900/20 rounded-lg">
+                <Scale className="w-8 h-8 text-minga-600 dark:text-minga-400 mx-auto mb-2" />
+                <p className="text-2xl font-bold text-gray-900 dark:text-white">
                   {((dashboardData?.ernten_diese_woche_gramm || 0) / 1000).toFixed(1)} kg
                 </p>
-                <p className="text-sm text-gray-500">Ernte diese Woche</p>
+                <p className="text-sm text-gray-500 dark:text-gray-400">Ernte diese Woche</p>
               </div>
-              <div className="text-center p-4 bg-red-50 rounded-lg">
-                <AlertTriangle className="w-8 h-8 text-red-600 mx-auto mb-2" />
-                <p className="text-2xl font-bold text-gray-900">
+              <div className="text-center p-4 bg-red-50 dark:bg-red-900/20 rounded-lg">
+                <AlertTriangle className="w-8 h-8 text-red-600 dark:text-red-400 mx-auto mb-2" />
+                <p className="text-2xl font-bold text-gray-900 dark:text-white">
                   {((dashboardData?.verluste_diese_woche_gramm || 0) / 1000).toFixed(1)} kg
                 </p>
-                <p className="text-sm text-gray-500">Verluste</p>
+                <p className="text-sm text-gray-500 dark:text-gray-400">Verluste</p>
               </div>
-              <div className="text-center p-4 bg-blue-50 rounded-lg">
-                <TrendingUp className="w-8 h-8 text-blue-600 mx-auto mb-2" />
-                <p className="text-2xl font-bold text-gray-900">
+              <div className="text-center p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
+                <TrendingUp className="w-8 h-8 text-blue-600 dark:text-blue-400 mx-auto mb-2" />
+                <p className="text-2xl font-bold text-gray-900 dark:text-white">
                   {dashboardData?.erntereife_chargen || 0}
                 </p>
-                <p className="text-sm text-gray-500">Chargen bereit</p>
+                <p className="text-sm text-gray-500 dark:text-gray-400">Chargen bereit</p>
               </div>
             </div>
           </div>
         </div>
       </div >
+
+      {/* Role-Specific Section */}
+      {showSalesSection && (
+        <div className="card">
+          <div className="card-header">
+            <h3 className="card-title">Vertrieb & Finanzen</h3>
+          </div>
+          <div className="card-body">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div className="flex items-center gap-3 p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
+                <Receipt className="w-8 h-8 text-blue-600 dark:text-blue-400" />
+                <div>
+                  <p className="text-xl font-bold text-gray-900 dark:text-white">
+                    {invoicesData?.length || 0}
+                  </p>
+                  <p className="text-sm text-gray-500 dark:text-gray-400">Offene Rechnungen</p>
+                </div>
+              </div>
+              <a href="/orders" className="flex items-center gap-3 p-4 bg-minga-50 dark:bg-minga-900/20 rounded-lg hover:bg-minga-100 dark:hover:bg-minga-900/30 transition-colors">
+                <Calendar className="w-8 h-8 text-minga-600 dark:text-minga-400" />
+                <div>
+                  <p className="text-xl font-bold text-gray-900 dark:text-white">
+                    {ordersData?.total || 0}
+                  </p>
+                  <p className="text-sm text-gray-500 dark:text-gray-400">Offene Bestellungen</p>
+                </div>
+              </a>
+              <a href="/customers" className="flex items-center gap-3 p-4 bg-purple-50 dark:bg-purple-900/20 rounded-lg hover:bg-purple-100 dark:hover:bg-purple-900/30 transition-colors">
+                <Users className="w-8 h-8 text-purple-600 dark:text-purple-400" />
+                <div className="flex items-center gap-1">
+                  <span className="text-sm font-medium text-gray-900 dark:text-white">Kunden verwalten</span>
+                  <ArrowRight className="w-4 h-4 text-gray-400" />
+                </div>
+              </a>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Harvest Modal */}
       < Modal

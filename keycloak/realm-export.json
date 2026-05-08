@@ -96,6 +96,46 @@
       "realmRoles": [
         "production_staff"
       ]
+    },
+    {
+      "username": "thomas",
+      "enabled": true,
+      "email": "thomas@minga-greens.de",
+      "firstName": "Thomas",
+      "lastName": "Minga-Greens",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "MingaTest2026!",
+          "temporary": true
+        }
+      ],
+      "realmRoles": [
+        "admin",
+        "production_planner",
+        "production_staff",
+        "sales"
+      ]
+    },
+    {
+      "username": "gernot",
+      "enabled": true,
+      "email": "gernot@minga-greens.de",
+      "firstName": "Gernot",
+      "lastName": "Minga-Greens",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "MingaTest2026!",
+          "temporary": true
+        }
+      ],
+      "realmRoles": [
+        "admin",
+        "production_planner",
+        "production_staff",
+        "sales"
+      ]
     }
   ],
   "clients": [
@@ -107,12 +147,16 @@
       "redirectUris": [
         "http://localhost:3000/*",
         "http://localhost:3002/*",
-        "http://localhost:8000/*"
+        "http://localhost:8000/*",
+        "https://${DOMAIN}/*",
+        "https://app.${DOMAIN}/*"
       ],
       "webOrigins": [
         "http://localhost:3000",
         "http://localhost:3002",
-        "http://localhost:8000"
+        "http://localhost:8000",
+        "https://${DOMAIN}",
+        "https://app.${DOMAIN}"
       ],
       "standardFlowEnabled": true,
       "directAccessGrantsEnabled": true,

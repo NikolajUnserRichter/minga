@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { X, Check, AlertTriangle } from 'lucide-react';
+import { Check, AlertTriangle } from 'lucide-react';
 import { inventoryApi } from '../../services/api';
 import { Button, Input, Modal, useToast } from '../ui';
 import { InventoryType } from '../../types';
@@ -65,13 +65,13 @@ export function StockCorrectionModal({
     return (
         <Modal open={open} onClose={onClose} title={`Bestandskorrektur: ${itemName}`}>
             <form onSubmit={handleSubmit} className="space-y-4">
-                <div className="bg-gray-50 p-4 rounded-lg flex justify-between items-center mb-4">
+                <div className="bg-gray-50 dark:bg-gray-700/50 p-4 rounded-lg flex justify-between items-center mb-4">
                     <div>
-                        <p className="text-sm text-gray-500">Aktueller Bestand (System)</p>
+                        <p className="text-sm text-gray-500 dark:text-gray-400">Aktueller Bestand (System)</p>
                         <p className="text-xl font-bold">{currentQuantity} {unit}</p>
                     </div>
                     {difference !== 0 && (
-                        <div className={`text-right ${isGain ? 'text-green-600' : 'text-red-600'}`}>
+                        <div className={`text-right ${isGain ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
                             <p className="text-sm">Differenz</p>
                             <p className="text-xl font-bold">
                                 {isGain ? '+' : ''}{difference.toFixed(2)} {unit}
@@ -101,7 +101,7 @@ export function StockCorrectionModal({
                 />
 
                 {isLoss && (
-                    <div className="flex items-center gap-2 text-amber-600 text-sm bg-amber-50 p-2 rounded">
+                    <div className="flex items-center gap-2 text-amber-600 dark:text-amber-400 text-sm bg-amber-50 dark:bg-amber-900/20 p-2 rounded">
                         <AlertTriangle className="w-4 h-4" />
                         <span>Achtung: Dies bucht einen Verlust von {Math.abs(difference)} {unit}.</span>
                     </div>

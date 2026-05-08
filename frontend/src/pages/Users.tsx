@@ -1,17 +1,18 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Search } from 'lucide-react';
+import { Plus, Search, Users as UsersIcon, UserCheck, UserX } from 'lucide-react';
 import { usersApi } from '../services/api';
 import { User, UserRole } from '../types';
 import { PageHeader, FilterBar } from '../components/common/Layout';
 import { UserCard } from '../components/domain/UserCard';
+import { StatCard } from '../components/domain/StatCard';
+import { SkeletonStatCard, SkeletonCard } from '../components/ui/Skeleton';
 import {
     Button,
     Input,
     Select,
     Modal,
     ConfirmDialog,
-    PageLoader,
     EmptyState,
     useToast,
     SelectOption,
@@ -66,11 +67,36 @@ export default function Users() {
     );
 
     if (isLoading) {
-        return <PageLoader />;
+        return (
+            <div className="space-y-6 animate-pulse">
+                <div className="flex items-center justify-between">
+                    <div className="space-y-2">
+                        <div className="skeleton h-7 w-48" />
+                        <div className="skeleton h-4 w-32" />
+                    </div>
+                    <div className="skeleton h-10 w-36 rounded-lg" />
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <SkeletonStatCard />
+                    <SkeletonStatCard />
+                    <SkeletonStatCard />
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    <SkeletonCard />
+                    <SkeletonCard />
+                    <SkeletonCard />
+                    <SkeletonCard />
+                    <SkeletonCard />
+                </div>
+            </div>
+        );
     }
 
+    const activeUsers = users.filter((u) => u.is_active !== false);
+    const inactiveUsers = users.filter((u) => u.is_active === false);
+
     return (
-        <div>
+        <div className="space-y-6">
             <PageHeader
                 title="Benutzerverwaltung"
                 subtitle={`${users.length} Benutzer`}
@@ -80,6 +106,28 @@ export default function Users() {
                     </Button>
                 }
             />
+
+            {/* Stats */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <StatCard
+                    title="Gesamt"
+                    value={users.length}
+                    icon={<UsersIcon className="w-5 h-5" />}
+                    variant="primary"
+                />
+                <StatCard
+                    title="Aktiv"
+                    value={activeUsers.length}
+                    icon={<UserCheck className="w-5 h-5" />}
+                    variant="success"
+                />
+                <StatCard
+                    title="Inaktiv"
+                    value={inactiveUsers.length}
+                    icon={<UserX className="w-5 h-5" />}
+                    variant="warning"
+                />
+            </div>
 
             <FilterBar>
                 <div className="flex-1 max-w-md">
