@@ -7,7 +7,8 @@ import type {
   InventoryLocation, SeedInventory, FinishedGoodsInventory,
   PackagingInventory, InventoryMovement, StockOverview,
   ArticleType, LocationType, TraceabilityChain, Capacity,
-  RevenueStats, YieldStats, Subscription, AccuracySummary, AccuracyDetail
+  RevenueStats, YieldStats, Subscription, AccuracySummary, AccuracyDetail,
+  Contact, Supplier
 } from '../types'
 
 import keycloak from './auth';
@@ -144,6 +145,37 @@ export const salesApi = {
 
   runDailySubscriptions: () =>
     api.post('/sales/subscriptions/process-today').then(r => r.data),
+
+  // Contacts (Ansprechpartner) — multiple per customer
+  listContacts: (customerId: string) =>
+    api.get<Contact[]>(`/sales/customers/${customerId}/contacts`).then(r => r.data),
+
+  createContact: (customerId: string, data: Partial<Contact>) =>
+    api.post<Contact>(`/sales/customers/${customerId}/contacts`, data).then(r => r.data),
+
+  updateContact: (customerId: string, contactId: string, data: Partial<Contact>) =>
+    api.patch<Contact>(`/sales/customers/${customerId}/contacts/${contactId}`, data).then(r => r.data),
+
+  deleteContact: (customerId: string, contactId: string) =>
+    api.delete(`/sales/customers/${customerId}/contacts/${contactId}`),
+}
+
+// Suppliers API
+export const suppliersApi = {
+  list: (params?: { is_active?: boolean; search?: string }) =>
+    api.get<{ items: Supplier[]; total: number }>('/suppliers', { params }).then(r => r.data),
+
+  get: (id: string) =>
+    api.get<Supplier>(`/suppliers/${id}`).then(r => r.data),
+
+  create: (data: Partial<Supplier>) =>
+    api.post<Supplier>('/suppliers', data).then(r => r.data),
+
+  update: (id: string, data: Partial<Supplier>) =>
+    api.patch<Supplier>(`/suppliers/${id}`, data).then(r => r.data),
+
+  delete: (id: string) =>
+    api.delete(`/suppliers/${id}`),
 }
 
 // Forecasting API

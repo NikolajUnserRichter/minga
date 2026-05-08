@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, Search } from 'lucide-react';
-import { seedsApi } from '../services/api';
+import { seedsApi, suppliersApi } from '../services/api';
 import { Seed } from '../types';
 import { PageHeader, FilterBar } from '../components/common/Layout';
 import { SeedCard } from '../components/domain/SeedCard';
@@ -169,10 +169,20 @@ interface SeedFormProps {
 function SeedForm({ seed, onSubmit, onCancel }: SeedFormProps) {
   const toast = useToast();
   const [loading, setLoading] = useState(false);
+  const { data: supplierData } = useQuery({
+    queryKey: ['suppliers', { is_active: true }],
+    queryFn: () => suppliersApi.list({ is_active: true }),
+  });
+  const supplierOptions: SelectOption[] = [
+    { value: '', label: '— kein —' },
+    ...((supplierData?.items ?? []).map((s) => ({ value: s.id, label: s.name }))),
+  ];
   const [formData, setFormData] = useState({
     name: seed?.name || '',
     sorte: seed?.sorte || '',
     lieferant: seed?.lieferant || '',
+    supplier_id: (seed as any)?.supplier_id || '',
+    backup_supplier_id: (seed as any)?.backup_supplier_id || '',
     keimdauer_tage: seed?.keimdauer_tage || 2,
     wachstumsdauer_tage: seed?.wachstumsdauer_tage || 8,
     erntefenster_min_tage: seed?.erntefenster_min_tage || 8,
@@ -188,10 +198,15 @@ function SeedForm({ seed, onSubmit, onCancel }: SeedFormProps) {
     setLoading(true);
 
     try {
+      const payload = {
+        ...formData,
+        supplier_id: formData.supplier_id || null,
+        backup_supplier_id: formData.backup_supplier_id || null,
+      };
       if (seed) {
-        await seedsApi.update(seed.id, formData);
+        await seedsApi.update(seed.id, payload);
       } else {
-        await seedsApi.create(formData);
+        await seedsApi.create(payload);
       }
       onSubmit();
     } catch (error) {
@@ -219,8 +234,23 @@ function SeedForm({ seed, onSubmit, onCancel }: SeedFormProps) {
         />
       </div>
 
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <Select
+          label="Standard-Lieferant"
+          options={supplierOptions}
+          value={formData.supplier_id}
+          onChange={(e) => setFormData({ ...formData, supplier_id: e.target.value })}
+        />
+        <Select
+          label="Backup-Lieferant"
+          options={supplierOptions}
+          value={formData.backup_supplier_id}
+          onChange={(e) => setFormData({ ...formData, backup_supplier_id: e.target.value })}
+        />
+      </div>
+
       <Input
-        label="Lieferant"
+        label="Lieferant (Notiz, falls nicht im System)"
         value={formData.lieferant}
         onChange={(e) => setFormData({ ...formData, lieferant: e.target.value })}
         placeholder="z.B. Bio-Saatgut München GmbH"

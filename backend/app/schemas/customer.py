@@ -200,6 +200,42 @@ class CustomerListResponse(BaseModel):
 
 
 # ============================================================
+# CONTACT (ANSPRECHPARTNER) SCHEMAS
+# ============================================================
+
+class ContactBase(BaseModel):
+    """Ansprechpartner pro Kunde"""
+    name: str = Field(..., min_length=1, max_length=200)
+    email: Optional[EmailStr] = None
+    telefon: Optional[str] = Field(None, max_length=50)
+    role: str = Field(default="ALLGEMEIN", description="ALLGEMEIN | EINKAUF | VERTRIEB | BUCHHALTUNG | TECHNIK")
+    is_primary: bool = Field(default=False)
+    notizen: Optional[str] = None
+
+
+class ContactCreate(ContactBase):
+    pass
+
+
+class ContactUpdate(BaseModel):
+    name: Optional[str] = Field(None, min_length=1, max_length=200)
+    email: Optional[EmailStr] = None
+    telefon: Optional[str] = None
+    role: Optional[str] = None
+    is_primary: Optional[bool] = None
+    notizen: Optional[str] = None
+
+
+class ContactResponse(ContactBase):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    customer_id: UUID
+    created_at: datetime
+    updated_at: datetime
+
+
+# ============================================================
 # SUBSCRIPTION SCHEMAS
 # ============================================================
 

@@ -1,9 +1,9 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Search } from 'lucide-react';
+import { Plus, Search, Trash } from 'lucide-react';
 import { salesApi } from '../services/api';
-import { Customer, CustomerType } from '../types';
+import { Customer, CustomerType, Contact } from '../types';
 import { PageHeader, FilterBar } from '../components/common/Layout';
 import { CustomerCard } from '../components/domain/CustomerCard';
 import { CreateOrderModal } from '../components/domain/CreateOrderModal';
@@ -359,6 +359,8 @@ function CustomerForm({ customer, onSubmit, onCancel }: CustomerFormProps) {
         <span className="text-sm text-gray-700 dark:text-gray-300">Aktiv</span>
       </label>
 
+      {customer && <ContactList customerId={customer.id} />}
+
       <div className="flex gap-3 pt-4 border-t">
         <Button type="button" variant="secondary" onClick={onCancel}>
           Abbrechen
@@ -368,5 +370,127 @@ function CustomerForm({ customer, onSubmit, onCancel }: CustomerFormProps) {
         </Button>
       </div>
     </form>
+  );
+}
+
+function ContactList({ customerId }: { customerId: string }) {
+  const queryClient = useQueryClient();
+  const toast = useToast();
+  const { data: contacts = [] } = useQuery({
+    queryKey: ['customer-contacts', customerId],
+    queryFn: () => salesApi.listContacts(customerId),
+  });
+
+  const [newContact, setNewContact] = useState<Partial<Contact>>({
+    name: '',
+    email: '',
+    telefon: '',
+    role: 'ALLGEMEIN',
+    is_primary: false,
+  });
+
+  const invalidate = () => queryClient.invalidateQueries({ queryKey: ['customer-contacts', customerId] });
+
+  const addMutation = useMutation({
+    mutationFn: () => salesApi.createContact(customerId, newContact),
+    onSuccess: () => {
+      invalidate();
+      setNewContact({ name: '', email: '', telefon: '', role: 'ALLGEMEIN', is_primary: false });
+      toast.success('Ansprechpartner hinzugefügt');
+    },
+    onError: () => toast.error('Fehler beim Hinzufügen'),
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (contactId: string) => salesApi.deleteContact(customerId, contactId),
+    onSuccess: () => {
+      invalidate();
+      toast.success('Ansprechpartner gelöscht');
+    },
+  });
+
+  const roleOptions: SelectOption[] = [
+    { value: 'ALLGEMEIN', label: 'Allgemein' },
+    { value: 'EINKAUF', label: 'Einkauf' },
+    { value: 'VERTRIEB', label: 'Vertrieb' },
+    { value: 'BUCHHALTUNG', label: 'Buchhaltung' },
+    { value: 'TECHNIK', label: 'Technik' },
+  ];
+
+  return (
+    <fieldset className="border border-gray-200 dark:border-gray-700 rounded-lg p-4 space-y-3">
+      <legend className="px-2 text-sm font-medium text-gray-700 dark:text-gray-300">
+        Ansprechpartner ({contacts.length})
+      </legend>
+
+      {contacts.length > 0 && (
+        <div className="space-y-2">
+          {contacts.map((c) => (
+            <div key={c.id} className="flex items-center gap-2 text-sm bg-gray-50 dark:bg-gray-700/50 rounded px-3 py-2">
+              <div className="flex-1">
+                <div className="font-medium text-gray-900 dark:text-white">
+                  {c.name} {c.is_primary && <span className="text-xs text-minga-600">★</span>}
+                </div>
+                <div className="text-xs text-gray-500 dark:text-gray-400">
+                  {c.role} · {c.email || '–'} · {c.telefon || '–'}
+                </div>
+              </div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                icon={<Trash className="w-4 h-4" />}
+                onClick={() => deleteMutation.mutate(c.id)}
+              />
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
+        <Input
+          placeholder="Name"
+          value={newContact.name || ''}
+          onChange={(e) => setNewContact({ ...newContact, name: e.target.value })}
+        />
+        <Input
+          type="email"
+          placeholder="E-Mail"
+          value={newContact.email || ''}
+          onChange={(e) => setNewContact({ ...newContact, email: e.target.value })}
+        />
+        <Input
+          placeholder="Telefon"
+          value={newContact.telefon || ''}
+          onChange={(e) => setNewContact({ ...newContact, telefon: e.target.value })}
+        />
+        <Select
+          options={roleOptions}
+          value={newContact.role || 'ALLGEMEIN'}
+          onChange={(e) => setNewContact({ ...newContact, role: e.target.value as Contact['role'] })}
+        />
+      </div>
+      <div className="flex justify-between items-center">
+        <label className="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
+          <input
+            type="checkbox"
+            checked={newContact.is_primary || false}
+            onChange={(e) => setNewContact({ ...newContact, is_primary: e.target.checked })}
+            className="w-4 h-4 rounded border-gray-300 dark:border-gray-600"
+          />
+          Hauptansprechpartner
+        </label>
+        <Button
+          type="button"
+          size="sm"
+          variant="secondary"
+          icon={<Plus className="w-4 h-4" />}
+          disabled={!newContact.name}
+          onClick={() => addMutation.mutate()}
+        >
+          Hinzufügen
+        </Button>
+      </div>
+    </fieldset>
   );
 }

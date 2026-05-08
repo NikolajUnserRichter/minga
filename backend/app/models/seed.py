@@ -14,6 +14,33 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
 
 
+class Supplier(Base):
+    """
+    Lieferant — Saatgut-Lieferanten als Stammdaten.
+    Erlaubt Default + Backup-Lieferant pro Sorte.
+    """
+    __tablename__ = "suppliers"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, primary_key=True, default=uuid.uuid4
+    )
+    name: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
+    email: Mapped[Optional[str]] = mapped_column(String(200))
+    telefon: Mapped[Optional[str]] = mapped_column(String(50))
+    adresse: Mapped[Optional[str]] = mapped_column(Text)
+    ust_id: Mapped[Optional[str]] = mapped_column(String(20))
+    notizen: Mapped[Optional[str]] = mapped_column(Text)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc)
+    )
+
+    def __repr__(self) -> str:
+        return f"<Supplier(name='{self.name}')>"
+
+
 class Seed(Base):
     """
     Saatgut-Sorte mit Wachstumsparametern.
@@ -26,7 +53,15 @@ class Seed(Base):
     )
     name: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
     sorte: Mapped[Optional[str]] = mapped_column(String(100))
-    lieferant: Mapped[Optional[str]] = mapped_column(String(200))
+    lieferant: Mapped[Optional[str]] = mapped_column(String(200))  # Legacy free-text
+
+    # Strukturierte Lieferanten (default + backup)
+    supplier_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid, ForeignKey("suppliers.id", ondelete="SET NULL")
+    )
+    backup_supplier_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid, ForeignKey("suppliers.id", ondelete="SET NULL")
+    )
 
     # Wachstumsparameter
     keimdauer_tage: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -57,6 +92,12 @@ class Seed(Base):
     # Beziehungen
     batches: Mapped[list["SeedBatch"]] = relationship(
         "SeedBatch", back_populates="seed", cascade="all, delete-orphan"
+    )
+    supplier: Mapped[Optional["Supplier"]] = relationship(
+        "Supplier", foreign_keys=[supplier_id]
+    )
+    backup_supplier: Mapped[Optional["Supplier"]] = relationship(
+        "Supplier", foreign_keys=[backup_supplier_id]
     )
 
     @property

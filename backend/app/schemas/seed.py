@@ -12,7 +12,9 @@ class SeedBase(BaseModel):
     """Basis-Schema für Saatgut"""
     name: str = Field(..., min_length=1, max_length=100, description="Name der Sorte")
     sorte: Optional[str] = Field(None, max_length=100, description="Sortenbezeichnung")
-    lieferant: Optional[str] = Field(None, max_length=200, description="Lieferant")
+    lieferant: Optional[str] = Field(None, max_length=200, description="Lieferant (Legacy free-text)")
+    supplier_id: Optional[UUID] = Field(None, description="Standard-Lieferant (Stammdaten)")
+    backup_supplier_id: Optional[UUID] = Field(None, description="Backup-Lieferant")
     keimdauer_tage: int = Field(..., ge=1, le=30, description="Keimdauer in Tagen")
     wachstumsdauer_tage: int = Field(..., ge=1, le=60, description="Wachstumsdauer in Tagen")
     erntefenster_min_tage: int = Field(..., ge=1, description="Frühester Erntezeitpunkt")
@@ -32,6 +34,8 @@ class SeedUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=100)
     sorte: Optional[str] = None
     lieferant: Optional[str] = None
+    supplier_id: Optional[UUID] = None
+    backup_supplier_id: Optional[UUID] = None
     keimdauer_tage: Optional[int] = Field(None, ge=1, le=30)
     wachstumsdauer_tage: Optional[int] = Field(None, ge=1, le=60)
     erntefenster_min_tage: Optional[int] = Field(None, ge=1)

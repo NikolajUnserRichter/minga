@@ -49,6 +49,32 @@ export interface Harvest {
   created_at: string
 }
 
+export interface Contact {
+  id: string
+  customer_id: string
+  name: string
+  email: string | null
+  telefon: string | null
+  role: 'ALLGEMEIN' | 'EINKAUF' | 'VERTRIEB' | 'BUCHHALTUNG' | 'TECHNIK'
+  is_primary: boolean
+  notizen: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface Supplier {
+  id: string
+  name: string
+  email: string | null
+  telefon: string | null
+  adresse: string | null
+  ust_id: string | null
+  notizen: string | null
+  is_active: boolean
+  created_at: string
+  updated_at: string
+}
+
 export interface Customer {
   id: string
   name: string

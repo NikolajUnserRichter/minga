@@ -200,6 +200,9 @@ class Customer(Base):
     addresses: Mapped[list["CustomerAddress"]] = relationship(
         "CustomerAddress", back_populates="customer", cascade="all, delete-orphan"
     )
+    contacts: Mapped[list["Contact"]] = relationship(
+        "Contact", back_populates="customer", cascade="all, delete-orphan"
+    )
     price_list: Mapped[Optional["PriceList"]] = relationship("PriceList")
     invoices: Mapped[list["Invoice"]] = relationship(
         "Invoice", back_populates="customer"
@@ -259,6 +262,37 @@ class Customer(Base):
 
     def __repr__(self) -> str:
         return f"<Customer(name='{self.name}', typ={self.typ.value})>"
+
+
+class Contact(Base):
+    """
+    Ansprechpartner pro Kunde.
+    Mehrere Personen mit Rollen: ALLGEMEIN, EINKAUF, VERTRIEB, BUCHHALTUNG, TECHNIK
+    """
+    __tablename__ = "contacts"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, primary_key=True, default=uuid.uuid4
+    )
+    customer_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("customers.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    email: Mapped[Optional[str]] = mapped_column(String(200))
+    telefon: Mapped[Optional[str]] = mapped_column(String(50))
+    role: Mapped[str] = mapped_column(String(30), default="ALLGEMEIN")
+    is_primary: Mapped[bool] = mapped_column(Boolean, default=False)
+    notizen: Mapped[Optional[str]] = mapped_column(Text)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc)
+    )
+
+    customer: Mapped["Customer"] = relationship("Customer", back_populates="contacts")
+
+    def __repr__(self) -> str:
+        return f"<Contact(name='{self.name}', role='{self.role}')>"
 
 
 class Subscription(Base):

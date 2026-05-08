@@ -11,12 +11,13 @@ from sqlalchemy import select, func
 from sqlalchemy.orm import joinedload
 
 from app.api.deps import DBSession, Pagination, CurrentUser
-from app.models.customer import Customer, CustomerType, Subscription
+from app.models.customer import Customer, CustomerType, Contact, Subscription
 from app.models.order import Order, OrderLine, OrderStatus, OrderAuditLog, TaxRate
 from app.models.seed import Seed
 from app.models.product import Product
 from app.schemas.customer import (
     CustomerCreate, CustomerUpdate, CustomerResponse, CustomerListResponse,
+    ContactCreate, ContactUpdate, ContactResponse,
     SubscriptionCreate, SubscriptionUpdate, SubscriptionResponse, SubscriptionListResponse
 )
 from app.schemas.order import (
@@ -160,6 +161,54 @@ async def reactivate_customer(customer_id: UUID, db: DBSession):
     db.commit()
     db.refresh(customer)
     return CustomerResponse.model_validate(customer)
+
+
+# ============== Contact (Ansprechpartner) Endpoints ==============
+
+@router.get("/customers/{customer_id}/contacts", response_model=list[ContactResponse])
+async def list_contacts(customer_id: UUID, db: DBSession):
+    """Ansprechpartner eines Kunden listen."""
+    customer = db.get(Customer, customer_id)
+    if not customer:
+        raise HTTPException(status_code=404, detail="Kunde nicht gefunden")
+    contacts = db.execute(
+        select(Contact).where(Contact.customer_id == customer_id).order_by(Contact.is_primary.desc(), Contact.name)
+    ).scalars().all()
+    return [ContactResponse.model_validate(c) for c in contacts]
+
+
+@router.post("/customers/{customer_id}/contacts", response_model=ContactResponse, status_code=status.HTTP_201_CREATED)
+async def create_contact(customer_id: UUID, data: ContactCreate, db: DBSession):
+    """Neuen Ansprechpartner anlegen."""
+    customer = db.get(Customer, customer_id)
+    if not customer:
+        raise HTTPException(status_code=404, detail="Kunde nicht gefunden")
+    contact = Contact(customer_id=customer_id, **data.model_dump())
+    db.add(contact)
+    db.commit()
+    db.refresh(contact)
+    return ContactResponse.model_validate(contact)
+
+
+@router.patch("/customers/{customer_id}/contacts/{contact_id}", response_model=ContactResponse)
+async def update_contact(customer_id: UUID, contact_id: UUID, data: ContactUpdate, db: DBSession):
+    contact = db.get(Contact, contact_id)
+    if not contact or contact.customer_id != customer_id:
+        raise HTTPException(status_code=404, detail="Ansprechpartner nicht gefunden")
+    for field, value in data.model_dump(exclude_unset=True).items():
+        setattr(contact, field, value)
+    db.commit()
+    db.refresh(contact)
+    return ContactResponse.model_validate(contact)
+
+
+@router.delete("/customers/{customer_id}/contacts/{contact_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_contact(customer_id: UUID, contact_id: UUID, db: DBSession):
+    contact = db.get(Contact, contact_id)
+    if not contact or contact.customer_id != customer_id:
+        raise HTTPException(status_code=404, detail="Ansprechpartner nicht gefunden")
+    db.delete(contact)
+    db.commit()
 
 
 @router.get("/customers/export/datev")
