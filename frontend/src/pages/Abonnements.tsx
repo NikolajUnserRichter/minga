@@ -477,6 +477,10 @@ export default function Abonnements() {
                                 <option value="BUND">Bund</option>
                                 <option value="SCHALE">Schale</option>
                                 <option value="STUECK">Stück</option>
+                                <option value="TRAY">Tray (8 Schalen)</option>
+                                <option value="KISTE_12">Mehrwegkiste (12 Schalen)</option>
+                                <option value="KISTE_6">Mehrwegkiste (6 Schalen)</option>
+                                <option value="KARTON_6">Karton (6 Schalen)</option>
                             </select>
                         </div>
                     </div>

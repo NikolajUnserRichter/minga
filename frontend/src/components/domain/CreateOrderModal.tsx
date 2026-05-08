@@ -211,7 +211,11 @@ export function CreateOrderModal({ open, onClose, preselectedCustomer }: CreateO
                                         { value: 'g', label: 'g' },
                                         { value: 'kg', label: 'kg' },
                                         { value: 'STK', label: 'Stk' },
-                                        { value: 'SCHALE', label: 'Schale' }
+                                        { value: 'SCHALE', label: 'Schale' },
+                                        { value: 'TRAY', label: 'Tray (8 Schalen)' },
+                                        { value: 'KISTE_12', label: 'Mehrwegkiste (12 Schalen)' },
+                                        { value: 'KISTE_6', label: 'Mehrwegkiste (6 Schalen)' },
+                                        { value: 'KARTON_6', label: 'Karton (6 Schalen)' },
                                     ]}
                                 />
                             </div>

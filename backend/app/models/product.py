@@ -130,6 +130,13 @@ class GrowPlan(Base):
     humidity_percent: Mapped[int] = mapped_column(Integer, default=60)
     light_hours_per_day: Mapped[int] = mapped_column(Integer, default=12)
 
+    # Kühlphase (nach Ernte, optional)
+    cooling_days: Mapped[Optional[int]] = mapped_column(Integer)
+    cooling_shelf_life_days: Mapped[Optional[int]] = mapped_column(Integer)
+
+    # Prozessvariante: STANDARD, PLATTE, PLATTE_STEINE
+    process_type: Mapped[str] = mapped_column(String(20), default="STANDARD")
+
     # Notizen
     growing_notes: Mapped[Optional[str]] = mapped_column(Text)
     harvest_notes: Mapped[Optional[str]] = mapped_column(Text)
@@ -185,6 +192,9 @@ class Product(Base):
 
     # Identifikation
     sku: Mapped[str] = mapped_column(String(50), unique=True, nullable=False, index=True)
+    gtin: Mapped[Optional[str]] = mapped_column(String(14))  # EAN-13 / GTIN-14
+    old_article_number: Mapped[Optional[str]] = mapped_column(String(50))  # Migration aus Altsystem
+    certification: Mapped[Optional[str]] = mapped_column(String(30))  # BIO, KONVENTIONELL, TRANSITIONAL
     name: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
     name_short: Mapped[Optional[str]] = mapped_column(String(50))  # Für Labels
     description: Mapped[Optional[str]] = mapped_column(Text)

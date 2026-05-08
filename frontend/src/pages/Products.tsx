@@ -303,6 +303,9 @@ function ProductForm({ product, growPlans, productGroups, onSubmit, onCancel }: 
   const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState({
     sku: product?.sku || '',
+    gtin: product?.gtin || '',
+    old_article_number: product?.old_article_number || '',
+    certification: product?.certification || '',
     name: product?.name || '',
     category: product?.category || 'MICROGREEN',
     description: product?.description || '',
@@ -324,6 +327,9 @@ function ProductForm({ product, growPlans, productGroups, onSubmit, onCancel }: 
         ...formData,
         product_group_id: formData.product_group_id || null,
         grow_plan_id: formData.grow_plan_id || null,
+        gtin: formData.gtin || null,
+        old_article_number: formData.old_article_number || null,
+        certification: formData.certification || null,
       };
 
       if (product) {
@@ -352,6 +358,13 @@ function ProductForm({ product, growPlans, productGroups, onSubmit, onCancel }: 
     { value: 'STEUERFREI', label: '0% (Steuerfrei)' },
   ];
 
+  const certificationOptions: SelectOption[] = [
+    { value: '', label: 'Keine Zertifizierung' },
+    { value: 'BIO', label: 'BIO' },
+    { value: 'KONVENTIONELL', label: 'Konventionell' },
+    { value: 'TRANSITIONAL', label: 'Umstellung' },
+  ];
+
   const groupOptions: SelectOption[] = [
     { value: '', label: 'Keine Gruppe' },
     ...productGroups.map((g) => ({ value: g.id, label: g.name })),
@@ -378,6 +391,27 @@ function ProductForm({ product, growPlans, productGroups, onSubmit, onCancel }: 
           value={formData.name}
           onChange={(e) => setFormData({ ...formData, name: e.target.value })}
           placeholder="z.B. Sonnenblume Microgreens"
+        />
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <Input
+          label="GTIN / EAN"
+          value={formData.gtin}
+          onChange={(e) => setFormData({ ...formData, gtin: e.target.value })}
+          placeholder="4012345678901"
+        />
+        <Input
+          label="Alte Artikelnummer"
+          value={formData.old_article_number}
+          onChange={(e) => setFormData({ ...formData, old_article_number: e.target.value })}
+          placeholder="aus Altsystem"
+        />
+        <Select
+          label="Zertifizierung"
+          options={certificationOptions}
+          value={formData.certification}
+          onChange={(e) => setFormData({ ...formData, certification: e.target.value })}
         />
       </div>
 

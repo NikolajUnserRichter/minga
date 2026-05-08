@@ -71,11 +71,27 @@ class SeedBatchBase(BaseModel):
     menge_gramm: Decimal = Field(..., gt=0, description="Gelieferte Menge in Gramm")
     mhd: Optional[date] = Field(None, description="Mindesthaltbarkeitsdatum")
     lieferdatum: Optional[date] = Field(None, description="Lieferdatum")
+    in_production_at: Optional[date] = Field(None, description="Wann in Produktion genommen")
+    lieferschein_nr: Optional[str] = Field(None, max_length=50, description="Lieferschein-Nummer")
+    bio_zertifiziert: bool = Field(default=False, description="BIO-zertifiziert (Kontrollstelle)")
+    kontrollstelle: Optional[str] = Field(None, max_length=100, description="Kontrollstelle (z.B. DE-ÖKO-006)")
 
 
 class SeedBatchCreate(SeedBatchBase):
     """Schema zum Erstellen einer Saatgut-Charge"""
     seed_id: UUID = Field(..., description="ID der Saatgut-Sorte")
+
+
+class SeedBatchUpdate(BaseModel):
+    """Schema zum Aktualisieren einer Saatgut-Charge"""
+    charge_nummer: Optional[str] = Field(None, min_length=1, max_length=50)
+    menge_gramm: Optional[Decimal] = Field(None, gt=0)
+    mhd: Optional[date] = None
+    lieferdatum: Optional[date] = None
+    in_production_at: Optional[date] = None
+    lieferschein_nr: Optional[str] = Field(None, max_length=50)
+    bio_zertifiziert: Optional[bool] = None
+    kontrollstelle: Optional[str] = Field(None, max_length=100)
 
 
 class SeedBatchResponse(SeedBatchBase):

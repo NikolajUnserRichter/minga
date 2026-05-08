@@ -34,6 +34,9 @@ class ProductService:
         name: str,
         category: ProductCategory,
         description: Optional[str] = None,
+        gtin: Optional[str] = None,
+        old_article_number: Optional[str] = None,
+        certification: Optional[str] = None,
         product_group_id: Optional[UUID] = None,
         base_unit_id: Optional[UUID] = None,
         base_price: Optional[Decimal] = None,
@@ -73,6 +76,9 @@ class ProductService:
 
         product = Product(
             sku=sku,
+            gtin=gtin,
+            old_article_number=old_article_number,
+            certification=certification,
             name=name,
             category=category,
             description=description,
@@ -242,6 +248,9 @@ class ProductService:
         optimal_humidity_percent: Optional[int] = None,
         light_hours_per_day: Optional[int] = None,
         seed_density_grams_per_tray: Optional[Decimal] = None,
+        cooling_days: Optional[int] = None,
+        cooling_shelf_life_days: Optional[int] = None,
+        process_type: str = "STANDARD",
     ) -> GrowPlan:
         """
         Erstellt einen neuen Wachstumsplan.
@@ -275,6 +284,9 @@ class ProductService:
             humidity_percent=optimal_humidity_percent,
             light_hours_per_day=light_hours_per_day,
             seed_density_grams_per_tray=seed_density_grams_per_tray,
+            cooling_days=cooling_days,
+            cooling_shelf_life_days=cooling_shelf_life_days,
+            process_type=process_type,
         )
 
         self.db.add(grow_plan)

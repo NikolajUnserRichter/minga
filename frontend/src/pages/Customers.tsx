@@ -197,8 +197,15 @@ function CustomerForm({ customer, onSubmit, onCancel }: CustomerFormProps) {
     name: customer?.name || '',
     typ: customer?.typ || ('GASTRO' as CustomerType),
     email: customer?.email || '',
+    email_purchasing: customer?.email_purchasing || '',
+    email_sales: customer?.email_sales || '',
+    email_billing: customer?.email_billing || '',
     telefon: customer?.telefon || '',
     adresse: customer?.adresse || '',
+    ansprechpartner_name: customer?.ansprechpartner_name || '',
+    ansprechpartner_email: customer?.ansprechpartner_email || '',
+    ansprechpartner_telefon: customer?.ansprechpartner_telefon || '',
+    ust_id: customer?.ust_id || '',
     liefertage: customer?.liefertage?.map(String) || [],
     aktiv: customer?.aktiv ?? true,
   });
@@ -206,6 +213,7 @@ function CustomerForm({ customer, onSubmit, onCancel }: CustomerFormProps) {
   const customerTypeOptions: SelectOption[] = [
     { value: 'GASTRO', label: 'Gastronomie' },
     { value: 'HANDEL', label: 'Handel' },
+    { value: 'GEWERBE', label: 'Gewerbe' },
     { value: 'PRIVAT', label: 'Privat' },
   ];
 
@@ -253,7 +261,7 @@ function CustomerForm({ customer, onSubmit, onCancel }: CustomerFormProps) {
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <Input
-          label="E-Mail"
+          label="E-Mail (Hauptkontakt)"
           type="email"
           value={formData.email}
           onChange={(e) => setFormData({ ...formData, email: e.target.value })}
@@ -267,6 +275,58 @@ function CustomerForm({ customer, onSubmit, onCancel }: CustomerFormProps) {
         />
       </div>
 
+      <fieldset className="border border-gray-200 dark:border-gray-700 rounded-lg p-4 space-y-3">
+        <legend className="px-2 text-sm font-medium text-gray-700 dark:text-gray-300">Abteilungs-E-Mails (optional)</legend>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <Input
+            label="Einkauf"
+            type="email"
+            value={formData.email_purchasing}
+            onChange={(e) => setFormData({ ...formData, email_purchasing: e.target.value })}
+            placeholder="einkauf@..."
+          />
+          <Input
+            label="Vertrieb"
+            type="email"
+            value={formData.email_sales}
+            onChange={(e) => setFormData({ ...formData, email_sales: e.target.value })}
+            placeholder="vertrieb@..."
+          />
+          <Input
+            label="Rechnung"
+            type="email"
+            value={formData.email_billing}
+            onChange={(e) => setFormData({ ...formData, email_billing: e.target.value })}
+            placeholder="buchhaltung@..."
+          />
+        </div>
+      </fieldset>
+
+      <fieldset className="border border-gray-200 dark:border-gray-700 rounded-lg p-4 space-y-3">
+        <legend className="px-2 text-sm font-medium text-gray-700 dark:text-gray-300">Ansprechpartner</legend>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <Input
+            label="Name"
+            value={formData.ansprechpartner_name}
+            onChange={(e) => setFormData({ ...formData, ansprechpartner_name: e.target.value })}
+            placeholder="Max Mustermann"
+          />
+          <Input
+            label="E-Mail"
+            type="email"
+            value={formData.ansprechpartner_email}
+            onChange={(e) => setFormData({ ...formData, ansprechpartner_email: e.target.value })}
+            placeholder="max@..."
+          />
+          <Input
+            label="Telefon"
+            value={formData.ansprechpartner_telefon}
+            onChange={(e) => setFormData({ ...formData, ansprechpartner_telefon: e.target.value })}
+            placeholder="+49 ..."
+          />
+        </div>
+      </fieldset>
+
       <Input
         label="Adresse"
         value={formData.adresse}
@@ -274,12 +334,20 @@ function CustomerForm({ customer, onSubmit, onCancel }: CustomerFormProps) {
         placeholder="Straße, PLZ Ort"
       />
 
-      <MultiSelect
-        label="Liefertage"
-        options={weekdayOptions}
-        value={formData.liefertage}
-        onChange={(value) => setFormData({ ...formData, liefertage: value })}
-      />
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <Input
+          label="USt-IdNr."
+          value={formData.ust_id}
+          onChange={(e) => setFormData({ ...formData, ust_id: e.target.value })}
+          placeholder="DE123456789"
+        />
+        <MultiSelect
+          label="Standard-Liefertage"
+          options={weekdayOptions}
+          value={formData.liefertage}
+          onChange={(value) => setFormData({ ...formData, liefertage: value })}
+        />
+      </div>
 
       <label className="flex items-center gap-2">
         <input

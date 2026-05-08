@@ -79,6 +79,11 @@ class GrowPlanBase(BaseModel):
     expected_yield_grams_per_tray: Decimal = Field(..., gt=0, description="Erwarteter Ertrag g/Tray")
     expected_loss_percent: Decimal = Field(default=Decimal("5"), ge=0, le=100, description="Erwartete Verlustquote %")
 
+    # Kühlphase + Prozessvariante
+    cooling_days: Optional[int] = Field(None, ge=0, description="Tage in Kühlung nach Ernte")
+    cooling_shelf_life_days: Optional[int] = Field(None, ge=0, description="Haltbarkeit in Kühlung (Tage)")
+    process_type: str = Field(default="STANDARD", description="Prozessvariante: STANDARD, PLATTE, PLATTE_STEINE")
+
 
 class GrowPlanCreate(GrowPlanBase):
     """Schema zum Erstellen eines GrowPlans"""
@@ -105,6 +110,9 @@ class GrowPlanUpdate(BaseModel):
     optimal_humidity_percent: Optional[int] = None
     light_hours_per_day: Optional[int] = None
     seed_density_grams_per_tray: Optional[Decimal] = None
+    cooling_days: Optional[int] = None
+    cooling_shelf_life_days: Optional[int] = None
+    process_type: Optional[str] = None
     is_active: Optional[bool] = None
 
 
@@ -238,6 +246,9 @@ class PriceListItemListResponse(BaseModel):
 class ProductBase(BaseModel):
     """Basis-Schema für Produkt"""
     sku: str = Field(..., min_length=1, max_length=50, description="Artikelnummer")
+    gtin: Optional[str] = Field(None, max_length=14, description="GTIN/EAN (Barcode)")
+    old_article_number: Optional[str] = Field(None, max_length=50, description="Alte Artikelnummer (Migration)")
+    certification: Optional[str] = Field(None, max_length=30, description="Zertifizierung (BIO, KONVENTIONELL, …)")
     name: str = Field(..., min_length=1, max_length=200, description="Produktname")
     description: Optional[str] = Field(None, description="Beschreibung")
     category: ProductCategory = Field(..., description="Produktkategorie")
@@ -269,6 +280,9 @@ class ProductCreate(ProductBase):
 class ProductUpdate(BaseModel):
     """Schema zum Aktualisieren eines Produkts"""
     name: Optional[str] = Field(None, min_length=1, max_length=200)
+    gtin: Optional[str] = Field(None, max_length=14)
+    old_article_number: Optional[str] = Field(None, max_length=50)
+    certification: Optional[str] = Field(None, max_length=30)
     description: Optional[str] = None
     product_group_id: Optional[UUID] = None
     base_unit_id: Optional[UUID] = None

@@ -54,15 +54,22 @@ export interface Customer {
   name: string
   typ: CustomerType
   email: string | null
+  email_purchasing: string | null
+  email_sales: string | null
+  email_billing: string | null
   telefon: string | null
   adresse: string | null
+  ansprechpartner_name: string | null
+  ansprechpartner_email: string | null
+  ansprechpartner_telefon: string | null
+  ust_id: string | null
   liefertage: number[] | null
   aktiv: boolean
   created_at: string
   updated_at: string
 }
 
-export type CustomerType = 'GASTRO' | 'HANDEL' | 'PRIVAT'
+export type CustomerType = 'GASTRO' | 'HANDEL' | 'GEWERBE' | 'PRIVAT'
 
 export interface Order {
   id: string
@@ -266,6 +273,9 @@ export type TaxRate = 'STANDARD' | 'REDUZIERT' | 'STEUERFREI'
 export interface Product {
   id: string
   sku: string
+  gtin: string | null
+  old_article_number: string | null
+  certification: string | null
   name: string
   category: ProductCategory
   description: string | null
@@ -313,6 +323,9 @@ export interface GrowPlan {
   optimal_humidity_percent: number | null
   light_hours_per_day: number | null
   seed_density_grams_per_tray: number | null
+  cooling_days: number | null
+  cooling_shelf_life_days: number | null
+  process_type: string
   is_active: boolean
 }
 

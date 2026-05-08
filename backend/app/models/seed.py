@@ -90,6 +90,12 @@ class SeedBatch(Base):
     # Daten
     mhd: Mapped[Optional[date]] = mapped_column(Date)
     lieferdatum: Mapped[Optional[date]] = mapped_column(Date)
+    in_production_at: Mapped[Optional[date]] = mapped_column(Date)  # Wann in Produktion genommen
+
+    # Lieferschein / Bio-Doku
+    lieferschein_nr: Mapped[Optional[str]] = mapped_column(String(50))
+    bio_zertifiziert: Mapped[bool] = mapped_column(Boolean, default=False)
+    kontrollstelle: Mapped[Optional[str]] = mapped_column(String(100))  # z.B. DE-ÖKO-006
 
     # Timestamp
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
