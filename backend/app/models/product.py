@@ -278,8 +278,59 @@ class Product(Base):
         "PriceListItem", back_populates="product"
     )
 
+    # Variants
+    variants: Mapped[list["ProductVariant"]] = relationship(
+        "ProductVariant", back_populates="parent_product", cascade="all, delete-orphan"
+    )
+
     def __repr__(self) -> str:
         return f"<Product(sku='{self.sku}', name='{self.name}')>"
+
+
+class ProductVariant(Base):
+    """
+    Verpackungs-Variante eines Produkts.
+    Erlaubt mehrere Größen/Mixe pro Sorte ohne separate Product-Datensätze.
+
+    Beispiel: Sonnenblume → ['12er Mehrwegkiste', '6er Karton', 'Tray', '50g lose']
+    """
+    __tablename__ = "product_variants"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, primary_key=True, default=uuid.uuid4
+    )
+    parent_product_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("products.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    packaging_unit_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("units_of_measure.id", ondelete="RESTRICT"), nullable=False
+    )
+    items_per_pack: Mapped[int] = mapped_column(Integer, default=1)  # z.B. 12 für KISTE_12
+    sku_suffix: Mapped[Optional[str]] = mapped_column(String(20))    # z.B. "-12"
+    name_suffix: Mapped[Optional[str]] = mapped_column(String(100))  # z.B. "12er Mehrwegkiste"
+    gtin: Mapped[Optional[str]] = mapped_column(String(14))
+    price_override: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 2))  # None → product.base_price
+    weight_grams: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 3))    # Netto-Gewicht
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc)
+    )
+
+    parent_product: Mapped["Product"] = relationship("Product", back_populates="variants")
+    packaging_unit: Mapped["UnitOfMeasure"] = relationship("UnitOfMeasure")
+
+    @property
+    def effective_price(self) -> Optional[Decimal]:
+        """Effektiver Preis: Override oder Eltern-Produkt-Basispreis."""
+        if self.price_override is not None:
+            return self.price_override
+        return self.parent_product.base_price if self.parent_product else None
+
+    def __repr__(self) -> str:
+        return f"<ProductVariant({self.parent_product_id}, {self.name_suffix})>"
 
 
 class PriceList(Base):

@@ -11,13 +11,15 @@ from sqlalchemy import select
 
 from app.api.deps import DBSession, PaginationParams
 from app.models.product import (
-    Product, ProductGroup, GrowPlan, PriceList, PriceListItem,
+    Product, ProductGroup, GrowPlan, ProductVariant, PriceList, PriceListItem,
     ProductCategory
 )
+from app.models.unit import UnitOfMeasure
 from app.schemas.product import (
     ProductCreate, ProductUpdate, ProductResponse, ProductDetailResponse,
     ProductGroupCreate, ProductGroupUpdate, ProductGroupResponse,
     GrowPlanCreate, GrowPlanUpdate, GrowPlanResponse,
+    ProductVariantCreate, ProductVariantUpdate, ProductVariantResponse,
     PriceListCreate, PriceListUpdate, PriceListResponse,
     PriceListItemCreate, PriceListItemUpdate, PriceListItemResponse,
 )
@@ -137,6 +139,69 @@ def deactivate_product(product_id: UUID, db: DBSession):
         raise HTTPException(status_code=404, detail="Produkt nicht gefunden")
 
     product.is_active = False
+    db.commit()
+
+
+# ========================================
+# PRODUCT VARIANTS (Verpackungsgrößen)
+# ========================================
+
+def _build_variant_response(variant: ProductVariant) -> ProductVariantResponse:
+    response = ProductVariantResponse.model_validate(variant)
+    if variant.packaging_unit:
+        response.packaging_unit_code = variant.packaging_unit.code
+        response.packaging_unit_name = variant.packaging_unit.name
+    return response
+
+
+@router.get("/{product_id}/variants", response_model=list[ProductVariantResponse])
+def list_product_variants(product_id: UUID, db: DBSession):
+    """Verpackungs-Varianten eines Produkts."""
+    product = db.get(Product, product_id)
+    if not product:
+        raise HTTPException(status_code=404, detail="Produkt nicht gefunden")
+    variants = db.execute(
+        select(ProductVariant)
+        .where(ProductVariant.parent_product_id == product_id)
+        .order_by(ProductVariant.sort_order, ProductVariant.created_at)
+    ).scalars().all()
+    return [_build_variant_response(v) for v in variants]
+
+
+@router.post("/{product_id}/variants", response_model=ProductVariantResponse, status_code=201)
+def create_product_variant(product_id: UUID, data: ProductVariantCreate, db: DBSession):
+    """Verpackungs-Variante zu einem Produkt hinzufügen."""
+    product = db.get(Product, product_id)
+    if not product:
+        raise HTTPException(status_code=404, detail="Produkt nicht gefunden")
+    unit = db.get(UnitOfMeasure, data.packaging_unit_id)
+    if not unit:
+        raise HTTPException(status_code=404, detail="Einheit nicht gefunden")
+    variant = ProductVariant(parent_product_id=product_id, **data.model_dump())
+    db.add(variant)
+    db.commit()
+    db.refresh(variant)
+    return _build_variant_response(variant)
+
+
+@router.patch("/{product_id}/variants/{variant_id}", response_model=ProductVariantResponse)
+def update_product_variant(product_id: UUID, variant_id: UUID, data: ProductVariantUpdate, db: DBSession):
+    variant = db.get(ProductVariant, variant_id)
+    if not variant or variant.parent_product_id != product_id:
+        raise HTTPException(status_code=404, detail="Variante nicht gefunden")
+    for field, value in data.model_dump(exclude_unset=True).items():
+        setattr(variant, field, value)
+    db.commit()
+    db.refresh(variant)
+    return _build_variant_response(variant)
+
+
+@router.delete("/{product_id}/variants/{variant_id}", status_code=204)
+def delete_product_variant(product_id: UUID, variant_id: UUID, db: DBSession):
+    variant = db.get(ProductVariant, variant_id)
+    if not variant or variant.parent_product_id != product_id:
+        raise HTTPException(status_code=404, detail="Variante nicht gefunden")
+    db.delete(variant)
     db.commit()
 
 

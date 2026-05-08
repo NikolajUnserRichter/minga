@@ -8,7 +8,7 @@ import type {
   PackagingInventory, InventoryMovement, StockOverview,
   ArticleType, LocationType, TraceabilityChain, Capacity,
   RevenueStats, YieldStats, Subscription, AccuracySummary, AccuracyDetail,
-  Contact, Supplier
+  Contact, Supplier, ProductVariant, UnitOfMeasure
 } from '../types'
 
 import keycloak from './auth';
@@ -244,6 +244,25 @@ export const productsApi = {
 
   getStatistics: () =>
     api.get('/products/statistics').then(r => r.data),
+
+  // Variants (Verpackungsgrößen)
+  listVariants: (productId: string) =>
+    api.get<ProductVariant[]>(`/products/${productId}/variants`).then(r => r.data),
+
+  createVariant: (productId: string, data: Partial<ProductVariant>) =>
+    api.post<ProductVariant>(`/products/${productId}/variants`, data).then(r => r.data),
+
+  updateVariant: (productId: string, variantId: string, data: Partial<ProductVariant>) =>
+    api.patch<ProductVariant>(`/products/${productId}/variants/${variantId}`, data).then(r => r.data),
+
+  deleteVariant: (productId: string, variantId: string) =>
+    api.delete(`/products/${productId}/variants/${variantId}`),
+}
+
+// Units of Measure API
+export const unitsApi = {
+  list: () =>
+    api.get<UnitOfMeasure[]>('/units').then(r => r.data).catch(() => [] as UnitOfMeasure[]),
 }
 
 // Product Groups API

@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Search, Package } from 'lucide-react';
-import { productsApi, growPlansApi, productGroupsApi } from '../services/api';
-import { Product, ProductCategory, GrowPlan, ProductGroup } from '../types';
+import { Plus, Search, Package, Trash } from 'lucide-react';
+import { productsApi, growPlansApi, productGroupsApi, unitsApi } from '../services/api';
+import { Product, ProductCategory, GrowPlan, ProductGroup, ProductVariant, UnitOfMeasure } from '../types';
 import { PageHeader, FilterBar } from '../components/common/Layout';
 import {
   Button,
@@ -493,6 +493,8 @@ function ProductForm({ product, growPlans, productGroups, onSubmit, onCancel }: 
         </label>
       </div>
 
+      {product && <VariantList productId={product.id} />}
+
       <div className="flex gap-3 pt-4 border-t">
         <Button type="button" variant="secondary" onClick={onCancel}>
           Abbrechen
@@ -502,6 +504,129 @@ function ProductForm({ product, growPlans, productGroups, onSubmit, onCancel }: 
         </Button>
       </div>
     </form>
+  );
+}
+
+function VariantList({ productId }: { productId: string }) {
+  const queryClient = useQueryClient();
+  const toast = useToast();
+  const { data: variants = [] } = useQuery({
+    queryKey: ['product-variants', productId],
+    queryFn: () => productsApi.listVariants(productId),
+  });
+  const { data: units = [] } = useQuery({
+    queryKey: ['units'],
+    queryFn: () => unitsApi.list(),
+  });
+
+  const containerUnits = units.filter((u) => u.category === 'CONTAINER' || u.category === 'WEIGHT' || u.category === 'COUNT');
+  const unitOptions: SelectOption[] = [
+    { value: '', label: 'Einheit wählen…' },
+    ...containerUnits.map((u: UnitOfMeasure) => ({ value: u.id, label: `${u.code} — ${u.name}` })),
+  ];
+
+  const [newVariant, setNewVariant] = useState<Partial<ProductVariant>>({
+    packaging_unit_id: '',
+    items_per_pack: 1,
+    sku_suffix: '',
+    name_suffix: '',
+    price_override: null,
+  });
+
+  const invalidate = () => queryClient.invalidateQueries({ queryKey: ['product-variants', productId] });
+
+  const addMutation = useMutation({
+    mutationFn: () => productsApi.createVariant(productId, newVariant),
+    onSuccess: () => {
+      invalidate();
+      setNewVariant({ packaging_unit_id: '', items_per_pack: 1, sku_suffix: '', name_suffix: '', price_override: null });
+      toast.success('Variante hinzugefügt');
+    },
+    onError: () => toast.error('Fehler beim Hinzufügen'),
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (variantId: string) => productsApi.deleteVariant(productId, variantId),
+    onSuccess: () => {
+      invalidate();
+      toast.success('Variante gelöscht');
+    },
+  });
+
+  return (
+    <fieldset className="border border-gray-200 dark:border-gray-700 rounded-lg p-4 space-y-3">
+      <legend className="px-2 text-sm font-medium text-gray-700 dark:text-gray-300">
+        Verpackungs-Varianten ({variants.length})
+      </legend>
+
+      {variants.length > 0 && (
+        <div className="space-y-2">
+          {variants.map((v) => (
+            <div key={v.id} className="flex items-center gap-2 text-sm bg-gray-50 dark:bg-gray-700/50 rounded px-3 py-2">
+              <div className="flex-1">
+                <div className="font-medium text-gray-900 dark:text-white">
+                  {v.name_suffix || v.packaging_unit_name} {v.sku_suffix && <span className="text-xs text-gray-500">({v.sku_suffix})</span>}
+                </div>
+                <div className="text-xs text-gray-500 dark:text-gray-400">
+                  {v.items_per_pack} × {v.packaging_unit_code} · {v.price_override !== null ? `€${v.price_override}` : 'Basispreis'}
+                </div>
+              </div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                icon={<Trash className="w-4 h-4" />}
+                onClick={() => deleteMutation.mutate(v.id)}
+              />
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 md:grid-cols-5 gap-2">
+        <Select
+          options={unitOptions}
+          value={newVariant.packaging_unit_id || ''}
+          onChange={(e) => setNewVariant({ ...newVariant, packaging_unit_id: e.target.value })}
+        />
+        <Input
+          type="number"
+          placeholder="Stk/Pack"
+          value={newVariant.items_per_pack || 1}
+          onChange={(e) => setNewVariant({ ...newVariant, items_per_pack: Number(e.target.value) })}
+          min={1}
+        />
+        <Input
+          placeholder="SKU-Suffix"
+          value={newVariant.sku_suffix || ''}
+          onChange={(e) => setNewVariant({ ...newVariant, sku_suffix: e.target.value })}
+        />
+        <Input
+          placeholder="Name (z.B. 12er Kiste)"
+          value={newVariant.name_suffix || ''}
+          onChange={(e) => setNewVariant({ ...newVariant, name_suffix: e.target.value })}
+        />
+        <Input
+          type="number"
+          step="0.01"
+          placeholder="Preis (optional)"
+          value={newVariant.price_override ?? ''}
+          onChange={(e) => setNewVariant({ ...newVariant, price_override: e.target.value ? Number(e.target.value) : null })}
+        />
+      </div>
+      <div className="flex justify-end">
+        <Button
+          type="button"
+          size="sm"
+          variant="secondary"
+          icon={<Plus className="w-4 h-4" />}
+          disabled={!newVariant.packaging_unit_id}
+          onClick={() => addMutation.mutate()}
+        >
+          Hinzufügen
+        </Button>
+      </div>
+    </fieldset>
   );
 }
 

@@ -344,3 +344,49 @@ class ProductDetailResponse(ProductResponse):
     """Detailliertes Produkt-Schema mit allen Relationen"""
     grow_plan: Optional[GrowPlanResponse] = None
     prices: Optional[list[PriceListItemResponse]] = None
+
+
+# ============================================================
+# PRODUCT VARIANT SCHEMAS (Verpackungsgrößen)
+# ============================================================
+
+class ProductVariantBase(BaseModel):
+    """Basis-Schema für Verpackungs-Variante"""
+    packaging_unit_id: UUID = Field(..., description="Verpackungs-Einheit")
+    items_per_pack: int = Field(default=1, ge=1, description="Stück pro Verpackung")
+    sku_suffix: Optional[str] = Field(None, max_length=20, description="SKU-Suffix (z.B. '-12')")
+    name_suffix: Optional[str] = Field(None, max_length=100, description="Anzeige-Suffix (z.B. '12er Kiste')")
+    gtin: Optional[str] = Field(None, max_length=14, description="GTIN/EAN der Verpackung")
+    price_override: Optional[Decimal] = Field(None, ge=0, description="Preis (überschreibt Basispreis)")
+    weight_grams: Optional[Decimal] = Field(None, ge=0, description="Netto-Gewicht in g")
+    sort_order: int = Field(default=0, description="Sortierreihenfolge")
+
+
+class ProductVariantCreate(ProductVariantBase):
+    pass
+
+
+class ProductVariantUpdate(BaseModel):
+    packaging_unit_id: Optional[UUID] = None
+    items_per_pack: Optional[int] = Field(None, ge=1)
+    sku_suffix: Optional[str] = Field(None, max_length=20)
+    name_suffix: Optional[str] = Field(None, max_length=100)
+    gtin: Optional[str] = Field(None, max_length=14)
+    price_override: Optional[Decimal] = Field(None, ge=0)
+    weight_grams: Optional[Decimal] = Field(None, ge=0)
+    sort_order: Optional[int] = None
+    is_active: Optional[bool] = None
+
+
+class ProductVariantResponse(ProductVariantBase):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    parent_product_id: UUID
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+
+    # Expandiert
+    packaging_unit_code: Optional[str] = None
+    packaging_unit_name: Optional[str] = None

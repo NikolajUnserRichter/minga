@@ -331,6 +331,34 @@ export interface ProductGroup {
   is_active: boolean
 }
 
+export interface ProductVariant {
+  id: string
+  parent_product_id: string
+  packaging_unit_id: string
+  items_per_pack: number
+  sku_suffix: string | null
+  name_suffix: string | null
+  gtin: string | null
+  price_override: number | null
+  weight_grams: number | null
+  is_active: boolean
+  sort_order: number
+  packaging_unit_code: string | null
+  packaging_unit_name: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface UnitOfMeasure {
+  id: string
+  code: string
+  name: string
+  symbol: string | null
+  category: 'WEIGHT' | 'VOLUME' | 'COUNT' | 'CONTAINER'
+  is_base_unit: boolean
+  is_active: boolean
+}
+
 export interface GrowPlan {
   id: string
   code: string
