@@ -360,7 +360,7 @@ export default function Production() {
                 <thead>
                   <tr>
                     <th>Sorte</th>
-                    <th>Trays</th>
+                    <th>Kisten</th>
                     <th>Aussaat</th>
                     <th>Ernte (optimal)</th>
                     <th>Tage</th>

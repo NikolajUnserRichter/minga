@@ -55,7 +55,7 @@ export function ProductionSuggestionCard({
         <div className="mt-4 grid grid-cols-2 gap-3">
           <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
             <Layers className="w-4 h-4 text-gray-400" />
-            <span>{suggestion.empfohlene_trays} Trays</span>
+            <span>{suggestion.empfohlene_trays} Kisten</span>
           </div>
           <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
             <Scale className="w-4 h-4 text-gray-400" />
@@ -159,7 +159,7 @@ export function ProductionSuggestionRow({
         <div>
           <p className="font-medium">{suggestion.seed?.name}</p>
           <p className="text-sm text-gray-500 dark:text-gray-400">
-            {suggestion.empfohlene_trays} Trays | Aussaat: {formatDate(suggestion.aussaat_datum)}
+            {suggestion.empfohlene_trays} Kisten | Aussaat: {formatDate(suggestion.aussaat_datum)}
           </p>
         </div>
       </div>

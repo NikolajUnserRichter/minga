@@ -170,7 +170,7 @@ export default function Dashboard() {
                     <div className="flex-1">
                       <p className="font-medium text-gray-900 dark:text-white">{batch.seed_name}</p>
                       <p className="text-sm text-gray-500 dark:text-gray-400">
-                        {batch.tray_anzahl} Trays | Optimal:{' '}
+                        {batch.tray_anzahl} Kisten | Optimal:{' '}
                         {new Date(batch.erwartete_ernte_optimal).toLocaleDateString('de-DE')}
                       </p>
                     </div>
@@ -222,7 +222,7 @@ export default function Dashboard() {
                     <div className="flex-1">
                       <p className="font-medium text-gray-900 dark:text-white">{suggestion.seed_name}</p>
                       <p className="text-sm text-gray-500 dark:text-gray-400">
-                        {suggestion.empfohlene_trays} Trays | Aussaat:{' '}
+                        {suggestion.empfohlene_trays} Kisten | Aussaat:{' '}
                         {new Date(suggestion.aussaat_datum).toLocaleDateString('de-DE')}
                       </p>
                       {suggestion.warnungen?.map((w, i) => (

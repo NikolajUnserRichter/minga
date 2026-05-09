@@ -73,6 +73,12 @@ const navigationSections: NavSection[] = [
         roles: ['ADMIN', 'SALES', 'PRODUCTION_PLANNER', 'PRODUCTION_STAFF', 'ACCOUNTING'],
       },
       {
+        name: 'Lieferanten',
+        href: '/suppliers',
+        icon: Layers,
+        roles: ['ADMIN', 'PRODUCTION_PLANNER', 'ACCOUNTING'],
+      },
+      {
         name: 'Produkte',
         href: '/products',
         icon: Tag,

@@ -47,7 +47,7 @@ export function GrowBatchCard({
         <div className="grid grid-cols-2 gap-3 mt-4">
           <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
             <Layers className="w-4 h-4 text-gray-400" />
-            <span>{batch.tray_anzahl} Trays</span>
+            <span>{batch.tray_anzahl} Kisten</span>
           </div>
           <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
             <Calendar className="w-4 h-4 text-gray-400" />
@@ -209,7 +209,7 @@ export function GrowBatchRow({ batch, onHarvest, onClick }: GrowBatchRowProps) {
             <span className="font-medium">{batch.seed?.name}</span>
           </div>
           <p className="text-sm text-gray-500 dark:text-gray-400">
-            {batch.tray_anzahl} Trays | Tag {currentDay} | Regal {batch.regal_position || '-'}
+            {batch.tray_anzahl} Kisten | Tag {currentDay} | Regal {batch.regal_position || '-'}
           </p>
         </div>
       </div>

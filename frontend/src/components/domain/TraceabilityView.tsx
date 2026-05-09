@@ -84,7 +84,7 @@ export function TraceabilityView({ data }: TraceabilityViewProps) {
                                 </div>
                                 <div>
                                     <p className="text-gray-500 dark:text-gray-400">Menge</p>
-                                    <p>{data.grow_batch.trays} Trays</p>
+                                    <p>{data.grow_batch.trays} Kisten</p>
                                 </div>
                                 <div>
                                     <p className="text-gray-500 dark:text-gray-400">Position</p>

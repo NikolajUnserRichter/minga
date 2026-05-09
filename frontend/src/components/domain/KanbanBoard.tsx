@@ -193,7 +193,7 @@ function KanbanCard({ batch, onHarvest }: KanbanCardProps) {
             <div className="flex items-center gap-3 mt-2 text-xs text-gray-500 dark:text-gray-400">
                 <div className="flex items-center gap-1">
                     <Layers className="w-3 h-3" />
-                    <span>{batch.tray_anzahl} Trays</span>
+                    <span>{batch.tray_anzahl} Kisten</span>
                 </div>
                 <div className="flex items-center gap-1">
                     <Calendar className="w-3 h-3" />

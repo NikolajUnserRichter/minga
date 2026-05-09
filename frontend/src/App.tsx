@@ -17,6 +17,7 @@ import Harvests from './pages/Harvests';
 import Users from './pages/Users';
 import Abonnements from './pages/Abonnements';
 import AccuracyReports from './pages/AccuracyReports';
+import Suppliers from './pages/Suppliers';
 
 function App() {
   return (
@@ -29,6 +30,7 @@ function App() {
 
           {/* Stammdaten */}
           <Route path="seeds" element={<Seeds />} />
+          <Route path="suppliers" element={<Suppliers />} />
           <Route path="products" element={<Products />} />
           <Route path="inventory" element={<Inventory />} />
 
