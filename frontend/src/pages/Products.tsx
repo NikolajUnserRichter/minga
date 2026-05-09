@@ -203,7 +203,7 @@ export default function Products() {
                         </Badge>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white">
-                        {product.base_price ? `${product.base_price.toFixed(2)} €` : '-'}
+                        {product.base_price !== null && product.base_price !== undefined ? `${Number(product.base_price).toFixed(2)} €` : '-'}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
                         {product.tax_rate === 'REDUZIERT' ? '7%' : product.tax_rate === 'STANDARD' ? '19%' : '0%'}

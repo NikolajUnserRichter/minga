@@ -44,10 +44,11 @@ export const DatePicker = forwardRef<HTMLInputElement, DatePickerProps>(
 DatePicker.displayName = 'DatePicker';
 
 // Helper to format date for display
-export function formatDate(dateString: string | Date, format: 'short' | 'long' | 'iso' = 'short'): string {
+export function formatDate(dateString: string | Date | null | undefined, format: 'short' | 'long' | 'iso' = 'short'): string {
+  if (!dateString) return '-';
   const date = typeof dateString === 'string' ? new Date(dateString) : dateString;
 
-  if (isNaN(date.getTime())) return '-';
+  if (!date || isNaN(date.getTime())) return '-';
 
   const options: Intl.DateTimeFormatOptions =
     format === 'long'
@@ -62,8 +63,10 @@ export function formatDate(dateString: string | Date, format: 'short' | 'long' |
 }
 
 // Helper to get relative date description
-export function getRelativeDate(dateString: string): string {
+export function getRelativeDate(dateString: string | null | undefined): string {
+  if (!dateString) return '–';
   const date = new Date(dateString);
+  if (isNaN(date.getTime())) return '–';
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   date.setHours(0, 0, 0, 0);

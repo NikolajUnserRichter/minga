@@ -54,22 +54,26 @@ export function GrowBatchStatusBadge({ status }: GrowBatchStatusBadgeProps) {
   return <span className={`badge ${config.class}`}>{config.label}</span>;
 }
 
-// Order Status Badge
-const orderStatusConfig: Record<OrderStatus, { label: string; variant: BadgeVariant }> = {
-  OFFEN: { label: 'Offen', variant: 'gray' },
+// Order Status Badge — supports both legacy + current backend enum values
+const orderStatusConfig: Record<string, { label: string; variant: BadgeVariant }> = {
+  // Current backend (OrderStatus)
+  ENTWURF: { label: 'Entwurf', variant: 'gray' },
   BESTAETIGT: { label: 'Bestätigt', variant: 'info' },
   IN_PRODUKTION: { label: 'In Produktion', variant: 'warning' },
-  BEREIT: { label: 'Bereit', variant: 'success' },
-  GELIEFERT: { label: 'Geliefert', variant: 'gray' },
+  GELIEFERT: { label: 'Geliefert', variant: 'success' },
+  FAKTURIERT: { label: 'Fakturiert', variant: 'gray' },
   STORNIERT: { label: 'Storniert', variant: 'danger' },
+  // Legacy
+  OFFEN: { label: 'Offen', variant: 'gray' },
+  BEREIT: { label: 'Bereit', variant: 'success' },
 };
 
 interface OrderStatusBadgeProps {
-  status: OrderStatus;
+  status: OrderStatus | string;
 }
 
 export function OrderStatusBadge({ status }: OrderStatusBadgeProps) {
-  const config = orderStatusConfig[status];
+  const config = orderStatusConfig[status as string] || { label: status, variant: 'gray' as BadgeVariant };
   return <Badge variant={config.variant}>{config.label}</Badge>;
 }
 

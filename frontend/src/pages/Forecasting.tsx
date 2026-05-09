@@ -35,6 +35,13 @@ import {
 } from 'recharts';
 import type { Forecast, ProductionSuggestion, Seed } from '../types';
 
+// Backend liefert Decimals als Strings — sicherer Wrapper für .toFixed()
+const fixed = (v: any, digits = 0): string => {
+  if (v === null || v === undefined || v === '') return '-';
+  const n = Number(v);
+  return Number.isFinite(n) ? n.toFixed(digits) : '-';
+};
+
 export default function Forecasting() {
   const toast = useToast();
   const queryClient = useQueryClient();
@@ -138,13 +145,13 @@ export default function Forecasting() {
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <StatCard
           title="Ø MAPE"
-          value={`${accuracyData?.durchschnitt_mape?.toFixed(1) || '-'}%`}
+          value={`${fixed(accuracyData?.durchschnitt_mape, 1)}%`}
           icon={<BarChart3 className="w-5 h-5" />}
           variant="primary"
         />
         <StatCard
           title="Beste Genauigkeit"
-          value={`${accuracyData?.beste_genauigkeit?.toFixed(1) || '-'}%`}
+          value={`${fixed(accuracyData?.beste_genauigkeit, 1)}%`}
           icon={<TrendingUp className="w-5 h-5" />}
           variant="success"
         />
@@ -189,7 +196,7 @@ export default function Forecasting() {
                         borderRadius: '8px',
                       }}
                       formatter={(value: number, name: string) => [
-                        `${value?.toFixed(0) || '-'}g`,
+                        `${fixed(value, 0)}g`,
                         name === 'prognose'
                           ? 'Prognose'
                           : name === 'override'
@@ -277,22 +284,22 @@ export default function Forecasting() {
                 {(forecastsData?.items || []).map((forecast: Forecast) => (
                   <tr key={forecast.id} className={forecast.override_menge ? 'bg-amber-50 dark:bg-amber-900/20' : ''}>
                     <td>{new Date(forecast.datum).toLocaleDateString('de-DE')}</td>
-                    <td>{forecast.prognostizierte_menge?.toFixed(0)}g</td>
+                    <td>{fixed(forecast.prognostizierte_menge, 0)}g</td>
                     <td className="text-gray-500 dark:text-gray-400 text-sm">
-                      {forecast.konfidenz_untergrenze?.toFixed(0)} -{' '}
-                      {forecast.konfidenz_obergrenze?.toFixed(0)}g
+                      {fixed(forecast.konfidenz_untergrenze, 0)} -{' '}
+                      {fixed(forecast.konfidenz_obergrenze, 0)}g
                     </td>
                     <td>
                       {forecast.override_menge ? (
                         <span className="text-amber-600 dark:text-amber-400 font-medium">
-                          {forecast.override_menge.toFixed(0)}g
+                          {fixed(forecast.override_menge, 0)}g
                         </span>
                       ) : (
                         '-'
                       )}
                     </td>
                     <td className="font-medium">
-                      {(forecast.effektive_menge || forecast.prognostizierte_menge)?.toFixed(0)}g
+                      {fixed(forecast.effektive_menge || forecast.prognostizierte_menge, 0)}g
                     </td>
                     <td>
                       <Badge variant="gray">{forecast.modell_typ}</Badge>

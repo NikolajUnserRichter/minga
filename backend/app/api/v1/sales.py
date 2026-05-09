@@ -19,7 +19,7 @@ from app.models.unit import UnitOfMeasure
 from app.schemas.customer import (
     CustomerCreate, CustomerUpdate, CustomerResponse, CustomerListResponse,
     ContactCreate, ContactUpdate, ContactResponse,
-    CustomerAddressCreate, CustomerAddressUpdate, CustomerAddressResponse,
+    CustomerAddressBase, CustomerAddressUpdate, CustomerAddressResponse,
     SubscriptionCreate, SubscriptionUpdate, SubscriptionResponse, SubscriptionListResponse
 )
 from app.schemas.order import (
@@ -182,8 +182,8 @@ async def list_addresses(customer_id: UUID, db: DBSession):
 
 
 @router.post("/customers/{customer_id}/addresses", response_model=CustomerAddressResponse, status_code=status.HTTP_201_CREATED)
-async def create_address(customer_id: UUID, data: CustomerAddressCreate, db: DBSession):
-    """Adresse zu einem Kunden hinzufügen."""
+async def create_address(customer_id: UUID, data: CustomerAddressBase, db: DBSession):
+    """Adresse zu einem Kunden hinzufügen. customer_id kommt aus dem Pfad."""
     customer = db.get(Customer, customer_id)
     if not customer:
         raise HTTPException(status_code=404, detail="Kunde nicht gefunden")

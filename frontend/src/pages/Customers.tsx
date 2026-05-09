@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, Search, Trash } from 'lucide-react';
 import { salesApi } from '../services/api';
 import { Customer, CustomerType, Contact, CustomerAddress, AddressType } from '../types';
+import { getErrorMessage } from '../services/errors';
 import { PageHeader, FilterBar } from '../components/common/Layout';
 import { CustomerCard } from '../components/domain/CustomerCard';
 import { CreateOrderModal } from '../components/domain/CreateOrderModal';
@@ -238,7 +239,7 @@ function CustomerForm({ customer, onSubmit, onCancel }: CustomerFormProps) {
       }
       onSubmit(saved);
     } catch (error: any) {
-      toast.error(error?.response?.data?.detail || 'Fehler beim Speichern');
+      toast.error(getErrorMessage(error, 'Fehler beim Speichern'));
     } finally {
       setLoading(false);
     }
@@ -364,7 +365,7 @@ function AddressList({ customerId }: { customerId: string }) {
       setNewAddr({ address_type: 'BOTH', name: '', strasse: '', hausnummer: '', plz: '', ort: '', land: 'DE', is_default: false });
       toast.success('Adresse hinzugefügt');
     },
-    onError: (e: any) => toast.error(e?.response?.data?.detail || 'Fehler beim Hinzufügen'),
+    onError: (e) => toast.error(getErrorMessage(e, 'Fehler beim Hinzufügen')),
   });
 
   const deleteMutation = useMutation({

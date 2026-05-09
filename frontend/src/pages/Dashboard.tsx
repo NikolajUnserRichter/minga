@@ -49,7 +49,7 @@ export default function Dashboard() {
 
   const { data: ordersData } = useQuery({
     queryKey: ['orders', 'open'],
-    queryFn: () => salesApi.listOrders({ status: 'OFFEN' }),
+    queryFn: () => salesApi.listOrders({ status: 'BESTAETIGT' }),
     retry: 0,
   });
 

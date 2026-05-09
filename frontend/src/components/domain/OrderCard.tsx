@@ -35,8 +35,8 @@ export function OrderCard({ order, onMarkReady, onMarkDelivered, onClick }: Orde
         <div className="mt-4 space-y-2">
           <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
             <Calendar className="w-4 h-4 text-gray-400" />
-            <span>Lieferung: {formatDate(order.liefer_datum)}</span>
-            <span className="text-minga-600 dark:text-minga-400 font-medium">({getRelativeDate(order.liefer_datum)})</span>
+            <span>Lieferung: {formatDate((order.liefer_datum || (order as any).requested_delivery_date))}</span>
+            <span className="text-minga-600 dark:text-minga-400 font-medium">({getRelativeDate((order.liefer_datum || (order as any).requested_delivery_date))})</span>
           </div>
         </div>
 
@@ -131,7 +131,7 @@ export function OrderRow({ order, onClick }: OrderRowProps) {
             <span className="font-medium">{order.kunde?.name}</span>
           </div>
           <p className="text-sm text-gray-500 dark:text-gray-400">
-            {order.positionen?.length || 0} Position(en) | {formatDate(order.liefer_datum)}
+            {order.positionen?.length || 0} Position(en) | {formatDate((order.liefer_datum || (order as any).requested_delivery_date))}
           </p>
         </div>
       </div>

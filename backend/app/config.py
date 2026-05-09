@@ -56,7 +56,11 @@ class Settings(BaseSettings):
     quality_max_loss_percent: float = 20.0 # Maximale Verlustquote (%) für Auto-Freigabe
 
     # CORS
-    cors_origins: list[str] = ["http://localhost:3000"]
+    cors_origins: list[str] = [
+        "http://localhost:3000",
+        "http://localhost:3002",
+        "http://localhost:5173",
+    ]
 
     class Config:
         env_file = ".env"
