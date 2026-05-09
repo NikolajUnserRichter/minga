@@ -14,6 +14,7 @@ interface CreateOrderModalProps {
 
 interface OrderLineRow {
     product_id: string;
+    product_variant_id: string;
     product_name: string;
     quantity: number;
     unit: string;
@@ -26,7 +27,8 @@ export function CreateOrderModal({ open, onClose, preselectedCustomer }: CreateO
 
     const [customerId, setCustomerId] = useState('');
     const [deliveryDate, setDeliveryDate] = useState('');
-    const [lines, setLines] = useState<OrderLineRow[]>([{ product_id: '', product_name: '', quantity: 1, unit: 'g', unit_price: 0 }]);
+    const [lines, setLines] = useState<OrderLineRow[]>([{ product_id: '', product_variant_id: '', product_name: '', quantity: 1, unit: 'g', unit_price: 0 }]);
+    const [variantsByProduct, setVariantsByProduct] = useState<Record<string, Array<{ id: string; name_suffix: string | null; packaging_unit_code: string | null; price_override: number | null; items_per_pack: number }>>>({});
     const [notes, setNotes] = useState('');
     const [customerReference, setCustomerReference] = useState('');
 
@@ -61,11 +63,22 @@ export function CreateOrderModal({ open, onClose, preselectedCustomer }: CreateO
             // Reset form
             setCustomerId(preselectedCustomer?.id || '');
             setDeliveryDate(new Date().toISOString().split('T')[0]); // Today (same-day allowed)
-            setLines([{ product_id: '', product_name: '', quantity: 1, unit: 'g', unit_price: 0 }]);
+            setLines([{ product_id: '', product_variant_id: '', product_name: '', quantity: 1, unit: 'g', unit_price: 0 }]);
             setNotes('');
             setCustomerReference('');
+            setVariantsByProduct({});
         }
     }, [open, preselectedCustomer]);
+
+    const loadVariantsForProduct = async (productId: string) => {
+        if (variantsByProduct[productId] !== undefined) return;
+        try {
+            const variants = await productsApi.listVariants(productId);
+            setVariantsByProduct((prev) => ({ ...prev, [productId]: variants as any }));
+        } catch {
+            setVariantsByProduct((prev) => ({ ...prev, [productId]: [] }));
+        }
+    };
 
     const createOrderMutation = useMutation({
         mutationFn: (data: Parameters<typeof salesApi.createOrder>[0]) => salesApi.createOrder(data),
@@ -91,6 +104,7 @@ export function CreateOrderModal({ open, onClose, preselectedCustomer }: CreateO
 
         const orderLines = lines.map(l => ({
             product_id: l.product_id || undefined,
+            product_variant_id: l.product_variant_id || undefined,
             product_name: l.product_name,
             quantity: l.quantity,
             unit: l.unit,
@@ -111,13 +125,26 @@ export function CreateOrderModal({ open, onClose, preselectedCustomer }: CreateO
         const newLines = [...lines];
         newLines[index] = { ...newLines[index], [field]: value };
 
-        // If product_id changes, update product_name and unit_price from the selected product
         if (field === 'product_id') {
             const selectedItem = availableItems.find(p => p.id === value);
             if (selectedItem) {
                 newLines[index].product_name = selectedItem.name;
                 newLines[index].unit_price = selectedItem.price;
                 newLines[index].unit = selectedItem.unit || 'g';
+                newLines[index].product_variant_id = '';
+            }
+            if (value) loadVariantsForProduct(value);
+        }
+
+        if (field === 'product_variant_id' && value) {
+            const variants = variantsByProduct[newLines[index].product_id] || [];
+            const variant = variants.find((v) => v.id === value);
+            if (variant) {
+                if (variant.packaging_unit_code) newLines[index].unit = variant.packaging_unit_code;
+                if (variant.price_override !== null) newLines[index].unit_price = Number(variant.price_override);
+                if (variant.name_suffix) {
+                    newLines[index].product_name = `${availableItems.find(p => p.id === newLines[index].product_id)?.name || ''} — ${variant.name_suffix}`;
+                }
             }
         }
 
@@ -131,7 +158,7 @@ export function CreateOrderModal({ open, onClose, preselectedCustomer }: CreateO
     };
 
     const addLine = () => {
-        setLines([...lines, { product_id: '', product_name: '', quantity: 1, unit: 'g', unit_price: 0 }]);
+        setLines([...lines, { product_id: '', product_variant_id: '', product_name: '', quantity: 1, unit: 'g', unit_price: 0 }]);
     };
 
     const calculateTotal = () => {
@@ -181,7 +208,10 @@ export function CreateOrderModal({ open, onClose, preselectedCustomer }: CreateO
 
                 <div className="space-y-2">
                     <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Positionen</label>
-                    {lines.map((line, index) => (
+                    {lines.map((line, index) => {
+                        const variants = variantsByProduct[line.product_id] || [];
+                        const hasVariants = variants.length > 0;
+                        return (
                         <div key={index} className="flex gap-2 items-end">
                             <div className="flex-1">
                                 <Select
@@ -193,6 +223,21 @@ export function CreateOrderModal({ open, onClose, preselectedCustomer }: CreateO
                                     ]}
                                 />
                             </div>
+                            {hasVariants && (
+                                <div className="w-44">
+                                    <Select
+                                        value={line.product_variant_id}
+                                        onChange={(e) => updateLine(index, 'product_variant_id', e.target.value)}
+                                        options={[
+                                            { value: '', label: 'Variante (opt.)' },
+                                            ...variants.map((v) => ({
+                                                value: v.id,
+                                                label: v.name_suffix || v.packaging_unit_code || 'Variante',
+                                            })),
+                                        ]}
+                                    />
+                                </div>
+                            )}
                             <div className="w-20">
                                 <Input
                                     type="number"
@@ -237,7 +282,8 @@ export function CreateOrderModal({ open, onClose, preselectedCustomer }: CreateO
                                 icon={<Trash className="w-4 h-4" />}
                             />
                         </div>
-                    ))}
+                        );
+                    })}
                     <Button type="button" variant="secondary" size="sm" onClick={addLine} icon={<Plus className="w-3 h-3" />}>
                         Position hinzufügen
                     </Button>

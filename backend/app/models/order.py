@@ -202,6 +202,10 @@ class OrderLine(Base):
     product_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         Uuid, ForeignKey("products.id", ondelete="SET NULL")
     )
+    # Verpackungs-Variante (12er Kiste, 6er Karton etc.) — optional
+    product_variant_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid, ForeignKey("product_variants.id", ondelete="SET NULL")
+    )
     # Legacy: seed_id für Rückwärtskompatibilität
     seed_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         Uuid, ForeignKey("seeds.id", ondelete="SET NULL")

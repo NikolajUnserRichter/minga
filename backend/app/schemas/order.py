@@ -39,6 +39,7 @@ class OrderLineBase(BaseModel):
 class OrderLineCreate(OrderLineBase):
     """Schema zum Erstellen einer Bestellposition"""
     product_id: Optional[UUID] = Field(None, description="Produkt-ID")
+    product_variant_id: Optional[UUID] = Field(None, description="Verpackungs-Variante (12er Kiste, 6er Karton, …)")
     seed_id: Optional[UUID] = Field(None, description="Saatgut-ID (Legacy)")
     product_sku: Optional[str] = Field(None, description="Artikelnummer")
     product_description: Optional[str] = Field(None, description="Produktbeschreibung")
@@ -66,6 +67,7 @@ class OrderLineResponse(BaseModel):
 
     # Produkt
     product_id: Optional[UUID]
+    product_variant_id: Optional[UUID] = None
     seed_id: Optional[UUID]
     product_sku: Optional[str]
     product_name: str

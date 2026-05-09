@@ -14,7 +14,8 @@ from app.api.deps import DBSession, Pagination, CurrentUser
 from app.models.customer import Customer, CustomerType, Contact, CustomerAddress, AddressType, Subscription
 from app.models.order import Order, OrderLine, OrderStatus, OrderAuditLog, TaxRate
 from app.models.seed import Seed
-from app.models.product import Product
+from app.models.product import Product, ProductVariant
+from app.models.unit import UnitOfMeasure
 from app.schemas.customer import (
     CustomerCreate, CustomerUpdate, CustomerResponse, CustomerListResponse,
     ContactCreate, ContactUpdate, ContactResponse,
@@ -544,6 +545,7 @@ def _build_order_response(order: Order) -> OrderResponse:
             order_id=line.order_id,
             position=line.position,
             product_id=line.product_id,
+            product_variant_id=line.product_variant_id,
             product_name=line.product.name if line.product else line.beschreibung or "",
             quantity=line.quantity,
             unit=line.unit,
@@ -713,6 +715,8 @@ async def create_order(order_data: OrderCreate, db: DBSession, user: CurrentUser
     for idx, line_data in enumerate(order_data.lines, start=1):
         product = None
         product_name = line_data.product_name
+        line_unit = line_data.unit
+        line_price = line_data.unit_price
 
         if line_data.product_id:
             product = db.get(Product, line_data.product_id)
@@ -723,14 +727,35 @@ async def create_order(order_data: OrderCreate, db: DBSession, user: CurrentUser
                 )
             product_name = product.name
 
+        # Variante: ergänzt Name, Einheit (aus packaging_unit) und Preis (aus override
+        # oder Eltern-Basispreis), wenn nicht explizit gesetzt.
+        if line_data.product_variant_id:
+            variant = db.get(ProductVariant, line_data.product_variant_id)
+            if not variant:
+                raise HTTPException(status_code=404, detail="Verpackungs-Variante nicht gefunden")
+            if line_data.product_id and variant.parent_product_id != line_data.product_id:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Variante gehört nicht zum gewählten Produkt"
+                )
+            product_name = f"{product.name if product else product_name} — {variant.name_suffix or ''}".strip(" —")
+            packaging_unit = db.get(UnitOfMeasure, variant.packaging_unit_id)
+            if packaging_unit:
+                line_unit = packaging_unit.code
+            if variant.price_override is not None:
+                line_price = variant.price_override
+            elif product and product.base_price is not None:
+                line_price = product.base_price
+
         line = OrderLine(
             order_id=order.id,
             position=idx,
             product_id=line_data.product_id,
+            product_variant_id=line_data.product_variant_id,
             beschreibung=product_name,
             quantity=line_data.quantity,
-            unit=line_data.unit,
-            unit_price=line_data.unit_price,
+            unit=line_unit,
+            unit_price=line_price,
             discount_percent=line_data.discount_percent,
             tax_rate=line_data.tax_rate or TaxRate.REDUZIERT,  # Lebensmittel: 7%
             requested_delivery_date=line_data.requested_delivery_date
