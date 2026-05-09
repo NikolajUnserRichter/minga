@@ -54,14 +54,12 @@ class Seed(Base):
     name: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
     sorte: Mapped[Optional[str]] = mapped_column(String(100))
     lieferant: Mapped[Optional[str]] = mapped_column(String(200))  # Legacy free-text
+    # Mehrere Lieferanten via `seed_suppliers` Join-Tabelle (siehe SeedSupplier-Modell)
 
-    # Strukturierte Lieferanten (default + backup)
-    supplier_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        Uuid, ForeignKey("suppliers.id", ondelete="SET NULL")
-    )
-    backup_supplier_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        Uuid, ForeignKey("suppliers.id", ondelete="SET NULL")
-    )
+    # Kühlphase + Prozessvariante (sortenspezifisch)
+    cooling_days: Mapped[Optional[int]] = mapped_column(Integer)
+    cooling_shelf_life_days: Mapped[Optional[int]] = mapped_column(Integer)
+    process_type: Mapped[str] = mapped_column(String(30), default="STANDARD")  # STANDARD | PLATTE | PLATTE_STEINE
 
     # Wachstumsparameter
     keimdauer_tage: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -93,12 +91,17 @@ class Seed(Base):
     batches: Mapped[list["SeedBatch"]] = relationship(
         "SeedBatch", back_populates="seed", cascade="all, delete-orphan"
     )
-    supplier: Mapped[Optional["Supplier"]] = relationship(
-        "Supplier", foreign_keys=[supplier_id]
+    supplier_links: Mapped[list["SeedSupplier"]] = relationship(
+        "SeedSupplier", back_populates="seed", cascade="all, delete-orphan"
     )
-    backup_supplier: Mapped[Optional["Supplier"]] = relationship(
-        "Supplier", foreign_keys=[backup_supplier_id]
-    )
+
+    @property
+    def default_supplier(self) -> Optional["Supplier"]:
+        """Standard-Lieferant (is_default=True)."""
+        for link in self.supplier_links:
+            if link.is_default:
+                return link.supplier
+        return None
 
     @property
     def gesamte_wachstumsdauer(self) -> int:
@@ -149,6 +152,32 @@ class SeedBatch(Base):
 
     def __repr__(self) -> str:
         return f"<SeedBatch(charge='{self.charge_nummer}', id={self.id})>"
+
+
+class SeedSupplier(Base):
+    """
+    Many-to-Many zwischen Saatgut-Sorte und Lieferanten.
+    Mehrere Lieferanten pro Sorte mit optionalem Default-Flag.
+    """
+    __tablename__ = "seed_suppliers"
+
+    seed_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("seeds.id", ondelete="CASCADE"), primary_key=True
+    )
+    supplier_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("suppliers.id", ondelete="CASCADE"), primary_key=True
+    )
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False)
+    notizen: Mapped[Optional[str]] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+
+    seed: Mapped["Seed"] = relationship("Seed", back_populates="supplier_links")
+    supplier: Mapped["Supplier"] = relationship("Supplier")
+
+    def __repr__(self) -> str:
+        return f"<SeedSupplier(seed={self.seed_id}, supplier={self.supplier_id}, default={self.is_default})>"
 
 
 # Import für Type Hints

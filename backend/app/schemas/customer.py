@@ -76,9 +76,6 @@ class CustomerBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=200, description="Kundenname")
     typ: CustomerType = Field(..., description="Kundentyp")
     email: Optional[EmailStr] = Field(None, description="E-Mail-Adresse (Hauptkontakt)")
-    email_purchasing: Optional[EmailStr] = Field(None, description="E-Mail Einkauf")
-    email_sales: Optional[EmailStr] = Field(None, description="E-Mail Vertrieb")
-    email_billing: Optional[EmailStr] = Field(None, description="E-Mail Rechnung")
     telefon: Optional[str] = Field(None, max_length=50, description="Telefonnummer")
     adresse: Optional[str] = Field(None, description="Adresse (Legacy)")
     liefertage: Optional[list[int]] = Field(None, description="Liefertage (0=Mo, 6=So)")
@@ -121,9 +118,6 @@ class CustomerUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=200)
     typ: Optional[CustomerType] = None
     email: Optional[EmailStr] = None
-    email_purchasing: Optional[EmailStr] = None
-    email_sales: Optional[EmailStr] = None
-    email_billing: Optional[EmailStr] = None
     telefon: Optional[str] = None
     adresse: Optional[str] = None
     liefertage: Optional[list[int]] = None

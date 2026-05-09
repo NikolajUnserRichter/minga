@@ -138,6 +138,7 @@ def receive_seed_batch(
     supplier: Optional[str] = None,
     mhd: Optional[date] = None,
     lieferdatum: Optional[date] = None,
+    in_production_at: Optional[date] = None,
     lieferschein_nr: Optional[str] = None,
     kontrollstelle: Optional[str] = None,
     purchase_price: Optional[Decimal] = None,
@@ -172,6 +173,7 @@ def receive_seed_batch(
             verbleibend_gramm=quantity * Decimal("1000"),
             mhd=mhd,
             lieferdatum=lieferdatum,
+            in_production_at=in_production_at,
             lieferschein_nr=lieferschein_nr,
             bio_zertifiziert=is_organic,
             kontrollstelle=kontrollstelle,
@@ -436,6 +438,78 @@ def create_packaging_inventory(data: PackagingInventoryCreate, db: DBSession):
     """Erstellt einen neuen Verpackungsmaterial-Bestand."""
     inventory = PackagingInventory(**data.model_dump())
     db.add(inventory)
+    db.commit()
+    db.refresh(inventory)
+    return inventory
+
+
+@router.post("/packaging/receive", response_model=PackagingInventoryResponse, status_code=201)
+def receive_packaging(
+    db: DBSession,
+    sku: str,
+    name: str,
+    quantity: int,
+    unit: str = "Stück",
+    location_id: Optional[UUID] = None,
+    supplier_name: Optional[str] = None,
+    supplier_sku: Optional[str] = None,
+    purchase_price: Optional[Decimal] = None,
+    min_quantity: Optional[int] = None,
+    reorder_quantity: Optional[int] = None,
+):
+    """Wareneingang Verpackung: erhöht Bestand wenn SKU existiert, sonst neu anlegen.
+
+    Erfasst zusätzlich eine InventoryMovement-Bewegung für die Nachvollziehbarkeit.
+    """
+    from app.models.inventory import InventoryMovement, MovementType, InventoryItemType
+
+    existing = db.execute(
+        select(PackagingInventory).where(PackagingInventory.sku == sku)
+    ).scalar_one_or_none()
+
+    if existing:
+        before = existing.current_quantity
+        existing.current_quantity = before + quantity
+        if location_id is not None:
+            existing.location_id = location_id
+        if supplier_name:
+            existing.supplier_name = supplier_name
+        if supplier_sku:
+            existing.supplier_sku = supplier_sku
+        if purchase_price is not None:
+            existing.purchase_price = purchase_price
+        inventory = existing
+    else:
+        inventory = PackagingInventory(
+            sku=sku,
+            name=name,
+            current_quantity=quantity,
+            unit=unit,
+            location_id=location_id,
+            supplier_name=supplier_name,
+            supplier_sku=supplier_sku,
+            purchase_price=purchase_price,
+            min_quantity=min_quantity or 0,
+            reorder_quantity=reorder_quantity,
+        )
+        db.add(inventory)
+        db.flush()
+        before = 0
+
+    # Lagerbewegung
+    movement = InventoryMovement(
+        movement_type=MovementType.EINGANG,
+        item_type=InventoryItemType.VERPACKUNG,
+        packaging_id=inventory.id,
+        quantity=Decimal(str(quantity)),
+        unit=unit,
+        quantity_before=Decimal(str(before)),
+        quantity_after=Decimal(str(before + quantity)),
+        to_location_id=location_id,
+        reference_number=sku,
+    )
+    db.add(movement)
+
     db.commit()
     db.refresh(inventory)
     return inventory

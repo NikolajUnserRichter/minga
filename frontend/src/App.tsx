@@ -18,6 +18,7 @@ import Users from './pages/Users';
 import Abonnements from './pages/Abonnements';
 import AccuracyReports from './pages/AccuracyReports';
 import Suppliers from './pages/Suppliers';
+import Locations from './pages/Locations';
 
 function App() {
   return (
@@ -33,6 +34,7 @@ function App() {
           <Route path="suppliers" element={<Suppliers />} />
           <Route path="products" element={<Products />} />
           <Route path="inventory" element={<Inventory />} />
+          <Route path="locations" element={<Locations />} />
 
           {/* Produktion */}
           <Route path="production" element={<Production />} />

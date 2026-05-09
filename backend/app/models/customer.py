@@ -141,11 +141,7 @@ class Customer(Base):
     email: Mapped[Optional[str]] = mapped_column(String(200))
     telefon: Mapped[Optional[str]] = mapped_column(String(50))
     adresse: Mapped[Optional[str]] = mapped_column(Text)  # Legacy, nutze addresses
-
-    # Abteilungs-spezifische Mailadressen
-    email_purchasing: Mapped[Optional[str]] = mapped_column(String(200))
-    email_sales: Mapped[Optional[str]] = mapped_column(String(200))
-    email_billing: Mapped[Optional[str]] = mapped_column(String(200))
+    # Mehrere Ansprechpartner mit Abteilung über `Contact` (siehe unten)
 
     # Ansprechpartner
     ansprechpartner_name: Mapped[Optional[str]] = mapped_column(String(200))

@@ -90,6 +90,12 @@ const navigationSections: NavSection[] = [
         icon: Warehouse,
         roles: ['ADMIN', 'SALES', 'PRODUCTION_PLANNER', 'PRODUCTION_STAFF', 'ACCOUNTING'],
       },
+      {
+        name: 'Lagerorte',
+        href: '/locations',
+        icon: Warehouse,
+        roles: ['ADMIN', 'PRODUCTION_PLANNER'],
+      },
     ],
   },
   {

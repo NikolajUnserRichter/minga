@@ -58,6 +58,25 @@ export const seedsApi = {
   delete: (id: string) =>
     api.delete(`/seeds/${id}`),
 
+  // Suppliers per Seed (M:N)
+  listSuppliers: (seedId: string) =>
+    api.get<Array<{
+      supplier_id: string
+      is_default: boolean
+      notizen: string | null
+      supplier_name: string | null
+      supplier_email: string | null
+    }>>(`/seeds/${seedId}/suppliers`).then(r => r.data),
+
+  addSupplier: (seedId: string, data: { supplier_id: string; is_default?: boolean; notizen?: string }) =>
+    api.post(`/seeds/${seedId}/suppliers`, data).then(r => r.data),
+
+  removeSupplier: (seedId: string, supplierId: string) =>
+    api.delete(`/seeds/${seedId}/suppliers/${supplierId}`),
+
+  setDefaultSupplier: (seedId: string, supplierId: string) =>
+    api.post(`/seeds/${seedId}/suppliers/${supplierId}/set-default`).then(r => r.data),
+
   // Batches per Seed (Saatgutchargen)
   listBatches: (seedId: string) =>
     api.get<Array<{
@@ -467,6 +486,7 @@ export const inventoryApi = {
     supplier?: string
     mhd?: string
     lieferdatum?: string
+    in_production_at?: string
     lieferschein_nr?: string
     kontrollstelle?: string
     purchase_price?: number
@@ -474,6 +494,21 @@ export const inventoryApi = {
     organic_certification?: string
   }) =>
     api.post<SeedInventory>('/inventory/seeds/receive', null, { params: data }).then(r => r.data),
+
+  // Wareneingang Verpackung: erhöht Bestand wenn SKU bekannt, sonst neu anlegen
+  receivePackaging: (data: {
+    sku: string
+    name: string
+    quantity: number
+    unit?: string
+    location_id?: string
+    supplier_name?: string
+    supplier_sku?: string
+    purchase_price?: number
+    min_quantity?: number
+    reorder_quantity?: number
+  }) =>
+    api.post<PackagingInventory>('/inventory/packaging/receive', null, { params: data }).then(r => r.data),
 
   consumeSeed: (inventoryId: string, data: { quantity: number; grow_batch_id?: string; notes?: string }) =>
     api.post(`/inventory/seeds/${inventoryId}/consume`, null, { params: data }).then(r => r.data),

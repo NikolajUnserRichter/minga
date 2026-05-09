@@ -8,10 +8,11 @@ from sqlalchemy import select, func
 from sqlalchemy.orm import Session
 
 from app.api.deps import DBSession, Pagination
-from app.models.seed import Seed, SeedBatch
+from app.models.seed import Seed, SeedBatch, SeedSupplier, Supplier
 from app.schemas.seed import (
     SeedCreate, SeedUpdate, SeedResponse, SeedListResponse,
-    SeedBatchCreate, SeedBatchResponse
+    SeedBatchCreate, SeedBatchResponse,
+    SeedSupplierLink, SeedSupplierResponse,
 )
 
 router = APIRouter()
@@ -190,6 +191,117 @@ async def create_seed_batch(batch_data: SeedBatchCreate, db: DBSession):
     db.refresh(batch)
 
     return SeedBatchResponse.model_validate(batch)
+
+
+# ============== Seed-Supplier (M:N) Endpoints ==============
+
+@router.get("/{seed_id}/suppliers", response_model=list[SeedSupplierResponse])
+async def list_seed_suppliers(seed_id: UUID, db: DBSession):
+    """Lieferanten einer Sorte mit Default-Flag."""
+    from sqlalchemy.orm import selectinload
+    seed = db.execute(
+        select(Seed).options(selectinload(Seed.supplier_links).selectinload(SeedSupplier.supplier)).where(Seed.id == seed_id)
+    ).scalar_one_or_none()
+    if not seed:
+        raise HTTPException(status_code=404, detail="Saatgut nicht gefunden")
+    out = []
+    for link in seed.supplier_links:
+        out.append(SeedSupplierResponse(
+            supplier_id=link.supplier_id,
+            is_default=link.is_default,
+            notizen=link.notizen,
+            supplier_name=link.supplier.name if link.supplier else None,
+            supplier_email=link.supplier.email if link.supplier else None,
+        ))
+    return out
+
+
+@router.post("/{seed_id}/suppliers", response_model=SeedSupplierResponse, status_code=status.HTTP_201_CREATED)
+async def add_seed_supplier(seed_id: UUID, data: SeedSupplierLink, db: DBSession):
+    """Lieferant zu einer Sorte hinzufügen."""
+    seed = db.get(Seed, seed_id)
+    if not seed:
+        raise HTTPException(status_code=404, detail="Saatgut nicht gefunden")
+    supplier = db.get(Supplier, data.supplier_id)
+    if not supplier:
+        raise HTTPException(status_code=404, detail="Lieferant nicht gefunden")
+
+    # Existierender Link?
+    existing = db.execute(
+        select(SeedSupplier).where(
+            SeedSupplier.seed_id == seed_id, SeedSupplier.supplier_id == data.supplier_id
+        )
+    ).scalar_one_or_none()
+    if existing:
+        raise HTTPException(status_code=409, detail="Lieferant ist bereits zu dieser Sorte verknüpft")
+
+    if data.is_default:
+        # bestehende Defaults zurücksetzen
+        existing_defaults = db.execute(
+            select(SeedSupplier).where(SeedSupplier.seed_id == seed_id, SeedSupplier.is_default == True)
+        ).scalars().all()
+        for ed in existing_defaults:
+            ed.is_default = False
+
+    link = SeedSupplier(
+        seed_id=seed_id,
+        supplier_id=data.supplier_id,
+        is_default=data.is_default,
+        notizen=data.notizen,
+    )
+    db.add(link)
+    db.commit()
+    db.refresh(link)
+    return SeedSupplierResponse(
+        supplier_id=link.supplier_id,
+        is_default=link.is_default,
+        notizen=link.notizen,
+        supplier_name=supplier.name,
+        supplier_email=supplier.email,
+    )
+
+
+@router.delete("/{seed_id}/suppliers/{supplier_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def remove_seed_supplier(seed_id: UUID, supplier_id: UUID, db: DBSession):
+    link = db.execute(
+        select(SeedSupplier).where(SeedSupplier.seed_id == seed_id, SeedSupplier.supplier_id == supplier_id)
+    ).scalar_one_or_none()
+    if not link:
+        raise HTTPException(status_code=404, detail="Verknüpfung nicht gefunden")
+    db.delete(link)
+    db.commit()
+
+
+@router.post("/{seed_id}/suppliers/{supplier_id}/set-default", response_model=SeedSupplierResponse)
+async def set_default_seed_supplier(seed_id: UUID, supplier_id: UUID, db: DBSession):
+    link = db.execute(
+        select(SeedSupplier).where(SeedSupplier.seed_id == seed_id, SeedSupplier.supplier_id == supplier_id)
+    ).scalar_one_or_none()
+    if not link:
+        raise HTTPException(status_code=404, detail="Verknüpfung nicht gefunden")
+
+    # Andere Defaults zurücksetzen
+    other_defaults = db.execute(
+        select(SeedSupplier).where(
+            SeedSupplier.seed_id == seed_id,
+            SeedSupplier.is_default == True,
+            SeedSupplier.supplier_id != supplier_id,
+        )
+    ).scalars().all()
+    for ed in other_defaults:
+        ed.is_default = False
+
+    link.is_default = True
+    db.commit()
+    db.refresh(link)
+    supplier = db.get(Supplier, supplier_id)
+    return SeedSupplierResponse(
+        supplier_id=link.supplier_id,
+        is_default=link.is_default,
+        notizen=link.notizen,
+        supplier_name=supplier.name if supplier else None,
+        supplier_email=supplier.email if supplier else None,
+    )
 
 
 @router.get("/batches/{batch_id}", response_model=SeedBatchResponse)

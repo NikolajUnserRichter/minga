@@ -79,11 +79,6 @@ class GrowPlanBase(BaseModel):
     expected_yield_grams_per_tray: Decimal = Field(..., gt=0, description="Erwarteter Ertrag g/Tray")
     expected_loss_percent: Decimal = Field(default=Decimal("5"), ge=0, le=100, description="Erwartete Verlustquote %")
 
-    # Kühlphase + Prozessvariante
-    cooling_days: Optional[int] = Field(None, ge=0, description="Tage in Kühlung nach Ernte")
-    cooling_shelf_life_days: Optional[int] = Field(None, ge=0, description="Haltbarkeit in Kühlung (Tage)")
-    process_type: str = Field(default="STANDARD", description="Prozessvariante: STANDARD, PLATTE, PLATTE_STEINE")
-
 
 class GrowPlanCreate(GrowPlanBase):
     """Schema zum Erstellen eines GrowPlans"""
@@ -110,9 +105,6 @@ class GrowPlanUpdate(BaseModel):
     optimal_humidity_percent: Optional[int] = None
     light_hours_per_day: Optional[int] = None
     seed_density_grams_per_tray: Optional[Decimal] = None
-    cooling_days: Optional[int] = None
-    cooling_shelf_life_days: Optional[int] = None
-    process_type: Optional[str] = None
     is_active: Optional[bool] = None
 
 

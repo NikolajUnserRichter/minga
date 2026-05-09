@@ -5,6 +5,9 @@ export interface Seed {
   name: string
   sorte: string | null
   lieferant: string | null
+  cooling_days: number | null
+  cooling_shelf_life_days: number | null
+  process_type: 'STANDARD' | 'PLATTE' | 'PLATTE_STEINE' | string
   keimdauer_tage: number
   wachstumsdauer_tage: number
   erntefenster_min_tage: number
@@ -16,6 +19,14 @@ export interface Seed {
   gesamte_wachstumsdauer: number
   created_at: string
   updated_at: string
+}
+
+export interface SeedSupplierLink {
+  supplier_id: string
+  is_default: boolean
+  notizen: string | null
+  supplier_name: string | null
+  supplier_email: string | null
 }
 
 export interface GrowBatch {
@@ -80,14 +91,8 @@ export interface Customer {
   name: string
   typ: CustomerType
   email: string | null
-  email_purchasing: string | null
-  email_sales: string | null
-  email_billing: string | null
   telefon: string | null
   adresse: string | null
-  ansprechpartner_name: string | null
-  ansprechpartner_email: string | null
-  ansprechpartner_telefon: string | null
   ust_id: string | null
   liefertage: number[] | null
   aktiv: boolean
@@ -377,9 +382,6 @@ export interface GrowPlan {
   optimal_humidity_percent: number | null
   light_hours_per_day: number | null
   seed_density_grams_per_tray: number | null
-  cooling_days: number | null
-  cooling_shelf_life_days: number | null
-  process_type: string
   is_active: boolean
 }
 

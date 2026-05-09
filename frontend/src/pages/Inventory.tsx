@@ -784,10 +784,24 @@ function ReceiveForm({
     supplier: '',
     mhd: '',
     lieferdatum: new Date().toISOString().split('T')[0],
+    in_production_at: '',
     lieferschein_nr: '',
     kontrollstelle: '',
     purchase_price: 0,
     is_organic: false,
+  });
+
+  const [packagingData, setPackagingData] = useState({
+    sku: '',
+    name: '',
+    quantity: 0,
+    unit: 'Stück',
+    location_id: '',
+    supplier_name: '',
+    supplier_sku: '',
+    purchase_price: 0,
+    min_quantity: 0,
+    reorder_quantity: 0,
   });
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -800,13 +814,29 @@ function ReceiveForm({
           ...formData,
           mhd: formData.mhd || undefined,
           lieferdatum: formData.lieferdatum || undefined,
+          in_production_at: formData.in_production_at || undefined,
           lieferschein_nr: formData.lieferschein_nr || undefined,
           kontrollstelle: formData.is_organic ? (formData.kontrollstelle || undefined) : undefined,
         });
         toast.success('Wareneingang erfasst (inkl. Saatgut-Charge)');
       } else if (articleType === 'VERPACKUNG') {
-        toast.error('Wareneingang Verpackung ist noch nicht implementiert');
-        return;
+        if (!packagingData.sku || !packagingData.name || packagingData.quantity <= 0) {
+          toast.error('SKU, Name und Menge sind Pflichtfelder');
+          return;
+        }
+        await inventoryApi.receivePackaging({
+          sku: packagingData.sku,
+          name: packagingData.name,
+          quantity: packagingData.quantity,
+          unit: packagingData.unit,
+          location_id: packagingData.location_id || undefined,
+          supplier_name: packagingData.supplier_name || undefined,
+          supplier_sku: packagingData.supplier_sku || undefined,
+          purchase_price: packagingData.purchase_price || undefined,
+          min_quantity: packagingData.min_quantity || undefined,
+          reorder_quantity: packagingData.reorder_quantity || undefined,
+        });
+        toast.success(`Wareneingang Verpackung: ${packagingData.quantity} ${packagingData.unit} erfasst`);
       }
       onSubmit();
     } catch (error: any) {
@@ -891,12 +921,19 @@ function ReceiveForm({
             />
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-3 gap-4">
             <Input
-              label="Lieferdatum"
+              label="Anlieferungsdatum"
               type="date"
               value={formData.lieferdatum}
               onChange={(e) => setFormData({ ...formData, lieferdatum: e.target.value })}
+            />
+            <Input
+              label="In Produktion ab"
+              type="date"
+              value={formData.in_production_at}
+              onChange={(e) => setFormData({ ...formData, in_production_at: e.target.value })}
+              hint="leer = noch im Lager"
             />
             <Input
               label="Lieferschein-Nr."
@@ -941,6 +978,89 @@ function ReceiveForm({
                 placeholder="z.B. DE-ÖKO-006"
               />
             )}
+          </div>
+        </>
+      )}
+
+      {articleType === 'VERPACKUNG' && (
+        <>
+          <div className="grid grid-cols-2 gap-4">
+            <Input
+              label="SKU"
+              required
+              value={packagingData.sku}
+              onChange={(e) => setPackagingData({ ...packagingData, sku: e.target.value })}
+              placeholder="z.B. VP-KISTE12-001"
+              hint="Bekannte SKU → Bestand wird erhöht"
+            />
+            <Input
+              label="Bezeichnung"
+              required
+              value={packagingData.name}
+              onChange={(e) => setPackagingData({ ...packagingData, name: e.target.value })}
+              placeholder="z.B. Mehrwegkiste 12 Schalen"
+            />
+          </div>
+
+          <div className="grid grid-cols-3 gap-4">
+            <Input
+              label="Menge"
+              type="number"
+              required
+              min={1}
+              value={packagingData.quantity}
+              onChange={(e) => setPackagingData({ ...packagingData, quantity: Number(e.target.value) })}
+            />
+            <Input
+              label="Einheit"
+              value={packagingData.unit}
+              onChange={(e) => setPackagingData({ ...packagingData, unit: e.target.value })}
+            />
+            <Select
+              label="Lagerort"
+              options={locationOptions}
+              value={packagingData.location_id}
+              onChange={(e) => setPackagingData({ ...packagingData, location_id: e.target.value })}
+            />
+          </div>
+
+          <div className="grid grid-cols-3 gap-4">
+            <Input
+              label="Lieferant"
+              value={packagingData.supplier_name}
+              onChange={(e) => setPackagingData({ ...packagingData, supplier_name: e.target.value })}
+            />
+            <Input
+              label="Lieferanten-SKU"
+              value={packagingData.supplier_sku}
+              onChange={(e) => setPackagingData({ ...packagingData, supplier_sku: e.target.value })}
+            />
+            <Input
+              label="Einkaufspreis"
+              type="number"
+              step="0.01"
+              min={0}
+              value={packagingData.purchase_price}
+              onChange={(e) => setPackagingData({ ...packagingData, purchase_price: Number(e.target.value) })}
+              endIcon="€/Stk"
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <Input
+              label="Mindestbestand"
+              type="number"
+              min={0}
+              value={packagingData.min_quantity}
+              onChange={(e) => setPackagingData({ ...packagingData, min_quantity: Number(e.target.value) })}
+            />
+            <Input
+              label="Nachbestellmenge"
+              type="number"
+              min={0}
+              value={packagingData.reorder_quantity}
+              onChange={(e) => setPackagingData({ ...packagingData, reorder_quantity: Number(e.target.value) })}
+            />
           </div>
         </>
       )}

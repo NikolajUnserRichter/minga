@@ -13,8 +13,9 @@ class SeedBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=100, description="Name der Sorte")
     sorte: Optional[str] = Field(None, max_length=100, description="Sortenbezeichnung")
     lieferant: Optional[str] = Field(None, max_length=200, description="Lieferant (Legacy free-text)")
-    supplier_id: Optional[UUID] = Field(None, description="Standard-Lieferant (Stammdaten)")
-    backup_supplier_id: Optional[UUID] = Field(None, description="Backup-Lieferant")
+    cooling_days: Optional[int] = Field(None, ge=0, description="Tage in Kühlung nach Ernte")
+    cooling_shelf_life_days: Optional[int] = Field(None, ge=0, description="Haltbarkeit in Kühlung (Tage)")
+    process_type: str = Field(default="STANDARD", description="Prozessvariante: STANDARD | PLATTE | PLATTE_STEINE")
     keimdauer_tage: int = Field(..., ge=1, le=30, description="Keimdauer in Tagen")
     wachstumsdauer_tage: int = Field(..., ge=1, le=60, description="Wachstumsdauer in Tagen")
     erntefenster_min_tage: int = Field(..., ge=1, description="Frühester Erntezeitpunkt")
@@ -34,8 +35,9 @@ class SeedUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=100)
     sorte: Optional[str] = None
     lieferant: Optional[str] = None
-    supplier_id: Optional[UUID] = None
-    backup_supplier_id: Optional[UUID] = None
+    cooling_days: Optional[int] = None
+    cooling_shelf_life_days: Optional[int] = None
+    process_type: Optional[str] = None
     keimdauer_tage: Optional[int] = Field(None, ge=1, le=30)
     wachstumsdauer_tage: Optional[int] = Field(None, ge=1, le=60)
     erntefenster_min_tage: Optional[int] = Field(None, ge=1)
@@ -106,3 +108,22 @@ class SeedBatchResponse(SeedBatchBase):
     seed_id: UUID
     verbleibend_gramm: Decimal
     created_at: datetime
+
+
+# Seed-Supplier Link (M:N)
+class SeedSupplierLink(BaseModel):
+    """Verknüpfung zwischen Sorte und Lieferant"""
+    supplier_id: UUID
+    is_default: bool = False
+    notizen: Optional[str] = None
+
+
+class SeedSupplierResponse(BaseModel):
+    """Verknüpfung mit eingebettetem Lieferanten-Detail"""
+    model_config = ConfigDict(from_attributes=True)
+
+    supplier_id: UUID
+    is_default: bool
+    notizen: Optional[str] = None
+    supplier_name: Optional[str] = None
+    supplier_email: Optional[str] = None
