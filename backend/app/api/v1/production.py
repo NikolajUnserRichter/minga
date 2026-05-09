@@ -87,6 +87,20 @@ def create_grow_batch(data: GrowBatchCreate, db: DBSession):
         status=GrowBatchStatus.KEIMUNG,
     )
     db.add(grow_batch)
+
+    # Capacity-Decrement: erhöht aktuell_belegt für das Regal (Stringmatch auf Capacity.name).
+    # Antwortet auf PDF-Hinweis "es ändert sich nichts an der Platz Verfügbarkeit".
+    if data.regal_position:
+        from app.models.capacity import Capacity, ResourceType
+        cap = db.execute(
+            select(Capacity).where(
+                Capacity.name == data.regal_position,
+                Capacity.ressource_typ == ResourceType.REGAL,
+            )
+        ).scalar_one_or_none()
+        if cap:
+            cap.aktuell_belegt = (cap.aktuell_belegt or 0) + data.tray_anzahl
+
     db.commit()
     db.refresh(grow_batch)
     return grow_batch
@@ -150,15 +164,28 @@ def list_harvests(
 
 @router.post("/harvests", response_model=HarvestResponse)
 def create_harvest(data: HarvestCreate, db: DBSession):
-    """Erfasst eine Ernte."""
+    """Erfasst eine Ernte und gibt das Regal frei (Capacity-Decrement)."""
+    from app.models.capacity import Capacity, ResourceType
+
     harvest = Harvest(**data.model_dump())
-    # Update GrowBatch Status?
+    db.add(harvest)
+
     batch = db.get(GrowBatch, data.grow_batch_id)
     if batch and batch.status != GrowBatchStatus.GEERNTET:
-        # Check if full harvest? allow partial for now.
-        pass
-        
-    db.add(harvest)
+        # Markiere Charge als geerntet (vereinfachte Annahme: eine Ernte pro Charge)
+        batch.status = GrowBatchStatus.GEERNTET
+
+        # Regal-Kapazität freigeben
+        if batch.regal_position:
+            cap = db.execute(
+                select(Capacity).where(
+                    Capacity.name == batch.regal_position,
+                    Capacity.ressource_typ == ResourceType.REGAL,
+                )
+            ).scalar_one_or_none()
+            if cap:
+                cap.aktuell_belegt = max(0, (cap.aktuell_belegt or 0) - batch.tray_anzahl)
+
     db.commit()
     db.refresh(harvest)
     return harvest
