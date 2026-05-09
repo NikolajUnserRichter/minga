@@ -148,11 +148,20 @@ export default function Customers() {
       >
         <CustomerForm
           customer={editingCustomer}
-          onSubmit={() => {
+          onSubmit={(saved) => {
             queryClient.invalidateQueries({ queryKey: ['customers'] });
-            setIsCreating(false);
-            setEditingCustomer(null);
-            toast.success(editingCustomer ? 'Kunde aktualisiert' : 'Kunde erstellt');
+            const wasCreating = isCreating;
+            if (wasCreating && saved) {
+              // Modal offen lassen und in den Edit-Mode wechseln,
+              // damit der User direkt Ansprechpartner hinzufügen kann.
+              setIsCreating(false);
+              setEditingCustomer(saved);
+              toast.success('Kunde erstellt — Ansprechpartner können jetzt hinzugefügt werden');
+            } else {
+              setIsCreating(false);
+              setEditingCustomer(null);
+              toast.success('Kunde aktualisiert');
+            }
           }}
           onCancel={() => {
             setIsCreating(false);
@@ -186,7 +195,7 @@ export default function Customers() {
 // Customer Form Component
 interface CustomerFormProps {
   customer: Customer | null;
-  onSubmit: () => void;
+  onSubmit: (saved?: Customer) => void;
   onCancel: () => void;
 }
 
@@ -221,14 +230,15 @@ function CustomerForm({ customer, onSubmit, onCancel }: CustomerFormProps) {
         liefertage: formData.liefertage.map(Number),
       };
 
+      let saved: Customer;
       if (customer) {
-        await salesApi.updateCustomer(customer.id, payload);
+        saved = await salesApi.updateCustomer(customer.id, payload);
       } else {
-        await salesApi.createCustomer(payload);
+        saved = await salesApi.createCustomer(payload);
       }
-      onSubmit();
-    } catch (error) {
-      toast.error('Fehler beim Speichern');
+      onSubmit(saved);
+    } catch (error: any) {
+      toast.error(error?.response?.data?.detail || 'Fehler beim Speichern');
     } finally {
       setLoading(false);
     }
@@ -301,7 +311,15 @@ function CustomerForm({ customer, onSubmit, onCancel }: CustomerFormProps) {
         <span className="text-sm text-gray-700 dark:text-gray-300">Aktiv</span>
       </label>
 
-      {customer && <ContactList customerId={customer.id} />}
+      {customer ? (
+        <ContactList customerId={customer.id} />
+      ) : (
+        <div className="rounded-lg border border-dashed border-gray-300 dark:border-gray-700 p-4 text-sm text-gray-500 dark:text-gray-400">
+          Ansprechpartner können hinzugefügt werden, sobald der Kunde gespeichert ist.
+          Nach Klick auf <span className="font-medium">Erstellen</span> öffnet sich der
+          Bereich automatisch.
+        </div>
+      )}
 
       <div className="flex gap-3 pt-4 border-t">
         <Button type="button" variant="secondary" onClick={onCancel}>
