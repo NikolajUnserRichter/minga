@@ -113,6 +113,12 @@ const navigationSections: NavSection[] = [
         icon: Scissors,
         roles: ['ADMIN', 'PRODUCTION_PLANNER', 'PRODUCTION_STAFF'],
       },
+      {
+        name: 'Kapazitäten',
+        href: '/capacities',
+        icon: Layers,
+        roles: ['ADMIN', 'PRODUCTION_PLANNER'],
+      },
     ],
   },
   {

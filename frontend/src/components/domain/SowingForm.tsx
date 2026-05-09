@@ -58,9 +58,8 @@ export function SowingForm({
 
   const selectedBatch = seedBatches.find((b) => b.id === formData.seed_batch_id);
 
-  // Saatgut-Dichte: solange auf Seed/GrowPlan-Ebene keine Pflichtangabe existiert,
-  // verwenden wir den Default und zeigen ihn als editierbaren Hint
-  const seedPerTray = DEFAULT_SEED_PER_TRAY;
+  // Saatgut-Dichte: vom Seed-Stammdatensatz (Sortenebene) — Fallback auf Default
+  const seedPerTray = selectedSeed?.saatgut_pro_einheit_gramm ?? DEFAULT_SEED_PER_TRAY;
   const seedRequired = formData.tray_anzahl * seedPerTray;
   const expectedYield = selectedSeed
     ? (formData.tray_anzahl * selectedSeed.ertrag_gramm_pro_tray * (1 - selectedSeed.verlustquote_prozent / 100)) / 1000
@@ -125,27 +124,22 @@ export function SowingForm({
     };
   });
 
-  // Regal-Positionen aus Capacity (Typ REGAL/SHELF) — fallback wenn keine konfiguriert
-  const regalCapacities = capacities.filter((c: any) => c.resource_type === 'REGAL' || c.resource_type === 'SHELF');
+  // Regal-Positionen aus Capacity (Typ REGAL) — fallback wenn keine konfiguriert
+  const regalCapacities = capacities.filter((c: any) => c.ressource_typ === 'REGAL');
   const regalOptions: SelectOption[] = regalCapacities.length
-    ? regalCapacities.map((c: any) => {
-        const free = (c.max_capacity ?? 0) - (c.used_capacity ?? 0);
-        return {
-          value: c.name || c.id,
-          label: `${c.name || c.id} — ${free} von ${c.max_capacity} frei`,
-          disabled: free <= 0,
-        };
-      })
+    ? regalCapacities.map((c: any) => ({
+        value: c.name || c.id,
+        label: `${c.name || c.id} — ${c.verfuegbar} von ${c.max_kapazitaet} frei`,
+        disabled: c.verfuegbar <= 0,
+      }))
     : [
-        { value: 'A1', label: 'Regal A1 (Stammdaten fehlen)' },
-        { value: 'A2', label: 'Regal A2 (Stammdaten fehlen)' },
-        { value: 'B1', label: 'Regal B1 (Stammdaten fehlen)' },
+        { value: '', label: 'Keine Regal-Kapazitäten gepflegt — unter Produktion → Kapazitäten anlegen' },
       ];
 
   const selectedRegal = regalCapacities.find((c: any) => (c.name || c.id) === formData.regal_position);
   const regalHint = selectedRegal
-    ? `${(selectedRegal.max_capacity ?? 0) - (selectedRegal.used_capacity ?? 0)} von ${selectedRegal.max_capacity} Plätzen frei`
-    : (regalCapacities.length === 0 ? 'Keine Regal-Kapazitäten gepflegt — bitte unter Stammdaten anlegen' : 'Position wählen');
+    ? `${selectedRegal.verfuegbar} von ${selectedRegal.max_kapazitaet} Plätzen frei`
+    : (regalCapacities.length === 0 ? 'Keine Regal-Kapazitäten gepflegt — bitte unter Produktion → Kapazitäten anlegen' : 'Position wählen');
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
@@ -186,7 +180,7 @@ export function SowingForm({
         <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
           <span className="inline-flex items-center gap-1">
             <Scale className="w-3 h-3" />
-            {seedRequired}g Saatgut benötigt ({seedPerTray} g/Kiste)
+            {seedRequired}g Saatgut benötigt ({seedPerTray} g/Kiste{!selectedSeed?.saatgut_pro_einheit_gramm && ' — Default, Sorte konfigurieren'})
           </span>
         </p>
         {selectedBatch && !hasEnoughSeed && (

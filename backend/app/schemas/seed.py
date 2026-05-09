@@ -16,6 +16,7 @@ class SeedBase(BaseModel):
     cooling_days: Optional[int] = Field(None, ge=0, description="Tage in Kühlung nach Ernte")
     cooling_shelf_life_days: Optional[int] = Field(None, ge=0, description="Haltbarkeit in Kühlung (Tage)")
     process_type: str = Field(default="STANDARD", description="Prozessvariante: STANDARD | PLATTE | PLATTE_STEINE")
+    saatgut_pro_einheit_gramm: Optional[Decimal] = Field(None, ge=0, description="Saatgut-Dichte pro Anzucht-Einheit (Kiste) in g")
     keimdauer_tage: int = Field(..., ge=1, le=30, description="Keimdauer in Tagen")
     wachstumsdauer_tage: int = Field(..., ge=1, le=60, description="Wachstumsdauer in Tagen")
     erntefenster_min_tage: int = Field(..., ge=1, description="Frühester Erntezeitpunkt")
@@ -38,6 +39,7 @@ class SeedUpdate(BaseModel):
     cooling_days: Optional[int] = None
     cooling_shelf_life_days: Optional[int] = None
     process_type: Optional[str] = None
+    saatgut_pro_einheit_gramm: Optional[Decimal] = None
     keimdauer_tage: Optional[int] = Field(None, ge=1, le=30)
     wachstumsdauer_tage: Optional[int] = Field(None, ge=1, le=60)
     erntefenster_min_tage: Optional[int] = Field(None, ge=1)

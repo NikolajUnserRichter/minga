@@ -61,6 +61,9 @@ class Seed(Base):
     cooling_shelf_life_days: Mapped[Optional[int]] = mapped_column(Integer)
     process_type: Mapped[str] = mapped_column(String(30), default="STANDARD")  # STANDARD | PLATTE | PLATTE_STEINE
 
+    # Saatgut-Dichte pro Anzucht-Einheit (Kiste/Tray) — wird im SowingForm angezeigt
+    saatgut_pro_einheit_gramm: Mapped[Optional[Decimal]] = mapped_column(Numeric(8, 2))
+
     # Wachstumsparameter
     keimdauer_tage: Mapped[int] = mapped_column(Integer, nullable=False)
     wachstumsdauer_tage: Mapped[int] = mapped_column(Integer, nullable=False)

@@ -11,13 +11,14 @@ from sqlalchemy import select, func
 from sqlalchemy.orm import joinedload
 
 from app.api.deps import DBSession, Pagination, CurrentUser
-from app.models.customer import Customer, CustomerType, Contact, Subscription
+from app.models.customer import Customer, CustomerType, Contact, CustomerAddress, AddressType, Subscription
 from app.models.order import Order, OrderLine, OrderStatus, OrderAuditLog, TaxRate
 from app.models.seed import Seed
 from app.models.product import Product
 from app.schemas.customer import (
     CustomerCreate, CustomerUpdate, CustomerResponse, CustomerListResponse,
     ContactCreate, ContactUpdate, ContactResponse,
+    CustomerAddressCreate, CustomerAddressUpdate, CustomerAddressResponse,
     SubscriptionCreate, SubscriptionUpdate, SubscriptionResponse, SubscriptionListResponse
 )
 from app.schemas.order import (
@@ -161,6 +162,83 @@ async def reactivate_customer(customer_id: UUID, db: DBSession):
     db.commit()
     db.refresh(customer)
     return CustomerResponse.model_validate(customer)
+
+
+# ============== Customer Address Endpoints ==============
+
+@router.get("/customers/{customer_id}/addresses", response_model=list[CustomerAddressResponse])
+async def list_addresses(customer_id: UUID, db: DBSession):
+    """Adressen eines Kunden (Rechnungs-/Lieferadressen)."""
+    customer = db.get(Customer, customer_id)
+    if not customer:
+        raise HTTPException(status_code=404, detail="Kunde nicht gefunden")
+    addresses = db.execute(
+        select(CustomerAddress)
+        .where(CustomerAddress.customer_id == customer_id)
+        .order_by(CustomerAddress.is_default.desc(), CustomerAddress.address_type)
+    ).scalars().all()
+    return [CustomerAddressResponse.model_validate(a) for a in addresses]
+
+
+@router.post("/customers/{customer_id}/addresses", response_model=CustomerAddressResponse, status_code=status.HTTP_201_CREATED)
+async def create_address(customer_id: UUID, data: CustomerAddressCreate, db: DBSession):
+    """Adresse zu einem Kunden hinzufügen."""
+    customer = db.get(Customer, customer_id)
+    if not customer:
+        raise HTTPException(status_code=404, detail="Kunde nicht gefunden")
+
+    if data.is_default:
+        # Andere Default-Adressen gleichen Typs zurücksetzen
+        existing_defaults = db.execute(
+            select(CustomerAddress).where(
+                CustomerAddress.customer_id == customer_id,
+                CustomerAddress.address_type == data.address_type,
+                CustomerAddress.is_default == True,
+            )
+        ).scalars().all()
+        for ed in existing_defaults:
+            ed.is_default = False
+
+    address = CustomerAddress(customer_id=customer_id, **data.model_dump())
+    db.add(address)
+    db.commit()
+    db.refresh(address)
+    return CustomerAddressResponse.model_validate(address)
+
+
+@router.patch("/customers/{customer_id}/addresses/{address_id}", response_model=CustomerAddressResponse)
+async def update_address(customer_id: UUID, address_id: UUID, data: CustomerAddressUpdate, db: DBSession):
+    address = db.get(CustomerAddress, address_id)
+    if not address or address.customer_id != customer_id:
+        raise HTTPException(status_code=404, detail="Adresse nicht gefunden")
+    update_data = data.model_dump(exclude_unset=True)
+    if update_data.get("is_default") is True:
+        # Andere Defaults gleichen Typs zurücksetzen
+        target_type = update_data.get("address_type", address.address_type)
+        others = db.execute(
+            select(CustomerAddress).where(
+                CustomerAddress.customer_id == customer_id,
+                CustomerAddress.address_type == target_type,
+                CustomerAddress.is_default == True,
+                CustomerAddress.id != address_id,
+            )
+        ).scalars().all()
+        for o in others:
+            o.is_default = False
+    for field, value in update_data.items():
+        setattr(address, field, value)
+    db.commit()
+    db.refresh(address)
+    return CustomerAddressResponse.model_validate(address)
+
+
+@router.delete("/customers/{customer_id}/addresses/{address_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_address(customer_id: UUID, address_id: UUID, db: DBSession):
+    address = db.get(CustomerAddress, address_id)
+    if not address or address.customer_id != customer_id:
+        raise HTTPException(status_code=404, detail="Adresse nicht gefunden")
+    db.delete(address)
+    db.commit()
 
 
 # ============== Contact (Ansprechpartner) Endpoints ==============

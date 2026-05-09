@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, Search, Trash } from 'lucide-react';
 import { salesApi } from '../services/api';
-import { Customer, CustomerType, Contact } from '../types';
+import { Customer, CustomerType, Contact, CustomerAddress, AddressType } from '../types';
 import { PageHeader, FilterBar } from '../components/common/Layout';
 import { CustomerCard } from '../components/domain/CustomerCard';
 import { CreateOrderModal } from '../components/domain/CreateOrderModal';
@@ -312,12 +312,15 @@ function CustomerForm({ customer, onSubmit, onCancel }: CustomerFormProps) {
       </label>
 
       {customer ? (
-        <ContactList customerId={customer.id} />
+        <>
+          <AddressList customerId={customer.id} />
+          <ContactList customerId={customer.id} />
+        </>
       ) : (
         <div className="rounded-lg border border-dashed border-gray-300 dark:border-gray-700 p-4 text-sm text-gray-500 dark:text-gray-400">
-          Ansprechpartner können hinzugefügt werden, sobald der Kunde gespeichert ist.
-          Nach Klick auf <span className="font-medium">Erstellen</span> öffnet sich der
-          Bereich automatisch.
+          Adressen (Rechnung/Lieferung) und Ansprechpartner können hinzugefügt werden,
+          sobald der Kunde gespeichert ist. Nach Klick auf <span className="font-medium">Erstellen</span> öffnen sich die
+          Bereiche automatisch.
         </div>
       )}
 
@@ -330,6 +333,145 @@ function CustomerForm({ customer, onSubmit, onCancel }: CustomerFormProps) {
         </Button>
       </div>
     </form>
+  );
+}
+
+function AddressList({ customerId }: { customerId: string }) {
+  const queryClient = useQueryClient();
+  const toast = useToast();
+  const { data: addresses = [] } = useQuery({
+    queryKey: ['customer-addresses', customerId],
+    queryFn: () => salesApi.listAddresses(customerId),
+  });
+
+  const [newAddr, setNewAddr] = useState<Partial<CustomerAddress>>({
+    address_type: 'BOTH',
+    name: '',
+    strasse: '',
+    hausnummer: '',
+    plz: '',
+    ort: '',
+    land: 'DE',
+    is_default: false,
+  });
+
+  const invalidate = () => queryClient.invalidateQueries({ queryKey: ['customer-addresses', customerId] });
+
+  const addMutation = useMutation({
+    mutationFn: () => salesApi.createAddress(customerId, newAddr),
+    onSuccess: () => {
+      invalidate();
+      setNewAddr({ address_type: 'BOTH', name: '', strasse: '', hausnummer: '', plz: '', ort: '', land: 'DE', is_default: false });
+      toast.success('Adresse hinzugefügt');
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.detail || 'Fehler beim Hinzufügen'),
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) => salesApi.deleteAddress(customerId, id),
+    onSuccess: () => { invalidate(); toast.success('Adresse gelöscht'); },
+  });
+
+  const typeOptions: SelectOption[] = [
+    { value: 'BILLING', label: 'Rechnungsadresse' },
+    { value: 'SHIPPING', label: 'Lieferadresse' },
+    { value: 'BOTH', label: 'Beides' },
+  ];
+
+  const typeLabel = (t: AddressType) =>
+    t === 'BILLING' ? 'Rechnung' : t === 'SHIPPING' ? 'Lieferung' : 'Rechnung + Lieferung';
+
+  return (
+    <fieldset className="border border-gray-200 dark:border-gray-700 rounded-lg p-4 space-y-3">
+      <legend className="px-2 text-sm font-medium text-gray-700 dark:text-gray-300">
+        Adressen ({addresses.length})
+      </legend>
+
+      {addresses.length > 0 && (
+        <div className="space-y-2">
+          {addresses.map((a) => (
+            <div key={a.id} className="flex items-start gap-2 text-sm bg-gray-50 dark:bg-gray-700/50 rounded px-3 py-2">
+              <div className="flex-1">
+                <div className="font-medium text-gray-900 dark:text-white">
+                  {typeLabel(a.address_type)} {a.is_default && <span className="text-xs text-minga-600">★ Standard</span>}
+                </div>
+                <div className="text-xs text-gray-600 dark:text-gray-400">
+                  {a.name && <>{a.name}<br /></>}
+                  {a.strasse} {a.hausnummer || ''}<br />
+                  {a.plz} {a.ort} {a.land !== 'DE' && `(${a.land})`}
+                </div>
+              </div>
+              <Button type="button" variant="ghost" size="sm" icon={<Trash className="w-4 h-4" />} onClick={() => deleteMutation.mutate(a.id)} />
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+        <Select
+          options={typeOptions}
+          value={newAddr.address_type || 'BOTH'}
+          onChange={(e) => setNewAddr({ ...newAddr, address_type: e.target.value as AddressType })}
+        />
+        <Input
+          placeholder="Abweichender Name (optional)"
+          value={newAddr.name || ''}
+          onChange={(e) => setNewAddr({ ...newAddr, name: e.target.value })}
+        />
+      </div>
+      <div className="grid grid-cols-3 gap-2">
+        <Input
+          placeholder="Straße"
+          value={newAddr.strasse || ''}
+          onChange={(e) => setNewAddr({ ...newAddr, strasse: e.target.value })}
+          className="col-span-2"
+        />
+        <Input
+          placeholder="Hausnr."
+          value={newAddr.hausnummer || ''}
+          onChange={(e) => setNewAddr({ ...newAddr, hausnummer: e.target.value })}
+        />
+      </div>
+      <div className="grid grid-cols-4 gap-2">
+        <Input
+          placeholder="PLZ"
+          value={newAddr.plz || ''}
+          onChange={(e) => setNewAddr({ ...newAddr, plz: e.target.value })}
+        />
+        <Input
+          placeholder="Ort"
+          value={newAddr.ort || ''}
+          onChange={(e) => setNewAddr({ ...newAddr, ort: e.target.value })}
+          className="col-span-2"
+        />
+        <Input
+          placeholder="Land"
+          value={newAddr.land || 'DE'}
+          onChange={(e) => setNewAddr({ ...newAddr, land: e.target.value })}
+        />
+      </div>
+      <div className="flex justify-between items-center">
+        <label className="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
+          <input
+            type="checkbox"
+            checked={newAddr.is_default || false}
+            onChange={(e) => setNewAddr({ ...newAddr, is_default: e.target.checked })}
+            className="w-4 h-4 rounded"
+          />
+          Als Standard für diesen Typ
+        </label>
+        <Button
+          type="button"
+          size="sm"
+          variant="secondary"
+          icon={<Plus className="w-4 h-4" />}
+          disabled={!newAddr.strasse || !newAddr.plz || !newAddr.ort}
+          onClick={() => addMutation.mutate()}
+        >
+          Hinzufügen
+        </Button>
+      </div>
+    </fieldset>
   );
 }
 

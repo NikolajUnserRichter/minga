@@ -19,6 +19,7 @@ import Abonnements from './pages/Abonnements';
 import AccuracyReports from './pages/AccuracyReports';
 import Suppliers from './pages/Suppliers';
 import Locations from './pages/Locations';
+import Capacities from './pages/Capacities';
 
 function App() {
   return (
@@ -39,6 +40,7 @@ function App() {
           {/* Produktion */}
           <Route path="production" element={<Production />} />
           <Route path="harvests" element={<Harvests />} />
+          <Route path="capacities" element={<Capacities />} />
 
           {/* Vertrieb */}
           <Route path="customers" element={<Customers />} />

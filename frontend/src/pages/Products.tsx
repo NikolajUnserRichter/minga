@@ -630,68 +630,217 @@ function VariantList({ productId }: { productId: string }) {
   );
 }
 
-// Grow Plans Tab
+// Grow Plans Tab — list + create
 function GrowPlansTab({ growPlans }: { growPlans: GrowPlan[] }) {
+  const queryClient = useQueryClient();
+  const toast = useToast();
+  const [creating, setCreating] = useState(false);
+
   return (
-    <div className="bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden">
-      <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-        <thead className="bg-gray-50 dark:bg-gray-700/50">
-          <tr>
-            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Code</th>
-            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Name</th>
-            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Keimung</th>
-            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Wachstum</th>
-            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Erntefenster</th>
-            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Ertrag/Tray</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
-          {growPlans.map((plan) => (
-            <tr key={plan.id} className="hover:bg-gray-50 dark:bg-gray-700/50">
-              <td className="px-6 py-4 text-sm font-mono text-gray-900 dark:text-white">{plan.code}</td>
-              <td className="px-6 py-4 text-sm text-gray-900 dark:text-white">{plan.name}</td>
-              <td className="px-6 py-4 text-sm text-gray-500 dark:text-gray-400">{plan.germination_days} Tage</td>
-              <td className="px-6 py-4 text-sm text-gray-500 dark:text-gray-400">{plan.growth_days} Tage</td>
-              <td className="px-6 py-4 text-sm text-gray-500 dark:text-gray-400">
-                {plan.harvest_window_start_days}-{plan.harvest_window_end_days} Tage
-              </td>
-              <td className="px-6 py-4 text-sm text-gray-500 dark:text-gray-400">{plan.expected_yield_grams_per_tray}g</td>
+    <div className="space-y-4">
+      <div className="flex justify-end">
+        <Button icon={<Plus className="w-4 h-4" />} onClick={() => setCreating(true)}>
+          Neuer Wachstumsplan
+        </Button>
+      </div>
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden">
+        <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+          <thead className="bg-gray-50 dark:bg-gray-700/50">
+            <tr>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Code</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Name</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Keimung</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Wachstum</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Erntefenster</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Ertrag/Kiste</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
+            {growPlans.length === 0 ? (
+              <tr><td colSpan={6} className="px-6 py-8 text-sm text-center text-gray-500 dark:text-gray-400">Keine Wachstumspläne — lege deinen ersten an</td></tr>
+            ) : growPlans.map((plan) => (
+              <tr key={plan.id} className="hover:bg-gray-50 dark:bg-gray-700/50">
+                <td className="px-6 py-4 text-sm font-mono text-gray-900 dark:text-white">{plan.code}</td>
+                <td className="px-6 py-4 text-sm text-gray-900 dark:text-white">{plan.name}</td>
+                <td className="px-6 py-4 text-sm text-gray-500 dark:text-gray-400">{plan.germination_days} Tage</td>
+                <td className="px-6 py-4 text-sm text-gray-500 dark:text-gray-400">{plan.growth_days} Tage</td>
+                <td className="px-6 py-4 text-sm text-gray-500 dark:text-gray-400">
+                  {plan.harvest_window_start_days}-{plan.harvest_window_end_days} Tage
+                </td>
+                <td className="px-6 py-4 text-sm text-gray-500 dark:text-gray-400">{plan.expected_yield_grams_per_tray}g</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <Modal open={creating} onClose={() => setCreating(false)} title="Neuer Wachstumsplan" size="lg">
+        <GrowPlanForm
+          onSubmit={() => {
+            queryClient.invalidateQueries({ queryKey: ['grow-plans'] });
+            setCreating(false);
+            toast.success('Wachstumsplan angelegt');
+          }}
+          onCancel={() => setCreating(false)}
+        />
+      </Modal>
     </div>
   );
 }
 
-// Product Groups Tab
+// Product Groups Tab — list + create
 function ProductGroupsTab({ groups }: { groups: ProductGroup[] }) {
+  const queryClient = useQueryClient();
+  const toast = useToast();
+  const [creating, setCreating] = useState(false);
+
   return (
-    <div className="bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden">
-      <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-        <thead className="bg-gray-50 dark:bg-gray-700/50">
-          <tr>
-            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Code</th>
-            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Name</th>
-            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Beschreibung</th>
-            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Status</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
-          {groups.map((group) => (
-            <tr key={group.id} className="hover:bg-gray-50 dark:bg-gray-700/50">
-              <td className="px-6 py-4 text-sm font-mono text-gray-900 dark:text-white">{group.code}</td>
-              <td className="px-6 py-4 text-sm text-gray-900 dark:text-white">{group.name}</td>
-              <td className="px-6 py-4 text-sm text-gray-500 dark:text-gray-400">{group.description || '-'}</td>
-              <td className="px-6 py-4">
-                <Badge variant={group.is_active ? 'success' : 'gray'}>
-                  {group.is_active ? 'Aktiv' : 'Inaktiv'}
-                </Badge>
-              </td>
+    <div className="space-y-4">
+      <div className="flex justify-end">
+        <Button icon={<Plus className="w-4 h-4" />} onClick={() => setCreating(true)}>
+          Neue Produktgruppe
+        </Button>
+      </div>
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden">
+        <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+          <thead className="bg-gray-50 dark:bg-gray-700/50">
+            <tr>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Code</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Name</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Beschreibung</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Status</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
+            {groups.length === 0 ? (
+              <tr><td colSpan={4} className="px-6 py-8 text-sm text-center text-gray-500 dark:text-gray-400">Keine Produktgruppen — lege deine erste an</td></tr>
+            ) : groups.map((group) => (
+              <tr key={group.id} className="hover:bg-gray-50 dark:bg-gray-700/50">
+                <td className="px-6 py-4 text-sm font-mono text-gray-900 dark:text-white">{group.code}</td>
+                <td className="px-6 py-4 text-sm text-gray-900 dark:text-white">{group.name}</td>
+                <td className="px-6 py-4 text-sm text-gray-500 dark:text-gray-400">{group.description || '-'}</td>
+                <td className="px-6 py-4">
+                  <Badge variant={group.is_active ? 'success' : 'gray'}>
+                    {group.is_active ? 'Aktiv' : 'Inaktiv'}
+                  </Badge>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <Modal open={creating} onClose={() => setCreating(false)} title="Neue Produktgruppe">
+        <ProductGroupForm
+          onSubmit={() => {
+            queryClient.invalidateQueries({ queryKey: ['product-groups'] });
+            setCreating(false);
+            toast.success('Produktgruppe angelegt');
+          }}
+          onCancel={() => setCreating(false)}
+        />
+      </Modal>
     </div>
+  );
+}
+
+function GrowPlanForm({ onSubmit, onCancel }: { onSubmit: () => void; onCancel: () => void }) {
+  const toast = useToast();
+  const [loading, setLoading] = useState(false);
+  const [d, setD] = useState({
+    code: '',
+    name: '',
+    description: '',
+    soak_hours: 0,
+    blackout_days: 0,
+    germination_days: 2,
+    growth_days: 7,
+    harvest_window_start_days: 9,
+    harvest_window_optimal_days: 10,
+    harvest_window_end_days: 12,
+    expected_yield_grams_per_tray: 350,
+    expected_loss_percent: 5,
+    seed_density_grams_per_tray: 12,
+  });
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    try {
+      await growPlansApi.create(d);
+      onSubmit();
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || 'Fehler beim Speichern');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-4">
+      <div className="grid grid-cols-2 gap-4">
+        <Input label="Code" required value={d.code} onChange={(e) => setD({ ...d, code: e.target.value })} placeholder="z.B. MG-SONNE-STD" />
+        <Input label="Name" required value={d.name} onChange={(e) => setD({ ...d, name: e.target.value })} placeholder="z.B. Sonnenblume Standard" />
+      </div>
+      <Input label="Beschreibung" value={d.description} onChange={(e) => setD({ ...d, description: e.target.value })} />
+
+      <div className="grid grid-cols-3 gap-4">
+        <Input label="Einweichen" type="number" min={0} value={d.soak_hours} onChange={(e) => setD({ ...d, soak_hours: Number(e.target.value) })} endIcon="h" />
+        <Input label="Dunkelphase" type="number" min={0} value={d.blackout_days} onChange={(e) => setD({ ...d, blackout_days: Number(e.target.value) })} endIcon="Tage" />
+        <Input label="Saatdichte" type="number" min={0} step={0.1} value={d.seed_density_grams_per_tray} onChange={(e) => setD({ ...d, seed_density_grams_per_tray: Number(e.target.value) })} endIcon="g" />
+      </div>
+      <div className="grid grid-cols-2 gap-4">
+        <Input label="Keimdauer" type="number" required min={1} value={d.germination_days} onChange={(e) => setD({ ...d, germination_days: Number(e.target.value) })} endIcon="Tage" />
+        <Input label="Wachstumsdauer" type="number" required min={1} value={d.growth_days} onChange={(e) => setD({ ...d, growth_days: Number(e.target.value) })} endIcon="Tage" />
+      </div>
+      <div className="grid grid-cols-3 gap-4">
+        <Input label="Ernte ab" type="number" required min={1} value={d.harvest_window_start_days} onChange={(e) => setD({ ...d, harvest_window_start_days: Number(e.target.value) })} endIcon="Tage" />
+        <Input label="Optimal" type="number" required min={1} value={d.harvest_window_optimal_days} onChange={(e) => setD({ ...d, harvest_window_optimal_days: Number(e.target.value) })} endIcon="Tage" />
+        <Input label="Ernte bis" type="number" required min={1} value={d.harvest_window_end_days} onChange={(e) => setD({ ...d, harvest_window_end_days: Number(e.target.value) })} endIcon="Tage" />
+      </div>
+      <div className="grid grid-cols-2 gap-4">
+        <Input label="Erwarteter Ertrag" type="number" required min={1} value={d.expected_yield_grams_per_tray} onChange={(e) => setD({ ...d, expected_yield_grams_per_tray: Number(e.target.value) })} endIcon="g/Kiste" />
+        <Input label="Verlustquote" type="number" min={0} max={100} value={d.expected_loss_percent} onChange={(e) => setD({ ...d, expected_loss_percent: Number(e.target.value) })} endIcon="%" />
+      </div>
+
+      <div className="flex gap-3 pt-4 border-t">
+        <Button type="button" variant="secondary" onClick={onCancel}>Abbrechen</Button>
+        <Button type="submit" loading={loading} fullWidth>Anlegen</Button>
+      </div>
+    </form>
+  );
+}
+
+function ProductGroupForm({ onSubmit, onCancel }: { onSubmit: () => void; onCancel: () => void }) {
+  const toast = useToast();
+  const [loading, setLoading] = useState(false);
+  const [d, setD] = useState({ code: '', name: '', description: '' });
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    try {
+      await productGroupsApi.create(d);
+      onSubmit();
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || 'Fehler beim Speichern');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-4">
+      <div className="grid grid-cols-2 gap-4">
+        <Input label="Code" required value={d.code} onChange={(e) => setD({ ...d, code: e.target.value })} placeholder="z.B. MICROGREEN" />
+        <Input label="Name" required value={d.name} onChange={(e) => setD({ ...d, name: e.target.value })} placeholder="z.B. Microgreens" />
+      </div>
+      <Input label="Beschreibung" value={d.description} onChange={(e) => setD({ ...d, description: e.target.value })} />
+
+      <div className="flex gap-3 pt-4 border-t">
+        <Button type="button" variant="secondary" onClick={onCancel}>Abbrechen</Button>
+        <Button type="submit" loading={loading} fullWidth>Anlegen</Button>
+      </div>
+    </form>
   );
 }

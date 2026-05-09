@@ -177,6 +177,7 @@ function SeedForm({ seed, onSubmit, onCancel }: SeedFormProps) {
     cooling_days: seed?.cooling_days ?? null as number | null,
     cooling_shelf_life_days: seed?.cooling_shelf_life_days ?? null as number | null,
     process_type: seed?.process_type || 'STANDARD',
+    saatgut_pro_einheit_gramm: seed?.saatgut_pro_einheit_gramm ?? null as number | null,
     keimdauer_tage: seed?.keimdauer_tage || 2,
     wachstumsdauer_tage: seed?.wachstumsdauer_tage || 8,
     erntefenster_min_tage: seed?.erntefenster_min_tage || 8,
@@ -266,6 +267,17 @@ function SeedForm({ seed, onSubmit, onCancel }: SeedFormProps) {
       <div className="divider" />
 
       <h4 className="font-medium text-gray-900 dark:text-white">Wachstumsparameter</h4>
+
+      <Input
+        label="Saatgut pro Anzucht-Einheit (Kiste)"
+        type="number"
+        step="0.1"
+        min={0}
+        value={formData.saatgut_pro_einheit_gramm ?? ''}
+        onChange={(e) => setFormData({ ...formData, saatgut_pro_einheit_gramm: e.target.value ? Number(e.target.value) : null })}
+        endIcon="g"
+        hint="Wird beim Aussaat-Formular als Standardmenge vorgeschlagen"
+      />
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <Input

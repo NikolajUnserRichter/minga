@@ -8,6 +8,7 @@ export interface Seed {
   cooling_days: number | null
   cooling_shelf_life_days: number | null
   process_type: 'STANDARD' | 'PLATTE' | 'PLATTE_STEINE' | string
+  saatgut_pro_einheit_gramm: number | null
   keimdauer_tage: number
   wachstumsdauer_tage: number
   erntefenster_min_tage: number
@@ -69,6 +70,25 @@ export interface Contact {
   role: 'ALLGEMEIN' | 'EINKAUF' | 'VERTRIEB' | 'BUCHHALTUNG' | 'TECHNIK'
   is_primary: boolean
   notizen: string | null
+  created_at: string
+  updated_at: string
+}
+
+export type AddressType = 'BILLING' | 'SHIPPING' | 'BOTH'
+
+export interface CustomerAddress {
+  id: string
+  customer_id: string
+  address_type: AddressType
+  is_default: boolean
+  name: string | null
+  strasse: string
+  hausnummer: string | null
+  adresszusatz: string | null
+  plz: string
+  ort: string
+  land: string
+  lieferhinweise: string | null
   created_at: string
   updated_at: string
 }

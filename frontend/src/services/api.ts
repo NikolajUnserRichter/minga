@@ -8,7 +8,7 @@ import type {
   PackagingInventory, InventoryMovement, StockOverview,
   ArticleType, LocationType, TraceabilityChain, Capacity,
   RevenueStats, YieldStats, Subscription, AccuracySummary, AccuracyDetail,
-  Contact, Supplier, ProductVariant, UnitOfMeasure
+  Contact, Supplier, ProductVariant, UnitOfMeasure, CustomerAddress
 } from '../types'
 
 import keycloak from './auth';
@@ -181,6 +181,19 @@ export const salesApi = {
 
   runDailySubscriptions: () =>
     api.post('/sales/subscriptions/process-today').then(r => r.data),
+
+  // Addresses (Rechnungs-/Lieferadressen)
+  listAddresses: (customerId: string) =>
+    api.get<CustomerAddress[]>(`/sales/customers/${customerId}/addresses`).then(r => r.data),
+
+  createAddress: (customerId: string, data: Partial<CustomerAddress>) =>
+    api.post<CustomerAddress>(`/sales/customers/${customerId}/addresses`, data).then(r => r.data),
+
+  updateAddress: (customerId: string, addressId: string, data: Partial<CustomerAddress>) =>
+    api.patch<CustomerAddress>(`/sales/customers/${customerId}/addresses/${addressId}`, data).then(r => r.data),
+
+  deleteAddress: (customerId: string, addressId: string) =>
+    api.delete(`/sales/customers/${customerId}/addresses/${addressId}`),
 
   // Contacts (Ansprechpartner) — multiple per customer
   listContacts: (customerId: string) =>
