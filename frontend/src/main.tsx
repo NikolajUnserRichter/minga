@@ -7,6 +7,17 @@ import { ThemeProvider } from './context/ThemeContext';
 import { ToastProvider } from './components/ui/Toast';
 import './index.css';
 
+// FastAPI / Pydantic serialize Decimal as a JSON string ("4.50"). The whole
+// frontend was written assuming numbers and calls .toFixed everywhere, which
+// crashes on strings. Patching String.prototype.toFixed to coerce numerically
+// matches expectations without having to fix every component.
+if (!(String.prototype as any).toFixed) {
+  (String.prototype as any).toFixed = function (digits: number) {
+    const n = Number(this);
+    return Number.isFinite(n) ? n.toFixed(digits) : this.toString();
+  };
+}
+
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
