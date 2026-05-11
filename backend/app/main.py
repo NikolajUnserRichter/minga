@@ -63,11 +63,65 @@ async def lifespan(app: FastAPI):
     # Startup: Tabellen erstellen (für Entwicklung)
     # In Produktion: Alembic Migrations verwenden
     Base.metadata.create_all(bind=engine)
+
+    # Stammdaten-Seed für Demo-Deploys: Einheiten, falls Tabelle leer.
+    try:
+        from sqlalchemy import select, func
+        from app.database import SessionLocal
+        from app.models.unit import UnitOfMeasure, UnitCategory
+
+        with SessionLocal() as _db:
+            count = _db.execute(select(func.count()).select_from(UnitOfMeasure)).scalar() or 0
+            if count == 0:
+                seeds = [
+                    ("G", "Gramm", "g", UnitCategory.WEIGHT, 1, True, 10),
+                    ("KG", "Kilogramm", "kg", UnitCategory.WEIGHT, 1000, False, 20),
+                    ("STK", "Stück", "Stk", UnitCategory.COUNT, 1, True, 30),
+                    ("SCHALE", "Schale", "Schale", UnitCategory.CONTAINER, 1, True, 40),
+                    ("TRAY", "Tray (8 Schalen)", "Tray", UnitCategory.CONTAINER, 8, False, 50),
+                    ("KISTE_12", "Mehrwegkiste 12 Schalen", "Kiste 12", UnitCategory.CONTAINER, 12, False, 60),
+                    ("KISTE_6", "Mehrwegkiste 6 Schalen", "Kiste 6", UnitCategory.CONTAINER, 6, False, 70),
+                    ("KARTON_6", "Karton 6 Schalen", "Karton 6", UnitCategory.CONTAINER, 6, False, 80),
+                ]
+                for code, name, symbol, cat, factor, is_base, order in seeds:
+                    _db.add(UnitOfMeasure(
+                        code=code, name=name, symbol=symbol, category=cat,
+                        conversion_factor=factor, is_base_unit=is_base, is_active=True, sort_order=order,
+                    ))
+                _db.commit()
+                logger.info("[SEED] units_of_measure: 8 standard units inserted")
+    except Exception as e:
+        logger.error(f"[SEED] units seeding failed: {e}")
+
     yield
     # Shutdown: Cleanup falls nötig
 
 
+# Serialize Decimals as JSON numbers (not strings) so the frontend can call
+# .toFixed directly without wrapping every value in Number(...).
+import json as _json
+from decimal import Decimal as _Decimal
+from fastapi.responses import JSONResponse as _JSONResponse
+
+
+class _DecimalJSONResponse(_JSONResponse):
+    def render(self, content) -> bytes:
+        def default(o):
+            if isinstance(o, _Decimal):
+                return float(o)
+            raise TypeError
+        return _json.dumps(
+            content,
+            ensure_ascii=False,
+            allow_nan=False,
+            indent=None,
+            separators=(",", ":"),
+            default=default,
+        ).encode("utf-8")
+
+
 app = FastAPI(
+    default_response_class=_DecimalJSONResponse,
     title=settings.app_name,
     version=settings.app_version,
     description="""

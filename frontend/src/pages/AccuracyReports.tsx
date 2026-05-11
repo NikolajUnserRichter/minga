@@ -20,6 +20,13 @@ import {
 } from 'lucide-react';
 import type { AccuracyDetail, AccuracySummary, Seed } from '../types';
 
+// Backend liefert Decimals als Strings — sicherer Wrapper
+const fx = (v: any, digits = 0): string => {
+    if (v === null || v === undefined || v === '') return '-';
+    const n = Number(v);
+    return Number.isFinite(n) ? n.toFixed(digits) : '-';
+};
+
 export default function AccuracyReports() {
     // Date filters - default to last 30 days
     const today = new Date();
@@ -69,10 +76,12 @@ export default function AccuracyReports() {
         return <Badge variant="danger">Schlecht</Badge>;
     };
 
-    // Helper to format percentage
-    const formatPercent = (value: number | null | undefined) => {
-        if (value === null || value === undefined) return '-';
-        return `${value.toFixed(1)}%`;
+    // Helper to format percentage (Backend liefert Decimals als Strings)
+    const formatPercent = (value: number | string | null | undefined) => {
+        if (value === null || value === undefined || value === '') return '-';
+        const n = Number(value);
+        if (!Number.isFinite(n)) return '-';
+        return `${n.toFixed(1)}%`;
     };
 
     return (
@@ -243,26 +252,26 @@ export default function AccuracyReports() {
                                         </div>
                                     </td>
                                     <td className="text-right text-gray-500 dark:text-gray-400">
-                                        {detail.prognostizierte_menge.toFixed(0)}g
+                                        {fx(detail.prognostizierte_menge)}g
                                     </td>
                                     <td className="text-right font-medium">
-                                        {detail.effektive_menge.toFixed(0)}g
+                                        {fx(detail.effektive_menge)}g
                                     </td>
                                     <td className="text-right font-semibold text-blue-600 dark:text-blue-400">
-                                        {detail.ist_menge.toFixed(0)}g
+                                        {fx(detail.ist_menge)}g
                                     </td>
                                     <td className="text-right">
                                         <span
                                             className={
-                                                detail.abweichung_absolut > 0
+                                                Number(detail.abweichung_absolut) > 0
                                                     ? 'text-red-600 dark:text-red-400'
-                                                    : detail.abweichung_absolut < 0
+                                                    : Number(detail.abweichung_absolut) < 0
                                                     ? 'text-green-600 dark:text-green-400'
                                                     : 'text-gray-500 dark:text-gray-400'
                                             }
                                         >
-                                            {detail.abweichung_absolut > 0 ? '+' : ''}
-                                            {detail.abweichung_absolut.toFixed(0)}g
+                                            {Number(detail.abweichung_absolut) > 0 ? '+' : ''}
+                                            {fx(detail.abweichung_absolut)}g
                                         </span>
                                     </td>
                                     <td className="text-center font-semibold">
@@ -322,8 +331,8 @@ export default function AccuracyReports() {
                                         ? 'text-green-600 dark:text-green-400'
                                         : 'text-gray-900 dark:text-white'
                                 }`}>
-                                    {summary.verbesserung_durch_anpassung !== undefined
-                                        ? `${summary.verbesserung_durch_anpassung > 0 ? '+' : ''}${summary.verbesserung_durch_anpassung.toFixed(1)}%`
+                                    {summary.verbesserung_durch_anpassung !== undefined && summary.verbesserung_durch_anpassung !== null
+                                        ? `${Number(summary.verbesserung_durch_anpassung) > 0 ? '+' : ''}${fx(summary.verbesserung_durch_anpassung, 1)}%`
                                         : '-'}
                                 </p>
                             </div>
