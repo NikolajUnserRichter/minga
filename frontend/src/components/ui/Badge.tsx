@@ -98,6 +98,7 @@ export function SuggestionStatusBadge({ status }: SuggestionStatusBadgeProps) {
 const customerTypeConfig: Record<CustomerType, { label: string; variant: BadgeVariant }> = {
   GASTRO: { label: 'Gastro', variant: 'purple' },
   HANDEL: { label: 'Handel', variant: 'info' },
+  GEWERBE: { label: 'Gewerbe', variant: 'info' },
   PRIVAT: { label: 'Privat', variant: 'gray' },
 };
 
