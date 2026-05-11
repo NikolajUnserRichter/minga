@@ -42,6 +42,24 @@ async def lifespan(app: FastAPI):
     for w in warnings:
         logger.warning(f"[CONFIG] {w}")
 
+    # Optional: SQLite-DB-Datei beim Start zurücksetzen (für Demo-Deploys).
+    # Wird per Env RESET_DB=true ausgelöst und erwartet eine SQLite-URL.
+    import os as _os
+    if _os.environ.get("RESET_DB", "").lower() == "true":
+        db_url = settings.database_url
+        if db_url.startswith("sqlite:///"):
+            db_path = db_url.replace("sqlite:///", "", 1)
+            if db_path.startswith("/"):
+                sqlite_file = db_path
+            else:
+                sqlite_file = _os.path.abspath(db_path)
+            try:
+                if _os.path.exists(sqlite_file):
+                    _os.remove(sqlite_file)
+                    logger.warning(f"[RESET_DB] removed {sqlite_file}")
+            except Exception as e:
+                logger.error(f"[RESET_DB] failed: {e}")
+
     # Startup: Tabellen erstellen (für Entwicklung)
     # In Produktion: Alembic Migrations verwenden
     Base.metadata.create_all(bind=engine)
