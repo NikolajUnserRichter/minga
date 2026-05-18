@@ -8,6 +8,7 @@ import BulkActionBar from '../components/common/BulkActionBar';
 import { useBulkSelection } from '../hooks/useBulkSelection';
 import { OrderCard } from '../components/domain/OrderCard';
 import { CreateOrderModal } from '../components/domain/CreateOrderModal';
+import { OrderDocumentsModal } from '../components/domain/OrderDocumentsModal';
 import { ExcelImport } from '../components/common/ExcelImport';
 import { ListPageSkeleton } from '../components/ui/Skeleton';
 import {
@@ -39,6 +40,7 @@ export default function Orders() {
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [search, setSearch] = useState('');
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [docsOrder, setDocsOrder] = useState<Order | null>(null);
 
   // Fetch orders
   const { data: ordersData, isLoading, isError } = useQuery({
@@ -184,6 +186,7 @@ export default function Orders() {
             title="Heutige Lieferungen"
             onMarkReady={handleMarkReady}
             onMarkDelivered={handleMarkDelivered}
+            onOpenDocs={setDocsOrder}
             bulk={bulk}
           />
         </TabPanel>
@@ -193,6 +196,7 @@ export default function Orders() {
             title="Morgen"
             onMarkReady={handleMarkReady}
             onMarkDelivered={handleMarkDelivered}
+            onOpenDocs={setDocsOrder}
             bulk={bulk}
           />
         </TabPanel>
@@ -202,6 +206,7 @@ export default function Orders() {
             title="Kommende Bestellungen"
             onMarkReady={handleMarkReady}
             onMarkDelivered={handleMarkDelivered}
+            onOpenDocs={setDocsOrder}
             bulk={bulk}
           />
         </TabPanel>
@@ -211,6 +216,7 @@ export default function Orders() {
             title="Alle Bestellungen"
             onMarkReady={handleMarkReady}
             onMarkDelivered={handleMarkDelivered}
+            onOpenDocs={setDocsOrder}
             bulk={bulk}
           />
         </TabPanel>
@@ -239,6 +245,11 @@ export default function Orders() {
         open={isCreateModalOpen}
         onClose={() => setIsCreateModalOpen(false)}
       />
+      <OrderDocumentsModal
+        open={!!docsOrder}
+        order={docsOrder}
+        onClose={() => setDocsOrder(null)}
+      />
     </div>
   );
 }
@@ -249,10 +260,11 @@ interface OrderListProps {
   title: string;
   onMarkReady: (order: Order) => void;
   onMarkDelivered: (order: Order) => void;
+  onOpenDocs: (order: Order) => void;
   bulk: ReturnType<typeof useBulkSelection<Order>>;
 }
 
-function OrderList({ orders, onMarkReady, onMarkDelivered, bulk }: OrderListProps) {
+function OrderList({ orders, onMarkReady, onMarkDelivered, onOpenDocs, bulk }: OrderListProps) {
   if (orders.length === 0) {
     return (
       <EmptyState
@@ -301,6 +313,7 @@ function OrderList({ orders, onMarkReady, onMarkDelivered, bulk }: OrderListProp
                   ...order,
                   kunde: { name: order.kunde_name } as any,
                 }}
+                onClick={() => onOpenDocs(order)}
                 onMarkReady={
                   order.status === 'IN_PRODUKTION' || order.status === 'BESTAETIGT'
                     ? () => onMarkReady(order)

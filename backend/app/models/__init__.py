@@ -69,6 +69,15 @@ from app.models.forecast import Forecast, ForecastAccuracy, ProductionSuggestion
 # Kapazitäten
 from app.models.capacity import Capacity
 
+# Belegkette (Auftragsbestätigung, Lieferschein, Verpackungsliste)
+from app.models.documents import (
+    OrderConfirmation,
+    DeliveryNote,
+    PackingList,
+    PackingListItem,
+)
+from app.models.enums import ConfirmationStatus, DeliveryNoteStatus
+
 __all__ = [
     # Seed & Production
     "Seed",
@@ -127,4 +136,11 @@ __all__ = [
     "ProductionSuggestion",
     # Capacity
     "Capacity",
+    # Belegkette
+    "OrderConfirmation",
+    "DeliveryNote",
+    "PackingList",
+    "PackingListItem",
+    "ConfirmationStatus",
+    "DeliveryNoteStatus",
 ]

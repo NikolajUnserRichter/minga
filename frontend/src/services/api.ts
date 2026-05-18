@@ -789,4 +789,106 @@ export const usersApi = {
   },
 }
 
+// ==================== BELEGKETTE (AB / Lieferschein / Packliste) ====================
+
+export interface OrderConfirmation {
+  id: string
+  order_id: string
+  confirmation_number: string
+  status: 'ENTWURF' | 'VERSENDET'
+  issued_at: string
+  sent_at: string | null
+  sent_to_email: string | null
+  notes: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface PackingListItem {
+  id: string
+  order_line_id: string | null
+  sort_order: number
+  product_name: string
+  quantity: number
+  unit: string
+  batch_number: string | null
+  harvest_id: string | null
+  is_returnable_container: boolean
+  container_type: string | null
+  container_count: number | null
+}
+
+export interface PackingList {
+  id: string
+  delivery_note_id: string
+  packing_list_number: string
+  total_weight_g: number | null
+  total_packages: number | null
+  notes: string | null
+  items: PackingListItem[]
+  created_at: string
+  updated_at: string
+}
+
+export interface DeliveryNote {
+  id: string
+  order_id: string
+  delivery_note_number: string
+  status: 'ENTWURF' | 'AUSGESTELLT' | 'GELIEFERT'
+  issued_at: string
+  delivered_at: string | null
+  signed_by: string | null
+  actual_delivery_date: string | null
+  notes: string | null
+  packing_list: PackingList | null
+  created_at: string
+  updated_at: string
+}
+
+const _openPdfFromResponse = async (url: string, filename: string) => {
+  const res = await api.get(url, { responseType: 'blob' })
+  const blob = new Blob([res.data], { type: 'application/pdf' })
+  const objectUrl = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = objectUrl
+  a.target = '_blank'
+  a.rel = 'noopener'
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  setTimeout(() => URL.revokeObjectURL(objectUrl), 5000)
+}
+
+export const documentsApi = {
+  // Auftragsbestätigungen
+  listConfirmations: (orderId: string) =>
+    api.get<OrderConfirmation[]>(`/sales/orders/${orderId}/confirmations`).then(r => r.data),
+
+  createConfirmation: (orderId: string, data: { notes?: string }) =>
+    api.post<OrderConfirmation>(`/sales/orders/${orderId}/confirmations`, data).then(r => r.data),
+
+  sendConfirmation: (confId: string, data: { sent_to_email?: string }) =>
+    api.patch<OrderConfirmation>(`/sales/confirmations/${confId}/send`, data).then(r => r.data),
+
+  downloadConfirmationPdf: (conf: OrderConfirmation) =>
+    _openPdfFromResponse(`/sales/confirmations/${conf.id}/pdf`, `${conf.confirmation_number}.pdf`),
+
+  // Lieferscheine + Packlisten
+  listDeliveryNotes: (orderId: string) =>
+    api.get<DeliveryNote[]>(`/sales/orders/${orderId}/delivery-notes`).then(r => r.data),
+
+  createDeliveryNote: (orderId: string, data: { notes?: string; total_weight_g?: number; total_packages?: number; packing_items?: Partial<PackingListItem>[] }) =>
+    api.post<DeliveryNote>(`/sales/orders/${orderId}/delivery-notes`, data).then(r => r.data),
+
+  markDelivered: (noteId: string, data: { signed_by?: string; actual_delivery_date?: string }) =>
+    api.patch<DeliveryNote>(`/sales/delivery-notes/${noteId}/mark-delivered`, data).then(r => r.data),
+
+  downloadDeliveryNotePdf: (note: DeliveryNote) =>
+    _openPdfFromResponse(`/sales/delivery-notes/${note.id}/pdf`, `${note.delivery_note_number}.pdf`),
+
+  downloadPackingListPdf: (note: DeliveryNote) =>
+    _openPdfFromResponse(`/sales/delivery-notes/${note.id}/packing-list/pdf`, `${note.packing_list?.packing_list_number || note.delivery_note_number}-packing.pdf`),
+}
+
 export default api

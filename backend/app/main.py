@@ -21,7 +21,7 @@ from slowapi.errors import RateLimitExceeded
 
 from app.config import get_settings
 from app.database import engine, Base
-from app.api.v1 import seeds, production, sales, forecasting, products, invoices, inventory, analytics, capacity, suppliers, units, imports
+from app.api.v1 import seeds, production, sales, forecasting, products, invoices, inventory, analytics, capacity, suppliers, units, imports, documents
 from app.api.deps import get_current_user
 
 logger = logging.getLogger(__name__)
@@ -390,6 +390,13 @@ app.include_router(
 app.include_router(
     imports.router,
     prefix="/api/v1",
+    dependencies=_auth_deps,
+)
+
+app.include_router(
+    documents.router,
+    prefix="/api/v1/sales",
+    tags=["Belegkette"],
     dependencies=_auth_deps,
 )
 

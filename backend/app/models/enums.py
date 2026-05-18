@@ -61,3 +61,16 @@ class OrderStatus(str, Enum):
     GELIEFERT = "GELIEFERT"          # Delivered
     FAKTURIERT = "FAKTURIERT"        # Invoiced
     STORNIERT = "STORNIERT"          # Cancelled
+
+
+class ConfirmationStatus(str, Enum):
+    """Auftragsbestätigungs-Status"""
+    ENTWURF = "ENTWURF"      # Editierbar
+    VERSENDET = "VERSENDET"  # An Kunden geschickt – immutable
+
+
+class DeliveryNoteStatus(str, Enum):
+    """Lieferschein-Status"""
+    ENTWURF = "ENTWURF"      # Editierbar
+    AUSGESTELLT = "AUSGESTELLT"  # PDF generiert, aber noch nicht ausgeliefert
+    GELIEFERT = "GELIEFERT"  # Vom Empfänger quittiert – immutable
