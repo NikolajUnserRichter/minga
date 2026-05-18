@@ -203,6 +203,12 @@ class InvoiceService:
                 harvest_batch_ids=[line.harvest_id] if line.harvest_id else None,
             )
 
+        # Lines-Relationship neu laden + Summen final berechnen
+        # (add_line() callte calculate_totals() pro Line, aber invoice.lines
+        # ist nach jedem flush stale — der letzte Aufruf hätte nur eine Line gesehen)
+        self.db.refresh(invoice, ["lines"])
+        invoice.calculate_totals()
+
         return invoice
 
     def finalize_invoice(self, invoice_id: UUID) -> Invoice:

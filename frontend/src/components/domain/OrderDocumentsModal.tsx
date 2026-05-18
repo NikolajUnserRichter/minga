@@ -1,10 +1,10 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { FileText, Truck, Package, Send, Download, Plus, CheckCheck } from 'lucide-react';
+import { FileText, Truck, Package, Send, Download, Plus, CheckCheck, Receipt } from 'lucide-react';
 import { Modal } from '../ui/Modal';
 import { Button, Input, useToast } from '../ui';
-import { documentsApi, OrderConfirmation, DeliveryNote } from '../../services/api';
-import { Order } from '../../types';
+import { documentsApi, invoicesApi, OrderConfirmation, DeliveryNote } from '../../services/api';
+import { Order, Invoice } from '../../types';
 
 interface Props {
   open: boolean;
@@ -39,10 +39,49 @@ export function OrderDocumentsModal({ open, onClose, order }: Props) {
     enabled: open && !!orderId,
   });
 
+  const invoicesQuery = useQuery({
+    queryKey: ['order-invoices', orderId],
+    queryFn: () => invoicesApi.list({}).then((rows) => rows.filter((i: Invoice) => i.order_id === orderId)),
+    enabled: open && !!orderId,
+  });
+
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ['confirmations', orderId] });
     queryClient.invalidateQueries({ queryKey: ['delivery-notes', orderId] });
+    queryClient.invalidateQueries({ queryKey: ['order-invoices', orderId] });
+    queryClient.invalidateQueries({ queryKey: ['invoices'] });
     queryClient.invalidateQueries({ queryKey: ['orders'] });
+  };
+
+  const createInvoice = useMutation({
+    mutationFn: () => invoicesApi.createFromOrder(orderId!),
+    onSuccess: (inv: Invoice) => { toast.success(`Rechnung ${inv.invoice_number} angelegt`); invalidate(); },
+    onError: (e: any) => toast.error(e?.response?.data?.detail || 'Fehler beim Erstellen der Rechnung'),
+  });
+
+  const finalizeInvoice = useMutation({
+    mutationFn: (inv: Invoice) => invoicesApi.finalize(inv.id),
+    onSuccess: () => { toast.success('Rechnung finalisiert'); invalidate(); },
+    onError: (e: any) => toast.error(e?.response?.data?.detail || 'Fehler beim Finalisieren'),
+  });
+
+  const downloadInvoicePdf = async (inv: Invoice) => {
+    try {
+      const res = await invoicesApi.downloadPdf(inv.id);
+      const blob = new Blob([res.data], { type: 'application/pdf' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.target = '_blank';
+      a.rel = 'noopener';
+      a.download = `${inv.invoice_number}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+    } catch (e: any) {
+      toast.error(e?.response?.data?.detail || 'PDF-Download fehlgeschlagen');
+    }
   };
 
   const createConfirmation = useMutation({
@@ -76,6 +115,7 @@ export function OrderDocumentsModal({ open, onClose, order }: Props) {
 
   const confirmations = confirmationsQuery.data || [];
   const deliveryNotes = deliveryNotesQuery.data || [];
+  const invoices = invoicesQuery.data || [];
 
   return (
     <Modal
@@ -210,6 +250,59 @@ export function OrderDocumentsModal({ open, onClose, order }: Props) {
                       </Button>
                     </div>
                   )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+
+        {/* RECHNUNGEN */}
+        <section>
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="flex items-center gap-2 font-semibold text-gray-800 dark:text-gray-200">
+              <Receipt className="w-4 h-4" />
+              Rechnungen
+            </h3>
+            <Button
+              size="sm"
+              icon={<Plus className="w-3 h-3" />}
+              loading={createInvoice.isPending}
+              onClick={() => createInvoice.mutate()}
+            >
+              Rechnung aus Bestellung
+            </Button>
+          </div>
+          {invoices.length === 0 ? (
+            <p className="text-sm text-gray-500 dark:text-gray-400 italic">Noch keine Rechnung zu dieser Bestellung.</p>
+          ) : (
+            <ul className="space-y-2">
+              {invoices.map((inv: Invoice) => (
+                <li key={inv.id} className="flex items-center justify-between border rounded p-2 dark:border-gray-700">
+                  <div className="flex items-center gap-3">
+                    <span className="font-mono text-sm">{inv.invoice_number}</span>
+                    <span className={`text-xs px-2 py-0.5 rounded ${statusBadge(inv.status)}`}>{inv.status}</span>
+                    <span className="text-xs text-gray-500">€ {Number(inv.total || 0).toFixed(2)}</span>
+                  </div>
+                  <div className="flex gap-1">
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      icon={<Download className="w-3 h-3" />}
+                      onClick={() => downloadInvoicePdf(inv)}
+                    >
+                      PDF
+                    </Button>
+                    {inv.status === 'ENTWURF' && (
+                      <Button
+                        size="sm"
+                        icon={<Send className="w-3 h-3" />}
+                        loading={finalizeInvoice.isPending}
+                        onClick={() => finalizeInvoice.mutate(inv)}
+                      >
+                        Finalisieren
+                      </Button>
+                    )}
+                  </div>
                 </li>
               ))}
             </ul>
