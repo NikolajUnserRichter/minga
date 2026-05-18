@@ -36,6 +36,7 @@ from app.schemas.documents import (
     PackingListItemCreate,
 )
 from app.services.pdf_service import PDFService
+from app.services.email_service import send_email, EmailNotConfiguredError
 
 router = APIRouter()
 
@@ -109,12 +110,44 @@ def list_confirmations(order_id: UUID, db: DBSession):
 
 @router.patch("/confirmations/{conf_id}/send", response_model=OrderConfirmationResponse)
 def send_confirmation(conf_id: UUID, data: OrderConfirmationSend, db: DBSession):
-    """Markiert AB als versendet — danach immutable."""
-    conf = db.get(OrderConfirmation, conf_id)
+    """Versendet AB per Email (PDF im Anhang) und markiert sie als VERSENDET.
+
+    Wenn `sent_to_email` leer ist, wird nur der Status gesetzt — z.B. bei
+    persönlicher Übergabe."""
+    conf = db.execute(
+        select(OrderConfirmation)
+        .options(joinedload(OrderConfirmation.order).joinedload(Order.customer))
+        .where(OrderConfirmation.id == conf_id)
+    ).unique().scalar_one_or_none()
     if not conf:
         raise HTTPException(status_code=404, detail="Auftragsbestätigung nicht gefunden")
     if conf.is_locked():
         raise HTTPException(status_code=400, detail="AB ist bereits versendet")
+
+    # Order-Lines explizit laden (vom Mapper nicht eager)
+    _load_order_with_lines(db, conf.order_id)
+
+    if data.sent_to_email:
+        try:
+            pdf = PDFService.generate_confirmation_pdf(conf)
+            customer_name = conf.order.customer.name if conf.order and conf.order.customer else "Kunde"
+            send_email(
+                to=data.sent_to_email,
+                subject=f"Auftragsbestätigung {conf.confirmation_number}",
+                body=(
+                    f"Sehr geehrte Damen und Herren bei {customer_name},\n\n"
+                    f"anbei finden Sie die Auftragsbestätigung {conf.confirmation_number}\n"
+                    f"zu Ihrer Bestellung {conf.order.order_number}.\n\n"
+                    f"Mit freundlichen Grüßen\nIhr Minga-Greens-Team"
+                ),
+                attachment_bytes=pdf,
+                attachment_filename=f"{conf.confirmation_number}.pdf",
+            )
+        except EmailNotConfiguredError as e:
+            raise HTTPException(status_code=503, detail=str(e))
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"E-Mail-Versand fehlgeschlagen: {e}")
+
     conf.status = ConfirmationStatus.VERSENDET
     conf.sent_at = datetime.now(timezone.utc)
     conf.sent_to_email = data.sent_to_email

@@ -469,6 +469,9 @@ export const invoicesApi = {
 
   downloadPdf: (id: string) =>
     api.get(`/invoices/${id}/pdf`, { responseType: 'blob' }),
+
+  sendInvoiceEmail: (invoiceId: string, toEmail: string) =>
+    api.post(`/invoices/${invoiceId}/send`, null, { params: { to_email: toEmail } }).then(r => r.data),
 }
 
 // ... existing code ...

@@ -41,6 +41,9 @@ class Settings(BaseSettings):
     smtp_port: int = 1025 # Mailpit default
     smtp_user: str = ""
     smtp_password: str = ""
+    smtp_use_tls: bool = False     # STARTTLS (Port 587)
+    smtp_use_ssl: bool = False     # Direct SSL (Port 465)
+    smtp_timeout: int = 10         # Sekunden — verhindert hängende Requests
     emails_from_email: str = "info@minga-greens.de"
     emails_from_name: str = "Minga Greens"
 

@@ -23,6 +23,7 @@ from app.schemas.invoice import (
 )
 from app.services.invoice_service import InvoiceService
 from app.services.datev_service import DatevService
+from app.services.email_service import send_email, EmailNotConfiguredError
 
 router = APIRouter(prefix="/invoices", tags=["Rechnungen"])
 
@@ -166,6 +167,60 @@ def finalize_invoice(invoice_id: UUID, db: DBSession):
         return invoice
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/{invoice_id}/send")
+def send_invoice_email(
+    invoice_id: UUID,
+    db: DBSession,
+    to_email: str = Query(..., description="Empfänger-Adresse"),
+):
+    """Sendet die Rechnung als PDF-Anhang per E-Mail.
+
+    Setzt zusätzlich sent_at; bei ENTWURF-Status wird automatisch nach OFFEN
+    überführt (gleicher Effekt wie /finalize)."""
+    from app.models.invoice import Invoice as InvoiceModel  # local import to avoid cycle
+    from app.services.pdf_service import PDFService
+    from datetime import datetime as _dt, timezone as _tz
+
+    invoice = db.execute(
+        select(InvoiceModel)
+        .options(joinedload(InvoiceModel.customer), joinedload(InvoiceModel.lines))
+        .where(InvoiceModel.id == invoice_id)
+    ).unique().scalar_one_or_none()
+    if not invoice:
+        raise HTTPException(status_code=404, detail="Rechnung nicht gefunden")
+    if invoice.status == InvoiceStatus.STORNIERT:
+        raise HTTPException(status_code=400, detail="Stornierte Rechnungen können nicht versendet werden")
+    if not invoice.lines:
+        raise HTTPException(status_code=400, detail="Rechnung hat keine Positionen")
+
+    try:
+        pdf = PDFService.generate_invoice_pdf(invoice)
+        send_email(
+            to=to_email,
+            subject=f"Rechnung {invoice.invoice_number} — Minga Greens",
+            body=(
+                f"Sehr geehrte Damen und Herren bei {invoice.customer.name},\n\n"
+                f"anbei finden Sie die Rechnung {invoice.invoice_number} über\n"
+                f"{invoice.total:.2f} {invoice.currency}.\n\n"
+                f"Fällig am: {invoice.due_date.strftime('%d.%m.%Y') if invoice.due_date else '—'}\n\n"
+                f"Mit freundlichen Grüßen\nIhr Minga-Greens-Team"
+            ),
+            attachment_bytes=pdf,
+            attachment_filename=f"{invoice.invoice_number}.pdf",
+        )
+    except EmailNotConfiguredError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"E-Mail-Versand fehlgeschlagen: {e}")
+
+    invoice.sent_at = _dt.now(_tz.utc)
+    if invoice.status == InvoiceStatus.ENTWURF:
+        invoice.status = InvoiceStatus.OFFEN
+    db.commit()
+    db.refresh(invoice)
+    return {"invoice_number": invoice.invoice_number, "sent_to": to_email, "sent_at": invoice.sent_at}
 
 
 @router.post("/{invoice_id}/cancel")

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { FileText, Truck, Package, Send, Download, Plus, CheckCheck, Receipt } from 'lucide-react';
+import { FileText, Truck, Package, Send, Download, Plus, CheckCheck, Receipt, Mail } from 'lucide-react';
 import { Modal } from '../ui/Modal';
 import { Button, Input, useToast } from '../ui';
 import { documentsApi, invoicesApi, OrderConfirmation, DeliveryNote } from '../../services/api';
@@ -91,10 +91,27 @@ export function OrderDocumentsModal({ open, onClose, order }: Props) {
   });
 
   const sendConfirmation = useMutation({
-    mutationFn: (conf: OrderConfirmation) => documentsApi.sendConfirmation(conf.id, {}),
-    onSuccess: () => { toast.success('AB als versendet markiert'); invalidate(); },
+    mutationFn: ({ conf, email }: { conf: OrderConfirmation; email?: string }) =>
+      documentsApi.sendConfirmation(conf.id, email ? { sent_to_email: email } : {}),
+    onSuccess: (_d, vars) => {
+      toast.success(vars.email ? `AB an ${vars.email} versendet` : 'AB als versendet markiert');
+      invalidate();
+    },
     onError: (e: any) => toast.error(e?.response?.data?.detail || 'Fehler beim Versenden'),
   });
+
+  const sendInvoiceMail = useMutation({
+    mutationFn: ({ inv, email }: { inv: Invoice; email: string }) =>
+      invoicesApi.sendInvoiceEmail(inv.id, email),
+    onSuccess: (_d, vars) => { toast.success(`Rechnung an ${vars.email} versendet`); invalidate(); },
+    onError: (e: any) => toast.error(e?.response?.data?.detail || 'Fehler beim Versand'),
+  });
+
+  const promptEmailFor = (defaultEmail = '') =>
+    window.prompt(
+      'E-Mail-Adresse des Empfängers (leer lassen = nur als versendet markieren):',
+      defaultEmail,
+    );
 
   const createDeliveryNote = useMutation({
     mutationFn: () => documentsApi.createDeliveryNote(orderId!, {}),
@@ -167,7 +184,11 @@ export function OrderDocumentsModal({ open, onClose, order }: Props) {
                         size="sm"
                         icon={<Send className="w-3 h-3" />}
                         loading={sendConfirmation.isPending}
-                        onClick={() => sendConfirmation.mutate(c)}
+                        onClick={() => {
+                          const email = promptEmailFor();
+                          if (email === null) return; // Abbrechen
+                          sendConfirmation.mutate({ conf: c, email: email || undefined });
+                        }}
                       >
                         Versenden
                       </Button>
@@ -292,6 +313,21 @@ export function OrderDocumentsModal({ open, onClose, order }: Props) {
                     >
                       PDF
                     </Button>
+                    {inv.status !== 'STORNIERT' && (
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        icon={<Mail className="w-3 h-3" />}
+                        loading={sendInvoiceMail.isPending}
+                        onClick={() => {
+                          const email = promptEmailFor();
+                          if (!email) return;
+                          sendInvoiceMail.mutate({ inv, email });
+                        }}
+                      >
+                        Mailen
+                      </Button>
+                    )}
                     {inv.status === 'ENTWURF' && (
                       <Button
                         size="sm"
