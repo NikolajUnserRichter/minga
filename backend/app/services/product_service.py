@@ -50,6 +50,9 @@ class ProductService:
         min_stock_quantity: Optional[Decimal] = None,
         is_bundle: bool = False,
         bundle_components: Optional[list[dict]] = None,
+        is_variable_bundle: bool = False,
+        variable_bundle_min_slots: Optional[int] = None,
+        variable_bundle_max_slots: Optional[int] = None,
     ) -> Product:
         """
         Erstellt ein neues Produkt.
@@ -95,6 +98,9 @@ class ProductService:
             min_stock_level=min_stock_quantity,
             is_bundle=is_bundle,
             bundle_components=bundle_components,
+            is_variable_bundle=is_variable_bundle,
+            variable_bundle_min_slots=variable_bundle_min_slots,
+            variable_bundle_max_slots=variable_bundle_max_slots,
         )
 
         self.db.add(product)
