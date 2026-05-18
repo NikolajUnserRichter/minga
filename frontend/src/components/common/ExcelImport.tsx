@@ -2,11 +2,13 @@ import { useRef, useState } from 'react';
 import { Upload, FileDown } from 'lucide-react';
 import { Button, useToast } from '../ui';
 
-type Entity = 'customers' | 'suppliers' | 'seeds' | 'products' | 'locations';
+type Entity = 'customers' | 'suppliers' | 'seeds' | 'products' | 'locations' | 'order_history';
 
 interface Props {
   entity: Entity;
   label?: string;
+  /** Wort für den zweiten Counter im Toast (Default: "aktualisiert"). Für Historien-Import: "übersprungen". */
+  secondaryLabel?: string;
   onImported?: () => void;
 }
 
@@ -16,7 +18,7 @@ const API_URL = import.meta.env.VITE_API_URL ?? (import.meta.env.DEV ? 'http://l
  * Excel-Import-Button: lädt eine .xlsx hoch und zeigt das Importergebnis (created/updated/errors).
  * Plus separater Download-Button für ein leeres Template mit Header-Zeile.
  */
-export function ExcelImport({ entity, label = 'Excel-Import', onImported }: Props) {
+export function ExcelImport({ entity, label = 'Excel-Import', secondaryLabel = 'aktualisiert', onImported }: Props) {
   const toast = useToast();
   const fileInput = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
@@ -59,7 +61,7 @@ export function ExcelImport({ entity, label = 'Excel-Import', onImported }: Prop
       const created = data.created || 0;
       const updated = data.updated || 0;
       const errors: string[] = data.errors || [];
-      const summary = `${created} angelegt · ${updated} aktualisiert${errors.length ? ` · ${errors.length} Fehler` : ''}`;
+      const summary = `${created} angelegt · ${updated} ${secondaryLabel}${errors.length ? ` · ${errors.length} Fehler` : ''}`;
       if (errors.length) {
         toast.error(`${summary}\n${errors.slice(0, 3).join('\n')}${errors.length > 3 ? '\n…' : ''}`);
       } else {

@@ -8,6 +8,7 @@ import BulkActionBar from '../components/common/BulkActionBar';
 import { useBulkSelection } from '../hooks/useBulkSelection';
 import { OrderCard } from '../components/domain/OrderCard';
 import { CreateOrderModal } from '../components/domain/CreateOrderModal';
+import { ExcelImport } from '../components/common/ExcelImport';
 import { ListPageSkeleton } from '../components/ui/Skeleton';
 import {
   Button,
@@ -146,9 +147,17 @@ export default function Orders() {
         title="Bestellungen"
         subtitle={`${orders.length} Bestellungen`}
         actions={
-          <Button icon={<Plus className="w-4 h-4" />} onClick={() => setIsCreateModalOpen(true)}>
-            Neue Bestellung
-          </Button>
+          <div className="flex items-center gap-2">
+            <ExcelImport
+              entity="order_history"
+              label="Historie importieren"
+              secondaryLabel="übersprungen"
+              onImported={() => queryClient.invalidateQueries({ queryKey: ['orders'] })}
+            />
+            <Button icon={<Plus className="w-4 h-4" />} onClick={() => setIsCreateModalOpen(true)}>
+              Neue Bestellung
+            </Button>
+          </div>
         }
       />
 

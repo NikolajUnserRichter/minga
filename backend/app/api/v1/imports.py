@@ -9,6 +9,8 @@ Unterstützte entities: customers, seeds, products, suppliers, locations
 from __future__ import annotations
 
 import io
+from collections import defaultdict
+from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any, Optional, Sequence
 from uuid import UUID
@@ -17,7 +19,7 @@ from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, PatternFill
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.api.deps import DBSession
 from app.models.customer import Customer, CustomerType
@@ -26,6 +28,7 @@ from app.models.product import Product, ProductCategory
 from app.models.inventory import InventoryLocation, LocationType
 from app.models.unit import UnitOfMeasure
 from app.models.enums import TaxRate
+from app.models.order import Order, OrderLine, OrderStatus
 
 router = APIRouter(prefix="/imports", tags=["Excel-Import"])
 
@@ -90,6 +93,17 @@ COLUMNS = {
         ("temperature_min", "temperature_min", False, "decimal"),
         ("temperature_max", "temperature_max", False, "decimal"),
     ],
+    "order_history": [
+        ("bestell_nr_extern", "bestell_nr_extern", True, "str"),
+        ("kunde", "kunde", True, "str"),
+        ("bestelldatum", "bestelldatum", True, "date"),
+        ("lieferdatum", "lieferdatum", True, "date"),
+        ("produkt_sku", "produkt_sku", True, "str"),
+        ("menge", "menge", True, "decimal"),
+        ("einheit", "einheit", False, "str"),
+        ("einzelpreis", "einzelpreis", True, "decimal"),
+        ("status", "status", False, "enum:ENTWURF|BESTAETIGT|IN_PRODUKTION|GELIEFERT|FAKTURIERT|STORNIERT"),
+    ],
 }
 
 
@@ -106,6 +120,18 @@ def _coerce(value: Any, type_hint: str) -> Any:
         if type_hint == "bool":
             s = str(value).strip().lower()
             return s in ("true", "1", "ja", "yes", "x")
+        if type_hint == "date":
+            if isinstance(value, datetime):
+                return value.date()
+            if isinstance(value, date):
+                return value
+            s = str(value).strip()
+            for fmt in ("%Y-%m-%d", "%d.%m.%Y", "%d/%m/%Y", "%Y/%m/%d"):
+                try:
+                    return datetime.strptime(s, fmt).date()
+                except ValueError:
+                    continue
+            return None
         if type_hint.startswith("enum:"):
             valid = type_hint.split(":", 1)[1].split("|")
             v = str(value).strip().upper()
@@ -275,12 +301,145 @@ def _import_locations(db, rows: list[dict]) -> tuple[int, int]:
     return created, updated
 
 
+def _generate_historic_order_number(db, order_date: date, used_numbers: set[str]) -> str:
+    """Generiert BE-YYYYMMDD-NNNN für ein historisches Datum.
+
+    Berücksichtigt sowohl bereits existierende DB-Nummern als auch
+    Nummern, die in dieser Import-Transaktion bereits vergeben wurden
+    (used_numbers), damit Massenimporte kollisionsfrei bleiben."""
+    prefix = f"BE-{order_date.strftime('%Y%m%d')}"
+    last = db.execute(
+        select(Order)
+        .where(Order.order_number.like(f"{prefix}-%"))
+        .order_by(Order.order_number.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    next_num = (int(last.order_number.split("-")[-1]) + 1) if last else 1
+    while f"{prefix}-{next_num:04d}" in used_numbers:
+        next_num += 1
+    number = f"{prefix}-{next_num:04d}"
+    used_numbers.add(number)
+    return number
+
+
+def _import_order_history(db, rows: list[dict]) -> tuple[int, int]:
+    """Importiert historische Bestellungen für Forecast-Training.
+
+    Gruppiert Zeilen nach `bestell_nr_extern` → eine Bestellung pro Gruppe.
+    Idempotent über customer_reference (re-runs überspringen vorhandene)."""
+    if not rows:
+        return 0, 0
+
+    # 1) Gruppieren
+    groups: dict[str, list[dict]] = defaultdict(list)
+    for r in rows:
+        groups[r["bestell_nr_extern"]].append(r)
+
+    # 2) Customer-Cache (case-insensitive Name-Lookup)
+    customers_by_name: dict[str, Customer] = {}
+    products_by_sku: dict[str, Product] = {}
+
+    def _get_customer(name: str) -> Optional[Customer]:
+        key = name.strip().lower()
+        if key in customers_by_name:
+            return customers_by_name[key]
+        c = db.execute(
+            select(Customer).where(func.lower(Customer.name) == key)
+        ).scalar_one_or_none()
+        if c:
+            customers_by_name[key] = c
+        return c
+
+    def _get_product(sku: str) -> Optional[Product]:
+        if sku in products_by_sku:
+            return products_by_sku[sku]
+        p = db.execute(select(Product).where(Product.sku == sku)).scalar_one_or_none()
+        if p:
+            products_by_sku[sku] = p
+        return p
+
+    created = skipped = 0
+    used_numbers: set[str] = set()
+    for ext_nr, group_rows in groups.items():
+        # Idempotenz: gleicher customer_reference schon importiert → skip
+        existing = db.execute(
+            select(Order).where(Order.customer_reference == ext_nr).limit(1)
+        ).scalar_one_or_none()
+        if existing:
+            skipped += 1
+            continue
+
+        head = group_rows[0]
+        customer = _get_customer(head["kunde"])
+        if not customer:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Bestellung '{ext_nr}': Kunde '{head['kunde']}' nicht gefunden — bitte zuerst Stammdaten importieren",
+            )
+
+        status_str = head.get("status") or "GELIEFERT"
+        try:
+            order_status = OrderStatus(status_str)
+        except ValueError:
+            order_status = OrderStatus.GELIEFERT
+
+        order_number = _generate_historic_order_number(db, head["bestelldatum"], used_numbers)
+
+        order = Order(
+            order_number=order_number,
+            customer_id=customer.id,
+            customer_reference=ext_nr,
+            order_date=datetime.combine(head["bestelldatum"], datetime.min.time()),
+            requested_delivery_date=head["lieferdatum"],
+            actual_delivery_date=head["lieferdatum"] if order_status == OrderStatus.GELIEFERT else None,
+            status=order_status,
+            currency="EUR",
+            total_net=Decimal("0"),
+            total_vat=Decimal("0"),
+            total_gross=Decimal("0"),
+            discount_percent=Decimal("0"),
+            discount_amount=Decimal("0"),
+        )
+        db.add(order)
+        db.flush()  # order.id verfügbar machen
+
+        for position, line_row in enumerate(group_rows, start=1):
+            product = _get_product(line_row["produkt_sku"])
+            if not product:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Bestellung '{ext_nr}': SKU '{line_row['produkt_sku']}' nicht gefunden",
+                )
+            line = OrderLine(
+                order_id=order.id,
+                position=position,
+                product_id=product.id,
+                product_sku=product.sku,
+                product_name=product.name,
+                quantity=line_row["menge"],
+                unit=line_row.get("einheit") or "g",
+                unit_price=line_row["einzelpreis"],
+                discount_percent=Decimal("0"),
+                tax_rate=product.tax_rate or TaxRate.REDUZIERT,
+            )
+            line.calculate_line_totals()
+            db.add(line)
+            order.lines.append(line)
+
+        order.calculate_totals()
+        created += 1
+
+    db.commit()
+    return created, skipped
+
+
 IMPORTERS = {
     "customers": _import_customers,
     "suppliers": _import_suppliers,
     "seeds": _import_seeds,
     "products": _import_products,
     "locations": _import_locations,
+    "order_history": _import_order_history,
 }
 
 
