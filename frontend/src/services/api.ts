@@ -789,6 +789,76 @@ export const usersApi = {
   },
 }
 
+// ==================== ATTACHMENTS (Zertifikate, Datenblätter) ====================
+
+export type AttachmentEntityType = 'supplier' | 'product' | 'harvest'
+
+export interface Attachment {
+  id: string
+  entity_type: AttachmentEntityType
+  entity_id: string
+  filename: string
+  content_type: string | null
+  size_bytes: number
+  certificate_type: string | null
+  bio_kontrollstelle: string | null
+  valid_until: string | null
+  notes: string | null
+  uploaded_at: string
+  uploaded_by: string | null
+}
+
+export const attachmentsApi = {
+  list: (entityType: AttachmentEntityType, entityId: string) =>
+    api.get<Attachment[]>(`/attachments/${entityType}/${entityId}`).then(r => r.data),
+
+  upload: async (
+    entityType: AttachmentEntityType,
+    entityId: string,
+    file: File,
+    meta: {
+      certificate_type?: string;
+      bio_kontrollstelle?: string;
+      valid_until?: string;
+      notes?: string;
+    } = {},
+  ) => {
+    const form = new FormData()
+    form.append('file', file)
+    if (meta.certificate_type) form.append('certificate_type', meta.certificate_type)
+    if (meta.bio_kontrollstelle) form.append('bio_kontrollstelle', meta.bio_kontrollstelle)
+    if (meta.valid_until) form.append('valid_until', meta.valid_until)
+    if (meta.notes) form.append('notes', meta.notes)
+    const res = await api.post<Attachment>(
+      `/attachments/${entityType}/${entityId}`,
+      form,
+      { headers: { 'Content-Type': 'multipart/form-data' } },
+    )
+    return res.data
+  },
+
+  update: (id: string, data: Partial<Pick<Attachment, 'certificate_type' | 'bio_kontrollstelle' | 'valid_until' | 'notes'>>) =>
+    api.patch<Attachment>(`/attachments/${id}`, data).then(r => r.data),
+
+  delete: (id: string) =>
+    api.delete(`/attachments/${id}`).then(r => r.data),
+
+  download: async (att: Attachment) => {
+    const res = await api.get(`/attachments/${att.id}/download`, { responseType: 'blob' })
+    const blob = new Blob([res.data], { type: att.content_type || 'application/octet-stream' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = att.filename
+    a.target = '_blank'
+    a.rel = 'noopener'
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    setTimeout(() => URL.revokeObjectURL(url), 5000)
+  },
+}
+
 // ==================== BELEGKETTE (AB / Lieferschein / Packliste) ====================
 
 export interface OrderConfirmation {

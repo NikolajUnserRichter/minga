@@ -1,10 +1,11 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Trash, Edit2 } from 'lucide-react';
+import { Plus, Trash, Edit2, Paperclip } from 'lucide-react';
 import { suppliersApi } from '../services/api';
 import { Supplier } from '../types';
 import { PageHeader } from '../components/common/Layout';
 import { ExcelImport } from '../components/common/ExcelImport';
+import { AttachmentsModal } from '../components/common/AttachmentsModal';
 import {
   Button,
   Input,
@@ -24,6 +25,7 @@ export default function Suppliers() {
   const [editing, setEditing] = useState<Supplier | null>(null);
   const [creating, setCreating] = useState(false);
   const [deleting, setDeleting] = useState<Supplier | null>(null);
+  const [attachmentsFor, setAttachmentsFor] = useState<Supplier | null>(null);
 
   const { data, isLoading } = useQuery({
     queryKey: ['suppliers', 'all'],
@@ -93,6 +95,7 @@ export default function Suppliers() {
                     <Badge variant={s.is_active ? 'success' : 'gray'}>{s.is_active ? 'Aktiv' : 'Inaktiv'}</Badge>
                   </td>
                   <td className="px-6 py-4 text-right">
+                    <Button variant="ghost" size="sm" icon={<Paperclip className="w-4 h-4" />} onClick={() => setAttachmentsFor(s)} title="Zertifikate / Anhänge" />
                     <Button variant="ghost" size="sm" icon={<Edit2 className="w-4 h-4" />} onClick={() => setEditing(s)} />
                     <Button variant="ghost" size="sm" icon={<Trash className="w-4 h-4" />} onClick={() => setDeleting(s)} />
                   </td>
@@ -135,6 +138,15 @@ export default function Suppliers() {
         confirmLabel="Deaktivieren"
         variant="danger"
         loading={deleteMutation.isPending}
+      />
+
+      <AttachmentsModal
+        open={!!attachmentsFor}
+        onClose={() => setAttachmentsFor(null)}
+        entityType="supplier"
+        entityId={attachmentsFor?.id || null}
+        entityName={attachmentsFor?.name || ''}
+        defaultCertificateType="BIO"
       />
     </div>
   );

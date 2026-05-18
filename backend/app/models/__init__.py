@@ -78,6 +78,13 @@ from app.models.documents import (
 )
 from app.models.enums import ConfirmationStatus, DeliveryNoteStatus
 
+# Anhänge (Zertifikate, Datenblätter)
+from app.models.attachment import (
+    Attachment,
+    ATTACHMENT_ENTITY_TYPES,
+    CERTIFICATE_TYPES,
+)
+
 __all__ = [
     # Seed & Production
     "Seed",
@@ -143,4 +150,8 @@ __all__ = [
     "PackingListItem",
     "ConfirmationStatus",
     "DeliveryNoteStatus",
+    # Attachments
+    "Attachment",
+    "ATTACHMENT_ENTITY_TYPES",
+    "CERTIFICATE_TYPES",
 ]

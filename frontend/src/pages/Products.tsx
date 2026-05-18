@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Search, Package, Trash } from 'lucide-react';
+import { Plus, Search, Package, Trash, Paperclip } from 'lucide-react';
 import { productsApi, growPlansApi, productGroupsApi, unitsApi } from '../services/api';
 import { Product, ProductCategory, GrowPlan, ProductGroup, ProductVariant, UnitOfMeasure } from '../types';
 import { ExcelImport } from '../components/common/ExcelImport';
+import { AttachmentsModal } from '../components/common/AttachmentsModal';
 import { PageHeader, FilterBar } from '../components/common/Layout';
 import {
   Button,
@@ -41,6 +42,7 @@ export default function Products() {
   const [filterCategory, setFilterCategory] = useState<string>('all');
   const [filterActive, setFilterActive] = useState<string>('true');
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+  const [attachmentsFor, setAttachmentsFor] = useState<Product | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [deletingProduct, setDeletingProduct] = useState<Product | null>(null);
   const [activeTab, setActiveTab] = useState('products');
@@ -221,6 +223,13 @@ export default function Products() {
                         <Button
                           variant="ghost"
                           size="sm"
+                          icon={<Paperclip className="w-4 h-4" />}
+                          onClick={() => setAttachmentsFor(product)}
+                          title="Zertifikate / Datenblätter"
+                        />
+                        <Button
+                          variant="ghost"
+                          size="sm"
                           onClick={() => setEditingProduct(product)}
                         >
                           Bearbeiten
@@ -288,6 +297,15 @@ export default function Products() {
         confirmLabel="Deaktivieren"
         variant="danger"
         loading={deleteMutation.isPending}
+      />
+
+      <AttachmentsModal
+        open={!!attachmentsFor}
+        onClose={() => setAttachmentsFor(null)}
+        entityType="product"
+        entityId={attachmentsFor?.id || null}
+        entityName={attachmentsFor?.name || ''}
+        defaultCertificateType="DATENBLATT"
       />
     </div>
   );

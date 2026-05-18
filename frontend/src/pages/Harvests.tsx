@@ -10,8 +10,10 @@ import {
     useToast,
     InlineLoader,
 } from '../components/ui';
-import { Plus, Scissors, Star, TrendingDown, Scale, Calendar } from 'lucide-react';
+import { Plus, Scissors, Star, TrendingDown, Scale, Calendar, Paperclip } from 'lucide-react';
 import type { Harvest, GrowBatch } from '../types';
+import { AttachmentsModal } from '../components/common/AttachmentsModal';
+import { Button } from '../components/ui';
 
 export default function Harvests() {
     const toast = useToast();
@@ -28,6 +30,7 @@ export default function Harvests() {
     // Modal state
     const [isCreating, setIsCreating] = useState(false);
     const [selectedBatch, setSelectedBatch] = useState<GrowBatch | null>(null);
+    const [attachmentsFor, setAttachmentsFor] = useState<Harvest | null>(null);
 
     // Data queries
     const { data: harvestsData, isLoading } = useQuery({
@@ -291,6 +294,15 @@ export default function Harvests() {
                                             minute: '2-digit',
                                         })}
                                     </td>
+                                    <td className="text-right">
+                                        <Button
+                                            variant="ghost"
+                                            size="sm"
+                                            icon={<Paperclip className="w-4 h-4" />}
+                                            onClick={() => setAttachmentsFor(harvest)}
+                                            title="Test-Reports / Analyse-Zertifikate"
+                                        />
+                                    </td>
                                 </tr>
                             ))}
                         </tbody>
@@ -378,6 +390,15 @@ export default function Harvests() {
                     />
                 )}
             </Modal>
+
+            <AttachmentsModal
+                open={!!attachmentsFor}
+                onClose={() => setAttachmentsFor(null)}
+                entityType="harvest"
+                entityId={attachmentsFor?.id || null}
+                entityName={attachmentsFor ? `Charge ${attachmentsFor.id.slice(0, 8)}` : ''}
+                defaultCertificateType="ANALYSE"
+            />
         </div>
     );
 }
