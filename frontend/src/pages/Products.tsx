@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, Search, Package, Trash } from 'lucide-react';
 import { productsApi, growPlansApi, productGroupsApi, unitsApi } from '../services/api';
 import { Product, ProductCategory, GrowPlan, ProductGroup, ProductVariant, UnitOfMeasure } from '../types';
+import { ExcelImport } from '../components/common/ExcelImport';
 import { PageHeader, FilterBar } from '../components/common/Layout';
 import {
   Button,
@@ -115,9 +116,12 @@ export default function Products() {
         title="Produktverwaltung"
         subtitle={`${products.length} Produkte`}
         actions={
-          <Button icon={<Plus className="w-4 h-4" />} onClick={() => setIsCreating(true)}>
-            Neues Produkt
-          </Button>
+          <div className="flex gap-2 items-center">
+            <ExcelImport entity="products" onImported={() => queryClient.invalidateQueries({ queryKey: ['products'] })} />
+            <Button icon={<Plus className="w-4 h-4" />} onClick={() => setIsCreating(true)}>
+              Neues Produkt
+            </Button>
+          </div>
         }
       />
 

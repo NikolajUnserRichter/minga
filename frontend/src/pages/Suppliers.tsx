@@ -4,6 +4,7 @@ import { Plus, Trash, Edit2 } from 'lucide-react';
 import { suppliersApi } from '../services/api';
 import { Supplier } from '../types';
 import { PageHeader } from '../components/common/Layout';
+import { ExcelImport } from '../components/common/ExcelImport';
 import {
   Button,
   Input,
@@ -49,9 +50,12 @@ export default function Suppliers() {
         title="Lieferanten"
         subtitle={`${suppliers.length} aktive Lieferanten`}
         actions={
-          <Button icon={<Plus className="w-4 h-4" />} onClick={() => setCreating(true)}>
-            Neuer Lieferant
-          </Button>
+          <div className="flex gap-2 items-center">
+            <ExcelImport entity="suppliers" onImported={() => queryClient.invalidateQueries({ queryKey: ['suppliers'] })} />
+            <Button icon={<Plus className="w-4 h-4" />} onClick={() => setCreating(true)}>
+              Neuer Lieferant
+            </Button>
+          </div>
         }
       />
 

@@ -4,6 +4,7 @@ import { Plus, Edit2 } from 'lucide-react';
 import { inventoryApi } from '../services/api';
 import { InventoryLocation, LocationType } from '../types';
 import { PageHeader, FilterBar } from '../components/common/Layout';
+import { ExcelImport } from '../components/common/ExcelImport';
 import {
   Button,
   Input,
@@ -61,9 +62,12 @@ export default function Locations() {
         title="Lagerorte"
         subtitle={`${locations.length} aktive Lagerorte`}
         actions={
-          <Button icon={<Plus className="w-4 h-4" />} onClick={() => setCreating(true)}>
-            Neuer Lagerort
-          </Button>
+          <div className="flex gap-2 items-center">
+            <ExcelImport entity="locations" onImported={() => queryClient.invalidateQueries({ queryKey: ['locations'] })} />
+            <Button icon={<Plus className="w-4 h-4" />} onClick={() => setCreating(true)}>
+              Neuer Lagerort
+            </Button>
+          </div>
         }
       />
 

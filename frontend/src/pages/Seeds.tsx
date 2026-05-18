@@ -5,6 +5,7 @@ import { seedsApi, suppliersApi } from '../services/api';
 import { Seed } from '../types';
 import { PageHeader, FilterBar } from '../components/common/Layout';
 import { SeedCard } from '../components/domain/SeedCard';
+import { ExcelImport } from '../components/common/ExcelImport';
 import {
   Button,
   Input,
@@ -72,9 +73,12 @@ export default function Seeds() {
         title="Saatgutverwaltung"
         subtitle={`${seeds.length} Sorten`}
         actions={
-          <Button icon={<Plus className="w-4 h-4" />} onClick={() => setIsCreating(true)}>
-            Neue Sorte
-          </Button>
+          <div className="flex gap-2 items-center">
+            <ExcelImport entity="seeds" onImported={() => queryClient.invalidateQueries({ queryKey: ['seeds'] })} />
+            <Button icon={<Plus className="w-4 h-4" />} onClick={() => setIsCreating(true)}>
+              Neue Sorte
+            </Button>
+          </div>
         }
       />
 

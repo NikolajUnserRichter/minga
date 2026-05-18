@@ -5,6 +5,7 @@ import { Plus, Search, Trash } from 'lucide-react';
 import { salesApi } from '../services/api';
 import { Customer, CustomerType, Contact, CustomerAddress, AddressType } from '../types';
 import { getErrorMessage } from '../services/errors';
+import { ExcelImport } from '../components/common/ExcelImport';
 import { PageHeader, FilterBar } from '../components/common/Layout';
 import { CustomerCard } from '../components/domain/CustomerCard';
 import { CreateOrderModal } from '../components/domain/CreateOrderModal';
@@ -89,9 +90,12 @@ export default function Customers() {
         title="Kundenverwaltung"
         subtitle={`${customers.length} Kunden`}
         actions={
-          <Button icon={<Plus className="w-4 h-4" />} onClick={() => setIsCreating(true)}>
-            Neuer Kunde
-          </Button>
+          <div className="flex gap-2 items-center">
+            <ExcelImport entity="customers" onImported={() => queryClient.invalidateQueries({ queryKey: ['customers'] })} />
+            <Button icon={<Plus className="w-4 h-4" />} onClick={() => setIsCreating(true)}>
+              Neuer Kunde
+            </Button>
+          </div>
         }
       />
 

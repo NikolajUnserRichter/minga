@@ -47,3 +47,4 @@ qrcode==7.4.2
 pandas==2.2.0
 scikit-learn==1.4.0
 numpy==1.26.3
+openpyxl==3.1.5
