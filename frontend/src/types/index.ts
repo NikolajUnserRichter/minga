@@ -93,6 +93,13 @@ export interface CustomerAddress {
   updated_at: string
 }
 
+export type SupplierProductGroup =
+  | 'SAATGUT'
+  | 'SUBSTRAT'
+  | 'VERPACKUNG'
+  | 'ARBEITSMATERIAL'
+  | 'SONSTIGES'
+
 export interface Supplier {
   id: string
   name: string
@@ -101,6 +108,11 @@ export interface Supplier {
   adresse: string | null
   ust_id: string | null
   notizen: string | null
+  product_group: SupplierProductGroup | null
+  is_organic: boolean
+  bio_certificate_url: string | null
+  bio_certificate_valid_until: string | null
+  bio_kontrollstelle: string | null
   is_active: boolean
   created_at: string
   updated_at: string
@@ -496,7 +508,7 @@ export interface Payment {
 
 // Inventory
 export type LocationType = 'LAGER' | 'KUEHLRAUM' | 'REGAL' | 'KEIMRAUM' | 'VERSAND'
-export type ArticleType = 'SAATGUT' | 'FERTIGWARE' | 'VERPACKUNG'
+export type ArticleType = 'SAATGUT' | 'FERTIGWARE' | 'VERPACKUNG' | 'SUBSTRAT' | 'PFANDKISTE'
 export type InventoryType = ArticleType
 export type MovementType = 'EINGANG' | 'AUSGANG' | 'PRODUKTION' | 'ERNTE' | 'VERLUST' | 'KORREKTUR'
 

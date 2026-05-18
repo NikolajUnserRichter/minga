@@ -20,6 +20,7 @@ class InventoryLocationBase(BaseModel):
     code: str = Field(..., min_length=1, max_length=20, description="Lagerort-Code")
     name: str = Field(..., min_length=1, max_length=100, description="Lagerort-Name")
     location_type: LocationType = Field(..., description="Lagerort-Typ")
+    description: Optional[str] = Field(None, description="Beschreibung / Notiz")
 
 
 class InventoryLocationCreate(InventoryLocationBase):
@@ -36,6 +37,7 @@ class InventoryLocationCreate(InventoryLocationBase):
 class InventoryLocationUpdate(BaseModel):
     """Schema zum Aktualisieren eines Lagerorts"""
     name: Optional[str] = None
+    description: Optional[str] = None
     parent_id: Optional[UUID] = None
     capacity_trays: Optional[int] = None
     capacity_kg: Optional[Decimal] = None

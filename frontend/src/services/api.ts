@@ -508,12 +508,13 @@ export const inventoryApi = {
   }) =>
     api.post<SeedInventory>('/inventory/seeds/receive', null, { params: data }).then(r => r.data),
 
-  // Wareneingang Verpackung: erhöht Bestand wenn SKU bekannt, sonst neu anlegen
+  // Wareneingang Verpackung / Substrat / Pfandkiste: erhöht Bestand wenn SKU bekannt, sonst neu anlegen
   receivePackaging: (data: {
     sku: string
     name: string
     quantity: number
     unit?: string
+    article_type?: 'VERPACKUNG' | 'SUBSTRAT' | 'PFANDKISTE'
     location_id?: string
     supplier_name?: string
     supplier_sku?: string

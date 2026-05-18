@@ -30,6 +30,16 @@ class Supplier(Base):
     adresse: Mapped[Optional[str]] = mapped_column(Text)
     ust_id: Mapped[Optional[str]] = mapped_column(String(20))
     notizen: Mapped[Optional[str]] = mapped_column(Text)
+
+    # Produktgruppe — SAATGUT | SUBSTRAT | VERPACKUNG | ARBEITSMATERIAL | SONSTIGES
+    product_group: Mapped[Optional[str]] = mapped_column(String(30))
+
+    # BIO-Daten (relevant nur für Saatgut-/Substrat-Lieferanten)
+    is_organic: Mapped[bool] = mapped_column(Boolean, default=False)
+    bio_certificate_url: Mapped[Optional[str]] = mapped_column(String(500))
+    bio_certificate_valid_until: Mapped[Optional[date]] = mapped_column(Date)
+    bio_kontrollstelle: Mapped[Optional[str]] = mapped_column(String(100))
+
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))

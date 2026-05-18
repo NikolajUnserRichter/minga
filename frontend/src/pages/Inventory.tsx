@@ -767,7 +767,7 @@ function ReceiveForm({
 }) {
   const toast = useToast();
   const [loading, setLoading] = useState(false);
-  const [articleType, setArticleType] = useState<'SAATGUT' | 'VERPACKUNG'>('SAATGUT');
+  const [articleType, setArticleType] = useState<'SAATGUT' | 'VERPACKUNG' | 'SUBSTRAT' | 'PFANDKISTE'>('SAATGUT');
 
   const { data: seedsData } = useQuery({
     queryKey: ['seeds'],
@@ -819,7 +819,7 @@ function ReceiveForm({
           kontrollstelle: formData.is_organic ? (formData.kontrollstelle || undefined) : undefined,
         });
         toast.success('Wareneingang erfasst (inkl. Saatgut-Charge)');
-      } else if (articleType === 'VERPACKUNG') {
+      } else if (['VERPACKUNG', 'SUBSTRAT', 'PFANDKISTE'].includes(articleType)) {
         if (!packagingData.sku || !packagingData.name || packagingData.quantity <= 0) {
           toast.error('SKU, Name und Menge sind Pflichtfelder');
           return;
@@ -829,6 +829,7 @@ function ReceiveForm({
           name: packagingData.name,
           quantity: packagingData.quantity,
           unit: packagingData.unit,
+          article_type: articleType as 'VERPACKUNG' | 'SUBSTRAT' | 'PFANDKISTE',
           location_id: packagingData.location_id || undefined,
           supplier_name: packagingData.supplier_name || undefined,
           supplier_sku: packagingData.supplier_sku || undefined,
@@ -836,7 +837,8 @@ function ReceiveForm({
           min_quantity: packagingData.min_quantity || undefined,
           reorder_quantity: packagingData.reorder_quantity || undefined,
         });
-        toast.success(`Wareneingang Verpackung: ${packagingData.quantity} ${packagingData.unit} erfasst`);
+        const labelMap: Record<string, string> = { VERPACKUNG: 'Verpackung', SUBSTRAT: 'Substrat', PFANDKISTE: 'Pfandkiste' };
+        toast.success(`Wareneingang ${labelMap[articleType]}: ${packagingData.quantity} ${packagingData.unit} erfasst`);
       }
       onSubmit();
     } catch (error: any) {
@@ -859,7 +861,7 @@ function ReceiveForm({
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
-      <div className="flex gap-2 mb-4">
+      <div className="flex flex-wrap gap-2 mb-4">
         <Button
           type="button"
           variant={articleType === 'SAATGUT' ? 'primary' : 'secondary'}
@@ -873,6 +875,20 @@ function ReceiveForm({
           onClick={() => setArticleType('VERPACKUNG')}
         >
           Verpackung
+        </Button>
+        <Button
+          type="button"
+          variant={articleType === 'SUBSTRAT' ? 'primary' : 'secondary'}
+          onClick={() => setArticleType('SUBSTRAT')}
+        >
+          Substrat
+        </Button>
+        <Button
+          type="button"
+          variant={articleType === 'PFANDKISTE' ? 'primary' : 'secondary'}
+          onClick={() => setArticleType('PFANDKISTE')}
+        >
+          Pfandkiste
         </Button>
       </div>
 
@@ -982,7 +998,7 @@ function ReceiveForm({
         </>
       )}
 
-      {articleType === 'VERPACKUNG' && (
+      {['VERPACKUNG', 'SUBSTRAT', 'PFANDKISTE'].includes(articleType) && (
         <>
           <div className="grid grid-cols-2 gap-4">
             <Input
@@ -990,7 +1006,7 @@ function ReceiveForm({
               required
               value={packagingData.sku}
               onChange={(e) => setPackagingData({ ...packagingData, sku: e.target.value })}
-              placeholder="z.B. VP-KISTE12-001"
+              placeholder={articleType === 'SUBSTRAT' ? 'z.B. SUB-HANF-50L' : articleType === 'PFANDKISTE' ? 'z.B. PK-MWK-12' : 'z.B. VP-KISTE12-001'}
               hint="Bekannte SKU → Bestand wird erhöht"
             />
             <Input
@@ -998,7 +1014,7 @@ function ReceiveForm({
               required
               value={packagingData.name}
               onChange={(e) => setPackagingData({ ...packagingData, name: e.target.value })}
-              placeholder="z.B. Mehrwegkiste 12 Schalen"
+              placeholder={articleType === 'SUBSTRAT' ? 'z.B. Hanfmatte 50L' : articleType === 'PFANDKISTE' ? 'z.B. Mehrwegkiste 12er' : 'z.B. Mehrwegkiste 12 Schalen'}
             />
           </div>
 

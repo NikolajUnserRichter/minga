@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { subscriptionsApi, salesApi, seedsApi } from '../services/api';
+import { subscriptionsApi, salesApi, seedsApi, productsApi } from '../services/api';
 import { PageHeader, FilterBar } from '../components/common/Layout';
 import {
     Modal,
@@ -39,6 +39,7 @@ export default function Abonnements() {
     const [formData, setFormData] = useState({
         kunde_id: '',
         seed_id: '',
+        product_id: '',
         menge: '',
         einheit: 'GRAMM',
         intervall: 'WOECHENTLICH' as SubscriptionInterval,
@@ -61,6 +62,12 @@ export default function Abonnements() {
         queryKey: ['customers', 'active'],
         queryFn: () => salesApi.listCustomers({ aktiv: true }),
     });
+
+    const { data: productsData } = useQuery({
+        queryKey: ['products', 'active'],
+        queryFn: () => productsApi.list({ is_active: true }),
+    });
+    const products = productsData || [];
 
     const { data: seedsData } = useQuery({
         queryKey: ['seeds', 'active'],
@@ -149,21 +156,23 @@ export default function Abonnements() {
         } else {
             createMutation.mutate({
                 kunde_id: formData.kunde_id,
-                seed_id: formData.seed_id,
+                product_id: formData.product_id || undefined,
+                seed_id: formData.seed_id || undefined,
                 menge: parseFloat(formData.menge),
                 einheit: formData.einheit,
                 intervall: formData.intervall,
                 liefertage: formData.liefertage.length > 0 ? formData.liefertage : undefined,
                 gueltig_von: formData.gueltig_von,
                 gueltig_bis: formData.gueltig_bis || undefined,
-            });
+            } as any);
         }
     };
 
     const openEditModal = (sub: Subscription) => {
         setFormData({
             kunde_id: sub.kunde_id,
-            seed_id: sub.seed_id,
+            seed_id: sub.seed_id || '',
+            product_id: (sub as any).product_id || '',
             menge: sub.menge.toString(),
             einheit: sub.einheit,
             intervall: sub.intervall,
@@ -434,18 +443,35 @@ export default function Abonnements() {
                                     Produkt *
                                 </label>
                                 <select
-                                    value={formData.seed_id}
-                                    onChange={(e) => setFormData({ ...formData, seed_id: e.target.value })}
-                                    required
+                                    value={formData.product_id}
+                                    onChange={(e) => setFormData({ ...formData, product_id: e.target.value, seed_id: '' })}
+                                    required={!formData.seed_id}
                                     className={selectClassName}
                                 >
                                     <option value="">Produkt auswählen...</option>
-                                    {seeds.map((seed: Seed) => (
-                                        <option key={seed.id} value={seed.id}>
-                                            {seed.name}
+                                    {products.map((p) => (
+                                        <option key={p.id} value={p.id}>
+                                            {p.name}
                                         </option>
                                     ))}
                                 </select>
+                                {products.length === 0 && seeds.length > 0 && (
+                                    <div className="mt-2">
+                                        <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">
+                                            (Keine Produkte angelegt — Saatgut wählen)
+                                        </label>
+                                        <select
+                                            value={formData.seed_id}
+                                            onChange={(e) => setFormData({ ...formData, seed_id: e.target.value, product_id: '' })}
+                                            className={selectClassName}
+                                        >
+                                            <option value="">Saatgut auswählen...</option>
+                                            {seeds.map((seed: Seed) => (
+                                                <option key={seed.id} value={seed.id}>{seed.name}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                )}
                             </div>
                         </>
                     )}

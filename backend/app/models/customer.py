@@ -304,8 +304,15 @@ class Subscription(Base):
     kunde_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("customers.id"), nullable=False
     )
-    seed_id: Mapped[uuid.UUID] = mapped_column(
-        Uuid, ForeignKey("seeds.id"), nullable=False
+    # Legacy: seed_id (für Migration). Neue Abos referenzieren Produkt + ggf. Variante.
+    seed_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid, ForeignKey("seeds.id"), nullable=True
+    )
+    product_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid, ForeignKey("products.id", ondelete="SET NULL")
+    )
+    product_variant_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid, ForeignKey("product_variants.id", ondelete="SET NULL")
     )
 
     # Bestellmenge

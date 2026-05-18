@@ -41,7 +41,8 @@ class InventoryItemType(str, Enum):
     SAATGUT = "SAATGUT"           # Saatgut
     VERPACKUNG = "VERPACKUNG"     # Verpackungsmaterial
     FERTIGWARE = "FERTIGWARE"     # Geerntete Microgreens
-    SUBSTRAT = "SUBSTRAT"         # Erde, Kokosfaser, etc.
+    SUBSTRAT = "SUBSTRAT"         # Erde, Hanfmatten, Schafwollsubstrat
+    PFANDKISTE = "PFANDKISTE"     # Pfandfähige Mehrwegkisten
     SONSTIGES = "SONSTIGES"       # Sonstige Materialien
 
 
@@ -76,6 +77,9 @@ class InventoryLocation(Base):
     temperature_max: Mapped[Optional[Decimal]] = mapped_column(Numeric(4, 1))
     humidity_min: Mapped[Optional[int]] = mapped_column(Integer)  # %
     humidity_max: Mapped[Optional[int]] = mapped_column(Integer)
+
+    # Beschreibung / Notiz
+    description: Mapped[Optional[str]] = mapped_column(Text)
 
     # Status
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -305,6 +309,9 @@ class PackagingInventory(Base):
 
     # Einheit
     unit: Mapped[str] = mapped_column(String(20), default="Stück")
+
+    # Artikel-Typ: VERPACKUNG | SUBSTRAT | PFANDKISTE (für Filter im Wareneingang)
+    article_type: Mapped[str] = mapped_column(String(20), default="VERPACKUNG", nullable=False)
 
     # Lieferant
     supplier_name: Mapped[Optional[str]] = mapped_column(String(200))

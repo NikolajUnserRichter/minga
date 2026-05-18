@@ -1,5 +1,5 @@
-"""Pydantic-Schemas für Saatgut-Lieferanten."""
-from datetime import datetime
+"""Pydantic-Schemas für Lieferanten (Saatgut, Substrat, Verpackung, …)."""
+from datetime import date, datetime
 from typing import Optional
 from uuid import UUID
 
@@ -13,6 +13,12 @@ class SupplierBase(BaseModel):
     adresse: Optional[str] = None
     ust_id: Optional[str] = Field(None, max_length=20)
     notizen: Optional[str] = None
+    # SAATGUT | SUBSTRAT | VERPACKUNG | ARBEITSMATERIAL | SONSTIGES
+    product_group: Optional[str] = Field(None, max_length=30, description="Produktgruppe")
+    is_organic: bool = Field(default=False, description="BIO-zertifiziert?")
+    bio_certificate_url: Optional[str] = Field(None, max_length=500, description="URL zum BIO-Zertifikat")
+    bio_certificate_valid_until: Optional[date] = Field(None, description="Zertifikat gültig bis")
+    bio_kontrollstelle: Optional[str] = Field(None, max_length=100, description="Kontrollstelle (z.B. DE-ÖKO-006)")
 
 
 class SupplierCreate(SupplierBase):
@@ -26,6 +32,11 @@ class SupplierUpdate(BaseModel):
     adresse: Optional[str] = None
     ust_id: Optional[str] = None
     notizen: Optional[str] = None
+    product_group: Optional[str] = Field(None, max_length=30)
+    is_organic: Optional[bool] = None
+    bio_certificate_url: Optional[str] = Field(None, max_length=500)
+    bio_certificate_valid_until: Optional[date] = None
+    bio_kontrollstelle: Optional[str] = Field(None, max_length=100)
     is_active: Optional[bool] = None
 
 

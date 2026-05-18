@@ -450,6 +450,7 @@ def receive_packaging(
     name: str,
     quantity: int,
     unit: str = "Stück",
+    article_type: str = "VERPACKUNG",
     location_id: Optional[UUID] = None,
     supplier_name: Optional[str] = None,
     supplier_sku: Optional[str] = None,
@@ -485,6 +486,7 @@ def receive_packaging(
             name=name,
             current_quantity=quantity,
             unit=unit,
+            article_type=article_type,
             location_id=location_id,
             supplier_name=supplier_name,
             supplier_sku=supplier_sku,
@@ -496,10 +498,16 @@ def receive_packaging(
         db.flush()
         before = 0
 
-    # Lagerbewegung
+    # Lagerbewegung mit passendem item_type
+    item_type_map = {
+        "SUBSTRAT": InventoryItemType.SUBSTRAT,
+        "PFANDKISTE": InventoryItemType.PFANDKISTE,
+    }
+    movement_item_type = item_type_map.get(article_type, InventoryItemType.VERPACKUNG)
+
     movement = InventoryMovement(
         movement_type=MovementType.EINGANG,
-        item_type=InventoryItemType.VERPACKUNG,
+        item_type=movement_item_type,
         packaging_id=inventory.id,
         quantity=Decimal(str(quantity)),
         unit=unit,

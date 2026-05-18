@@ -246,7 +246,9 @@ class SubscriptionBase(BaseModel):
 class SubscriptionCreate(SubscriptionBase):
     """Schema zum Erstellen eines Abonnements"""
     kunde_id: UUID = Field(..., description="Kunden-ID")
-    seed_id: UUID = Field(..., description="Produkt-ID")
+    seed_id: Optional[UUID] = Field(None, description="Saatgut-ID (Legacy)")
+    product_id: Optional[UUID] = Field(None, description="Produkt-ID")
+    product_variant_id: Optional[UUID] = Field(None, description="Verpackungs-Variante")
 
 
 class SubscriptionUpdate(BaseModel):
@@ -265,7 +267,9 @@ class SubscriptionResponse(SubscriptionBase):
 
     id: UUID
     kunde_id: UUID
-    seed_id: UUID
+    seed_id: Optional[UUID] = None
+    product_id: Optional[UUID] = None
+    product_variant_id: Optional[UUID] = None
     aktiv: bool
     created_at: datetime
     updated_at: datetime
@@ -276,6 +280,7 @@ class SubscriptionResponse(SubscriptionBase):
     # Expandierte Felder
     kunde_name: Optional[str] = None
     seed_name: Optional[str] = None
+    product_name: Optional[str] = None
 
 
 class SubscriptionListResponse(BaseModel):
