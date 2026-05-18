@@ -100,19 +100,23 @@ class OrderLineResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
 
-    # Legacy-Aliase für Rückwärtskompatibilität
+    # Legacy-Aliase für Rückwärtskompatibilität — @computed_field damit sie im JSON landen
+    @computed_field
     @property
     def menge(self) -> Decimal:
         return self.quantity
 
+    @computed_field
     @property
     def einheit(self) -> str:
         return self.unit
 
+    @computed_field
     @property
     def preis_pro_einheit(self) -> Decimal:
         return self.unit_price
 
+    @computed_field
     @property
     def positionswert(self) -> Decimal:
         return self.line_gross

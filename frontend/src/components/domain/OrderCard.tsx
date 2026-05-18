@@ -10,8 +10,11 @@ interface OrderCardProps {
 }
 
 export function OrderCard({ order, onMarkReady, onMarkDelivered, onClick }: OrderCardProps) {
-  const totalValue = order.positionen?.reduce(
-    (sum, item) => sum + (item.menge * (item.preis_pro_einheit || 0)),
+  // Prefer backend-computed total_gross; fall back to legacy gesamtwert / line-summation
+  const totalValue = Number(
+    (order as any).total_gross ??
+    order.gesamtwert ??
+    order.positionen?.reduce((sum, item) => sum + (item.menge * (item.preis_pro_einheit || 0)), 0) ??
     0
   ) || 0;
 
@@ -45,18 +48,24 @@ export function OrderCard({ order, onMarkReady, onMarkDelivered, onClick }: Orde
           <div className="mt-4 pt-4 border-t border-gray-100 dark:border-gray-700">
             <p className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Positionen:</p>
             <div className="space-y-1">
-              {order.positionen.slice(0, 3).map((item, idx) => (
-                <div key={idx} className="flex justify-between text-sm">
-                  <span className="text-gray-600 dark:text-gray-400">
-                    {item.seed?.name || 'Produkt'} {item.menge} {item.einheit}
-                  </span>
-                  {item.preis_pro_einheit && (
-                    <span className="text-gray-900 dark:text-white">
-                      {(item.menge * item.preis_pro_einheit).toFixed(2)}
+              {order.positionen.slice(0, 3).map((item, idx) => {
+                const name = (item as any).product_name || item.seed?.name || 'Produkt';
+                const qty = Number(item.menge ?? (item as any).quantity ?? 0);
+                const unit = item.einheit ?? (item as any).unit ?? '';
+                const price = Number(item.preis_pro_einheit ?? (item as any).unit_price ?? 0);
+                return (
+                  <div key={idx} className="flex justify-between text-sm">
+                    <span className="text-gray-600 dark:text-gray-400">
+                      {name} {qty} {unit}
                     </span>
-                  )}
-                </div>
-              ))}
+                    {price > 0 && (
+                      <span className="text-gray-900 dark:text-white">
+                        {(qty * price).toFixed(2)}
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
               {order.positionen.length > 3 && (
                 <p className="text-sm text-gray-500 dark:text-gray-400">
                   +{order.positionen.length - 3} weitere Positionen
