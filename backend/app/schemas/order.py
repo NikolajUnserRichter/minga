@@ -5,7 +5,7 @@ Vollständige ERP-konforme Implementierung.
 from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID
-from pydantic import BaseModel, Field, ConfigDict, field_validator
+from pydantic import BaseModel, Field, ConfigDict, field_validator, computed_field
 from typing import Optional
 
 from app.models.enums import OrderStatus, TaxRate
@@ -213,23 +213,34 @@ class OrderResponse(BaseModel):
     customer_name: Optional[str] = None
     line_count: Optional[int] = None
 
-    # Legacy-Aliase
+    # Legacy-Aliase als computed_field, damit sie im JSON serialisiert werden
+    # (Frontend nutzt diese Keys; alte/neue Namen werden parallel ausgeliefert)
+    @computed_field
     @property
     def kunde_id(self) -> UUID:
         return self.customer_id
 
+    @computed_field
     @property
     def liefer_datum(self) -> date:
         return self.requested_delivery_date
 
+    @computed_field
     @property
     def bestell_datum(self) -> datetime:
         return self.order_date
 
+    @computed_field
     @property
     def gesamtwert(self) -> Decimal:
         return self.total_gross
 
+    @computed_field
+    @property
+    def kunde_name(self) -> Optional[str]:
+        return self.customer_name
+
+    @computed_field
     @property
     def positionen(self) -> list[OrderLineResponse]:
         return self.lines

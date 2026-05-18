@@ -585,7 +585,7 @@ def _build_order_response(order: Order) -> OrderResponse:
         id=order.id,
         order_number=order.order_number,
         customer_id=order.customer_id,
-        kunde_name=order.kunde.name if order.kunde else None,
+        customer_name=order.customer.name if order.customer else None,
         customer_reference=order.customer_reference,
         billing_address=order.billing_address,
         delivery_address=order.delivery_address,
