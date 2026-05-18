@@ -1,11 +1,11 @@
-import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { capacityApi } from '../services/api';
+import { useState, useEffect } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { capacityApi, adminApi } from '../services/api';
 import { PageHeader } from '../components/common/Layout';
 import { CapacityIndicator, Input, Select, SelectOption, Button, useToast } from '../components/ui';
 import { SkeletonStatCard } from '../components/ui/Skeleton';
 import { CapacityModal } from '../components/domain/CapacityModal';
-import { Database, Server, Key, Bell, Pencil, Building2, Save, Globe, Hash } from 'lucide-react';
+import { Database, Server, Key, Bell, Pencil, Building2, Save, Globe, Hash, Mail, Send } from 'lucide-react';
 import { Capacity } from '../types';
 
 const forecastModelOptions: SelectOption[] = [
@@ -90,6 +90,9 @@ export default function Settings() {
       />
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* SMTP Settings */}
+        <SmtpSettingsCard />
+
         {/* Company Profile */}
         <div className="card lg:col-span-2">
           <div className="card-header">
@@ -300,6 +303,183 @@ export default function Settings() {
         onClose={() => setCapacityModalOpen(false)}
         capacity={editingCapacity}
       />
+    </div>
+  );
+}
+
+// ==================== SMTP-Settings (E-Mail-Versand konfigurieren) ====================
+
+export function SmtpSettingsCard() {
+  const toast = useToast();
+  const queryClient = useQueryClient();
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['admin-settings'],
+    queryFn: () => adminApi.listSettings(),
+  });
+
+  const [edit, setEdit] = useState<Record<string, string>>({});
+  const [testEmail, setTestEmail] = useState('');
+
+  useEffect(() => {
+    if (!data) return;
+    const next: Record<string, string> = {};
+    data.forEach((s) => {
+      next[s.key] = s.value || '';
+    });
+    setEdit(next);
+  }, [data]);
+
+  const saveMutation = useMutation({
+    mutationFn: (updates: Record<string, string | null>) => adminApi.updateSettings(updates),
+    onSuccess: () => {
+      toast.success('SMTP-Einstellungen gespeichert');
+      queryClient.invalidateQueries({ queryKey: ['admin-settings'] });
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.detail || 'Speichern fehlgeschlagen'),
+  });
+
+  const testMailMutation = useMutation({
+    mutationFn: (to: string) => adminApi.sendTestEmail(to),
+    onSuccess: (r) => toast.success(`Test-Mail an ${r.sent_to} verschickt`),
+    onError: (e: any) => toast.error(e?.response?.data?.detail || 'Test-Mail fehlgeschlagen'),
+  });
+
+  if (isLoading || !data) {
+    return <div className="card"><div className="card-body text-sm text-gray-500">Lädt SMTP-Settings…</div></div>;
+  }
+
+  const findSetting = (key: string) => data.find((s) => s.key === key);
+  const fieldFor = (key: string, type: 'text' | 'password' = 'text', placeholder = '') => {
+    const s = findSetting(key);
+    if (!s) return null;
+    return (
+      <Input
+        label={s.label}
+        type={type}
+        placeholder={placeholder}
+        value={edit[key] ?? ''}
+        onChange={(e) => setEdit((p) => ({ ...p, [key]: e.target.value }))}
+      />
+    );
+  };
+
+  const sourceBadge = (key: string) => {
+    const s = findSetting(key);
+    if (!s) return null;
+    if (s.source === 'db') return <span className="text-xs text-emerald-600 dark:text-emerald-400">aus DB</span>;
+    if (s.source === 'env') return <span className="text-xs text-amber-600 dark:text-amber-400">aus env-Var</span>;
+    return <span className="text-xs text-red-600 dark:text-red-400">nicht gesetzt</span>;
+  };
+
+  return (
+    <div className="card lg:col-span-2">
+      <div className="card-header">
+        <h3 className="card-title flex items-center gap-2">
+          <Mail className="w-5 h-5 text-minga-600 dark:text-minga-400" />
+          E-Mail-Versand (SMTP)
+        </h3>
+        <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+          Wird für „AB versenden" und „Rechnung per Mail" verwendet. DB-Werte
+          überschreiben Server-env-Vars.
+        </p>
+      </div>
+      <div className="card-body space-y-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            {fieldFor('SMTP_HOST', 'text', 'smtp.ionos.de')}
+            <div className="mt-1">{sourceBadge('SMTP_HOST')}</div>
+          </div>
+          <div>
+            {fieldFor('SMTP_PORT', 'text', '587 (TLS) oder 465 (SSL)')}
+            <div className="mt-1">{sourceBadge('SMTP_PORT')}</div>
+          </div>
+          <div>
+            {fieldFor('SMTP_USER', 'text', 'hello@minga-greens.de')}
+            <div className="mt-1">{sourceBadge('SMTP_USER')}</div>
+          </div>
+          <div>
+            {fieldFor('SMTP_PASSWORD', 'password', findSetting('SMTP_PASSWORD')?.has_value ? '*** (zum Ändern überschreiben)' : '')}
+            <div className="mt-1">{sourceBadge('SMTP_PASSWORD')}</div>
+          </div>
+          <div>
+            <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
+              <input
+                type="checkbox"
+                checked={['true', '1', 'yes', 'ja'].includes((edit['SMTP_USE_TLS'] || '').toLowerCase())}
+                onChange={(e) => setEdit((p) => ({ ...p, SMTP_USE_TLS: e.target.checked ? 'true' : 'false' }))}
+                className="rounded"
+              />
+              STARTTLS verwenden (Port 587)
+            </label>
+            {sourceBadge('SMTP_USE_TLS')}
+          </div>
+          <div>
+            <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
+              <input
+                type="checkbox"
+                checked={['true', '1', 'yes', 'ja'].includes((edit['SMTP_USE_SSL'] || '').toLowerCase())}
+                onChange={(e) => setEdit((p) => ({ ...p, SMTP_USE_SSL: e.target.checked ? 'true' : 'false' }))}
+                className="rounded"
+              />
+              Direct SSL verwenden (Port 465)
+            </label>
+            {sourceBadge('SMTP_USE_SSL')}
+          </div>
+          <div>
+            {fieldFor('EMAILS_FROM_EMAIL', 'text', 'hello@minga-greens.de')}
+            <div className="mt-1">{sourceBadge('EMAILS_FROM_EMAIL')}</div>
+          </div>
+          <div>
+            {fieldFor('EMAILS_FROM_NAME', 'text', 'Minga Greens')}
+            <div className="mt-1">{sourceBadge('EMAILS_FROM_NAME')}</div>
+          </div>
+        </div>
+
+        <div className="flex justify-end pt-2 border-t border-gray-100 dark:border-gray-700">
+          <Button
+            icon={<Save className="w-4 h-4" />}
+            loading={saveMutation.isPending}
+            onClick={() => {
+              const updates: Record<string, string | null> = {};
+              data.forEach((s) => {
+                const current = edit[s.key] ?? '';
+                // Bei Secrets: maskiertes "***" beibehalten = no-op (Backend ignoriert)
+                if (s.is_secret && current === '***') return;
+                updates[s.key] = current === '' ? null : current;
+              });
+              saveMutation.mutate(updates);
+            }}
+          >
+            Speichern
+          </Button>
+        </div>
+
+        <div className="border-t border-gray-100 dark:border-gray-700 pt-4">
+          <p className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+            Test-Mail
+          </p>
+          <div className="flex gap-2 items-end">
+            <div className="flex-1">
+              <Input
+                label="Empfänger"
+                type="email"
+                placeholder="dein-name@example.com"
+                value={testEmail}
+                onChange={(e) => setTestEmail(e.target.value)}
+              />
+            </div>
+            <Button
+              icon={<Send className="w-4 h-4" />}
+              loading={testMailMutation.isPending}
+              disabled={!testEmail}
+              onClick={() => testMailMutation.mutate(testEmail)}
+            >
+              Test-Mail senden
+            </Button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

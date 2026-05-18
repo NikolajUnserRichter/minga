@@ -198,6 +198,7 @@ def send_invoice_email(
     try:
         pdf = PDFService.generate_invoice_pdf(invoice)
         send_email(
+            db=db,
             to=to_email,
             subject=f"Rechnung {invoice.invoice_number} — Minga Greens",
             body=(

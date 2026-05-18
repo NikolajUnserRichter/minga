@@ -792,6 +792,30 @@ export const usersApi = {
   },
 }
 
+// ==================== ADMIN SETTINGS (SMTP etc.) ====================
+
+export interface AppSettingResponse {
+  key: string
+  label: string
+  is_secret: boolean
+  has_value: boolean
+  value: string | null
+  source: 'db' | 'env' | 'none'
+}
+
+export const adminApi = {
+  listSettings: () =>
+    api.get<AppSettingResponse[]>('/admin/settings').then(r => r.data),
+
+  updateSettings: (updates: Record<string, string | null>) =>
+    api.patch<{ changed: number }>('/admin/settings', updates).then(r => r.data),
+
+  sendTestEmail: (toEmail: string) =>
+    api.post<{ sent_to: string; ok: boolean }>('/admin/test-email', null, {
+      params: { to: toEmail },
+    }).then(r => r.data),
+}
+
 // ==================== ATTACHMENTS (Zertifikate, Datenblätter) ====================
 
 export type AttachmentEntityType = 'supplier' | 'product' | 'harvest'

@@ -132,6 +132,7 @@ def send_confirmation(conf_id: UUID, data: OrderConfirmationSend, db: DBSession)
             pdf = PDFService.generate_confirmation_pdf(conf)
             customer_name = conf.order.customer.name if conf.order and conf.order.customer else "Kunde"
             send_email(
+                db=db,
                 to=data.sent_to_email,
                 subject=f"Auftragsbestätigung {conf.confirmation_number}",
                 body=(

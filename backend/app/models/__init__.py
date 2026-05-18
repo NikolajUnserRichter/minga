@@ -85,6 +85,9 @@ from app.models.attachment import (
     CERTIFICATE_TYPES,
 )
 
+# App-Settings (Runtime-Konfiguration via Admin-Center)
+from app.models.app_setting import AppSetting
+
 __all__ = [
     # Seed & Production
     "Seed",
@@ -154,4 +157,6 @@ __all__ = [
     "Attachment",
     "ATTACHMENT_ENTITY_TYPES",
     "CERTIFICATE_TYPES",
+    # App-Settings
+    "AppSetting",
 ]
