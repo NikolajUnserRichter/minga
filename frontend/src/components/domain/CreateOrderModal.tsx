@@ -19,7 +19,18 @@ interface OrderLineRow {
     quantity: number;
     unit: string;
     unit_price: number;
+    variable_bundle_selections: Array<{ product_id: string; quantity: number }>;
 }
+
+const emptyLine = (): OrderLineRow => ({
+    product_id: '',
+    product_variant_id: '',
+    product_name: '',
+    quantity: 1,
+    unit: 'g',
+    unit_price: 0,
+    variable_bundle_selections: [],
+});
 
 export function CreateOrderModal({ open, onClose, preselectedCustomer }: CreateOrderModalProps) {
     const queryClient = useQueryClient();
@@ -27,7 +38,7 @@ export function CreateOrderModal({ open, onClose, preselectedCustomer }: CreateO
 
     const [customerId, setCustomerId] = useState('');
     const [deliveryDate, setDeliveryDate] = useState('');
-    const [lines, setLines] = useState<OrderLineRow[]>([{ product_id: '', product_variant_id: '', product_name: '', quantity: 1, unit: 'g', unit_price: 0 }]);
+    const [lines, setLines] = useState<OrderLineRow[]>([emptyLine()]);
     const [variantsByProduct, setVariantsByProduct] = useState<Record<string, Array<{ id: string; name_suffix: string | null; packaging_unit_code: string | null; price_override: number | null; items_per_pack: number }>>>({});
     const [notes, setNotes] = useState('');
     const [customerReference, setCustomerReference] = useState('');
@@ -55,15 +66,34 @@ export function CreateOrderModal({ open, onClose, preselectedCustomer }: CreateO
 
     // Determine available items (prefer products, fallback to seeds)
     const availableItems = productsData && productsData.length > 0
-        ? productsData.map(p => ({ id: p.id, name: p.name, price: p.base_price || 0, unit: 'g' }))
-        : (seedsData?.items || []).map(s => ({ id: s.id, name: s.name, price: 10, unit: 'g' })); // Default price for seeds
+        ? productsData.map(p => ({
+            id: p.id,
+            name: p.name,
+            price: p.base_price || 0,
+            unit: 'g',
+            is_variable_bundle: p.is_variable_bundle,
+            variable_bundle_min_slots: p.variable_bundle_min_slots,
+            variable_bundle_max_slots: p.variable_bundle_max_slots,
+        }))
+        : (seedsData?.items || []).map(s => ({
+            id: s.id,
+            name: s.name,
+            price: 10,
+            unit: 'g',
+            is_variable_bundle: false,
+            variable_bundle_min_slots: null as number | null,
+            variable_bundle_max_slots: null as number | null,
+        }));
+
+    // Picker-Auswahl: Nur Nicht-Bundle-Produkte (vermeidet rekursive Bundles)
+    const pickableSorten = (productsData || []).filter(p => !p.is_bundle && !p.is_variable_bundle && p.is_active);
 
     useEffect(() => {
         if (open) {
             // Reset form
             setCustomerId(preselectedCustomer?.id || '');
             setDeliveryDate(new Date().toISOString().split('T')[0]); // Today (same-day allowed)
-            setLines([{ product_id: '', product_variant_id: '', product_name: '', quantity: 1, unit: 'g', unit_price: 0 }]);
+            setLines([emptyLine()]);
             setNotes('');
             setCustomerReference('');
             setVariantsByProduct({});
@@ -102,15 +132,38 @@ export function CreateOrderModal({ open, onClose, preselectedCustomer }: CreateO
         if (lines.some(l => l.quantity <= 0)) return toast.error('Alle Mengen müssen größer als 0 sein');
         if (lines.some(l => l.unit_price < 0)) return toast.error('Preise dürfen nicht negativ sein');
 
-        const orderLines = lines.map(l => ({
-            product_id: l.product_id || undefined,
-            product_variant_id: l.product_variant_id || undefined,
-            product_name: l.product_name,
-            quantity: l.quantity,
-            unit: l.unit,
-            unit_price: l.unit_price,
-            tax_rate: 'REDUZIERT' as const, // Food products use reduced tax rate (7%)
-        }));
+        // Variable-Bundle: Sorten-Auswahl validieren
+        for (const l of lines) {
+            const item = availableItems.find(i => i.id === l.product_id);
+            if (!item?.is_variable_bundle) continue;
+            const sels = l.variable_bundle_selections;
+            if (sels.length === 0 || sels.some(s => !s.product_id || s.quantity <= 0)) {
+                return toast.error(`'${item.name}': Bitte Sorten auswählen`);
+            }
+            const total = sels.reduce((sum, s) => sum + Number(s.quantity || 0), 0);
+            const min = item.variable_bundle_min_slots ?? 1;
+            const max = item.variable_bundle_max_slots ?? 99;
+            if (total < min || total > max) {
+                return toast.error(`'${item.name}' braucht ${min}–${max} Sorten, gewählt: ${total}`);
+            }
+        }
+
+        const orderLines = lines.map(l => {
+            const item = availableItems.find(i => i.id === l.product_id);
+            const isVB = !!item?.is_variable_bundle;
+            return {
+                product_id: l.product_id || undefined,
+                product_variant_id: l.product_variant_id || undefined,
+                product_name: l.product_name,
+                quantity: l.quantity,
+                unit: l.unit,
+                unit_price: l.unit_price,
+                tax_rate: 'REDUZIERT' as const, // Food products use reduced tax rate (7%)
+                variable_bundle_selections: isVB && l.variable_bundle_selections.length > 0
+                    ? l.variable_bundle_selections.map(s => ({ product_id: s.product_id, quantity: Number(s.quantity) }))
+                    : undefined,
+            };
+        });
 
         createOrderMutation.mutate({
             customer_id: customerId,
@@ -158,7 +211,41 @@ export function CreateOrderModal({ open, onClose, preselectedCustomer }: CreateO
     };
 
     const addLine = () => {
-        setLines([...lines, { product_id: '', product_variant_id: '', product_name: '', quantity: 1, unit: 'g', unit_price: 0 }]);
+        setLines([...lines, emptyLine()]);
+    };
+
+    const updateBundleSelection = (
+        lineIndex: number,
+        selIndex: number,
+        field: 'product_id' | 'quantity',
+        value: string | number,
+    ) => {
+        const newLines = [...lines];
+        const sels = [...newLines[lineIndex].variable_bundle_selections];
+        sels[selIndex] = { ...sels[selIndex], [field]: value } as { product_id: string; quantity: number };
+        newLines[lineIndex] = { ...newLines[lineIndex], variable_bundle_selections: sels };
+        setLines(newLines);
+    };
+
+    const addBundleSelection = (lineIndex: number) => {
+        const newLines = [...lines];
+        newLines[lineIndex] = {
+            ...newLines[lineIndex],
+            variable_bundle_selections: [
+                ...newLines[lineIndex].variable_bundle_selections,
+                { product_id: '', quantity: 1 },
+            ],
+        };
+        setLines(newLines);
+    };
+
+    const removeBundleSelection = (lineIndex: number, selIndex: number) => {
+        const newLines = [...lines];
+        newLines[lineIndex] = {
+            ...newLines[lineIndex],
+            variable_bundle_selections: newLines[lineIndex].variable_bundle_selections.filter((_, i) => i !== selIndex),
+        };
+        setLines(newLines);
     };
 
     const calculateTotal = () => {
@@ -211,8 +298,14 @@ export function CreateOrderModal({ open, onClose, preselectedCustomer }: CreateO
                     {lines.map((line, index) => {
                         const variants = variantsByProduct[line.product_id] || [];
                         const hasVariants = variants.length > 0;
+                        const selectedItem = availableItems.find(i => i.id === line.product_id);
+                        const isVariableBundle = !!selectedItem?.is_variable_bundle;
+                        const vbMin = selectedItem?.variable_bundle_min_slots ?? 1;
+                        const vbMax = selectedItem?.variable_bundle_max_slots ?? 99;
+                        const vbTotal = line.variable_bundle_selections.reduce((s, x) => s + Number(x.quantity || 0), 0);
                         return (
-                        <div key={index} className="flex gap-2 items-end">
+                        <div key={index} className="space-y-2">
+                        <div className="flex gap-2 items-end">
                             <div className="flex-1">
                                 <Select
                                     value={line.product_id}
@@ -281,6 +374,65 @@ export function CreateOrderModal({ open, onClose, preselectedCustomer }: CreateO
                                 disabled={lines.length === 1}
                                 icon={<Trash className="w-4 h-4" />}
                             />
+                        </div>
+                        {isVariableBundle && (
+                            <div className="ml-2 pl-3 border-l-2 border-emerald-300 dark:border-emerald-700 space-y-2">
+                                <div className="flex items-center justify-between text-xs">
+                                    <span className="font-medium text-gray-700 dark:text-gray-300">
+                                        Sorten für „{selectedItem?.name}" auswählen
+                                    </span>
+                                    <span className={`tabular-nums ${vbTotal < vbMin || vbTotal > vbMax ? 'text-red-600 dark:text-red-400 font-semibold' : 'text-gray-500 dark:text-gray-400'}`}>
+                                        {vbTotal} / {vbMin === vbMax ? vbMin : `${vbMin}–${vbMax}`} Slots
+                                    </span>
+                                </div>
+                                {line.variable_bundle_selections.length === 0 && (
+                                    <div className="text-xs text-gray-500 dark:text-gray-400 italic">
+                                        Noch keine Sorte gewählt
+                                    </div>
+                                )}
+                                {line.variable_bundle_selections.map((sel, sIdx) => (
+                                    <div key={sIdx} className="flex gap-2 items-end">
+                                        <div className="flex-1">
+                                            <Select
+                                                value={sel.product_id}
+                                                onChange={(e) => updateBundleSelection(index, sIdx, 'product_id', e.target.value)}
+                                                options={[
+                                                    { value: '', label: 'Sorte wählen...' },
+                                                    ...pickableSorten.map(p => ({ value: p.id, label: p.name })),
+                                                ]}
+                                            />
+                                        </div>
+                                        <div className="w-20">
+                                            <Input
+                                                type="number"
+                                                value={sel.quantity}
+                                                onChange={(e) => updateBundleSelection(index, sIdx, 'quantity', parseInt(e.target.value) || 1)}
+                                                min={1}
+                                                step={1}
+                                                placeholder="Slots"
+                                            />
+                                        </div>
+                                        <Button
+                                            type="button"
+                                            variant="danger"
+                                            size="sm"
+                                            onClick={() => removeBundleSelection(index, sIdx)}
+                                            icon={<Trash className="w-3 h-3" />}
+                                        />
+                                    </div>
+                                ))}
+                                <Button
+                                    type="button"
+                                    variant="secondary"
+                                    size="sm"
+                                    onClick={() => addBundleSelection(index)}
+                                    disabled={vbTotal >= vbMax}
+                                    icon={<Plus className="w-3 h-3" />}
+                                >
+                                    Sorte hinzufügen
+                                </Button>
+                            </div>
+                        )}
                         </div>
                         );
                     })}

@@ -44,6 +44,9 @@ class OrderLineCreate(OrderLineBase):
     product_sku: Optional[str] = Field(None, description="Artikelnummer")
     product_description: Optional[str] = Field(None, description="Produktbeschreibung")
     requested_delivery_date: Optional[date] = Field(None, description="Abweichendes Lieferdatum")
+    # Variable Bundle (Gastrotray): gewählte Sorten je Position
+    # Format: [{"product_id": "uuid", "quantity": 1}, ...]
+    variable_bundle_selections: Optional[list[dict]] = Field(None, description="Variable Bundle: Sorten-Auswahl")
 
 
 class OrderLineUpdate(BaseModel):
@@ -72,6 +75,7 @@ class OrderLineResponse(BaseModel):
     product_sku: Optional[str]
     product_name: str
     product_description: Optional[str]
+    variable_bundle_selections: Optional[list[dict]] = None
 
     # Mengen & Preise
     quantity: Decimal

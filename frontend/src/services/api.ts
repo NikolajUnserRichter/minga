@@ -165,11 +165,13 @@ export const salesApi = {
     requested_delivery_date: string
     lines: Array<{
       product_id?: string
+      product_variant_id?: string
       product_name: string
       quantity: number
       unit: string
       unit_price: number
       tax_rate?: 'STANDARD' | 'REDUZIERT' | 'STEUERFREI'
+      variable_bundle_selections?: Array<{ product_id: string; quantity: number }>
     }>
     notes?: string
     customer_reference?: string

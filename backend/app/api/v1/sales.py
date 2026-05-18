@@ -561,6 +561,7 @@ def _build_order_response(order: Order) -> OrderResponse:
             product_description=line.beschreibung, # Mapping beschreibung -> product_description
             harvest_id=line.harvest_id,
             batch_number=line.batch_number,
+            variable_bundle_selections=line.variable_bundle_selections,
             created_at=line.created_at,
             updated_at=line.updated_at
         )
@@ -747,6 +748,34 @@ async def create_order(order_data: OrderCreate, db: DBSession, user: CurrentUser
             elif product and product.base_price is not None:
                 line_price = product.base_price
 
+        # Variable Bundle (Gastrotray): Sorten-Auswahl validieren
+        selections = line_data.variable_bundle_selections
+        if product and getattr(product, "is_variable_bundle", False):
+            if not selections:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"'{product.name}' ist ein variables Bundle — bitte Sorten auswählen",
+                )
+            total_slots = sum(int(s.get("quantity", 1) or 1) for s in selections)
+            min_slots = product.variable_bundle_min_slots or 1
+            max_slots = product.variable_bundle_max_slots or 99
+            if total_slots < min_slots or total_slots > max_slots:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"'{product.name}' braucht {min_slots}–{max_slots} Sorten, erhalten: {total_slots}",
+                )
+            # Validierung: alle product_ids müssen existieren
+            for s in selections:
+                child = db.get(Product, UUID(str(s["product_id"]))) if s.get("product_id") else None
+                if not child:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Sorte mit ID {s.get('product_id')} nicht gefunden",
+                    )
+        elif selections:
+            # variable_bundle_selections nur sinnvoll bei is_variable_bundle Produkten
+            selections = None
+
         line = OrderLine(
             order_id=order.id,
             position=idx,
@@ -758,7 +787,8 @@ async def create_order(order_data: OrderCreate, db: DBSession, user: CurrentUser
             unit_price=line_price,
             discount_percent=line_data.discount_percent,
             tax_rate=line_data.tax_rate or TaxRate.REDUZIERT,  # Lebensmittel: 7%
-            requested_delivery_date=line_data.requested_delivery_date
+            requested_delivery_date=line_data.requested_delivery_date,
+            variable_bundle_selections=selections,
         )
         _calculate_line_amounts(line)
         db.add(line)
