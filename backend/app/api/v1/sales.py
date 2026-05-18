@@ -31,6 +31,20 @@ from app.schemas.order import (
 from app.tasks.forecast_tasks import update_forecast_from_order
 from app.services.datev_service import DatevService
 
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+def _trigger_forecast_update(order_id: str, action: str) -> None:
+    """Fire-and-forget Forecast-Update. Wenn Redis nicht erreichbar ist
+    (z.B. Railway-Demo ohne Worker), nicht den Request abbrechen."""
+    try:
+        update_forecast_from_order.delay(order_id, action)
+    except Exception as exc:
+        logger.warning("Forecast-Update fire-and-forget übersprungen (%s): %s", action, exc)
+
+
 router = APIRouter()
 
 
@@ -810,7 +824,7 @@ async def create_order(order_data: OrderCreate, db: DBSession, user: CurrentUser
     ).unique().scalar_one()
 
     # Forecast-Neuberechnung triggern
-    update_forecast_from_order.delay(str(order.id), "CREATE")
+    _trigger_forecast_update(str(order.id), "CREATE")
 
     return _build_order_response(order)
 
@@ -871,7 +885,7 @@ async def update_order(
     db.commit()
 
     # Forecast-Neuberechnung triggern
-    update_forecast_from_order.delay(str(order.id), "UPDATE")
+    _trigger_forecast_update(str(order.id), "UPDATE")
 
     return await get_order(order_id, db)
 
@@ -927,7 +941,7 @@ async def confirm_order(
     db.commit()
 
     # Forecast-Neuberechnung triggern
-    update_forecast_from_order.delay(str(order.id), "CONFIRM")
+    _trigger_forecast_update(str(order.id), "CONFIRM")
 
     return await get_order(order_id, db)
 
@@ -988,7 +1002,7 @@ async def update_order_status(
 
     # Forecast bei Stornierung triggern
     if new_status == OrderStatus.STORNIERT:
-        update_forecast_from_order.delay(str(order.id), "CANCEL")
+        _trigger_forecast_update(str(order.id), "CANCEL")
 
     return await get_order(order_id, db)
 
