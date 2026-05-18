@@ -26,7 +26,7 @@ export function OrderCard({ order, onMarkReady, onMarkDelivered, onClick }: Orde
       <div className="card-body">
         <div className="flex items-start justify-between">
           <div>
-            <span className="text-sm font-mono text-gray-500 dark:text-gray-400">#{order.id.slice(0, 8)}</span>
+            <span className="text-sm font-mono text-gray-500 dark:text-gray-400">{order.order_number || `#${order.id.slice(0, 8)}`}</span>
             <h3 className="font-semibold text-gray-900 dark:text-white mt-1">{order.kunde?.name || 'Unbekannt'}</h3>
           </div>
           <OrderStatusBadge status={order.status} />
@@ -127,7 +127,7 @@ export function OrderRow({ order, onClick }: OrderRowProps) {
       <div className="flex items-center gap-4">
         <div>
           <div className="flex items-center gap-2">
-            <span className="font-mono text-sm text-gray-500 dark:text-gray-400">#{order.id.slice(0, 8)}</span>
+            <span className="font-mono text-sm text-gray-500 dark:text-gray-400">{order.order_number || `#${order.id.slice(0, 8)}`}</span>
             <span className="font-medium">{order.kunde?.name}</span>
           </div>
           <p className="text-sm text-gray-500 dark:text-gray-400">

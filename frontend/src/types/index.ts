@@ -136,6 +136,13 @@ export type CustomerType = 'GASTRO' | 'HANDEL' | 'GEWERBE' | 'PRIVAT'
 
 export interface Order {
   id: string
+  order_number?: string
+  customer_id?: string
+  customer_name?: string | null
+  customer_reference?: string | null
+  total_gross?: number | string
+  total_net?: number | string
+  total_vat?: number | string
   kunde_id: string
   liefer_datum: string
   status: OrderStatus
