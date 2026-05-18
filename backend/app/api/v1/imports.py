@@ -415,7 +415,7 @@ def _import_order_history(db, rows: list[dict]) -> tuple[int, int]:
                 position=position,
                 product_id=product.id,
                 product_sku=product.sku,
-                product_name=product.name,
+                beschreibung=product.name,  # Snapshot des Produktnamens
                 quantity=line_row["menge"],
                 unit=line_row.get("einheit") or "g",
                 unit_price=line_row["einzelpreis"],
