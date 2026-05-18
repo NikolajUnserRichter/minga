@@ -234,10 +234,14 @@ class Product(Base):
     packaging_type: Mapped[Optional[str]] = mapped_column(String(50))
     weight_per_unit: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 3))
 
-    # Bundle-Komponenten (für BUNDLE-Kategorie)
-    # Format: [{"product_id": "uuid", "quantity": 1}]
+    # Bundle-Komponenten (Legacy JSON, jetzt via BundleComponent-Tabelle)
     bundle_components: Mapped[Optional[dict]] = mapped_column(JSON)
     is_bundle: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    # Variable Bundle (Gastrotray): Kunde wählt 1..N Sorten je Bestellung
+    is_variable_bundle: Mapped[bool] = mapped_column(Boolean, default=False)
+    variable_bundle_min_slots: Mapped[Optional[int]] = mapped_column(Integer)
+    variable_bundle_max_slots: Mapped[Optional[int]] = mapped_column(Integer)
 
     # Status-Flags
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -276,8 +280,47 @@ class Product(Base):
         "ProductVariant", back_populates="parent_product", cascade="all, delete-orphan"
     )
 
+    # FIXED-Bundle Komponenten
+    components: Mapped[list["BundleComponent"]] = relationship(
+        "BundleComponent",
+        foreign_keys="BundleComponent.parent_product_id",
+        back_populates="parent_product",
+        cascade="all, delete-orphan",
+    )
+
     def __repr__(self) -> str:
         return f"<Product(sku='{self.sku}', name='{self.name}')>"
+
+
+class BundleComponent(Base):
+    """
+    Komponente eines FIXED-Bundle-Produkts (Mischkiste).
+    z.B. Genussmix → 1× Sonnenblume + 1× Rucola + 1× Erbse.
+    """
+    __tablename__ = "bundle_components"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, primary_key=True, default=uuid.uuid4
+    )
+    parent_product_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("products.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    child_product_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("products.id", ondelete="RESTRICT"), nullable=False
+    )
+    quantity: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("1"))
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+    parent_product: Mapped["Product"] = relationship(
+        "Product", foreign_keys=[parent_product_id], back_populates="components"
+    )
+    child_product: Mapped["Product"] = relationship(
+        "Product", foreign_keys=[child_product_id]
+    )
+
+    def __repr__(self) -> str:
+        return f"<BundleComponent(parent={self.parent_product_id}, child={self.child_product_id}, qty={self.quantity})>"
 
 
 class ProductVariant(Base):

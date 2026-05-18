@@ -318,6 +318,10 @@ function ProductForm({ product, growPlans, productGroups, onSubmit, onCancel }: 
     tax_rate: product?.tax_rate || 'REDUZIERT',
     grow_plan_id: product?.grow_plan_id || '',
     shelf_life_days: product?.shelf_life_days || 7,
+    is_bundle: product?.is_bundle ?? false,
+    is_variable_bundle: product?.is_variable_bundle ?? false,
+    variable_bundle_min_slots: product?.variable_bundle_min_slots ?? 1,
+    variable_bundle_max_slots: product?.variable_bundle_max_slots ?? 8,
     is_active: product?.is_active ?? true,
     is_sellable: product?.is_sellable ?? true,
   });
@@ -476,6 +480,52 @@ function ProductForm({ product, growPlans, productGroups, onSubmit, onCancel }: 
         />
       )}
 
+      {formData.category === 'BUNDLE' && (
+        <fieldset className="border border-gray-200 dark:border-gray-700 rounded-lg p-4 space-y-3">
+          <legend className="px-2 text-sm font-medium text-gray-700 dark:text-gray-300">Bundle-Typ</legend>
+          <label className="flex items-center gap-2">
+            <input
+              type="radio"
+              checked={!formData.is_variable_bundle}
+              onChange={() => setFormData({ ...formData, is_variable_bundle: false, is_bundle: true })}
+            />
+            <span className="text-sm">Fest (Mischkiste): definierte Komponenten</span>
+          </label>
+          <label className="flex items-center gap-2">
+            <input
+              type="radio"
+              checked={formData.is_variable_bundle}
+              onChange={() => setFormData({ ...formData, is_variable_bundle: true, is_bundle: false })}
+            />
+            <span className="text-sm">Variabel (Gastrotray): Sorten werden je Bestellung gewählt</span>
+          </label>
+          {formData.is_variable_bundle && (
+            <div className="grid grid-cols-2 gap-4">
+              <Input
+                label="Min. Sorten je Bestellung"
+                type="number"
+                min={1}
+                max={20}
+                value={formData.variable_bundle_min_slots}
+                onChange={(e) => setFormData({ ...formData, variable_bundle_min_slots: Number(e.target.value) || 1 })}
+              />
+              <Input
+                label="Max. Sorten je Bestellung"
+                type="number"
+                min={1}
+                max={20}
+                value={formData.variable_bundle_max_slots}
+                onChange={(e) => setFormData({ ...formData, variable_bundle_max_slots: Number(e.target.value) || 8 })}
+              />
+            </div>
+          )}
+        </fieldset>
+      )}
+
+      {product && formData.category === 'BUNDLE' && !formData.is_variable_bundle && (
+        <BundleComponentList productId={product.id} />
+      )}
+
       <div className="flex gap-4">
         <label className="flex items-center gap-2">
           <input
@@ -508,6 +558,95 @@ function ProductForm({ product, growPlans, productGroups, onSubmit, onCancel }: 
         </Button>
       </div>
     </form>
+  );
+}
+
+function BundleComponentList({ productId }: { productId: string }) {
+  const queryClient = useQueryClient();
+  const toast = useToast();
+  const { data: components = [] } = useQuery({
+    queryKey: ['bundle-components', productId],
+    queryFn: () => productsApi.listBundleComponents(productId),
+  });
+  const { data: allProducts = [] } = useQuery({
+    queryKey: ['products', { is_active: true }, 'for-bundle'],
+    queryFn: () => productsApi.list({ is_active: true }),
+  });
+
+  const linkedIds = new Set(components.map((c) => c.child_product_id));
+  const candidates = allProducts.filter((p) => p.id !== productId && !linkedIds.has(p.id));
+
+  const [pickedId, setPickedId] = useState('');
+  const [pickedQty, setPickedQty] = useState(1);
+
+  const invalidate = () => queryClient.invalidateQueries({ queryKey: ['bundle-components', productId] });
+
+  const addMutation = useMutation({
+    mutationFn: () => productsApi.addBundleComponent(productId, { child_product_id: pickedId, quantity: pickedQty }),
+    onSuccess: () => {
+      invalidate();
+      setPickedId('');
+      setPickedQty(1);
+      toast.success('Komponente hinzugefügt');
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.detail || 'Fehler beim Hinzufügen'),
+  });
+
+  const removeMutation = useMutation({
+    mutationFn: (id: string) => productsApi.removeBundleComponent(productId, id),
+    onSuccess: () => { invalidate(); toast.success('Komponente entfernt'); },
+  });
+
+  return (
+    <fieldset className="border border-gray-200 dark:border-gray-700 rounded-lg p-4 space-y-3">
+      <legend className="px-2 text-sm font-medium text-gray-700 dark:text-gray-300">
+        Bundle-Komponenten ({components.length})
+      </legend>
+
+      {components.length > 0 && (
+        <div className="space-y-2">
+          {components.map((c) => (
+            <div key={c.id} className="flex items-center gap-2 text-sm bg-gray-50 dark:bg-gray-700/50 rounded px-3 py-2">
+              <div className="flex-1">
+                <div className="font-medium text-gray-900 dark:text-white">{c.child_product_name || '?'}</div>
+                <div className="text-xs text-gray-500">{c.quantity}× · {c.child_product_sku}</div>
+              </div>
+              <Button type="button" variant="ghost" size="sm" icon={<Trash className="w-4 h-4" />} onClick={() => removeMutation.mutate(c.id)} />
+            </div>
+          ))}
+        </div>
+      )}
+
+      {candidates.length > 0 ? (
+        <div className="grid grid-cols-3 gap-2">
+          <Select
+            options={[
+              { value: '', label: 'Komponente wählen…' },
+              ...candidates.map((p) => ({ value: p.id, label: `${p.name} (${p.sku})` })),
+            ]}
+            value={pickedId}
+            onChange={(e) => setPickedId(e.target.value)}
+            className="col-span-2"
+          />
+          <Input
+            type="number"
+            min={0.01}
+            step={0.01}
+            value={pickedQty}
+            onChange={(e) => setPickedQty(Number(e.target.value) || 1)}
+            placeholder="Anteil"
+          />
+        </div>
+      ) : (
+        <p className="text-xs text-gray-500">Alle anderen Produkte sind bereits Komponenten</p>
+      )}
+      <div className="flex justify-end">
+        <Button type="button" size="sm" variant="secondary" icon={<Plus className="w-4 h-4" />}
+          disabled={!pickedId} onClick={() => addMutation.mutate()}>
+          Komponente hinzufügen
+        </Button>
+      </div>
+    </fieldset>
   );
 }
 

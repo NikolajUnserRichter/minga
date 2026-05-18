@@ -11,7 +11,7 @@ from sqlalchemy import select
 
 from app.api.deps import DBSession, PaginationParams
 from app.models.product import (
-    Product, ProductGroup, GrowPlan, ProductVariant, PriceList, PriceListItem,
+    Product, ProductGroup, GrowPlan, ProductVariant, BundleComponent, PriceList, PriceListItem,
     ProductCategory
 )
 from app.models.unit import UnitOfMeasure
@@ -20,6 +20,7 @@ from app.schemas.product import (
     ProductGroupCreate, ProductGroupUpdate, ProductGroupResponse,
     GrowPlanCreate, GrowPlanUpdate, GrowPlanResponse,
     ProductVariantCreate, ProductVariantUpdate, ProductVariantResponse,
+    BundleComponentCreate, BundleComponentResponse,
     PriceListCreate, PriceListUpdate, PriceListResponse,
     PriceListItemCreate, PriceListItemUpdate, PriceListItemResponse,
 )
@@ -202,6 +203,69 @@ def delete_product_variant(product_id: UUID, variant_id: UUID, db: DBSession):
     if not variant or variant.parent_product_id != product_id:
         raise HTTPException(status_code=404, detail="Variante nicht gefunden")
     db.delete(variant)
+    db.commit()
+
+
+# ========================================
+# BUNDLE COMPONENTS (Mischkisten: feste Kompositionen)
+# ========================================
+
+def _build_component_response(c: BundleComponent) -> BundleComponentResponse:
+    r = BundleComponentResponse.model_validate(c)
+    if c.child_product:
+        r.child_product_name = c.child_product.name
+        r.child_product_sku = c.child_product.sku
+    return r
+
+
+@router.get("/{product_id}/bundle-components", response_model=list[BundleComponentResponse])
+def list_bundle_components(product_id: UUID, db: DBSession):
+    """Komponenten eines Bundle-Produkts."""
+    product = db.get(Product, product_id)
+    if not product:
+        raise HTTPException(status_code=404, detail="Produkt nicht gefunden")
+    comps = db.execute(
+        select(BundleComponent)
+        .where(BundleComponent.parent_product_id == product_id)
+        .order_by(BundleComponent.sort_order, BundleComponent.created_at)
+    ).scalars().all()
+    return [_build_component_response(c) for c in comps]
+
+
+@router.post("/{product_id}/bundle-components", response_model=BundleComponentResponse, status_code=201)
+def add_bundle_component(product_id: UUID, data: BundleComponentCreate, db: DBSession):
+    """Komponente zum Bundle hinzufügen (z.B. Mischkiste → 1× Sonnenblume)."""
+    parent = db.get(Product, product_id)
+    if not parent:
+        raise HTTPException(status_code=404, detail="Bundle-Produkt nicht gefunden")
+    child = db.get(Product, data.child_product_id)
+    if not child:
+        raise HTTPException(status_code=404, detail="Kind-Produkt nicht gefunden")
+    if data.child_product_id == product_id:
+        raise HTTPException(status_code=400, detail="Bundle kann sich nicht selbst enthalten")
+    existing = db.execute(
+        select(BundleComponent).where(
+            BundleComponent.parent_product_id == product_id,
+            BundleComponent.child_product_id == data.child_product_id,
+        )
+    ).scalar_one_or_none()
+    if existing:
+        raise HTTPException(status_code=409, detail="Komponente bereits verknüpft")
+    comp = BundleComponent(parent_product_id=product_id, **data.model_dump())
+    db.add(comp)
+    if not parent.is_bundle:
+        parent.is_bundle = True
+    db.commit()
+    db.refresh(comp)
+    return _build_component_response(comp)
+
+
+@router.delete("/{product_id}/bundle-components/{component_id}", status_code=204)
+def remove_bundle_component(product_id: UUID, component_id: UUID, db: DBSession):
+    comp = db.get(BundleComponent, component_id)
+    if not comp or comp.parent_product_id != product_id:
+        raise HTTPException(status_code=404, detail="Komponente nicht gefunden")
+    db.delete(comp)
     db.commit()
 
 

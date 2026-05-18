@@ -353,10 +353,25 @@ export interface Product {
   storage_temp_min: number | null
   storage_temp_max: number | null
   min_stock_quantity: number | null
+  is_bundle: boolean
+  is_variable_bundle: boolean
+  variable_bundle_min_slots: number | null
+  variable_bundle_max_slots: number | null
   is_active: boolean
   is_sellable: boolean
   created_at: string
   updated_at: string
+}
+
+export interface BundleComponent {
+  id: string
+  parent_product_id: string
+  child_product_id: string
+  quantity: number
+  sort_order: number
+  child_product_name: string | null
+  child_product_sku: string | null
+  created_at: string
 }
 
 export interface ProductGroup {

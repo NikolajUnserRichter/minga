@@ -206,6 +206,9 @@ class OrderLine(Base):
     product_variant_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         Uuid, ForeignKey("product_variants.id", ondelete="SET NULL")
     )
+    # Variable Bundle: vom Kunden gewählte Sorten pro Bestell-Position
+    # Format: [{"product_id": "uuid", "quantity": 1}, ...]
+    variable_bundle_selections: Mapped[Optional[list]] = mapped_column(JSON)
     # Legacy: seed_id für Rückwärtskompatibilität
     seed_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         Uuid, ForeignKey("seeds.id", ondelete="SET NULL")

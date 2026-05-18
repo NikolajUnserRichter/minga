@@ -8,7 +8,7 @@ import type {
   PackagingInventory, InventoryMovement, StockOverview,
   ArticleType, LocationType, TraceabilityChain, Capacity,
   RevenueStats, YieldStats, Subscription, AccuracySummary, AccuracyDetail,
-  Contact, Supplier, ProductVariant, UnitOfMeasure, CustomerAddress
+  Contact, Supplier, ProductVariant, UnitOfMeasure, CustomerAddress, BundleComponent
 } from '../types'
 
 import keycloak from './auth';
@@ -306,6 +306,16 @@ export const productsApi = {
 
   deleteVariant: (productId: string, variantId: string) =>
     api.delete(`/products/${productId}/variants/${variantId}`),
+
+  // Bundle Components (Mischkisten: feste Komponenten)
+  listBundleComponents: (productId: string) =>
+    api.get<BundleComponent[]>(`/products/${productId}/bundle-components`).then(r => r.data),
+
+  addBundleComponent: (productId: string, data: { child_product_id: string; quantity: number; sort_order?: number }) =>
+    api.post<BundleComponent>(`/products/${productId}/bundle-components`, data).then(r => r.data),
+
+  removeBundleComponent: (productId: string, componentId: string) =>
+    api.delete(`/products/${productId}/bundle-components/${componentId}`),
 }
 
 // Units of Measure API

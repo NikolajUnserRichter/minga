@@ -264,9 +264,12 @@ class ProductCreate(ProductBase):
     storage_temp_max: Optional[Decimal] = Field(None, description="Max. Lagertemperatur °C")
     min_stock_quantity: Optional[Decimal] = Field(None, ge=0, description="Mindestbestand")
 
-    # Bundle
-    is_bundle: bool = Field(default=False, description="Ist ein Bundle?")
-    bundle_components: Optional[list[dict]] = Field(None, description="Bundle-Komponenten")
+    # Bundle (FIXED via bundle_components-Tabelle ODER VARIABLE für Gastrotray)
+    is_bundle: bool = Field(default=False, description="FIXED Bundle (Mischkiste)")
+    bundle_components: Optional[list[dict]] = Field(None, description="Legacy JSON")
+    is_variable_bundle: bool = Field(default=False, description="VARIABLE Bundle (Gastrotray: Sorten je Bestellung)")
+    variable_bundle_min_slots: Optional[int] = Field(None, ge=1, le=20, description="Min. Sorten (Variable Bundle)")
+    variable_bundle_max_slots: Optional[int] = Field(None, ge=1, le=20, description="Max. Sorten (Variable Bundle)")
 
 
 class ProductUpdate(BaseModel):
@@ -289,6 +292,9 @@ class ProductUpdate(BaseModel):
     min_stock_quantity: Optional[Decimal] = None
     is_bundle: Optional[bool] = None
     bundle_components: Optional[list[dict]] = None
+    is_variable_bundle: Optional[bool] = None
+    variable_bundle_min_slots: Optional[int] = None
+    variable_bundle_max_slots: Optional[int] = None
     is_active: Optional[bool] = None
     is_sellable: Optional[bool] = None
 
@@ -382,3 +388,28 @@ class ProductVariantResponse(ProductVariantBase):
     # Expandiert
     packaging_unit_code: Optional[str] = None
     packaging_unit_name: Optional[str] = None
+
+
+# ============================================================
+# BUNDLE COMPONENT SCHEMAS (FIXED-Bundle Komponenten)
+# ============================================================
+
+class BundleComponentBase(BaseModel):
+    child_product_id: UUID = Field(..., description="Kind-Produkt-ID")
+    quantity: Decimal = Field(default=Decimal("1"), gt=0, description="Anteil im Bundle")
+    sort_order: int = Field(default=0)
+
+
+class BundleComponentCreate(BundleComponentBase):
+    pass
+
+
+class BundleComponentResponse(BundleComponentBase):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    parent_product_id: UUID
+    created_at: datetime
+    # Expandiert
+    child_product_name: Optional[str] = None
+    child_product_sku: Optional[str] = None
