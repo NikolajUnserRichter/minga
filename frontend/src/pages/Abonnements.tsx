@@ -129,6 +129,7 @@ export default function Abonnements() {
         setFormData({
             kunde_id: '',
             seed_id: '',
+            product_id: '',
             menge: '',
             einheit: 'GRAMM',
             intervall: 'WOECHENTLICH',
