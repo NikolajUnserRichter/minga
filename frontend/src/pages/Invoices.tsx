@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, Search, FileText, Download, AlertCircle, CheckCircle, Clock } from 'lucide-react';
-import { invoicesApi, salesApi } from '../services/api';
+import { invoicesApi, salesApi, productsApi } from '../services/api';
 import { Invoice, InvoiceStatus, InvoiceType, Customer } from '../types';
 import { PageHeader, FilterBar } from '../components/common/Layout';
 import {
@@ -717,7 +717,80 @@ function DatevExportForm({ onClose }: { onClose: () => void }) {
 }
 
 // Invoice Detail
-function InvoiceDetail({ invoice }: { invoice: Invoice }) {
+function InvoiceDetail({ invoice: initial }: { invoice: Invoice }) {
+  const queryClient = useQueryClient();
+  const toast = useToast();
+
+  // Refetch invoice details after every mutation so the lines list stays in sync.
+  const { data: refreshed } = useQuery({
+    queryKey: ['invoice', initial.id],
+    queryFn: () => invoicesApi.get(initial.id),
+    initialData: initial,
+  });
+  const invoice = refreshed || initial;
+  const isDraft = invoice.status === 'ENTWURF';
+
+  const { data: products = [] } = useQuery({
+    queryKey: ['products', 'active'],
+    queryFn: () => productsApi.list({ is_active: true }),
+    enabled: isDraft,
+  });
+
+  const [newLine, setNewLine] = useState({
+    product_id: '',
+    description: '',
+    quantity: 1,
+    unit: 'STK',
+    unit_price: 0,
+    tax_rate: 'REDUZIERT' as const,
+  });
+
+  const invalidate = () => {
+    queryClient.invalidateQueries({ queryKey: ['invoices'] });
+    queryClient.invalidateQueries({ queryKey: ['invoice', invoice.id] });
+  };
+
+  const addLineMutation = useMutation({
+    mutationFn: () =>
+      invoicesApi.addLine(invoice.id, {
+        product_id: newLine.product_id || undefined,
+        description: newLine.description,
+        quantity: newLine.quantity,
+        unit: newLine.unit,
+        unit_price: newLine.unit_price,
+        tax_rate: newLine.tax_rate,
+      } as any),
+    onSuccess: () => {
+      invalidate();
+      setNewLine({ product_id: '', description: '', quantity: 1, unit: 'STK', unit_price: 0, tax_rate: 'REDUZIERT' });
+      toast.success('Position hinzugefügt');
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.detail || 'Fehler beim Hinzufügen'),
+  });
+
+  const deleteLineMutation = useMutation({
+    mutationFn: (lineId: string) => invoicesApi.deleteLine(invoice.id, lineId),
+    onSuccess: () => {
+      invalidate();
+      toast.success('Position entfernt');
+    },
+  });
+
+  const handleProductSelect = (productId: string) => {
+    const product = products.find((p) => p.id === productId);
+    if (product) {
+      setNewLine({
+        ...newLine,
+        product_id: productId,
+        description: product.name,
+        unit_price: Number(product.base_price) || 0,
+        tax_rate: (product.tax_rate as any) || 'REDUZIERT',
+      });
+    } else {
+      setNewLine({ ...newLine, product_id: '' });
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-2 gap-4">
@@ -735,7 +808,7 @@ function InvoiceDetail({ invoice }: { invoice: Invoice }) {
         </div>
         <div>
           <p className="text-sm text-gray-500 dark:text-gray-400">Fällig am</p>
-          <p className="font-medium">{new Date(invoice.due_date).toLocaleDateString('de-DE')}</p>
+          <p className="font-medium">{invoice.due_date ? new Date(invoice.due_date).toLocaleDateString('de-DE') : '–'}</p>
         </div>
       </div>
 
@@ -749,6 +822,7 @@ function InvoiceDetail({ invoice }: { invoice: Invoice }) {
                 <th className="text-right py-2">Menge</th>
                 <th className="text-right py-2">Preis</th>
                 <th className="text-right py-2">Summe</th>
+                {isDraft && <th className="w-8"></th>}
               </tr>
             </thead>
             <tbody>
@@ -760,12 +834,102 @@ function InvoiceDetail({ invoice }: { invoice: Invoice }) {
                   </td>
                   <td className="text-right py-2">{line.unit_price.toFixed(2)} €</td>
                   <td className="text-right py-2">{line.line_total.toFixed(2)} €</td>
+                  {isDraft && (
+                    <td className="text-right py-2">
+                      <button
+                        type="button"
+                        title="Position entfernen"
+                        onClick={() => deleteLineMutation.mutate(line.id)}
+                        className="text-red-600 hover:text-red-800 dark:text-red-400"
+                      >
+                        ×
+                      </button>
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>
           </table>
         ) : (
           <p className="text-gray-500 dark:text-gray-400 text-sm">Keine Positionen</p>
+        )}
+
+        {isDraft && (
+          <div className="mt-4 p-4 border border-dashed border-gray-300 dark:border-gray-700 rounded-lg space-y-3">
+            <p className="text-sm font-medium text-gray-700 dark:text-gray-300">Position hinzufügen</p>
+            <Select
+              label="Produkt (optional — füllt Beschreibung/Preis)"
+              options={[
+                { value: '', label: '— frei eingeben —' },
+                ...products.map((p) => ({ value: p.id, label: `${p.name} (${p.sku})` })),
+              ]}
+              value={newLine.product_id}
+              onChange={(e) => handleProductSelect(e.target.value)}
+            />
+            <Input
+              label="Beschreibung"
+              required
+              value={newLine.description}
+              onChange={(e) => setNewLine({ ...newLine, description: e.target.value })}
+              placeholder="z.B. Sonnenblume Microgreens 100g"
+            />
+            <div className="grid grid-cols-4 gap-2">
+              <Input
+                label="Menge"
+                type="number"
+                step="0.01"
+                min={0.01}
+                value={newLine.quantity}
+                onChange={(e) => setNewLine({ ...newLine, quantity: Number(e.target.value) || 0 })}
+              />
+              <Select
+                label="Einheit"
+                options={[
+                  { value: 'STK', label: 'Stück' },
+                  { value: 'SCHALE', label: 'Schale' },
+                  { value: 'TRAY', label: 'Tray' },
+                  { value: 'KISTE_12', label: 'Kiste 12' },
+                  { value: 'KISTE_6', label: 'Kiste 6' },
+                  { value: 'KARTON_6', label: 'Karton 6' },
+                  { value: 'g', label: 'g' },
+                  { value: 'kg', label: 'kg' },
+                ]}
+                value={newLine.unit}
+                onChange={(e) => setNewLine({ ...newLine, unit: e.target.value })}
+              />
+              <Input
+                label="Einzelpreis"
+                type="number"
+                step="0.01"
+                min={0}
+                value={newLine.unit_price}
+                onChange={(e) => setNewLine({ ...newLine, unit_price: Number(e.target.value) || 0 })}
+                endIcon="€"
+              />
+              <Select
+                label="MwSt"
+                options={[
+                  { value: 'REDUZIERT', label: '7%' },
+                  { value: 'STANDARD', label: '19%' },
+                  { value: 'STEUERFREI', label: '0%' },
+                ]}
+                value={newLine.tax_rate}
+                onChange={(e) => setNewLine({ ...newLine, tax_rate: e.target.value as any })}
+              />
+            </div>
+            <div className="flex justify-end">
+              <Button
+                type="button"
+                size="sm"
+                variant="primary"
+                disabled={!newLine.description || newLine.quantity <= 0}
+                loading={addLineMutation.isPending}
+                onClick={() => addLineMutation.mutate()}
+              >
+                Position hinzufügen
+              </Button>
+            </div>
+          </div>
         )}
       </div>
 
