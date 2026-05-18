@@ -52,6 +52,55 @@ def _ensure_entity_exists(db, entity_type: str, entity_id: UUID):
         raise HTTPException(status_code=404, detail=f"{entity_type.capitalize()} nicht gefunden")
 
 
+@router.get("/{att_id}/download")
+def download_attachment(att_id: UUID, db: DBSession):
+    """Datei-Download (Original-Mimetype). Hier zuerst registriert, sonst würde
+    /{entity_type}/{entity_id} die UUID schlucken (Route-Order)."""
+    att = db.get(Attachment, att_id)
+    if not att:
+        raise HTTPException(status_code=404, detail="Anhang nicht gefunden")
+    storage = get_storage()
+    try:
+        fp = storage.open(att.storage_key)
+    except FileNotFoundError:
+        raise HTTPException(status_code=410, detail="Datei nicht mehr im Storage vorhanden")
+
+    return StreamingResponse(
+        fp,
+        media_type=att.content_type or "application/octet-stream",
+        headers={"Content-Disposition": f'attachment; filename="{att.filename}"'},
+    )
+
+
+@router.patch("/{att_id}", response_model=AttachmentResponse)
+def update_attachment(att_id: UUID, data: AttachmentUpdate, db: DBSession):
+    """Aktualisiert nur Metadaten (Zertifikat-Typ, Gültigkeit, Notizen)."""
+    att = db.get(Attachment, att_id)
+    if not att:
+        raise HTTPException(status_code=404, detail="Anhang nicht gefunden")
+    payload = data.model_dump(exclude_unset=True)
+    if "certificate_type" in payload and payload["certificate_type"] and payload["certificate_type"] not in CERTIFICATE_TYPES:
+        raise HTTPException(status_code=400, detail=f"Ungültiger certificate_type")
+    for k, v in payload.items():
+        setattr(att, k, v)
+    db.commit()
+    db.refresh(att)
+    return att
+
+
+@router.delete("/{att_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_attachment(att_id: UUID, db: DBSession):
+    """Löscht Eintrag + Datei im Storage."""
+    att = db.get(Attachment, att_id)
+    if not att:
+        raise HTTPException(status_code=404, detail="Anhang nicht gefunden")
+    storage = get_storage()
+    storage.delete(att.storage_key)
+    db.delete(att)
+    db.commit()
+    return None
+
+
 @router.post("/{entity_type}/{entity_id}", response_model=AttachmentResponse, status_code=status.HTTP_201_CREATED)
 async def upload_attachment(
     entity_type: str,
@@ -114,49 +163,3 @@ def list_attachments(entity_type: str, entity_id: UUID, db: DBSession):
     return rows
 
 
-@router.get("/{att_id}/download")
-def download_attachment(att_id: UUID, db: DBSession):
-    """Datei-Download (Original-Mimetype)."""
-    att = db.get(Attachment, att_id)
-    if not att:
-        raise HTTPException(status_code=404, detail="Anhang nicht gefunden")
-    storage = get_storage()
-    try:
-        fp = storage.open(att.storage_key)
-    except FileNotFoundError:
-        raise HTTPException(status_code=410, detail="Datei nicht mehr im Storage vorhanden")
-
-    return StreamingResponse(
-        fp,
-        media_type=att.content_type or "application/octet-stream",
-        headers={"Content-Disposition": f'attachment; filename="{att.filename}"'},
-    )
-
-
-@router.patch("/{att_id}", response_model=AttachmentResponse)
-def update_attachment(att_id: UUID, data: AttachmentUpdate, db: DBSession):
-    """Aktualisiert nur Metadaten (Zertifikat-Typ, Gültigkeit, Notizen)."""
-    att = db.get(Attachment, att_id)
-    if not att:
-        raise HTTPException(status_code=404, detail="Anhang nicht gefunden")
-    payload = data.model_dump(exclude_unset=True)
-    if "certificate_type" in payload and payload["certificate_type"] and payload["certificate_type"] not in CERTIFICATE_TYPES:
-        raise HTTPException(status_code=400, detail=f"Ungültiger certificate_type")
-    for k, v in payload.items():
-        setattr(att, k, v)
-    db.commit()
-    db.refresh(att)
-    return att
-
-
-@router.delete("/{att_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_attachment(att_id: UUID, db: DBSession):
-    """Löscht Eintrag + Datei im Storage."""
-    att = db.get(Attachment, att_id)
-    if not att:
-        raise HTTPException(status_code=404, detail="Anhang nicht gefunden")
-    storage = get_storage()
-    storage.delete(att.storage_key)
-    db.delete(att)
-    db.commit()
-    return None
