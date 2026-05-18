@@ -736,6 +736,43 @@ function InvoiceDetail({ invoice: initial }: { invoice: Invoice }) {
     enabled: isDraft,
   });
 
+  // Header-Edit (nur ENTWURF)
+  const { data: customersData } = useQuery({
+    queryKey: ['customers', 'for-invoice-edit'],
+    queryFn: () => salesApi.listCustomers(),
+    enabled: isDraft,
+  });
+  const [headerEdit, setHeaderEdit] = useState({
+    customer_id: '',
+    invoice_date: '',
+    due_date: '',
+  });
+  const [headerDirty, setHeaderDirty] = useState(false);
+  // Sync edit-state when invoice changes
+  if (!headerDirty && (headerEdit.customer_id !== invoice.customer_id ||
+      headerEdit.invoice_date !== invoice.invoice_date.slice(0, 10) ||
+      headerEdit.due_date !== (invoice.due_date ? invoice.due_date.slice(0, 10) : ''))) {
+    setHeaderEdit({
+      customer_id: invoice.customer_id,
+      invoice_date: invoice.invoice_date.slice(0, 10),
+      due_date: invoice.due_date ? invoice.due_date.slice(0, 10) : '',
+    });
+  }
+  const saveHeaderMutation = useMutation({
+    mutationFn: () => invoicesApi.update(invoice.id, {
+      customer_id: headerEdit.customer_id,
+      invoice_date: headerEdit.invoice_date,
+      due_date: headerEdit.due_date || undefined,
+    } as any),
+    onSuccess: () => {
+      setHeaderDirty(false);
+      queryClient.invalidateQueries({ queryKey: ['invoice', invoice.id] });
+      queryClient.invalidateQueries({ queryKey: ['invoices'] });
+      toast.success('Kopfdaten gespeichert');
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.detail || 'Speichern fehlgeschlagen'),
+  });
+
   const [newLine, setNewLine] = useState({
     product_id: '',
     description: '',
@@ -793,24 +830,92 @@ function InvoiceDetail({ invoice: initial }: { invoice: Invoice }) {
 
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-2 gap-4">
-        <div>
-          <p className="text-sm text-gray-500 dark:text-gray-400">Kunde</p>
-          <p className="font-medium">{invoice.customer_name}</p>
+      {isDraft ? (
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="text-sm text-gray-500 dark:text-gray-400">Kunde *</label>
+              <select
+                value={headerEdit.customer_id}
+                onChange={(e) => { setHeaderEdit({ ...headerEdit, customer_id: e.target.value }); setHeaderDirty(true); }}
+                className="block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-800 dark:text-white rounded-md focus:outline-none focus:ring-1 focus:ring-minga-500"
+              >
+                <option value="">Kunde wählen...</option>
+                {(customersData?.items || []).map(c => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <p className="text-sm text-gray-500 dark:text-gray-400">Status</p>
+              <Badge variant={STATUS_COLORS[invoice.status]}>{STATUS_LABELS[invoice.status]}</Badge>
+            </div>
+            <div>
+              <label className="text-sm text-gray-500 dark:text-gray-400">Rechnungsdatum *</label>
+              <input
+                type="date"
+                value={headerEdit.invoice_date}
+                onChange={(e) => { setHeaderEdit({ ...headerEdit, invoice_date: e.target.value }); setHeaderDirty(true); }}
+                className="block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-800 dark:text-white rounded-md"
+              />
+            </div>
+            <div>
+              <label className="text-sm text-gray-500 dark:text-gray-400">Fällig am</label>
+              <input
+                type="date"
+                value={headerEdit.due_date}
+                onChange={(e) => { setHeaderEdit({ ...headerEdit, due_date: e.target.value }); setHeaderDirty(true); }}
+                className="block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-800 dark:text-white rounded-md"
+              />
+            </div>
+          </div>
+          {headerDirty && (
+            <div className="flex justify-end gap-2">
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => {
+                  setHeaderEdit({
+                    customer_id: invoice.customer_id,
+                    invoice_date: invoice.invoice_date.slice(0, 10),
+                    due_date: invoice.due_date ? invoice.due_date.slice(0, 10) : '',
+                  });
+                  setHeaderDirty(false);
+                }}
+              >
+                Verwerfen
+              </Button>
+              <Button
+                size="sm"
+                loading={saveHeaderMutation.isPending}
+                disabled={!headerEdit.customer_id || !headerEdit.invoice_date}
+                onClick={() => saveHeaderMutation.mutate()}
+              >
+                Kopfdaten speichern
+              </Button>
+            </div>
+          )}
         </div>
-        <div>
-          <p className="text-sm text-gray-500 dark:text-gray-400">Status</p>
-          <Badge variant={STATUS_COLORS[invoice.status]}>{STATUS_LABELS[invoice.status]}</Badge>
+      ) : (
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <p className="text-sm text-gray-500 dark:text-gray-400">Kunde</p>
+            <p className="font-medium">{invoice.customer_name}</p>
+          </div>
+          <div>
+            <p className="text-sm text-gray-500 dark:text-gray-400">Status</p>
+            <Badge variant={STATUS_COLORS[invoice.status]}>{STATUS_LABELS[invoice.status]}</Badge>
+          </div>
+          <div>
+            <p className="text-sm text-gray-500 dark:text-gray-400">Rechnungsdatum</p>
+            <p className="font-medium">{new Date(invoice.invoice_date).toLocaleDateString('de-DE')}</p>
+          </div>
+          <div>
+            <p className="text-sm text-gray-500 dark:text-gray-400">Fällig am</p>
+            <p className="font-medium">{invoice.due_date ? new Date(invoice.due_date).toLocaleDateString('de-DE') : '–'}</p>
+          </div>
         </div>
-        <div>
-          <p className="text-sm text-gray-500 dark:text-gray-400">Rechnungsdatum</p>
-          <p className="font-medium">{new Date(invoice.invoice_date).toLocaleDateString('de-DE')}</p>
-        </div>
-        <div>
-          <p className="text-sm text-gray-500 dark:text-gray-400">Fällig am</p>
-          <p className="font-medium">{invoice.due_date ? new Date(invoice.due_date).toLocaleDateString('de-DE') : '–'}</p>
-        </div>
-      </div>
+      )}
 
       <div className="border-t pt-4">
         <h4 className="font-medium mb-2">Positionen</h4>

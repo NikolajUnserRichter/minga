@@ -139,6 +139,7 @@ class InvoiceCreate(InvoiceBase):
 
 class InvoiceUpdate(BaseModel):
     """Schema zum Aktualisieren einer Rechnung"""
+    customer_id: Optional[UUID] = None
     invoice_date: Optional[date] = None
     delivery_date: Optional[date] = None
     due_date: Optional[date] = None
