@@ -317,6 +317,9 @@ class ProductResponse(ProductBase):
     min_stock_quantity: Optional[Decimal] = Field(validation_alias="min_stock_level")
     is_bundle: bool
     bundle_components: Optional[list[dict]]
+    is_variable_bundle: bool = False
+    variable_bundle_min_slots: Optional[int] = None
+    variable_bundle_max_slots: Optional[int] = None
     is_active: bool
     is_sellable: bool
     created_at: datetime
