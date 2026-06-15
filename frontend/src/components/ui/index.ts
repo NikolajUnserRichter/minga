@@ -4,6 +4,7 @@ export { Button, IconButton } from './Button';
 // Form Components
 export { Input, Textarea } from './Input';
 export { Select, MultiSelect, type SelectOption } from './Select';
+export { Combobox, type ComboboxOption } from './Combobox';
 export { DatePicker, formatDate, getRelativeDate } from './DatePicker';
 
 // Feedback Components

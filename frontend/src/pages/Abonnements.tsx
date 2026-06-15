@@ -6,6 +6,7 @@ import {
     Modal,
     EmptyState,
     Input,
+    Combobox,
     useToast,
     InlineLoader,
     Badge,
@@ -420,42 +421,25 @@ export default function Abonnements() {
                 <form onSubmit={handleSubmit} className="space-y-4">
                     {!editingSub && (
                         <>
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                                    Kunde *
-                                </label>
-                                <select
-                                    value={formData.kunde_id}
-                                    onChange={(e) => setFormData({ ...formData, kunde_id: e.target.value })}
-                                    required
-                                    className={selectClassName}
-                                >
-                                    <option value="">Kunde auswählen...</option>
-                                    {customers.map((customer: Customer) => (
-                                        <option key={customer.id} value={customer.id}>
-                                            {customer.name}
-                                        </option>
-                                    ))}
-                                </select>
-                            </div>
+                            <Combobox
+                                label="Kunde *"
+                                value={formData.kunde_id}
+                                onChange={(v) => setFormData({ ...formData, kunde_id: v })}
+                                placeholder="Kunde suchen…"
+                                options={customers.map((c: Customer) => ({ value: c.id, label: c.name }))}
+                            />
 
                             <div>
-                                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                                    Produkt *
-                                </label>
-                                <select
+                                <Combobox
+                                    label="Produkt *"
                                     value={formData.product_id}
-                                    onChange={(e) => setFormData({ ...formData, product_id: e.target.value, seed_id: '' })}
-                                    required={!formData.seed_id}
-                                    className={selectClassName}
-                                >
-                                    <option value="">Produkt auswählen...</option>
-                                    {products.map((p) => (
-                                        <option key={p.id} value={p.id}>
-                                            {(p.is_bundle || p.is_variable_bundle) ? '📦 ' : ''}{p.name}
-                                        </option>
-                                    ))}
-                                </select>
+                                    onChange={(v) => setFormData({ ...formData, product_id: v, seed_id: '' })}
+                                    placeholder="Produkt oder Bundle suchen…"
+                                    options={products.map((p) => ({
+                                        value: p.id,
+                                        label: `${(p.is_bundle || p.is_variable_bundle) ? '📦 ' : ''}${p.name}`,
+                                    }))}
+                                />
                                 {products.length === 0 && seeds.length > 0 && (
                                     <div className="mt-2">
                                         <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">

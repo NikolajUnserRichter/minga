@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Modal } from '../ui/Modal';
-import { Input, Select, Button, useToast } from '../ui';
+import { Input, Select, Button, Combobox, useToast } from '../ui';
 import { salesApi, productsApi, seedsApi } from '../../services/api';
 import { Customer } from '../../types';
 import { Plus, Trash } from 'lucide-react';
@@ -270,15 +270,13 @@ export function CreateOrderModal({ open, onClose, preselectedCustomer }: CreateO
         >
             <form onSubmit={handleSubmit} className="space-y-6">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <Select
+                    <Combobox
                         label="Kunde"
                         value={customerId}
-                        onChange={(e) => setCustomerId(e.target.value)}
+                        onChange={(v) => setCustomerId(v)}
                         disabled={!!preselectedCustomer}
-                        options={[
-                            { value: '', label: 'Kunde wählen...' },
-                            ...(customersData?.items || []).map(c => ({ value: c.id, label: c.name }))
-                        ]}
+                        placeholder="Tippen zum Suchen…"
+                        options={(customersData?.items || []).map(c => ({ value: c.id, label: c.name }))}
                     />
                     <Input
                         label="Lieferdatum"
@@ -310,13 +308,11 @@ export function CreateOrderModal({ open, onClose, preselectedCustomer }: CreateO
                         <div key={index} className="space-y-2">
                         <div className="flex gap-2 items-end">
                             <div className="flex-1">
-                                <Select
+                                <Combobox
                                     value={line.product_id}
-                                    onChange={(e) => updateLine(index, 'product_id', e.target.value)}
-                                    options={[
-                                        { value: '', label: 'Produkt wählen...' },
-                                        ...availableItems.map(p => ({ value: p.id, label: p.name }))
-                                    ]}
+                                    onChange={(v) => updateLine(index, 'product_id', v)}
+                                    placeholder="Produkt suchen…"
+                                    options={availableItems.map(p => ({ value: p.id, label: p.name }))}
                                 />
                             </div>
                             {hasVariants && (
