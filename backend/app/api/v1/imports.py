@@ -335,17 +335,26 @@ def _import_order_history(db, rows: list[dict]) -> tuple[int, int]:
     for r in rows:
         groups[r["bestell_nr_extern"]].append(r)
 
-    # 2) Customer-Cache (case-insensitive Name-Lookup)
+    # 2) Customer-Cache (case-insensitive + unicode-normalisierter Name-Lookup)
+    # SQLite's func.lower() macht kein Unicode-Casefolding ("Ö" bleibt "Ö"),
+    # daher laden wir einmal alle Kunden und vergleichen Python-seitig.
+    import unicodedata
+
+    def _normalize_name(s: str) -> str:
+        return unicodedata.normalize("NFC", s.strip()).casefold()
+
     customers_by_name: dict[str, Customer] = {}
     products_by_sku: dict[str, Product] = {}
 
+    # Alle Kunden einmal laden, normalisiert indexieren
+    _all_customers = db.execute(select(Customer)).scalars().all()
+    customer_index = {_normalize_name(c.name): c for c in _all_customers}
+
     def _get_customer(name: str) -> Optional[Customer]:
-        key = name.strip().lower()
+        key = _normalize_name(name)
         if key in customers_by_name:
             return customers_by_name[key]
-        c = db.execute(
-            select(Customer).where(func.lower(Customer.name) == key)
-        ).scalar_one_or_none()
+        c = customer_index.get(key)
         if c:
             customers_by_name[key] = c
         return c

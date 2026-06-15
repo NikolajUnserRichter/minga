@@ -452,7 +452,7 @@ export default function Abonnements() {
                                     <option value="">Produkt auswählen...</option>
                                     {products.map((p) => (
                                         <option key={p.id} value={p.id}>
-                                            {p.name}
+                                            {(p.is_bundle || p.is_variable_bundle) ? '📦 ' : ''}{p.name}
                                         </option>
                                     ))}
                                 </select>

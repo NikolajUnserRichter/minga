@@ -27,7 +27,7 @@ const emptyLine = (): OrderLineRow => ({
     product_variant_id: '',
     product_name: '',
     quantity: 1,
-    unit: 'g',
+    unit: 'STK',  // Default: Stück (B3); kann pro Position überschrieben werden
     unit_price: 0,
     variable_bundle_selections: [],
 });
@@ -68,9 +68,11 @@ export function CreateOrderModal({ open, onClose, preselectedCustomer }: CreateO
     const availableItems = productsData && productsData.length > 0
         ? productsData.map(p => ({
             id: p.id,
-            name: p.name,
-            price: p.base_price || 0,
-            unit: 'g',
+            name: (p.is_bundle || p.is_variable_bundle) ? `📦 ${p.name}` : p.name,
+            price: Number(p.base_price || 0),
+            // Bundles werden i.d.R. pro Stück verkauft, Microgreens in g
+            unit: (p.is_bundle || p.is_variable_bundle) ? 'STK' : (p.category === 'MICROGREEN' ? 'g' : 'STK'),
+            is_bundle: p.is_bundle,
             is_variable_bundle: p.is_variable_bundle,
             variable_bundle_min_slots: p.variable_bundle_min_slots,
             variable_bundle_max_slots: p.variable_bundle_max_slots,
@@ -80,6 +82,7 @@ export function CreateOrderModal({ open, onClose, preselectedCustomer }: CreateO
             name: s.name,
             price: 10,
             unit: 'g',
+            is_bundle: false,
             is_variable_bundle: false,
             variable_bundle_min_slots: null as number | null,
             variable_bundle_max_slots: null as number | null,
