@@ -150,16 +150,46 @@ Siehe separates Run-Log unten + `frontend/playwright-report/` nach UI-Lauf.
 
 ## 8. Remaining Known Issues / Backlog
 
-Aus B8-Gap-Analyse abgeleitet, nicht in dieser Wave umgesetzt:
-1. Firmendaten-Block auf allen PDFs (USt-IdNr, IBAN, Adresse)
-2. Skonto-Hinweis-Text auf Rechnung
-3. Bankverbindung auf Rechnung + Mahnung
-4. Reverse-Charge-Vermerk bei STEUERFREI
-5. Customer-spezifische Preislisten (große Sache — bewusst auf nächste Wave geschoben)
-6. Eigentumsvorbehalt-Klausel im LS/Rechnung-Footer
-7. MHD-Druck auf Lieferschein für Lebensmittel
-8. Bundles in Manual-Order: Inventory-Deduction auf Komponenten (aktuell nur Header-Line)
-9. Order-History-Import: Bundle-Lines mit Sorten-Selections (aktuell nur einfache Lines)
+Aus B8-Gap-Analyse abgeleitet:
+
+### Update Commit b5e888a — Backlog jetzt umgesetzt:
+1. ✅ Firmendaten-Block auf allen PDFs (USt-IdNr, IBAN, Adresse) → render_company_header/footer_block
+2. ✅ Skonto-Hinweis-Text auf Rechnung → automatisch wenn customer.skonto_percent > 0
+3. ✅ Bankverbindung auf Rechnung + Mahnung → render_company_footer_block aus Settings
+4. ✅ Reverse-Charge-Vermerk bei STEUERFREI → automatisch wenn eine Line steuerfrei
+6. ✅ Eigentumsvorbehalt-Klausel auf Rechnung → fester Footer-Text
+7. ✅ Charge + MHD-Spalten auf Lieferschein → aus OrderLine + Harvest.seed_batch.mhd
+
+### Bewusst deferred (für eigene Wave):
+5. **Customer-spezifische Preislisten** — Neue Tabelle `customer_prices` mit
+   effective-Date-Range, Order-Engine-Anpassung, Bundle-Overrides. Geschätzt
+   4-6h Arbeit.
+8. **Bundle-Inventory-Deduction beim Order-Versand** — Aktuell hat das System
+   noch keinen automatischen Order→Stock-Hook beim GELIEFERT-Übergang. Großer
+   Refactor von Inventory-Service nötig.
+9. **Order-History-Import mit Bundle-Sorten-Selections** — Excel-Format-Erweiterung
+   für Spalten "bundle_selections" als JSON. Klein, aber selten genutzter Pfad.
+
+### Konfiguration der Firmendaten
+
+Damit die Compliance-Verbesserungen sichtbar werden, müssen die Settings
+einmalig im Admin-Center gepflegt sein. Schnellster Pfad via API:
+
+```bash
+curl -X PATCH https://.../api/v1/admin/settings \
+  -H "Content-Type: application/json" \
+  -d '{
+    "COMPANY_NAME": "Minga Greens GmbH",
+    "COMPANY_ADDRESS_LINE1": "Musterstraße 1",
+    "COMPANY_ADDRESS_LINE2": "80331 München",
+    "COMPANY_USTID": "DE123456789",
+    "COMPANY_BANK_NAME": "Stadtsparkasse München",
+    "COMPANY_IBAN": "DE12 1234 5678 9012 3456 78",
+    "COMPANY_BIC": "SSKMDEMM"
+  }'
+```
+
+Ohne diese Werte fällt das PDF wieder auf "Minga Greens" als Fallback zurück.
 
 ## 9. Deployment Notes
 
