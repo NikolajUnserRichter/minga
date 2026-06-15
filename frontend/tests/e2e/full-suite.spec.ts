@@ -21,9 +21,9 @@
 import { test, expect, Page } from '@playwright/test';
 
 const BASE_URL = process.env.BASE_URL || 'http://localhost:5173';
-const BASIC_USER = process.env.BASIC_AUTH_USER || '';
-const BASIC_PASS = process.env.BASIC_AUTH_PASS || '';
 const TIMESTAMP = Date.now();
+// Credentials kommen NICHT in die URL (würden in Playwright-Traces / Reports landen).
+// Werden via use.httpCredentials in playwright.config.ts gesetzt (Authorization-Header).
 
 // Eindeutige Test-Daten je Lauf (keine Kollisionen bei Wiederholung)
 const TEST_CUSTOMER_NAME = `Ökoring Test ${TIMESTAMP}`;
@@ -34,14 +34,9 @@ const TEST_BUNDLE_SKU    = `BUN-${TIMESTAMP}`;
 const TEST_BUNDLE_NAME   = `Mini-Gastrotray ${TIMESTAMP}`;
 const TEST_GROWPLAN_CODE = `GP-${TIMESTAMP}`;
 
-const url = (path: string) => {
-  if (!BASIC_USER) return `${BASE_URL}${path}`;
-  const u = new URL(BASE_URL);
-  return `${u.protocol}//${encodeURIComponent(BASIC_USER)}:${encodeURIComponent(BASIC_PASS)}@${u.host}${path}`;
-};
-
 async function gotoApp(page: Page, path: string) {
-  await page.goto(url(path));
+  // Basic-Auth wird via use.httpCredentials gesetzt — kein User-Pass in der URL
+  await page.goto(`${BASE_URL}${path}`);
 }
 
 // ============================================================

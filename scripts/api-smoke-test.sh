@@ -6,7 +6,17 @@
 #   BASE_URL="https://USER:PASS@minga-greens-temp-demo-production.up.railway.app" ./scripts/api-smoke-test.sh
 set -u
 
-BASE="${BASE_URL:-https://Thomas%40minga-greens.de:MingaTest2026%21@minga-greens-temp-demo-production.up.railway.app}"
+BASE="${BASE_URL:?BASE_URL must be set, e.g. BASE_URL=https://USER:PASS@host or just https://host with BASIC_AUTH_USER/PASS env vars}"
+
+# Optional separate creds (preferred — not in URL)
+BASIC_USER="${BASIC_AUTH_USER:-}"
+BASIC_PASS="${BASIC_AUTH_PASS:-}"
+CURL_AUTH=()
+if [ -n "$BASIC_USER" ]; then
+  CURL_AUTH=(-u "$BASIC_USER:$BASIC_PASS")
+fi
+# wrap curl so all calls use auth when configured
+curl() { command curl "${CURL_AUTH[@]}" "$@"; }
 TS=$(date +%s)
 PASS=0
 FAIL=0

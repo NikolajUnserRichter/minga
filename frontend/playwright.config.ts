@@ -13,6 +13,16 @@ export default defineConfig({
     video: 'retain-on-failure',
     actionTimeout: 8_000,
     navigationTimeout: 15_000,
+    // Basic-Auth via Header (NICHT in der URL) — verhindert dass Credentials
+    // in Playwright-Traces / Screenshots / HTML-Reports landen.
+    ...(process.env.BASIC_AUTH_USER && process.env.BASIC_AUTH_PASS
+      ? {
+          httpCredentials: {
+            username: process.env.BASIC_AUTH_USER,
+            password: process.env.BASIC_AUTH_PASS,
+          },
+        }
+      : {}),
   },
   projects: [
     { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
