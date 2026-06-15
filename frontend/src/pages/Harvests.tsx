@@ -75,7 +75,7 @@ export default function Harvests() {
 
     // Derived data
     const harvests = harvestsData?.items || harvestsData || [];
-    const harvestableMatches = batchesData?.items || [];
+    const harvestableMatches = batchesData || [];
 
     // Statistics
     const totalHarvestKg = (Array.isArray(harvests) ? harvests : []).reduce(

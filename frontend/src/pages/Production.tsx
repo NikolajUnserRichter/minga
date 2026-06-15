@@ -79,13 +79,23 @@ export default function Production() {
   });
 
   const createSowingMutation = useMutation({
-    mutationFn: (data: { seed_id: string; seed_batch_id?: string; tray_anzahl: number; aussaat_datum: string; regal_position?: string }) =>
-      productionApi.createGrowBatch({
-        seed_batch_id: data.seed_batch_id || data.seed_id,
+    mutationFn: (data: { seed_id: string; seed_batch_id?: string; tray_anzahl: number; aussaat_datum: string; regal_position?: string }) => {
+      if (!data.seed_batch_id) {
+        return Promise.reject({
+          response: {
+            data: {
+              detail: 'Bitte eine Saatgut-Charge auswählen. Falls keine vorhanden ist: erst Lager → Saatgut-Wareneingang erfassen.',
+            },
+          },
+        });
+      }
+      return productionApi.createGrowBatch({
+        seed_batch_id: data.seed_batch_id,
         tray_anzahl: data.tray_anzahl,
         aussaat_datum: data.aussaat_datum,
         regal_position: data.regal_position || undefined,
-      }),
+      });
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['growBatches'] });
       queryClient.invalidateQueries({ queryKey: ['capacity'] });
@@ -122,7 +132,8 @@ export default function Production() {
   });
 
   // Derived State
-  const batches = batchesData?.items || [];
+  // Backend liefert flaches Array – legacy-Fallback auf .items für Kompat
+  const batches = Array.isArray(batchesData) ? batchesData : ((batchesData as any)?.items || []);
   const filteredBatches = batches.filter((batch: GrowBatch) =>
     batch.seed_name?.toLowerCase().includes(search.toLowerCase()) ||
     batch.id.toLowerCase().includes(search.toLowerCase())

@@ -796,6 +796,7 @@ function GrowPlansTab({ growPlans }: { growPlans: GrowPlan[] }) {
   const queryClient = useQueryClient();
   const toast = useToast();
   const [creating, setCreating] = useState(false);
+  const [editing, setEditing] = useState<GrowPlan | null>(null);
 
   return (
     <div className="space-y-4">
@@ -814,11 +815,12 @@ function GrowPlansTab({ growPlans }: { growPlans: GrowPlan[] }) {
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Wachstum</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Erntefenster</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Ertrag/Kiste</th>
+              <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Aktion</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
             {growPlans.length === 0 ? (
-              <tr><td colSpan={6} className="px-6 py-8 text-sm text-center text-gray-500 dark:text-gray-400">Keine Wachstumspläne — lege deinen ersten an</td></tr>
+              <tr><td colSpan={7} className="px-6 py-8 text-sm text-center text-gray-500 dark:text-gray-400">Keine Wachstumspläne — lege deinen ersten an</td></tr>
             ) : growPlans.map((plan) => (
               <tr key={plan.id} className="hover:bg-gray-50 dark:bg-gray-700/50">
                 <td className="px-6 py-4 text-sm font-mono text-gray-900 dark:text-white">{plan.code}</td>
@@ -829,6 +831,11 @@ function GrowPlansTab({ growPlans }: { growPlans: GrowPlan[] }) {
                   {plan.harvest_window_start_days}-{plan.harvest_window_end_days} Tage
                 </td>
                 <td className="px-6 py-4 text-sm text-gray-500 dark:text-gray-400">{plan.expected_yield_grams_per_tray}g</td>
+                <td className="px-6 py-4 text-right text-sm">
+                  <Button variant="ghost" size="sm" onClick={() => setEditing(plan)}>
+                    Bearbeiten
+                  </Button>
+                </td>
               </tr>
             ))}
           </tbody>
@@ -844,6 +851,20 @@ function GrowPlansTab({ growPlans }: { growPlans: GrowPlan[] }) {
           }}
           onCancel={() => setCreating(false)}
         />
+      </Modal>
+
+      <Modal open={!!editing} onClose={() => setEditing(null)} title={`Wachstumsplan bearbeiten — ${editing?.name ?? ''}`} size="lg">
+        {editing && (
+          <GrowPlanForm
+            plan={editing}
+            onSubmit={() => {
+              queryClient.invalidateQueries({ queryKey: ['grow-plans'] });
+              setEditing(null);
+              toast.success('Wachstumsplan gespeichert');
+            }}
+            onCancel={() => setEditing(null)}
+          />
+        )}
       </Modal>
     </div>
   );
@@ -905,30 +926,34 @@ function ProductGroupsTab({ groups }: { groups: ProductGroup[] }) {
   );
 }
 
-function GrowPlanForm({ onSubmit, onCancel }: { onSubmit: () => void; onCancel: () => void }) {
+function GrowPlanForm({ plan, onSubmit, onCancel }: { plan?: GrowPlan; onSubmit: () => void; onCancel: () => void }) {
   const toast = useToast();
   const [loading, setLoading] = useState(false);
   const [d, setD] = useState({
-    code: '',
-    name: '',
-    description: '',
-    soak_hours: 0,
-    blackout_days: 0,
-    germination_days: 2,
-    growth_days: 7,
-    harvest_window_start_days: 9,
-    harvest_window_optimal_days: 10,
-    harvest_window_end_days: 12,
-    expected_yield_grams_per_tray: 350,
-    expected_loss_percent: 5,
-    seed_density_grams_per_tray: 12,
+    code: plan?.code || '',
+    name: plan?.name || '',
+    description: plan?.description || '',
+    soak_hours: plan?.soak_hours ?? 0,
+    blackout_days: plan?.blackout_days ?? 0,
+    germination_days: plan?.germination_days ?? 2,
+    growth_days: plan?.growth_days ?? 7,
+    harvest_window_start_days: plan?.harvest_window_start_days ?? 9,
+    harvest_window_optimal_days: plan?.harvest_window_optimal_days ?? 10,
+    harvest_window_end_days: plan?.harvest_window_end_days ?? 12,
+    expected_yield_grams_per_tray: plan?.expected_yield_grams_per_tray ?? 350,
+    expected_loss_percent: plan?.expected_loss_percent ?? 5,
+    seed_density_grams_per_tray: plan?.seed_density_grams_per_tray ?? 12,
   });
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     try {
-      await growPlansApi.create(d);
+      if (plan) {
+        await growPlansApi.update(plan.id, d);
+      } else {
+        await growPlansApi.create(d);
+      }
       onSubmit();
     } catch (err: any) {
       toast.error(err?.response?.data?.detail || 'Fehler beim Speichern');

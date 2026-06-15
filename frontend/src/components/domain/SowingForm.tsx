@@ -89,6 +89,9 @@ export function SowingForm({
     if (!formData.seed_id) {
       newErrors.seed_id = 'Saatgut ist erforderlich';
     }
+    if (!formData.seed_batch_id) {
+      newErrors.seed_batch_id = 'Bitte eine Saatgut-Charge wählen (ggf. erst im Lager erfassen)';
+    }
     if (formData.tray_anzahl <= 0) {
       newErrors.tray_anzahl = 'Anzahl muss größer als 0 sein';
     }
@@ -157,13 +160,19 @@ export function SowingForm({
       {/* Seed Batch Selection */}
       {formData.seed_id && batchOptions.length > 0 && (
         <Select
-          label="Saatgut-Charge"
+          label="Saatgut-Charge *"
           options={batchOptions}
           value={formData.seed_batch_id}
           onChange={(e) => setFormData({ ...formData, seed_batch_id: e.target.value })}
           error={errors.seed_batch_id}
-          placeholder="Charge auswählen (optional)..."
+          placeholder="Charge auswählen..."
         />
+      )}
+      {formData.seed_id && batchOptions.length === 0 && (
+        <div className="text-sm text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-900/20 p-3 rounded border border-amber-200 dark:border-amber-800">
+          ⚠️ Für diese Sorte ist noch keine Saatgut-Charge im Lager.
+          Bitte erst unter <b>Lager → Wareneingang Saatgut</b> eine Charge erfassen.
+        </div>
       )}
 
       {/* Tray Count */}

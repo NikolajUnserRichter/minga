@@ -155,14 +155,14 @@ export default function Dashboard() {
         <div className="card">
           <div className="card-header">
             <h3 className="card-title">Erntereife Chargen</h3>
-            {erntereifData?.items && erntereifData.items.length > 0 && (
-              <Badge variant="success">{erntereifData.items.length}</Badge>
+            {erntereifData && erntereifData.length > 0 && (
+              <Badge variant="success">{erntereifData.length}</Badge>
             )}
           </div>
           <div className="card-body">
-            {erntereifData?.items?.length ? (
+            {erntereifData?.length ? (
               <div className="space-y-3">
-                {erntereifData.items.slice(0, 5).map((batch: GrowBatch) => (
+                {erntereifData.slice(0, 5).map((batch: GrowBatch) => (
                   <div
                     key={batch.id}
                     className="flex items-center justify-between p-3 bg-green-50 dark:bg-green-900/20 rounded-lg border border-green-200 dark:border-green-700"
@@ -185,9 +185,9 @@ export default function Dashboard() {
                     </div>
                   </div>
                 ))}
-                {erntereifData.items.length > 5 && (
+                {erntereifData.length > 5 && (
                   <a href="/production" className="flex items-center gap-1 text-sm text-minga-600 dark:text-minga-400 hover:text-minga-700">
-                    Alle {erntereifData.items.length} anzeigen <ArrowRight className="w-4 h-4" />
+                    Alle {erntereifData.length} anzeigen <ArrowRight className="w-4 h-4" />
                   </a>
                 )}
               </div>

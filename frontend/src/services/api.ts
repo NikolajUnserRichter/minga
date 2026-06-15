@@ -98,7 +98,7 @@ export const seedsApi = {
 // Production API
 export const productionApi = {
   listGrowBatches: (params?: { status?: string; erntereif?: boolean }) =>
-    api.get<ListResponse<GrowBatch>>('/production/grow-batches', { params }).then(r => r.data),
+    api.get<GrowBatch[]>('/production/grow-batches', { params }).then(r => r.data),
 
   getGrowBatch: (id: string) =>
     api.get<GrowBatch>(`/production/grow-batches/${id}`).then(r => r.data),
