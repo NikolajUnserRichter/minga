@@ -43,12 +43,14 @@ export default function Orders() {
   const [docsOrder, setDocsOrder] = useState<Order | null>(null);
 
   // Fetch orders
-  const { data: ordersData, isLoading, isError } = useQuery({
+  const { data: ordersData, isLoading, isError, error, refetch, isFetching } = useQuery({
     queryKey: ['orders', { status: statusFilter }],
     queryFn: () =>
       salesApi.listOrders({
         status: statusFilter === 'all' ? undefined : (statusFilter as OrderStatus),
       }),
+    retry: 2,                              // bis zu 2x re-tryen
+    retryDelay: (n) => Math.min(2000 * n, 5000),
   });
 
   const orders = ordersData?.items || [];
@@ -127,11 +129,23 @@ export default function Orders() {
   }
 
   if (isError) {
+    const errAny = error as any;
+    const status = errAny?.response?.status;
+    const detail = errAny?.response?.data?.detail || errAny?.message || 'Unbekannter Fehler';
     return (
       <div className="p-8 text-center">
-        <div className="w-12 h-12 text-red-400 mx-auto mb-4">⚠️</div>
+        <div className="text-3xl mb-3">⚠️</div>
         <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">Bestellungen konnten nicht geladen werden</h2>
-        <p className="text-gray-500 dark:text-gray-400">Bitte prüfe die Verbindung zum Server und versuche es erneut.</p>
+        <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">
+          {status ? `HTTP ${status}` : 'Netzwerkfehler'} — {String(detail)}
+        </p>
+        <button
+          className="mt-4 px-4 py-2 bg-minga-600 hover:bg-minga-700 text-white rounded-lg text-sm"
+          onClick={() => refetch()}
+          disabled={isFetching}
+        >
+          {isFetching ? 'Lädt…' : 'Erneut versuchen'}
+        </button>
       </div>
     );
   }

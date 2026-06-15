@@ -1,0 +1,229 @@
+- generic [ref=e3]:
+  - complementary [ref=e4]:
+    - link "Minga Greens Minga-Greens" [ref=e6] [cursor=pointer]:
+      - /url: /dashboard
+      - img "Minga Greens" [ref=e7]
+      - generic [ref=e8]: Minga-Greens
+    - navigation [ref=e9]:
+      - generic [ref=e11]:
+        - link "Dashboard" [ref=e12] [cursor=pointer]:
+          - /url: /dashboard
+          - img [ref=e13]
+          - text: Dashboard
+        - link "Auswertungen" [ref=e18] [cursor=pointer]:
+          - /url: /analytics
+          - img [ref=e19]
+          - text: Auswertungen
+      - generic [ref=e21]:
+        - paragraph [ref=e22]: Stammdaten
+        - generic [ref=e23]:
+          - link "Saatgut" [ref=e24] [cursor=pointer]:
+            - /url: /seeds
+            - img [ref=e25]
+            - text: Saatgut
+          - link "Lieferanten" [ref=e29] [cursor=pointer]:
+            - /url: /suppliers
+            - img [ref=e30]
+            - text: Lieferanten
+          - link "Produkte" [ref=e34] [cursor=pointer]:
+            - /url: /products
+            - img [ref=e35]
+            - text: Produkte
+          - link "Lager" [ref=e37] [cursor=pointer]:
+            - /url: /inventory
+            - img [ref=e38]
+            - text: Lager
+          - link "Lagerorte" [ref=e41] [cursor=pointer]:
+            - /url: /locations
+            - img [ref=e42]
+            - text: Lagerorte
+      - generic [ref=e45]:
+        - paragraph [ref=e46]: Produktion
+        - generic [ref=e47]:
+          - link "Wachstumschargen" [ref=e48] [cursor=pointer]:
+            - /url: /production
+            - img [ref=e49]
+            - text: Wachstumschargen
+          - link "Ernten" [ref=e53] [cursor=pointer]:
+            - /url: /harvests
+            - img [ref=e54]
+            - text: Ernten
+          - link "Kapazitäten" [ref=e60] [cursor=pointer]:
+            - /url: /capacities
+            - img [ref=e61]
+            - text: Kapazitäten
+      - generic [ref=e65]:
+        - paragraph [ref=e66]: Vertrieb
+        - generic [ref=e67]:
+          - link "Kunden" [ref=e68] [cursor=pointer]:
+            - /url: /customers
+            - img [ref=e69]
+            - text: Kunden
+          - link "Bestellungen" [ref=e74] [cursor=pointer]:
+            - /url: /orders
+            - img [ref=e75]
+            - text: Bestellungen
+          - link "Abonnements" [ref=e78] [cursor=pointer]:
+            - /url: /subscriptions
+            - img [ref=e79]
+            - text: Abonnements
+          - link "Rechnungen" [ref=e84] [cursor=pointer]:
+            - /url: /invoices
+            - img [ref=e85]
+            - text: Rechnungen
+      - generic [ref=e88]:
+        - paragraph [ref=e89]: Forecasting
+        - generic [ref=e90]:
+          - link "Prognosen" [ref=e91] [cursor=pointer]:
+            - /url: /forecasting
+            - img [ref=e92]
+            - text: Prognosen
+          - link "Produktionsvorschläge" [ref=e95] [cursor=pointer]:
+            - /url: /suggestions
+            - img [ref=e96]
+            - text: Produktionsvorschläge
+          - link "Forecast-Genauigkeit" [ref=e100] [cursor=pointer]:
+            - /url: /accuracy
+            - img [ref=e101]
+            - text: Forecast-Genauigkeit
+      - generic [ref=e103]:
+        - paragraph [ref=e104]: Admin
+        - generic [ref=e105]:
+          - link "Einstellungen" [ref=e106] [cursor=pointer]:
+            - /url: /settings
+            - img [ref=e107]
+            - text: Einstellungen
+          - link "Benutzerverwaltung" [ref=e110] [cursor=pointer]:
+            - /url: /users
+            - img [ref=e111]
+            - text: Benutzerverwaltung
+    - button "MM Max Mustermann Administrator" [ref=e125] [cursor=pointer]:
+      - generic [ref=e126]: MM
+      - generic [ref=e127]:
+        - paragraph [ref=e128]: Max Mustermann
+        - paragraph [ref=e129]: Administrator
+      - img [ref=e130]
+  - generic [ref=e132]:
+    - banner [ref=e133]:
+      - paragraph [ref=e135]: Guten Abend, Max!
+      - generic [ref=e136]:
+        - button "Suchen… Strg+K" [ref=e137] [cursor=pointer]:
+          - img [ref=e138]
+          - generic [ref=e141]: Suchen…
+          - generic [ref=e142]: Strg+K
+        - button "Dunkles Design" [ref=e143] [cursor=pointer]:
+          - img [ref=e144]
+        - button "Scannen" [ref=e146] [cursor=pointer]:
+          - img [ref=e147]
+          - generic [ref=e153]: Scannen
+        - generic [ref=e154]: Montag, 18. Mai 2026
+    - main [ref=e155]:
+      - generic [ref=e156]:
+        - generic [ref=e158]:
+          - heading "Einstellungen" [level=1] [ref=e159]
+          - paragraph [ref=e160]: Systemkonfiguration verwalten
+        - generic [ref=e161]:
+          - generic [ref=e163]: Lädt SMTP-Settings…
+          - generic [ref=e164]:
+            - heading "Firmendaten" [level=3] [ref=e166]:
+              - img [ref=e167]
+              - text: Firmendaten
+            - generic [ref=e171]:
+              - generic [ref=e172]:
+                - generic [ref=e173]:
+                  - generic [ref=e174]: Firmenname
+                  - textbox "Firmenname" [ref=e176]: Minga Greens GmbH
+                - generic [ref=e177]:
+                  - generic [ref=e178]: Adresse
+                  - textbox "Adresse" [ref=e180]: Breisacher Str. 12, 81667 München
+                - generic [ref=e181]:
+                  - generic [ref=e182]: USt-IdNr.
+                  - generic [ref=e183]:
+                    - img [ref=e185]
+                    - textbox "USt-IdNr." [ref=e188]: DE328451962
+                - generic [ref=e189]:
+                  - generic [ref=e190]: E-Mail
+                  - textbox "E-Mail" [ref=e192]: info@minga-greens.de
+                - generic [ref=e193]:
+                  - generic [ref=e194]: Telefon
+                  - textbox "Telefon" [ref=e196]: +49 89 123 456 0
+                - generic [ref=e197]:
+                  - generic [ref=e198]: Website
+                  - generic [ref=e199]:
+                    - img [ref=e201]
+                    - textbox "Website" [ref=e204]: www.minga-greens.de
+              - button "Speichern" [ref=e206] [cursor=pointer]:
+                - img [ref=e207]
+                - text: Speichern
+          - generic [ref=e211]:
+            - heading "Systeminfo" [level=3] [ref=e213]
+            - generic [ref=e214]:
+              - generic [ref=e215]:
+                - img [ref=e216]
+                - generic [ref=e219]:
+                  - paragraph [ref=e220]: Version
+                  - paragraph [ref=e221]: Minga-Greens ERP v1.0.0
+              - generic [ref=e222]:
+                - img [ref=e223]
+                - generic [ref=e227]:
+                  - paragraph [ref=e228]: Datenbank
+                  - paragraph [ref=e229]: PostgreSQL 15
+              - generic [ref=e232]:
+                - paragraph [ref=e233]: Status
+                - paragraph [ref=e234]: Alle Dienste aktiv
+          - generic [ref=e236]:
+            - heading "Kapazitäten" [level=3] [ref=e237]
+            - button "+ Hinzufügen" [ref=e238] [cursor=pointer]
+          - generic [ref=e253]:
+            - heading "Benachrichtigungen" [level=3] [ref=e255]
+            - generic [ref=e256]:
+              - generic [ref=e257] [cursor=pointer]:
+                - generic [ref=e258]:
+                  - img [ref=e259]
+                  - generic [ref=e262]: Erntereife Chargen
+                - checkbox "Erntereife Chargen" [checked] [ref=e263]
+              - generic [ref=e264] [cursor=pointer]:
+                - generic [ref=e265]:
+                  - img [ref=e266]
+                  - generic [ref=e269]: Kapazitätswarnungen
+                - checkbox "Kapazitätswarnungen" [checked] [ref=e270]
+              - generic [ref=e271] [cursor=pointer]:
+                - generic [ref=e272]:
+                  - img [ref=e273]
+                  - generic [ref=e276]: Neue Bestellungen
+                - checkbox "Neue Bestellungen" [checked] [ref=e277]
+              - generic [ref=e278] [cursor=pointer]:
+                - generic [ref=e279]:
+                  - img [ref=e280]
+                  - generic [ref=e283]: Niedriger Bestand
+                - checkbox "Niedriger Bestand" [checked] [ref=e284]
+              - generic [ref=e285] [cursor=pointer]:
+                - generic [ref=e286]:
+                  - img [ref=e287]
+                  - generic [ref=e290]: Überfällige Rechnungen
+                - checkbox "Überfällige Rechnungen" [ref=e291]
+              - button "Speichern" [ref=e293] [cursor=pointer]
+          - generic [ref=e294]:
+            - heading "Forecasting" [level=3] [ref=e296]
+            - generic [ref=e297]:
+              - generic [ref=e298]:
+                - generic [ref=e299]: Standardhorizont (Tage)
+                - spinbutton "Standardhorizont (Tage)" [ref=e301]: "14"
+              - generic [ref=e302]:
+                - generic [ref=e303]: Modell
+                - combobox "Modell" [ref=e304] [cursor=pointer]:
+                  - option "Prophet (empfohlen)" [selected]
+                  - option "ARIMA"
+                  - option "Ensemble"
+              - generic [ref=e305]:
+                - generic [ref=e306]: Sicherheitspuffer (%)
+                - spinbutton "Sicherheitspuffer (%)" [ref=e308]: "10"
+              - button "Speichern" [ref=e310] [cursor=pointer]
+        - generic [ref=e311]:
+          - heading "API & Integration" [level=3] [ref=e313]
+          - generic [ref=e315]:
+            - img [ref=e316]
+            - generic [ref=e320]:
+              - paragraph [ref=e321]: API-Schlüssel
+              - paragraph [ref=e322]: ••••••••••••••••••••••••••••••••
+            - button "Regenerieren" [ref=e323] [cursor=pointer]

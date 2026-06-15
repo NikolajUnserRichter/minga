@@ -818,7 +818,7 @@ export const adminApi = {
 
 // ==================== ATTACHMENTS (Zertifikate, Datenblätter) ====================
 
-export type AttachmentEntityType = 'supplier' | 'product' | 'harvest'
+export type AttachmentEntityType = 'supplier' | 'product' | 'harvest' | 'seed_inventory'
 
 export interface Attachment {
   id: string

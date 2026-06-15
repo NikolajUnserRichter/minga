@@ -1,0 +1,221 @@
+- generic [ref=e1]:
+  - generic [ref=e3]:
+    - complementary [ref=e4]:
+      - link "Minga Greens Minga-Greens" [ref=e6] [cursor=pointer]:
+        - /url: /dashboard
+        - img "Minga Greens" [ref=e7]
+        - generic [ref=e8]: Minga-Greens
+      - navigation [ref=e9]:
+        - generic [ref=e11]:
+          - link "Dashboard" [ref=e12] [cursor=pointer]:
+            - /url: /dashboard
+            - img [ref=e13]
+            - text: Dashboard
+          - link "Auswertungen" [ref=e18] [cursor=pointer]:
+            - /url: /analytics
+            - img [ref=e19]
+            - text: Auswertungen
+        - generic [ref=e21]:
+          - paragraph [ref=e22]: Stammdaten
+          - generic [ref=e23]:
+            - link "Saatgut" [ref=e24] [cursor=pointer]:
+              - /url: /seeds
+              - img [ref=e25]
+              - text: Saatgut
+            - link "Lieferanten" [ref=e29] [cursor=pointer]:
+              - /url: /suppliers
+              - img [ref=e30]
+              - text: Lieferanten
+            - link "Produkte" [ref=e34] [cursor=pointer]:
+              - /url: /products
+              - img [ref=e35]
+              - text: Produkte
+            - link "Lager" [ref=e37] [cursor=pointer]:
+              - /url: /inventory
+              - img [ref=e38]
+              - text: Lager
+            - link "Lagerorte" [ref=e41] [cursor=pointer]:
+              - /url: /locations
+              - img [ref=e42]
+              - text: Lagerorte
+        - generic [ref=e45]:
+          - paragraph [ref=e46]: Produktion
+          - generic [ref=e47]:
+            - link "Wachstumschargen" [ref=e48] [cursor=pointer]:
+              - /url: /production
+              - img [ref=e49]
+              - text: Wachstumschargen
+            - link "Ernten" [ref=e53] [cursor=pointer]:
+              - /url: /harvests
+              - img [ref=e54]
+              - text: Ernten
+            - link "Kapazitäten" [ref=e60] [cursor=pointer]:
+              - /url: /capacities
+              - img [ref=e61]
+              - text: Kapazitäten
+        - generic [ref=e65]:
+          - paragraph [ref=e66]: Vertrieb
+          - generic [ref=e67]:
+            - link "Kunden" [ref=e68] [cursor=pointer]:
+              - /url: /customers
+              - img [ref=e69]
+              - text: Kunden
+            - link "Bestellungen" [ref=e74] [cursor=pointer]:
+              - /url: /orders
+              - img [ref=e75]
+              - text: Bestellungen
+            - link "Abonnements" [ref=e78] [cursor=pointer]:
+              - /url: /subscriptions
+              - img [ref=e79]
+              - text: Abonnements
+            - link "Rechnungen" [ref=e84] [cursor=pointer]:
+              - /url: /invoices
+              - img [ref=e85]
+              - text: Rechnungen
+        - generic [ref=e88]:
+          - paragraph [ref=e89]: Forecasting
+          - generic [ref=e90]:
+            - link "Prognosen" [ref=e91] [cursor=pointer]:
+              - /url: /forecasting
+              - img [ref=e92]
+              - text: Prognosen
+            - link "Produktionsvorschläge" [ref=e95] [cursor=pointer]:
+              - /url: /suggestions
+              - img [ref=e96]
+              - text: Produktionsvorschläge
+            - link "Forecast-Genauigkeit" [ref=e100] [cursor=pointer]:
+              - /url: /accuracy
+              - img [ref=e101]
+              - text: Forecast-Genauigkeit
+        - generic [ref=e103]:
+          - paragraph [ref=e104]: Admin
+          - generic [ref=e105]:
+            - link "Einstellungen" [ref=e106] [cursor=pointer]:
+              - /url: /settings
+              - img [ref=e107]
+              - text: Einstellungen
+            - link "Benutzerverwaltung" [ref=e110] [cursor=pointer]:
+              - /url: /users
+              - img [ref=e111]
+              - text: Benutzerverwaltung
+      - button "MM Max Mustermann Administrator" [ref=e125] [cursor=pointer]:
+        - generic [ref=e126]: MM
+        - generic [ref=e127]:
+          - paragraph [ref=e128]: Max Mustermann
+          - paragraph [ref=e129]: Administrator
+        - img [ref=e130]
+    - generic [ref=e132]:
+      - banner [ref=e133]:
+        - paragraph [ref=e135]: Guten Tag, Max!
+        - generic [ref=e136]:
+          - button "Suchen… Strg+K" [ref=e137] [cursor=pointer]:
+            - img [ref=e138]
+            - generic [ref=e141]: Suchen…
+            - generic [ref=e142]: Strg+K
+          - button "Dunkles Design" [ref=e143] [cursor=pointer]:
+            - img [ref=e144]
+          - button "Scannen" [ref=e146] [cursor=pointer]:
+            - img [ref=e147]
+            - generic [ref=e153]: Scannen
+          - generic [ref=e154]: Montag, 18. Mai 2026
+      - main [ref=e155]:
+        - generic [ref=e208]:
+          - generic [ref=e209]:
+            - generic [ref=e210]:
+              - heading "Bestellungen" [level=1] [ref=e211]
+              - paragraph [ref=e212]: 0 Bestellungen
+            - button "Neue Bestellung" [ref=e214] [cursor=pointer]:
+              - img [ref=e215]
+              - text: Neue Bestellung
+          - generic [ref=e216]:
+            - generic [ref=e219]:
+              - img [ref=e221]
+              - textbox "Suchen nach Kunde oder Bestellnummer..." [ref=e224]
+            - combobox [ref=e226] [cursor=pointer]:
+              - option "Alle Status" [selected]
+              - option "Offen"
+              - option "Bestätigt"
+              - option "In Produktion"
+              - option "Bereit"
+              - option "Geliefert"
+          - generic [ref=e227]:
+            - generic [ref=e228]:
+              - tab "Heute" [selected] [ref=e229] [cursor=pointer]
+              - tab "Morgen" [ref=e230] [cursor=pointer]
+              - tab "Kommende" [ref=e231] [cursor=pointer]
+              - tab "Alle" [ref=e232] [cursor=pointer]
+            - tabpanel [ref=e234]:
+              - generic [ref=e235]:
+                - img [ref=e237]
+                - heading "Keine Bestellungen" [level=3] [ref=e240]
+                - paragraph [ref=e241]: In diesem Zeitraum sind keine Bestellungen vorhanden.
+  - dialog "Neue Bestellung aufnehmen" [ref=e243]:
+    - generic [ref=e244]:
+      - generic [ref=e245]:
+        - heading "Neue Bestellung aufnehmen" [level=2] [ref=e246]
+        - button "Schließen" [ref=e247] [cursor=pointer]:
+          - img [ref=e248]
+      - generic [ref=e252]:
+        - generic [ref=e253]:
+          - generic [ref=e254]:
+            - generic [ref=e255]: Kunde
+            - combobox "Kunde" [ref=e256] [cursor=pointer]:
+              - option "Kunde wählen..."
+              - option "Test Restaurant" [selected]
+          - generic [ref=e257]:
+            - generic [ref=e258]: Lieferdatum *
+            - textbox "Lieferdatum *" [ref=e260]: 2026-05-18
+        - generic [ref=e261]:
+          - generic [ref=e262]: Kundenbestellnummer (optional)
+          - textbox "Kundenbestellnummer (optional)" [ref=e264]:
+            - /placeholder: z.B. PO-12345
+        - generic [ref=e265]:
+          - text: Positionen
+          - generic [ref=e266]:
+            - generic [ref=e267]:
+              - combobox [ref=e270] [cursor=pointer]:
+                - option "Produkt wählen..."
+                - option "Sonnenblume Microgreens"
+                - option "Erbse Microgreens"
+                - option "Radieschen Microgreens"
+                - option "Gastrotray (3-5 Sorten)" [selected]
+              - spinbutton [ref=e274]: "1"
+              - combobox [ref=e277] [cursor=pointer]:
+                - option "g" [selected]
+                - option "kg"
+                - option "Stk"
+                - option "Schale"
+                - option "Tray (8 Schalen)"
+                - option "Mehrwegkiste (12 Schalen)"
+                - option "Mehrwegkiste (6 Schalen)"
+                - option "Karton (6 Schalen)"
+              - spinbutton [ref=e281]: "24.00"
+              - button [disabled] [ref=e282]:
+                - img [ref=e283]
+            - generic [ref=e296]:
+              - generic [ref=e297]:
+                - generic [ref=e298]: Sorten für „Gastrotray (3-5 Sorten)" auswählen
+                - generic [ref=e299]: 1 / 3–5 Slots
+              - generic [ref=e303]:
+                - combobox [ref=e306] [cursor=pointer]:
+                  - option "Sorte wählen..." [selected]
+                  - option "Sonnenblume Microgreens"
+                  - option "Erbse Microgreens"
+                  - option "Radieschen Microgreens"
+                - spinbutton [ref=e310]: "1"
+                - button [ref=e311] [cursor=pointer]:
+                  - img [ref=e312]
+              - button "Sorte hinzufügen" [active] [ref=e301] [cursor=pointer]:
+                - img [ref=e302]
+                - text: Sorte hinzufügen
+          - button "Position hinzufügen" [ref=e286] [cursor=pointer]:
+            - img [ref=e287]
+            - text: Position hinzufügen
+        - generic [ref=e288]: "Gesamtsumme: €24.00"
+        - generic [ref=e289]:
+          - generic [ref=e290]: Notizen (optional)
+          - textbox "Notizen (optional)" [ref=e292]:
+            - /placeholder: Interne Anmerkungen...
+      - generic [ref=e293]:
+        - button "Abbrechen" [ref=e294] [cursor=pointer]
+        - button "Bestellung erstellen" [ref=e295] [cursor=pointer]

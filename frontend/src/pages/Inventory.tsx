@@ -3,9 +3,10 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 import {
   Search, Package, Warehouse, Leaf, Box, AlertTriangle,
-  ArrowDownCircle, ArrowUpCircle, Thermometer, Printer, Link as LinkIcon, Edit
+  ArrowDownCircle, ArrowUpCircle, Thermometer, Printer, Link as LinkIcon, Edit, Paperclip
 } from 'lucide-react';
 import { inventoryApi, seedsApi } from '../services/api';
+import { AttachmentsModal } from '../components/common/AttachmentsModal';
 import {
   SeedInventory, FinishedGoodsInventory, PackagingInventory,
   InventoryLocation, InventoryMovement, LocationType
@@ -57,6 +58,7 @@ export default function Inventory() {
   const [selectedTraceItem, setSelectedTraceItem] = useState<TraceabilityChain | null>(null);
   const [showCorrectionModal, setShowCorrectionModal] = useState(false);
   const [correctionItem, setCorrectionItem] = useState<{ id: string, qty: number, unit: string, type: InventoryType, name: string } | null>(null);
+  const [attachmentsFor, setAttachmentsFor] = useState<{ id: string; name: string } | null>(null);
   const [searchParams] = useSearchParams();
   const highlightId = searchParams.get('highlight');
 
@@ -204,6 +206,10 @@ export default function Inventory() {
             });
             setShowCorrectionModal(true);
           }}
+          onAttachments={(item) => setAttachmentsFor({
+            id: item.id,
+            name: `${item.seed_name ?? '—'} (${item.batch_number})`,
+          })}
         />
       )}
 
@@ -310,6 +316,16 @@ export default function Inventory() {
           itemName={correctionItem.name}
         />
       )}
+
+      {/* Saatgut-Anhänge (Zertifikate, Lieferschein, Bilder, …) */}
+      <AttachmentsModal
+        open={!!attachmentsFor}
+        onClose={() => setAttachmentsFor(null)}
+        entityType="seed_inventory"
+        entityId={attachmentsFor?.id || null}
+        entityName={attachmentsFor?.name || ''}
+        defaultCertificateType="BIO"
+      />
     </div>
   );
 }
@@ -435,7 +451,7 @@ function OverviewTab({
 }
 
 // Seed Inventory Tab
-function SeedInventoryTab({ inventory, search, onCorrect }: { inventory: SeedInventory[]; search: string; onCorrect: (item: SeedInventory) => void }) {
+function SeedInventoryTab({ inventory, search, onCorrect, onAttachments }: { inventory: SeedInventory[]; search: string; onCorrect: (item: SeedInventory) => void; onAttachments: (item: SeedInventory) => void }) {
   const filtered = inventory.filter(
     (item) =>
       item.batch_number.toLowerCase().includes(search.toLowerCase()) ||
@@ -475,6 +491,13 @@ function SeedInventoryTab({ inventory, search, onCorrect }: { inventory: SeedInv
               </td>
               <td className="px-6 py-4">
                 {item.is_organic && <Badge variant="success">Bio</Badge>}
+                <button
+                  className="text-gray-400 hover:text-blue-600 dark:text-blue-400 ml-2"
+                  title="Anhänge (Zertifikate, Lieferschein, Bilder)"
+                  onClick={() => onAttachments(item)}
+                >
+                  <Paperclip className="w-4 h-4" />
+                </button>
                 <button
                   className="text-gray-400 hover:text-blue-600 dark:text-blue-400 ml-2"
                   title="Bestand korrigieren"

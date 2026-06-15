@@ -25,6 +25,7 @@ from app.models.attachment import Attachment, ATTACHMENT_ENTITY_TYPES, CERTIFICA
 from app.models.seed import Supplier
 from app.models.product import Product
 from app.models.production import Harvest
+from app.models.inventory import SeedInventory
 from app.schemas.attachment import AttachmentResponse, AttachmentUpdate
 from app.services.storage_service import get_storage
 
@@ -35,6 +36,7 @@ ENTITY_MODELS = {
     "supplier": Supplier,
     "product": Product,
     "harvest": Harvest,
+    "seed_inventory": SeedInventory,
 }
 
 
