@@ -118,6 +118,22 @@ export const productionApi = {
   downloadLabel: (id: string) =>
     api.get(`/production/grow-batches/${id}/label`, { responseType: 'blob' }),
 
+  // Production-Timeline-Events
+  listEvents: (batchId: string) =>
+    api.get<GrowthEvent[]>(`/production/grow-batches/${batchId}/events`).then(r => r.data),
+
+  createEvent: (batchId: string, data: {
+    event_type: GrowthEventTypeKey;
+    occurred_at?: string;
+    employee_name?: string;
+    notes?: string;
+    extra?: Record<string, any>;
+  }) =>
+    api.post<GrowthEvent>(`/production/grow-batches/${batchId}/events`, data).then(r => r.data),
+
+  listEventTypes: () =>
+    api.get<Array<{ value: GrowthEventTypeKey; label: string }>>('/production/event-types').then(r => r.data),
+
   listHarvests: (params?: { von_datum?: string; bis_datum?: string }) =>
     api.get<ListResponse<Harvest>>('/production/harvests', { params }).then(r => r.data),
 
@@ -790,6 +806,32 @@ export const usersApi = {
       }, 200)
     })
   },
+}
+
+// ==================== GROWTH-TIMELINE-EVENTS ====================
+
+export type GrowthEventTypeKey =
+  | 'SOAKING_STARTED'
+  | 'SOAKING_COMPLETED'
+  | 'SOWING_STARTED'
+  | 'SOWING_COMPLETED'
+  | 'MOVED_TO_GERMINATION'
+  | 'REMOVED_FROM_GERMINATION'
+  | 'MOVED_TO_GROW_ROOM'
+  | 'MOVED_TO_COOLING'
+  | 'PACKAGING_STARTED'
+  | 'PACKAGING_COMPLETED'
+  | 'NOTE'
+
+export interface GrowthEvent {
+  id: string
+  grow_batch_id: string
+  event_type: GrowthEventTypeKey
+  occurred_at: string
+  employee_name: string | null
+  notes: string | null
+  extra: Record<string, any> | null
+  created_at: string
 }
 
 // ==================== ADMIN SETTINGS (SMTP etc.) ====================

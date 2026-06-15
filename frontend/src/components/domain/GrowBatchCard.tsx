@@ -1,6 +1,6 @@
 import { GrowBatch, GrowBatchStatus, GrowBatchWithSeed } from '../../types';
 import { GrowBatchStatusBadge, formatDate, getRelativeDate } from '../ui';
-import { Layers, MapPin, Calendar, Scale, AlertCircle, Scissors, Printer } from 'lucide-react';
+import { Layers, MapPin, Calendar, Scale, AlertCircle, Scissors, Printer, History } from 'lucide-react';
 
 interface GrowBatchCardProps {
   batch: GrowBatchWithSeed;
@@ -8,6 +8,7 @@ interface GrowBatchCardProps {
   onStatusChange?: (status: GrowBatchStatus) => void;
   onClick?: () => void;
   onPrintLabel?: () => void;
+  onShowTimeline?: () => void;
   showActions?: boolean;
 }
 
@@ -16,6 +17,7 @@ export function GrowBatchCard({
   onHarvest,
   onClick,
   onPrintLabel,
+  onShowTimeline,
   showActions = true,
 }: GrowBatchCardProps) {
   const isHarvestReady = batch.status === 'ERNTEREIF';
@@ -105,6 +107,19 @@ export function GrowBatchCard({
               >
                 <Printer className="w-4 h-4" />
                 Label
+              </button>
+            )}
+            {onShowTimeline && (
+              <button
+                className="btn btn-secondary flex-1"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onShowTimeline();
+                }}
+                title="Timeline / Produktionsschritte"
+              >
+                <History className="w-4 h-4" />
+                Timeline
               </button>
             )}
           </div>

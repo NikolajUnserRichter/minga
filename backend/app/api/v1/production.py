@@ -144,6 +144,77 @@ def get_grow_batch_label(batch_id: UUID, db: DBSession):
     )
 
 # ========================================
+# GROWTH TIMELINE EVENTS
+# ========================================
+
+from app.models.growth_event import GrowthBatchEvent, GrowthEventType, GROWTH_EVENT_LABELS
+from datetime import datetime, timezone
+from pydantic import BaseModel, Field as PydField
+from typing import Optional as Opt
+
+
+class GrowthEventCreate(BaseModel):
+    event_type: GrowthEventType
+    occurred_at: Opt[datetime] = None
+    employee_name: Opt[str] = PydField(None, max_length=200)
+    notes: Opt[str] = None
+    extra: Opt[dict] = None
+
+
+class GrowthEventResponse(BaseModel):
+    model_config = {"from_attributes": True}
+    id: UUID
+    grow_batch_id: UUID
+    event_type: GrowthEventType
+    occurred_at: datetime
+    employee_name: Opt[str]
+    notes: Opt[str]
+    extra: Opt[dict]
+    created_at: datetime
+
+
+@router.get("/grow-batches/{batch_id}/events", response_model=List[GrowthEventResponse])
+def list_grow_batch_events(batch_id: UUID, db: DBSession):
+    """Listet alle Timeline-Events einer Charge, neueste zuerst."""
+    if not db.get(GrowBatch, batch_id):
+        raise HTTPException(status_code=404, detail="Charge nicht gefunden")
+    events = db.execute(
+        select(GrowthBatchEvent)
+        .where(GrowthBatchEvent.grow_batch_id == batch_id)
+        .order_by(desc(GrowthBatchEvent.occurred_at))
+    ).scalars().all()
+    return events
+
+
+@router.post("/grow-batches/{batch_id}/events", response_model=GrowthEventResponse, status_code=201)
+def create_grow_batch_event(batch_id: UUID, data: GrowthEventCreate, db: DBSession):
+    """Erfasst ein neues Timeline-Event für eine Charge."""
+    if not db.get(GrowBatch, batch_id):
+        raise HTTPException(status_code=404, detail="Charge nicht gefunden")
+    event = GrowthBatchEvent(
+        grow_batch_id=batch_id,
+        event_type=data.event_type,
+        occurred_at=data.occurred_at or datetime.now(timezone.utc),
+        employee_name=data.employee_name,
+        notes=data.notes,
+        extra=data.extra,
+    )
+    db.add(event)
+    db.commit()
+    db.refresh(event)
+    return event
+
+
+@router.get("/event-types")
+def list_event_types():
+    """Gibt alle bekannten Event-Typen + deutsche Labels zurück."""
+    return [
+        {"value": t.value, "label": GROWTH_EVENT_LABELS.get(t.value, t.value)}
+        for t in GrowthEventType
+    ]
+
+
+# ========================================
 # HARVESTS
 # ========================================
 

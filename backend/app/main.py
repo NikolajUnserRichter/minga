@@ -88,6 +88,7 @@ async def lifespan(app: FastAPI):
         _add_col_if_missing("customers", "skonto_days",           "INTEGER",      "0")
         _add_col_if_missing("customers", "packaging_fee_amount",  "NUMERIC(10,2)", "0")
         _add_col_if_missing("customers", "packaging_fee_percent", "NUMERIC(5,2)", "0")
+        # GrowthBatchEvent + andere neue Tabellen werden via create_all neu angelegt.
     except Exception as e:
         logger.error(f"[auto-migrate] failed: {e}")
 

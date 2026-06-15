@@ -88,6 +88,13 @@ from app.models.attachment import (
 # App-Settings (Runtime-Konfiguration via Admin-Center)
 from app.models.app_setting import AppSetting
 
+# Production-Timeline-Events
+from app.models.growth_event import (
+    GrowthBatchEvent,
+    GrowthEventType,
+    GROWTH_EVENT_LABELS,
+)
+
 __all__ = [
     # Seed & Production
     "Seed",
@@ -159,4 +166,8 @@ __all__ = [
     "CERTIFICATE_TYPES",
     # App-Settings
     "AppSetting",
+    # Production-Timeline
+    "GrowthBatchEvent",
+    "GrowthEventType",
+    "GROWTH_EVENT_LABELS",
 ]

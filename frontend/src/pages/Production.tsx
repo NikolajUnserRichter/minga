@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { productionApi, seedsApi } from '../services/api';
 import { PageHeader, FilterBar } from '../components/common/Layout';
 import { GrowBatchCard } from '../components/domain/GrowBatchCard';
+import { GrowthTimelineModal } from '../components/domain/GrowthTimelineModal';
 import { SowingForm } from '../components/domain/SowingForm';
 import { HarvestForm } from '../components/domain/HarvestForm';
 import { KanbanBoard } from '../components/domain/KanbanBoard';
@@ -39,6 +40,7 @@ export default function Production() {
   const [activeTab, setActiveTab] = useState('all');
   const [isCreating, setIsCreating] = useState(false);
   const [harvestingBatch, setHarvestingBatch] = useState<GrowBatch | null>(null);
+  const [timelineBatch, setTimelineBatch] = useState<GrowBatch | null>(null);
   const [packagingDate, setPackagingDate] = useState(new Date().toISOString().split('T')[0]);
 
   const [searchParams] = useSearchParams();
@@ -348,6 +350,7 @@ export default function Production() {
                     updateStatusMutation.mutate({ id: batch.id, status })
                   }
                   onHarvest={() => setHarvestingBatch(batch)}
+                  onShowTimeline={() => setTimelineBatch(batch)}
                   onPrintLabel={async () => {
                     try {
                       const response = await productionApi.downloadLabel(batch.id);
@@ -464,6 +467,14 @@ export default function Production() {
           />
         )}
       </Modal>
+
+      {/* Production-Timeline Modal */}
+      <GrowthTimelineModal
+        open={!!timelineBatch}
+        onClose={() => setTimelineBatch(null)}
+        growBatchId={timelineBatch?.id || null}
+        batchLabel={timelineBatch ? `${(timelineBatch as any).seed?.name || 'Charge'} #${timelineBatch.id.slice(0, 8)}` : undefined}
+      />
     </div>
   );
 }
