@@ -26,17 +26,18 @@ export function StockCorrectionModal({
 }: StockCorrectionModalProps) {
     const toast = useToast();
     const queryClient = useQueryClient();
-    const [actualQuantity, setActualQuantity] = useState<string>(currentQuantity.toString());
+    const safeCurrent = Number(currentQuantity ?? 0);
+    const [actualQuantity, setActualQuantity] = useState<string>(String(safeCurrent));
     const [reason, setReason] = useState('');
 
     useEffect(() => {
         if (open) {
-            setActualQuantity(currentQuantity.toString());
+            setActualQuantity(String(Number(currentQuantity ?? 0)));
             setReason('');
         }
     }, [open, currentQuantity]);
 
-    const difference = Number(actualQuantity) - currentQuantity;
+    const difference = Number(actualQuantity) - safeCurrent;
     const isGain = difference > 0;
     const isLoss = difference < 0;
 
@@ -68,7 +69,7 @@ export function StockCorrectionModal({
                 <div className="bg-gray-50 dark:bg-gray-700/50 p-4 rounded-lg flex justify-between items-center mb-4">
                     <div>
                         <p className="text-sm text-gray-500 dark:text-gray-400">Aktueller Bestand (System)</p>
-                        <p className="text-xl font-bold">{currentQuantity} {unit}</p>
+                        <p className="text-xl font-bold">{safeCurrent} {unit ?? ''}</p>
                     </div>
                     {difference !== 0 && (
                         <div className={`text-right ${isGain ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
@@ -114,7 +115,7 @@ export function StockCorrectionModal({
                     <Button
                         type="submit"
                         loading={correctionMutation.isPending}
-                        disabled={Number(actualQuantity) === currentQuantity}
+                        disabled={Number(actualQuantity) === safeCurrent}
                     >
                         <Check className="w-4 h-4 mr-2" />
                         Korrektur buchen

@@ -197,10 +197,10 @@ export default function Inventory() {
           onCorrect={(item) => {
             setCorrectionItem({
               id: item.id,
-              qty: item.current_quantity,
-              unit: item.unit,
+              qty: Number(item.current_quantity_kg || 0),
+              unit: 'kg',
               type: 'SAATGUT',
-              name: `${item.seed_name} (${item.batch_number})`
+              name: `${item.seed_name ?? '—'} (${item.batch_number})`
             });
             setShowCorrectionModal(true);
           }}
@@ -328,7 +328,7 @@ function OverviewTab({
   locations: InventoryLocation[];
   lowStockAlerts: any[];
 }) {
-  const totalSeedWeight = seedInventory.reduce((sum, s) => sum + s.current_quantity, 0);
+  const totalSeedWeight = seedInventory.reduce((sum, s) => sum + Number(s.current_quantity_kg || 0), 0);
   const totalFinishedWeight = finishedGoods.reduce((sum, f) => sum + f.current_quantity, 0);
 
   return (
@@ -342,7 +342,7 @@ function OverviewTab({
             </div>
             <div>
               <p className="text-sm text-gray-500 dark:text-gray-400">Saatgut</p>
-              <p className="text-xl font-semibold">{(totalSeedWeight / 1000).toFixed(1)} kg</p>
+              <p className="text-xl font-semibold">{totalSeedWeight.toFixed(1)} kg</p>
               <p className="text-xs text-gray-400">{seedInventory.length} Chargen</p>
             </div>
           </div>
@@ -466,12 +466,12 @@ function SeedInventoryTab({ inventory, search, onCorrect }: { inventory: SeedInv
               <td className="px-6 py-4 text-sm">{item.seed_name}</td>
               <td className="px-6 py-4 text-sm text-gray-500 dark:text-gray-400">{item.location_name}</td>
               <td className="px-6 py-4">
-                <span className={item.current_quantity <= (item.min_quantity || 0) ? 'text-red-600 dark:text-red-400 font-medium' : ''}>
-                  {item.current_quantity} {item.unit}
+                <span>
+                  {Number(item.current_quantity_kg ?? 0).toFixed(2)} kg
                 </span>
               </td>
               <td className="px-6 py-4 text-sm text-gray-500 dark:text-gray-400">
-                {item.mhd ? new Date(item.mhd).toLocaleDateString('de-DE') : '-'}
+                {item.best_before_date ? new Date(item.best_before_date).toLocaleDateString('de-DE') : '-'}
               </td>
               <td className="px-6 py-4">
                 {item.is_organic && <Badge variant="success">Bio</Badge>}
@@ -1176,7 +1176,7 @@ function MovementForm({
             { value: '', label: 'Charge auswählen...' },
             ...seedInventory.map((s) => ({
               value: s.id,
-              label: `${s.batch_number} - ${s.seed_name} (${s.current_quantity}g)`,
+              label: `${s.batch_number} - ${s.seed_name ?? '—'} (${Number(s.current_quantity_kg || 0).toFixed(2)} kg)`,
             })),
           ]}
           value={formData.inventory_id}

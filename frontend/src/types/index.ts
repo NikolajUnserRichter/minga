@@ -549,17 +549,24 @@ export interface SeedInventory {
   id: string
   seed_id: string
   batch_number: string
+  supplier_batch: string | null
   location_id: string | null
-  initial_quantity: number
-  current_quantity: number
-  unit: string
-  mhd: string | null
-  supplier: string | null
-  purchase_price: number | null
+  initial_quantity_kg: number | string
+  current_quantity_kg: number | string
+  received_date: string
+  best_before_date: string | null
+  germination_rate: number | null
+  quality_grade: string | null
+  production_date: string | null
+  supplier_name: string | null
+  purchase_price_per_kg: number | null
   is_organic: boolean
-  organic_certification: string | null
-  min_quantity: number | null
+  organic_certificate: string | null
   is_active: boolean
+  is_blocked: boolean
+  block_reason: string | null
+  is_expired?: boolean | null
+  days_until_expiry?: number | null
   seed_name?: string
   location_name?: string
 }
