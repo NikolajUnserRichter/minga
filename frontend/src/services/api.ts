@@ -841,6 +841,48 @@ export interface GrowthEvent {
   created_at: string
 }
 
+// ==================== CUSTOMER-PRICING ====================
+
+export interface CustomerPrice {
+  id: string
+  customer_id: string
+  product_id: string
+  unit_price: number | string
+  currency: string
+  valid_from: string
+  valid_until: string | null
+  notes: string | null
+  product_name?: string
+  product_sku?: string
+  created_at: string
+  updated_at: string
+}
+
+export const customerPricesApi = {
+  list: (customerId: string) =>
+    api.get<CustomerPrice[]>(`/sales/customers/${customerId}/prices`).then(r => r.data),
+
+  create: (customerId: string, data: {
+    product_id: string;
+    unit_price: number;
+    valid_from?: string;
+    valid_until?: string;
+    notes?: string;
+  }) =>
+    api.post<CustomerPrice>(`/sales/customers/${customerId}/prices`, data).then(r => r.data),
+
+  update: (priceId: string, data: Partial<Pick<CustomerPrice, 'unit_price' | 'valid_from' | 'valid_until' | 'notes'>>) =>
+    api.patch<CustomerPrice>(`/sales/customer-prices/${priceId}`, data).then(r => r.data),
+
+  delete: (priceId: string) =>
+    api.delete(`/sales/customer-prices/${priceId}`).then(r => r.data),
+
+  getEffective: (customerId: string, productId: string) =>
+    api.get<{ unit_price: string; is_customer_specific: boolean; base_price: string | null }>(
+      `/sales/customers/${customerId}/effective-price/${productId}`
+    ).then(r => r.data),
+}
+
 // ==================== ADMIN SETTINGS (SMTP etc.) ====================
 
 export interface AppSettingResponse {

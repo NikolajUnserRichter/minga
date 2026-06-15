@@ -272,6 +272,115 @@ async def delete_address(customer_id: UUID, address_id: UUID, db: DBSession):
     db.commit()
 
 
+# ============== Customer-Pricing Endpoints ==============
+
+from app.models.customer_price import CustomerPrice
+from app.schemas.customer_price import (
+    CustomerPriceCreate, CustomerPriceUpdate, CustomerPriceResponse,
+)
+from app.services.pricing_service import resolve_unit_price as _resolve_unit_price
+
+
+def _enrich_price(db, price: CustomerPrice) -> CustomerPriceResponse:
+    resp = CustomerPriceResponse.model_validate(price)
+    if price.product:
+        resp.product_name = price.product.name
+        resp.product_sku  = price.product.sku
+    return resp
+
+
+@router.get("/customers/{customer_id}/prices", response_model=list[CustomerPriceResponse])
+async def list_customer_prices(customer_id: UUID, db: DBSession):
+    """Listet alle Sonderpreise eines Kunden, sortiert nach Produktname."""
+    customer = db.get(Customer, customer_id)
+    if not customer:
+        raise HTTPException(status_code=404, detail="Kunde nicht gefunden")
+    prices = db.execute(
+        select(CustomerPrice)
+        .options(joinedload(CustomerPrice.product))
+        .where(CustomerPrice.customer_id == customer_id)
+        .order_by(CustomerPrice.valid_from.desc())
+    ).scalars().all()
+    return [_enrich_price(db, p) for p in prices]
+
+
+@router.post("/customers/{customer_id}/prices", response_model=CustomerPriceResponse, status_code=status.HTTP_201_CREATED)
+async def create_customer_price(customer_id: UUID, data: CustomerPriceCreate, db: DBSession):
+    """Legt einen Sonderpreis für ein Produkt fest. valid_from defaultet
+    auf heute, valid_until auf NULL (= unbegrenzt)."""
+    if not db.get(Customer, customer_id):
+        raise HTTPException(status_code=404, detail="Kunde nicht gefunden")
+    if not db.get(Product, data.product_id):
+        raise HTTPException(status_code=404, detail="Produkt nicht gefunden")
+
+    payload = data.model_dump()
+    if payload.get("valid_from") is None:
+        from datetime import date as _date
+        payload["valid_from"] = _date.today()
+
+    price = CustomerPrice(customer_id=customer_id, **payload)
+    db.add(price)
+    try:
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail=f"Sonderpreis konnte nicht angelegt werden (ggf. Duplikat für gleichen Zeitraum): {e}",
+        )
+    db.refresh(price)
+    # Product eager-laden für die Response
+    price = db.execute(
+        select(CustomerPrice).options(joinedload(CustomerPrice.product)).where(CustomerPrice.id == price.id)
+    ).unique().scalar_one()
+    return _enrich_price(db, price)
+
+
+@router.patch("/customer-prices/{price_id}", response_model=CustomerPriceResponse)
+async def update_customer_price(price_id: UUID, data: CustomerPriceUpdate, db: DBSession):
+    """Aktualisiert einen Sonderpreis."""
+    price = db.execute(
+        select(CustomerPrice).options(joinedload(CustomerPrice.product)).where(CustomerPrice.id == price_id)
+    ).unique().scalar_one_or_none()
+    if not price:
+        raise HTTPException(status_code=404, detail="Sonderpreis nicht gefunden")
+    for k, v in data.model_dump(exclude_unset=True).items():
+        setattr(price, k, v)
+    db.commit()
+    db.refresh(price)
+    return _enrich_price(db, price)
+
+
+@router.delete("/customer-prices/{price_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_customer_price(price_id: UUID, db: DBSession):
+    """Entfernt einen Sonderpreis (regulärer Preis greift dann wieder)."""
+    price = db.get(CustomerPrice, price_id)
+    if not price:
+        raise HTTPException(status_code=404, detail="Sonderpreis nicht gefunden")
+    db.delete(price)
+    db.commit()
+    return None
+
+
+@router.get("/customers/{customer_id}/effective-price/{product_id}")
+async def get_effective_price(customer_id: UUID, product_id: UUID, db: DBSession):
+    """Liefert den gültigen Preis für die Order-UI-Vorbelegung. Antwortet mit
+    {unit_price, is_customer_specific, base_price}."""
+    if not db.get(Customer, customer_id):
+        raise HTTPException(status_code=404, detail="Kunde nicht gefunden")
+    product = db.get(Product, product_id)
+    if not product:
+        raise HTTPException(status_code=404, detail="Produkt nicht gefunden")
+    price, is_customer = _resolve_unit_price(
+        db, customer_id=customer_id, product_id=product_id, default=product.base_price
+    )
+    return {
+        "unit_price": str(price),
+        "is_customer_specific": is_customer,
+        "base_price": str(product.base_price) if product.base_price is not None else None,
+    }
+
+
 # ============== Contact (Ansprechpartner) Endpoints ==============
 
 @router.get("/customers/{customer_id}/contacts", response_model=list[ContactResponse])
@@ -776,6 +885,19 @@ async def create_order(order_data: OrderCreate, db: DBSession, user: CurrentUser
                 )
             product_name = product.name
 
+            # Customer-spezifischer Preis schlägt Default-Preis,
+            # aber nur wenn der User keinen Preis explizit geliefert hat.
+            # (line_data.unit_price > 0 = User-Override, sonst Auto-Lookup)
+            if line_data.unit_price in (None, 0, Decimal("0")):
+                cp_price, is_cp = _resolve_unit_price(
+                    db,
+                    customer_id=order_data.customer_id,
+                    product_id=line_data.product_id,
+                    default=product.base_price,
+                    on_date=order_data.requested_delivery_date,
+                )
+                line_price = cp_price
+
         # Variante: ergänzt Name, Einheit (aus packaging_unit) und Preis (aus override
         # oder Eltern-Basispreis), wenn nicht explizit gesetzt.
         if line_data.product_variant_id:
@@ -1037,6 +1159,23 @@ async def update_order_status(
     # Forecast bei Stornierung triggern
     if new_status == OrderStatus.STORNIERT:
         _trigger_forecast_update(str(order.id), "CANCEL")
+
+    # Bestand reduzieren bei Übergang auf GELIEFERT (idempotent)
+    if new_status == OrderStatus.GELIEFERT:
+        from app.services.order_fulfillment_service import deduct_inventory_for_order
+        # Order mit Lines laden
+        order_full = db.execute(
+            select(Order)
+            .options(joinedload(Order.lines))
+            .where(Order.id == order_id)
+        ).unique().scalar_one_or_none()
+        if order_full:
+            try:
+                deduct_inventory_for_order(db, order_full)
+            except Exception as e:
+                import logging; logging.getLogger(__name__).exception(
+                    "Inventory-Deduction beim Status-Update fehlgeschlagen: %s", e
+                )
 
     return await get_order(order_id, db)
 

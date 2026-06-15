@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Search, Trash } from 'lucide-react';
+import { Plus, Search, Trash, Tag } from 'lucide-react';
+import { CustomerPricesModal } from '../components/domain/CustomerPricesModal';
 import { salesApi } from '../services/api';
 import { Customer, CustomerType, Contact, CustomerAddress, AddressType } from '../types';
 import { getErrorMessage } from '../services/errors';
@@ -47,6 +48,7 @@ export default function Customers() {
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState<string>('all');
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
+  const [pricesFor, setPricesFor] = useState<Customer | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [deletingCustomer, setDeletingCustomer] = useState<Customer | null>(null);
   const [orderForCustomer, setOrderForCustomer] = useState<Customer | null>(null);
@@ -130,13 +132,21 @@ export default function Customers() {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {filteredCustomers.map((customer) => (
-            <CustomerCard
-              key={customer.id}
-              customer={customer}
-              onEdit={() => setEditingCustomer(customer)}
-              onCreateOrder={() => setOrderForCustomer(customer)}
-              onManageSubscriptions={() => navigate('/subscriptions')}
-            />
+            <div key={customer.id} className="relative">
+              <CustomerCard
+                customer={customer}
+                onEdit={() => setEditingCustomer(customer)}
+                onCreateOrder={() => setOrderForCustomer(customer)}
+                onManageSubscriptions={() => navigate('/subscriptions')}
+              />
+              <button
+                className="absolute top-3 right-3 text-gray-400 hover:text-amber-600 dark:text-gray-500 dark:hover:text-amber-300"
+                title="Sonderpreise verwalten"
+                onClick={(e) => { e.stopPropagation(); setPricesFor(customer); }}
+              >
+                <Tag className="w-4 h-4" />
+              </button>
+            </div>
           ))}
         </div>
       )}
@@ -192,6 +202,14 @@ export default function Customers() {
         confirmLabel="Löschen"
         variant="danger"
         loading={deleteMutation.isPending}
+      />
+
+      {/* Sonderpreise pro Kunde */}
+      <CustomerPricesModal
+        open={!!pricesFor}
+        onClose={() => setPricesFor(null)}
+        customerId={pricesFor?.id || null}
+        customerName={pricesFor?.name || ''}
       />
     </div>
   );

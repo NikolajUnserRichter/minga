@@ -88,6 +88,9 @@ from app.models.attachment import (
 # App-Settings (Runtime-Konfiguration via Admin-Center)
 from app.models.app_setting import AppSetting
 
+# Customer-spezifische Preise
+from app.models.customer_price import CustomerPrice
+
 # Production-Timeline-Events
 from app.models.growth_event import (
     GrowthBatchEvent,
@@ -166,6 +169,8 @@ __all__ = [
     "CERTIFICATE_TYPES",
     # App-Settings
     "AppSetting",
+    # Customer-Pricing
+    "CustomerPrice",
     # Production-Timeline
     "GrowthBatchEvent",
     "GrowthEventType",

@@ -103,6 +103,10 @@ COLUMNS = {
         ("einheit", "einheit", False, "str"),
         ("einzelpreis", "einzelpreis", True, "decimal"),
         ("status", "status", False, "enum:ENTWURF|BESTAETIGT|IN_PRODUKTION|GELIEFERT|FAKTURIERT|STORNIERT"),
+        # JSON-Array für Variable-Bundle-Sorten:
+        # z.B. [{"sku": "MG-SONNE", "quantity": 1}, {"sku": "MG-ERBSE", "quantity": 1}]
+        # SKUs werden gegen die Produkt-Tabelle aufgelöst.
+        ("bundle_selections", "bundle_selections", False, "str"),
     ],
 }
 
@@ -412,6 +416,8 @@ def _import_order_history(db, rows: list[dict]) -> tuple[int, int]:
         db.add(order)
         db.flush()  # order.id verfügbar machen
 
+        import json
+
         for position, line_row in enumerate(group_rows, start=1):
             product = _get_product(line_row["produkt_sku"])
             if not product:
@@ -419,6 +425,34 @@ def _import_order_history(db, rows: list[dict]) -> tuple[int, int]:
                     status_code=400,
                     detail=f"Bestellung '{ext_nr}': SKU '{line_row['produkt_sku']}' nicht gefunden",
                 )
+
+            # Variable-Bundle-Sorten aus JSON-String (optional) auflösen
+            vb_selections = None
+            raw_sels = line_row.get("bundle_selections")
+            if raw_sels:
+                try:
+                    parsed = json.loads(raw_sels) if isinstance(raw_sels, str) else raw_sels
+                    vb_selections = []
+                    for sel in parsed:
+                        sku = sel.get("sku") or sel.get("product_sku")
+                        qty = int(sel.get("quantity", 1) or 1)
+                        if not sku:
+                            continue
+                        sort_prod = _get_product(sku)
+                        if not sort_prod:
+                            raise HTTPException(
+                                status_code=400,
+                                detail=f"Bestellung '{ext_nr}': Bundle-Sorte '{sku}' nicht in Produkten gefunden",
+                            )
+                        vb_selections.append({"product_id": str(sort_prod.id), "quantity": qty})
+                    if not vb_selections:
+                        vb_selections = None
+                except json.JSONDecodeError as e:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Bestellung '{ext_nr}': bundle_selections ist kein gültiges JSON: {e}",
+                    )
+
             line = OrderLine(
                 order_id=order.id,
                 position=position,
@@ -430,6 +464,7 @@ def _import_order_history(db, rows: list[dict]) -> tuple[int, int]:
                 unit_price=line_row["einzelpreis"],
                 discount_percent=Decimal("0"),
                 tax_rate=product.tax_rate or TaxRate.REDUZIERT,
+                variable_bundle_selections=vb_selections,
             )
             line.calculate_line_totals()
             db.add(line)

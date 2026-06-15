@@ -62,6 +62,8 @@ class Order(Base):
     )
     confirmed_delivery_date: Mapped[Optional[date]] = mapped_column(Date)
     actual_delivery_date: Mapped[Optional[date]] = mapped_column(Date)
+    # Idempotenz-Marker für order_fulfillment_service.deduct_inventory_for_order
+    inventory_deducted_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
 
     # ==================== STATUS ====================
     status: Mapped[OrderStatus] = mapped_column(

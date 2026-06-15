@@ -294,13 +294,29 @@ def mark_delivered(note_id: UUID, data: DeliveryNoteMarkDelivered, db: DBSession
     note.actual_delivery_date = data.actual_delivery_date or date.today()
 
     # Order-Sync
+    transitioned_to_delivered = False
     if note.order and not note.order.actual_delivery_date:
         note.order.actual_delivery_date = note.actual_delivery_date
         if note.order.status in (OrderStatus.ENTWURF, OrderStatus.BESTAETIGT, OrderStatus.IN_PRODUKTION):
             note.order.status = OrderStatus.GELIEFERT
+            transitioned_to_delivered = True
 
     db.commit()
     db.refresh(note)
+
+    # Bestand abziehen wenn neu auf GELIEFERT übergegangen
+    if transitioned_to_delivered and note.order:
+        # Order mit Lines neu laden — Stale-State vermeiden
+        from app.services.order_fulfillment_service import deduct_inventory_for_order
+        order_with_lines = _load_order_with_lines(db, note.order_id)
+        try:
+            deduct_inventory_for_order(db, order_with_lines)
+        except Exception as e:
+            # Fulfillment-Fehler darf das Quittieren nicht abbrechen
+            import logging; logging.getLogger(__name__).exception(
+                "Inventory-Deduction nach LS-Quittierung fehlgeschlagen: %s", e
+            )
+
     return note
 
 
