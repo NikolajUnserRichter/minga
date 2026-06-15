@@ -488,6 +488,13 @@ export const invoicesApi = {
 
   sendInvoiceEmail: (invoiceId: string, toEmail: string) =>
     api.post(`/invoices/${invoiceId}/send`, null, { params: { to_email: toEmail } }).then(r => r.data),
+
+  // Zahlungserinnerung / Mahnung (level 1-3) als PDF
+  generatePaymentReminder: (invoiceId: string, level: number = 1, dunning_fee: number = 0) =>
+    api.post(`/invoices/${invoiceId}/payment-reminder`, null, {
+      params: { level, dunning_fee },
+      responseType: 'blob',
+    }),
 }
 
 // ... existing code ...

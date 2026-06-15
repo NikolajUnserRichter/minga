@@ -500,6 +500,8 @@ export interface Invoice {
   buchungskonto?: string | null
   datev_exported: boolean
   customer_name?: string
+  reminder_level?: number
+  last_reminder_sent_at?: string | null
   lines?: InvoiceLine[]
   payments?: Payment[]
   created_at: string

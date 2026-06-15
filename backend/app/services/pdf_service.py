@@ -173,6 +173,122 @@ class PDFService:
         return pdf
 
     @staticmethod
+    def generate_payment_reminder_pdf(invoice: Invoice, reminder_level: int = 1, dunning_fee: float = 0.0) -> bytes:
+        """Generiert eine Zahlungserinnerung/Mahnung als PDF.
+
+        reminder_level=1 → freundliche Zahlungserinnerung
+        reminder_level=2 → erste Mahnung (mit Mahngebühr)
+        reminder_level=3 → letzte Mahnung
+        """
+        from datetime import date as _date
+        buffer = BytesIO()
+        doc = SimpleDocTemplate(
+            buffer, pagesize=A4,
+            rightMargin=2*cm, leftMargin=2*cm, topMargin=2*cm, bottomMargin=2*cm,
+        )
+        styles = getSampleStyleSheet()
+        elements = []
+
+        title_map = {
+            1: "Zahlungserinnerung",
+            2: "1. Mahnung",
+            3: "2. Mahnung",
+        }
+        title = title_map.get(reminder_level, "Zahlungserinnerung")
+
+        company_style = ParagraphStyle('Company', parent=styles['Heading1'], fontSize=16, spaceAfter=20)
+        elements.append(Paragraph("Minga Greens", company_style))
+        elements.append(Paragraph(title, styles['Heading2']))
+        elements.append(Spacer(1, 12))
+
+        days_overdue = 0
+        if invoice.due_date:
+            days_overdue = max(0, (_date.today() - invoice.due_date).days)
+
+        meta = [
+            ["Rechnung:", invoice.invoice_number],
+            ["Rechnungsdatum:", invoice.invoice_date.strftime("%d.%m.%Y")],
+            ["Fällig am:", invoice.due_date.strftime("%d.%m.%Y") if invoice.due_date else "—"],
+            ["Tage überfällig:", str(days_overdue)],
+            ["Kunde:", invoice.customer.name if invoice.customer else "—"],
+        ]
+        if invoice.customer and invoice.customer.customer_number:
+            meta.append(["Kundennummer:", invoice.customer.customer_number])
+        meta_table = Table(meta, colWidths=[4*cm, 13*cm])
+        meta_table.setStyle(TableStyle([
+            ('ALIGN', (0,0), (-1,-1), 'LEFT'),
+            ('FONTNAME', (0,0), (0,-1), 'Helvetica-Bold'),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 6),
+        ]))
+        elements.append(meta_table)
+        elements.append(Spacer(1, 20))
+
+        # Begründungs-Text je nach Stufe
+        if reminder_level == 1:
+            body_text = (
+                "Sehr geehrte Damen und Herren,<br/><br/>"
+                f"wir möchten Sie freundlich daran erinnern, dass die o.g. Rechnung "
+                f"über <b>{invoice.total:.2f} {invoice.currency}</b> am "
+                f"<b>{invoice.due_date.strftime('%d.%m.%Y') if invoice.due_date else '—'}</b> "
+                "zur Zahlung fällig war.<br/><br/>"
+                "Möglicherweise ist Ihre Zahlung mit dieser Erinnerung gekreuzt — "
+                "in diesem Fall betrachten Sie dieses Schreiben bitte als gegenstandslos."
+            )
+        elif reminder_level == 2:
+            body_text = (
+                "Sehr geehrte Damen und Herren,<br/><br/>"
+                f"trotz unserer Zahlungserinnerung ist der offene Betrag der "
+                f"Rechnung {invoice.invoice_number} bislang nicht ausgeglichen worden. "
+                f"Wir bitten Sie nochmals dringend, den fälligen Betrag inkl. "
+                f"Mahngebühr <b>innerhalb von 7 Tagen</b> zu überweisen."
+            )
+        else:
+            body_text = (
+                "Sehr geehrte Damen und Herren,<br/><br/>"
+                "trotz mehrfacher Mahnung ist unsere Forderung weiterhin offen. "
+                "Wir setzen Ihnen hiermit eine letzte Frist von 7 Tagen zur "
+                "Zahlung. Anderenfalls werden wir die Forderung kostenpflichtig "
+                "an unseren Anwalt zur gerichtlichen Geltendmachung übergeben."
+            )
+
+        elements.append(Paragraph(body_text, styles['Normal']))
+        elements.append(Spacer(1, 18))
+
+        # Betrags-Übersicht
+        open_amount = float(invoice.total) - float(invoice.paid_amount or 0)
+        totals = [
+            ["Rechnungsbetrag:", f"{invoice.total:.2f} {invoice.currency}"],
+            ["Bereits gezahlt:", f"{float(invoice.paid_amount or 0):.2f} {invoice.currency}"],
+            ["Offener Betrag:", f"{open_amount:.2f} {invoice.currency}"],
+        ]
+        if dunning_fee > 0:
+            totals.append(["Mahngebühr:", f"{dunning_fee:.2f} {invoice.currency}"])
+            totals.append(["<b>Zu zahlen gesamt:</b>", f"<b>{open_amount + dunning_fee:.2f} {invoice.currency}</b>"])
+        tt = Table(totals, colWidths=[12*cm, 5*cm])
+        tt.setStyle(TableStyle([
+            ('ALIGN', (0,0), (-1,-1), 'RIGHT'),
+            ('FONTNAME', (0,-1), (-1,-1), 'Helvetica-Bold'),
+            ('LINEABOVE', (0,-1), (-1,-1), 1, colors.black),
+        ]))
+        elements.append(tt)
+        elements.append(Spacer(1, 24))
+
+        elements.append(Paragraph("Mit freundlichen Grüßen", styles['Normal']))
+        elements.append(Paragraph("Ihr Minga-Greens-Team", styles['Normal']))
+        elements.append(Spacer(1, 20))
+        footer = ParagraphStyle('Footer', parent=styles['Normal'], fontSize=8, textColor=colors.grey)
+        elements.append(Paragraph(
+            "Minga Greens · Microgreens Farm München · "
+            f"Erstellt am {_date.today().strftime('%d.%m.%Y')}",
+            footer
+        ))
+
+        doc.build(elements)
+        pdf = buffer.getvalue()
+        buffer.close()
+        return pdf
+
+    @staticmethod
     def generate_confirmation_pdf(conf: OrderConfirmation) -> bytes:
         order = conf.order
         styles = getSampleStyleSheet()

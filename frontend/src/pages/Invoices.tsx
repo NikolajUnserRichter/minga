@@ -318,6 +318,35 @@ export default function Invoices() {
                       <Button
                         variant="ghost"
                         size="sm"
+                        title="Zahlungserinnerung / Mahnung erzeugen (PDF)"
+                        onClick={async (e) => {
+                          e.stopPropagation();
+                          const nextLevel = Math.min(3, (invoice.reminder_level || 0) + 1);
+                          const stageLabel = ['Zahlungserinnerung', '1. Mahnung', '2. Mahnung'][nextLevel - 1];
+                          const fee = nextLevel === 1 ? 0 : nextLevel === 2 ? 5 : 10;
+                          if (!confirm(`${stageLabel} mit Gebühr €${fee.toFixed(2)} erzeugen?`)) return;
+                          try {
+                            const response = await invoicesApi.generatePaymentReminder(invoice.id, nextLevel, fee);
+                            const url = window.URL.createObjectURL(new Blob([response.data]));
+                            const a = document.createElement('a');
+                            a.href = url;
+                            a.download = `Zahlungserinnerung_${invoice.invoice_number}_Stufe${nextLevel}.pdf`;
+                            a.click();
+                            window.URL.revokeObjectURL(url);
+                            queryClient.invalidateQueries({ queryKey: ['invoices'] });
+                            toast.success(`${stageLabel} erzeugt`);
+                          } catch (err: any) {
+                            toast.error(err?.response?.data?.detail || 'Fehler beim Erzeugen');
+                          }
+                        }}
+                      >
+                        Mahnung
+                      </Button>
+                    )}
+                    {['OFFEN', 'TEILBEZAHLT', 'UEBERFAELLIG'].includes(invoice.status) && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
                         onClick={() => {
                           setSelectedInvoice(invoice);
                           setShowPaymentModal(true);

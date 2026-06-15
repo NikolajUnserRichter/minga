@@ -169,6 +169,46 @@ def finalize_invoice(invoice_id: UUID, db: DBSession):
         raise HTTPException(status_code=400, detail=str(e))
 
 
+@router.post("/{invoice_id}/payment-reminder")
+def generate_payment_reminder(
+    invoice_id: UUID,
+    db: DBSession,
+    level: int = Query(default=1, ge=1, le=3, description="1=Erinnerung, 2=1.Mahnung, 3=2.Mahnung"),
+    dunning_fee: float = Query(default=0.0, ge=0.0),
+):
+    """Generiert eine Zahlungserinnerung / Mahnung als PDF + erhöht reminder_level."""
+    from app.models.invoice import Invoice as InvoiceModel
+    from app.services.pdf_service import PDFService
+    from io import BytesIO
+    from fastapi.responses import StreamingResponse
+
+    invoice = db.execute(
+        select(InvoiceModel)
+        .options(joinedload(InvoiceModel.customer), joinedload(InvoiceModel.lines))
+        .where(InvoiceModel.id == invoice_id)
+    ).unique().scalar_one_or_none()
+    if not invoice:
+        raise HTTPException(status_code=404, detail="Rechnung nicht gefunden")
+    if invoice.status in (InvoiceStatus.BEZAHLT, InvoiceStatus.STORNIERT):
+        raise HTTPException(status_code=400, detail="Bezahlte/stornierte Rechnungen können nicht gemahnt werden")
+
+    pdf = PDFService.generate_payment_reminder_pdf(invoice, reminder_level=level, dunning_fee=dunning_fee)
+
+    # Mahnstufe persistieren wenn höher
+    if level > (invoice.reminder_level or 0):
+        invoice.reminder_level = level
+        from datetime import datetime as _dt, timezone as _tz
+        invoice.last_reminder_sent_at = _dt.now(_tz.utc)
+        db.commit()
+
+    filename = f"Zahlungserinnerung_{invoice.invoice_number}_Stufe{level}.pdf"
+    return StreamingResponse(
+        BytesIO(pdf),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @router.post("/{invoice_id}/send")
 def send_invoice_email(
     invoice_id: UUID,

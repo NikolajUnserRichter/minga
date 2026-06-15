@@ -394,18 +394,36 @@ async def create_subscription(sub_data: SubscriptionCreate, db: DBSession):
     if not customer:
         raise HTTPException(status_code=404, detail="Kunde nicht gefunden")
 
-    seed = db.get(Seed, sub_data.seed_id)
-    if not seed:
-        raise HTTPException(status_code=404, detail="Produkt nicht gefunden")
+    # Entweder Product ODER Saatgut muss gewählt sein (Abos auf neuer Produkt-Welt
+    # oder Legacy-Saatgut-Welt)
+    payload = sub_data.model_dump()
+    product_id = payload.get("product_id")
+    seed_id = payload.get("seed_id")
 
-    subscription = Subscription(**sub_data.model_dump())
+    product = None
+    seed = None
+    if product_id:
+        product = db.get(Product, product_id)
+        if not product:
+            raise HTTPException(status_code=404, detail=f"Produkt {product_id} nicht gefunden")
+    elif seed_id:
+        seed = db.get(Seed, seed_id)
+        if not seed:
+            raise HTTPException(status_code=404, detail=f"Saatgut {seed_id} nicht gefunden")
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail="Bitte Produkt oder Saatgut auswählen",
+        )
+
+    subscription = Subscription(**payload)
     db.add(subscription)
     db.commit()
     db.refresh(subscription)
 
     response = SubscriptionResponse.model_validate(subscription)
     response.kunde_name = customer.name
-    response.seed_name = seed.name
+    response.seed_name = (seed.name if seed else (product.name if product else None))
     return response
 
 
