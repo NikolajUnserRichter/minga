@@ -457,10 +457,17 @@ def get_invoice_pdf(
     db: DBSession,
 ):
     """Generiert ein PDF für die Rechnung."""
-    invoice = db.get(Invoice, invoice_id)
+    # Lines + Customer eager laden — PDF-Service iteriert über invoice.lines
+    # (Reverse-Charge-Check) und liest customer.billing_address; bei lazy
+    # load würde das in strikten Async-Contexts crashen.
+    invoice = db.execute(
+        select(Invoice)
+        .options(joinedload(Invoice.lines), joinedload(Invoice.customer))
+        .where(Invoice.id == invoice_id)
+    ).unique().scalar_one_or_none()
     if not invoice:
         raise HTTPException(status_code=404, detail="Rechnung nicht gefunden")
-        
+
     from app.services.pdf_service import PDFService
     pdf_content = PDFService.generate_invoice_pdf(invoice, settings=load_company_settings(db))
     

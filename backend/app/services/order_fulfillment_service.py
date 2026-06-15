@@ -67,6 +67,11 @@ def _deduct_from_finished_goods(
     Funktion sie in Reihenfolge des Anlegedatums.
     """
     remaining = qty_grams
+    # with_for_update() lockt die selektierten Rows bis zum Commit der
+    # umgebenden Transaktion. Schützt gegen Race-Conditions zwischen
+    # parallelen GELIEFERT-Übergängen (zwei Worker dedukten sonst beide
+    # vom gleichen Bestand und verbrauchen ihn doppelt).
+    # SQLite: no-op (alle TX seriell), PostgreSQL: row-level lock.
     inventories = db.execute(
         select(FinishedGoodsInventory)
         .where(
@@ -74,6 +79,7 @@ def _deduct_from_finished_goods(
             FinishedGoodsInventory.current_quantity_g > 0,
         )
         .order_by(FinishedGoodsInventory.created_at.asc())
+        .with_for_update()
     ).scalars().all()
 
     if not inventories:
@@ -113,8 +119,14 @@ def _deduct_from_finished_goods(
     return True
 
 
-def deduct_inventory_for_order(db: Session, order: Order, *, dry_run: bool = False) -> dict:
-    """Hauptfunktion. Idempotent. Gibt eine Zusammenfassung zurück."""
+def deduct_inventory_for_order(db: Session, order: Order, *, dry_run: bool = False, commit: bool = True) -> dict:
+    """Hauptfunktion. Idempotent. Gibt eine Zusammenfassung zurück.
+
+    Mit commit=False bleibt die Transaction offen — der Aufrufer ist
+    verantwortlich, die Status-Änderung und den Inventory-Abzug atomar zu
+    committen. Damit wird vermieden, dass der Order-Status auf GELIEFERT
+    steht, der Bestand aber noch nicht abgezogen wurde (oder umgekehrt).
+    """
     if order.inventory_deducted_at and not dry_run:
         return {"status": "skipped", "reason": "bereits gebucht", "at": str(order.inventory_deducted_at)}
 
@@ -163,17 +175,25 @@ def deduct_inventory_for_order(db: Session, order: Order, *, dry_run: bool = Fal
                 child_qty = Decimal(str(sel.get("quantity", 1) or 1))
                 if not child_pid:
                     continue
-                # Einheit der Bundle-Line wird ignoriert; Sorten-Bestand ist in Gramm.
-                # Fallback: 1 STK = 1 Tray = z.B. 100g — sicher konservativ
-                grams_per_tray = Decimal("100")  # TODO: aus Sorte / Variant ableiten
-                total_grams = child_qty * line.quantity * grams_per_tray
-                if not dry_run:
-                    _deduct_from_finished_goods(db, UUID(str(child_pid)), total_grams, order, line)
+                # Variable-Bundle-Slots haben keinen fest definierten g/Slot-Wert,
+                # solange ProductVariant nicht eindeutig auf den Sorten-Bestand
+                # mappt. Statt 100g hart anzunehmen und damit Bestand systematisch
+                # falsch zu reduzieren, melden wir das laut und überspringen den
+                # Abzug. Die Folgewave nimmt items_per_pack/Tray-Gewicht aus dem
+                # ProductVariant-Mapping.
+                msg = (
+                    f"Variable-Bundle '{product.sku}' Sorte product_id={child_pid}: "
+                    f"Abzug übersprungen — pro-Slot-Gewicht nicht definiert. "
+                    f"Bitte manuell korrigieren oder Sorten-Variante pflegen."
+                )
+                logger.warning(msg)
+                warnings.append(msg)
                 deductions.append({
                     "type": "variable_bundle_sort",
                     "bundle_sku": product.sku,
                     "child_product_id": str(child_pid),
-                    "quantity_g": str(total_grams),
+                    "quantity_g": None,
+                    "skipped": True,
                 })
 
         # Reguläres Produkt
@@ -192,7 +212,9 @@ def deduct_inventory_for_order(db: Session, order: Order, *, dry_run: bool = Fal
 
     if not dry_run:
         order.inventory_deducted_at = datetime.now(timezone.utc)
-        db.commit()
+        if commit:
+            db.commit()
+        # sonst: Aufrufer committet zusammen mit dem Status-Change
 
     return {
         "status": "ok",

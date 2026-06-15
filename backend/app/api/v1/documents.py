@@ -301,22 +301,27 @@ def mark_delivered(note_id: UUID, data: DeliveryNoteMarkDelivered, db: DBSession
             note.order.status = OrderStatus.GELIEFERT
             transitioned_to_delivered = True
 
-    db.commit()
-    db.refresh(note)
-
-    # Bestand abziehen wenn neu auf GELIEFERT übergegangen
+    # Inventory-Deduction IN DERSELBEN TRANSACTION wie Status-Change.
+    # Wenn Abzug crasht → kompletter Rollback, Quittierung wird nicht persistiert
+    # und der User kann erneut versuchen, ohne dass die Order/LS-State inkonsistent
+    # mit dem Inventory wird.
     if transitioned_to_delivered and note.order:
-        # Order mit Lines neu laden — Stale-State vermeiden
         from app.services.order_fulfillment_service import deduct_inventory_for_order
         order_with_lines = _load_order_with_lines(db, note.order_id)
         try:
-            deduct_inventory_for_order(db, order_with_lines)
+            deduct_inventory_for_order(db, order_with_lines, commit=False)
         except Exception as e:
-            # Fulfillment-Fehler darf das Quittieren nicht abbrechen
+            db.rollback()
             import logging; logging.getLogger(__name__).exception(
                 "Inventory-Deduction nach LS-Quittierung fehlgeschlagen: %s", e
             )
+            raise HTTPException(
+                status_code=500,
+                detail=f"Quittierung abgebrochen — Inventory-Abzug fehlgeschlagen: {e}",
+            )
 
+    db.commit()
+    db.refresh(note)
     return note
 
 

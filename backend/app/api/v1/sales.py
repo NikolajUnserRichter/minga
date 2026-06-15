@@ -317,6 +317,13 @@ async def create_customer_price(customer_id: UUID, data: CustomerPriceCreate, db
     if payload.get("valid_from") is None:
         from datetime import date as _date
         payload["valid_from"] = _date.today()
+    # Datumsbereich validieren: end >= start
+    vf, vu = payload.get("valid_from"), payload.get("valid_until")
+    if vf and vu and vu < vf:
+        raise HTTPException(
+            status_code=400,
+            detail=f"valid_until ({vu}) liegt vor valid_from ({vf}) — Sonderpreis wäre nie aktiv",
+        )
 
     price = CustomerPrice(customer_id=customer_id, **payload)
     db.add(price)
@@ -344,8 +351,17 @@ async def update_customer_price(price_id: UUID, data: CustomerPriceUpdate, db: D
     ).unique().scalar_one_or_none()
     if not price:
         raise HTTPException(status_code=404, detail="Sonderpreis nicht gefunden")
-    for k, v in data.model_dump(exclude_unset=True).items():
+    updates = data.model_dump(exclude_unset=True)
+    for k, v in updates.items():
         setattr(price, k, v)
+    # Datumsbereich validieren NACH dem Setzen (kombiniertes Bild aus
+    # bestehenden + neuen Werten)
+    if price.valid_until and price.valid_until < price.valid_from:
+        db.rollback()
+        raise HTTPException(
+            status_code=400,
+            detail=f"valid_until ({price.valid_until}) liegt vor valid_from ({price.valid_from}) — Sonderpreis wäre nie aktiv",
+        )
     db.commit()
     db.refresh(price)
     return _enrich_price(db, price)
@@ -888,13 +904,18 @@ async def create_order(order_data: OrderCreate, db: DBSession, user: CurrentUser
             # Customer-spezifischer Preis schlägt Default-Preis,
             # aber nur wenn der User keinen Preis explizit geliefert hat.
             # (line_data.unit_price > 0 = User-Override, sonst Auto-Lookup)
+            # WICHTIG: on_date = HEUTE, nicht delivery_date. Wir wollen den
+            # Preis "zum Bestellzeitpunkt" — sonst würde ein zukünftiger
+            # Preistarif, dessen valid_from <= delivery_date ist, schon jetzt
+            # greifen und der Kunde sähe einen anderen Preis als erwartet.
             if line_data.unit_price in (None, 0, Decimal("0")):
+                from datetime import date as _date
                 cp_price, is_cp = _resolve_unit_price(
                     db,
                     customer_id=order_data.customer_id,
                     product_id=line_data.product_id,
                     default=product.base_price,
-                    on_date=order_data.requested_delivery_date,
+                    on_date=_date.today(),
                 )
                 line_price = cp_price
 
@@ -1154,16 +1175,11 @@ async def update_order_status(
         reason=status_update.reason
     )
 
-    db.commit()
-
-    # Forecast bei Stornierung triggern
-    if new_status == OrderStatus.STORNIERT:
-        _trigger_forecast_update(str(order.id), "CANCEL")
-
-    # Bestand reduzieren bei Übergang auf GELIEFERT (idempotent)
+    # Wenn Übergang auf GELIEFERT: Bestand IN DER SELBEN TRANSACTION abziehen.
+    # Damit ist garantiert, dass Status + Inventory atomar passieren — entweder
+    # beides oder nichts. Fehlschlag → 500 + Rollback, nichts wird persistiert.
     if new_status == OrderStatus.GELIEFERT:
         from app.services.order_fulfillment_service import deduct_inventory_for_order
-        # Order mit Lines laden
         order_full = db.execute(
             select(Order)
             .options(joinedload(Order.lines))
@@ -1171,11 +1187,22 @@ async def update_order_status(
         ).unique().scalar_one_or_none()
         if order_full:
             try:
-                deduct_inventory_for_order(db, order_full)
+                deduct_inventory_for_order(db, order_full, commit=False)
             except Exception as e:
+                db.rollback()
                 import logging; logging.getLogger(__name__).exception(
                     "Inventory-Deduction beim Status-Update fehlgeschlagen: %s", e
                 )
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Status-Übergang abgebrochen — Inventory-Abzug fehlgeschlagen: {e}",
+                )
+
+    db.commit()
+
+    # Forecast bei Stornierung triggern
+    if new_status == OrderStatus.STORNIERT:
+        _trigger_forecast_update(str(order.id), "CANCEL")
 
     return await get_order(order_id, db)
 

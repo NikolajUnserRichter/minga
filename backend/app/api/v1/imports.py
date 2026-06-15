@@ -308,6 +308,10 @@ def _import_locations(db, rows: list[dict]) -> tuple[int, int]:
 def _generate_historic_order_number(db, order_date: date, used_numbers: set[str]) -> str:
     """Generiert BE-YYYYMMDD-NNNN für ein historisches Datum.
 
+    Mit SELECT … FOR UPDATE auf den Row-Lock, damit zwei parallele
+    Import-Läufe nicht beide dieselbe Nummer vergeben (sonst Unique-Verletzung
+    + Rollback der einen Transaktion → Datenverlust).
+
     Berücksichtigt sowohl bereits existierende DB-Nummern als auch
     Nummern, die in dieser Import-Transaktion bereits vergeben wurden
     (used_numbers), damit Massenimporte kollisionsfrei bleiben."""
@@ -316,6 +320,7 @@ def _generate_historic_order_number(db, order_date: date, used_numbers: set[str]
         select(Order)
         .where(Order.order_number.like(f"{prefix}-%"))
         .order_by(Order.order_number.desc())
+        .with_for_update()
         .limit(1)
     ).scalar_one_or_none()
     next_num = (int(last.order_number.split("-")[-1]) + 1) if last else 1
