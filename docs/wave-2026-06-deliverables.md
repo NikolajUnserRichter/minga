@@ -160,15 +160,24 @@ Aus B8-Gap-Analyse abgeleitet:
 6. ✅ Eigentumsvorbehalt-Klausel auf Rechnung → fester Footer-Text
 7. ✅ Charge + MHD-Spalten auf Lieferschein → aus OrderLine + Harvest.seed_batch.mhd
 
-### Bewusst deferred (für eigene Wave):
-5. **Customer-spezifische Preislisten** — Neue Tabelle `customer_prices` mit
-   effective-Date-Range, Order-Engine-Anpassung, Bundle-Overrides. Geschätzt
-   4-6h Arbeit.
-8. **Bundle-Inventory-Deduction beim Order-Versand** — Aktuell hat das System
-   noch keinen automatischen Order→Stock-Hook beim GELIEFERT-Übergang. Großer
-   Refactor von Inventory-Service nötig.
-9. **Order-History-Import mit Bundle-Sorten-Selections** — Excel-Format-Erweiterung
-   für Spalten "bundle_selections" als JSON. Klein, aber selten genutzter Pfad.
+### Update Commit 60a5610 — ALLE deferred Items umgesetzt:
+5. ✅ **Customer-spezifische Preislisten** — `customer_prices`-Tabelle,
+   `pricing_service.resolve_unit_price()`, Order-Engine nutzt
+   Customer-Preis vor Default. UI: Tag-Button auf Customer-Karte →
+   CustomerPricesModal mit Combobox-Suche, Gültigkeitszeitraum, Liste.
+   API: GET/POST `/sales/customers/{id}/prices`, PATCH/DELETE
+   `/sales/customer-prices/{id}`, GET `/sales/customers/{id}/effective-price/{product_id}`.
+8. ✅ **Bundle-Inventory-Deduction** — `order_fulfillment_service.deduct_inventory_for_order()`
+   bucht beim GELIEFERT-Übergang FIFO aus `finished_goods_inventory` für:
+   - Reguläre Produkte → product_id × quantity
+   - FIXED Bundles → jede Bundle-Komponente × line.menge
+   - VARIABLE Bundles → jede `variable_bundle_selection` × line.menge
+   Idempotent über `orders.inventory_deducted_at` (Auto-Migrate). Hook in
+   `documents.mark_delivered` und `sales.update_order_status`.
+9. ✅ **Order-History-Import mit Bundle-Sorten** — Neue optionale
+   Excel-Spalte `bundle_selections` als JSON-String wie
+   `[{"sku": "MG-SONNE", "quantity": 1}]`. Wird über SKU aufgelöst und
+   nach `OrderLine.variable_bundle_selections` geschrieben.
 
 ### Konfiguration der Firmendaten
 
