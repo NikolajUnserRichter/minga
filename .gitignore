@@ -104,3 +104,4 @@ temp/
 
 # Jupyter
 .ipynb_checkpoints/
+.playwright-mcp/

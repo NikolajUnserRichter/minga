@@ -103,6 +103,14 @@ class CustomerCreate(CustomerBase):
     price_list_id: Optional[UUID] = Field(None, description="Preislisten-ID")
     discount_percent: Decimal = Field(default=Decimal("0"), ge=0, le=100, description="Rabatt %")
 
+    # Skonto (Frühzahler-Rabatt)
+    skonto_percent: Decimal = Field(default=Decimal("0"), ge=0, le=100, description="Skonto %")
+    skonto_days: int = Field(default=0, ge=0, le=90, description="Skontofrist in Tagen")
+
+    # Verpackungsgebühr
+    packaging_fee_amount: Decimal = Field(default=Decimal("0"), ge=0, description="Verpackungsgebühr (Fixbetrag EUR)")
+    packaging_fee_percent: Decimal = Field(default=Decimal("0"), ge=0, le=100, description="Verpackungsrabatt %")
+
     # DATEV
     datev_account: Optional[str] = Field(None, max_length=10, description="DATEV-Kontonummer")
 
@@ -142,6 +150,12 @@ class CustomerUpdate(BaseModel):
     price_list_id: Optional[UUID] = None
     discount_percent: Optional[Decimal] = None
 
+    # Skonto + Verpackung
+    skonto_percent: Optional[Decimal] = None
+    skonto_days: Optional[int] = None
+    packaging_fee_amount: Optional[Decimal] = None
+    packaging_fee_percent: Optional[Decimal] = None
+
     # DATEV
     datev_account: Optional[str] = None
 
@@ -167,6 +181,10 @@ class CustomerResponse(CustomerBase):
     credit_limit: Optional[Decimal]
     price_list_id: Optional[UUID]
     discount_percent: Decimal
+    skonto_percent: Decimal = Decimal("0")
+    skonto_days: int = 0
+    packaging_fee_amount: Decimal = Decimal("0")
+    packaging_fee_percent: Decimal = Decimal("0")
     datev_account: Optional[str]
     notizen: Optional[str]
     aktiv: bool

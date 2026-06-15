@@ -166,8 +166,17 @@ class Customer(Base):
         Uuid, ForeignKey("price_lists.id", ondelete="SET NULL")
     )
 
-    # Rabatt
+    # Rabatt (Jahresrabatt %)
     discount_percent: Mapped[Decimal] = mapped_column(Numeric(5, 2), default=Decimal("0"))
+
+    # Skonto (Frühzahler-Rabatt)
+    skonto_percent: Mapped[Decimal] = mapped_column(Numeric(5, 2), default=Decimal("0"))
+    skonto_days: Mapped[int] = mapped_column(Integer, default=0)
+
+    # Verpackungsgebühr (Fixbetrag in EUR pro Rechnung)
+    packaging_fee_amount: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("0"))
+    # Verpackungsrabatt (% auf Verpackungsanteil — optional)
+    packaging_fee_percent: Mapped[Decimal] = mapped_column(Numeric(5, 2), default=Decimal("0"))
 
     # DATEV-Kontonummer (Debitor)
     datev_account: Mapped[Optional[str]] = mapped_column(String(10))  # z.B. 10001

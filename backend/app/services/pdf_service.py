@@ -142,6 +142,8 @@ class PDFService:
             ["Datum:", (order.order_date.strftime("%d.%m.%Y") if order.order_date else "-")],
             ["Kunde:", order.customer.name if order.customer else "-"],
         ]
+        if order.customer and order.customer.customer_number:
+            meta_data.append(["Kundennummer:", order.customer.customer_number])
         if order.delivery_address:
             addr = order.delivery_address
             parts = [addr.get("strasse",""), addr.get("hausnummer","")]

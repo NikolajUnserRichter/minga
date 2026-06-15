@@ -57,6 +57,10 @@ class InvoiceService:
         if due_date is None:
             due_date = inv_date + timedelta(days=customer.payment_days)
 
+        # Customer-Default-Rabatt anwenden, falls nicht überschrieben
+        if discount_percent == Decimal("0") and getattr(customer, "discount_percent", 0):
+            discount_percent = customer.discount_percent
+
         # Adressen als Snapshot speichern
         billing_addr = None
         shipping_addr = None

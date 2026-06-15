@@ -210,13 +210,29 @@ function CustomerForm({ customer, onSubmit, onCancel }: CustomerFormProps) {
   const [formData, setFormData] = useState({
     name: customer?.name || '',
     typ: customer?.typ || ('GASTRO' as CustomerType),
+    customer_number: customer?.customer_number || '',
     email: customer?.email || '',
     telefon: customer?.telefon || '',
     adresse: customer?.adresse || '',
     ust_id: customer?.ust_id || '',
     liefertage: customer?.liefertage?.map(String) || [],
+    payment_terms: customer?.payment_terms || 'NET_14',
+    discount_percent: customer?.discount_percent != null ? String(customer.discount_percent) : '0',
+    skonto_percent: customer?.skonto_percent != null ? String(customer.skonto_percent) : '0',
+    skonto_days: customer?.skonto_days ?? 0,
+    packaging_fee_amount: customer?.packaging_fee_amount != null ? String(customer.packaging_fee_amount) : '0',
+    packaging_fee_percent: customer?.packaging_fee_percent != null ? String(customer.packaging_fee_percent) : '0',
     aktiv: customer?.aktiv ?? true,
   });
+
+  const paymentTermsOptions: SelectOption[] = [
+    { value: 'PREPAID', label: 'Vorkasse (0 Tage)' },
+    { value: 'COD', label: 'Bei Lieferung' },
+    { value: 'NET_7', label: '7 Tage netto' },
+    { value: 'NET_14', label: '14 Tage netto' },
+    { value: 'NET_30', label: '30 Tage netto' },
+    { value: 'NET_60', label: '60 Tage netto' },
+  ];
 
   const customerTypeOptions: SelectOption[] = [
     { value: 'GASTRO', label: 'Gastronomie' },
@@ -233,6 +249,12 @@ function CustomerForm({ customer, onSubmit, onCancel }: CustomerFormProps) {
       const payload = {
         ...formData,
         liefertage: formData.liefertage.map(Number),
+        // Decimal-Felder als Number senden
+        discount_percent: Number(formData.discount_percent) || 0,
+        skonto_percent: Number(formData.skonto_percent) || 0,
+        skonto_days: Number(formData.skonto_days) || 0,
+        packaging_fee_amount: Number(formData.packaging_fee_amount) || 0,
+        packaging_fee_percent: Number(formData.packaging_fee_percent) || 0,
       };
 
       let saved: Customer;
@@ -298,12 +320,68 @@ function CustomerForm({ customer, onSubmit, onCancel }: CustomerFormProps) {
           onChange={(e) => setFormData({ ...formData, ust_id: e.target.value })}
           placeholder="DE123456789"
         />
+        <Input
+          label="Kundennummer"
+          value={formData.customer_number}
+          onChange={(e) => setFormData({ ...formData, customer_number: e.target.value })}
+          placeholder="leer = automatisch (KD-NNNNN)"
+        />
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <MultiSelect
           label="Standard-Liefertage"
           options={weekdayOptions}
           value={formData.liefertage}
           onChange={(value) => setFormData({ ...formData, liefertage: value })}
         />
+        <Select
+          label="Zahlungsziel"
+          options={paymentTermsOptions}
+          value={formData.payment_terms}
+          onChange={(e) => setFormData({ ...formData, payment_terms: e.target.value })}
+        />
+      </div>
+
+      {/* Rabatte + Skonto + Verpackungsgebühr */}
+      <div className="bg-gray-50 dark:bg-gray-700/30 p-4 rounded-lg space-y-3">
+        <h4 className="font-medium text-sm text-gray-700 dark:text-gray-300">Konditionen</h4>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <Input
+            label="Jahresrabatt %"
+            type="number"
+            step="0.01"
+            min={0}
+            max={100}
+            value={formData.discount_percent}
+            onChange={(e) => setFormData({ ...formData, discount_percent: e.target.value })}
+          />
+          <Input
+            label="Skonto %"
+            type="number"
+            step="0.01"
+            min={0}
+            max={100}
+            value={formData.skonto_percent}
+            onChange={(e) => setFormData({ ...formData, skonto_percent: e.target.value })}
+          />
+          <Input
+            label="Skontofrist (Tage)"
+            type="number"
+            min={0}
+            max={90}
+            value={String(formData.skonto_days)}
+            onChange={(e) => setFormData({ ...formData, skonto_days: Number(e.target.value) })}
+          />
+          <Input
+            label="Verpackungsgebühr (€)"
+            type="number"
+            step="0.01"
+            min={0}
+            value={formData.packaging_fee_amount}
+            onChange={(e) => setFormData({ ...formData, packaging_fee_amount: e.target.value })}
+          />
+        </div>
       </div>
 
       <label className="flex items-center gap-2">

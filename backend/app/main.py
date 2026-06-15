@@ -64,6 +64,33 @@ async def lifespan(app: FastAPI):
     # In Produktion: Alembic Migrations verwenden
     Base.metadata.create_all(bind=engine)
 
+    # Idempotente Auto-Migration: fügt fehlende Spalten zu bestehenden Tabellen
+    # hinzu (SQLite-Demo überlebt damit Modell-Erweiterungen ohne RESET_DB).
+    try:
+        from sqlalchemy import text, inspect
+        inspector = inspect(engine)
+
+        def _add_col_if_missing(table: str, column: str, ddl_type: str, default: str = ""):
+            if not inspector.has_table(table):
+                return
+            cols = {c["name"] for c in inspector.get_columns(table)}
+            if column in cols:
+                return
+            stmt = f"ALTER TABLE {table} ADD COLUMN {column} {ddl_type}"
+            if default:
+                stmt += f" DEFAULT {default}"
+            with engine.begin() as conn:
+                conn.execute(text(stmt))
+            logger.warning(f"[auto-migrate] {table}.{column} added")
+
+        # Customer master-data extensions (Skonto, Verpackungsgebühr)
+        _add_col_if_missing("customers", "skonto_percent",        "NUMERIC(5,2)", "0")
+        _add_col_if_missing("customers", "skonto_days",           "INTEGER",      "0")
+        _add_col_if_missing("customers", "packaging_fee_amount",  "NUMERIC(10,2)", "0")
+        _add_col_if_missing("customers", "packaging_fee_percent", "NUMERIC(5,2)", "0")
+    except Exception as e:
+        logger.error(f"[auto-migrate] failed: {e}")
+
     # Stammdaten-Seed für Demo-Deploys: Einheiten, falls Tabelle leer.
     try:
         from sqlalchemy import select, func

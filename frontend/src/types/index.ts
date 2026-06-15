@@ -122,11 +122,18 @@ export interface Customer {
   id: string
   name: string
   typ: CustomerType
+  customer_number?: string | null
   email: string | null
   telefon: string | null
   adresse: string | null
   ust_id: string | null
   liefertage: number[] | null
+  payment_terms?: string
+  discount_percent?: number | string
+  skonto_percent?: number | string
+  skonto_days?: number
+  packaging_fee_amount?: number | string
+  packaging_fee_percent?: number | string
   aktiv: boolean
   created_at: string
   updated_at: string

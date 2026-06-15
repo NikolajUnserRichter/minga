@@ -105,13 +105,29 @@ async def get_customer(customer_id: UUID, db: DBSession):
 
 @router.post("/customers", response_model=CustomerResponse, status_code=status.HTTP_201_CREATED)
 async def create_customer(customer_data: CustomerCreate, db: DBSession):
-    """Neuen Kunden anlegen."""
+    """Neuen Kunden anlegen. Wenn customer_number leer ist, wird automatisch
+    KD-NNNNN sequenziell generiert (5-stellig, beginnend bei 10001)."""
     data = customer_data.model_dump()
-    # Adressen müssen separat behandelt werden oder leer initialisiert
-    # SQLAlchemy mag addresses=None nicht für Beziehungen
     if "addresses" in data:
         del data["addresses"]
-    
+
+    # Auto-Kundennummer wenn nicht angegeben
+    if not data.get("customer_number"):
+        last_with_num = db.execute(
+            select(Customer)
+            .where(Customer.customer_number.like("KD-%"))
+            .order_by(Customer.customer_number.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+        if last_with_num and last_with_num.customer_number:
+            try:
+                last_num = int(last_with_num.customer_number.split("-")[-1])
+            except (ValueError, IndexError):
+                last_num = 10000
+        else:
+            last_num = 10000
+        data["customer_number"] = f"KD-{last_num + 1:05d}"
+
     customer = Customer(**data)
     db.add(customer)
     db.commit()
