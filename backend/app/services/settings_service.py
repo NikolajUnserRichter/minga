@@ -18,6 +18,7 @@ from app.models.app_setting import AppSetting
 
 # Bekannte Setting-Keys + ob als Secret markiert
 KNOWN_SETTINGS: dict[str, dict] = {
+    # SMTP / E-Mail
     "SMTP_HOST":         {"is_secret": False, "label": "SMTP-Server"},
     "SMTP_PORT":         {"is_secret": False, "label": "Port"},
     "SMTP_USER":         {"is_secret": False, "label": "Benutzername"},
@@ -26,6 +27,19 @@ KNOWN_SETTINGS: dict[str, dict] = {
     "SMTP_USE_SSL":      {"is_secret": False, "label": "Direct SSL verwenden"},
     "EMAILS_FROM_EMAIL": {"is_secret": False, "label": "Absender-Adresse"},
     "EMAILS_FROM_NAME":  {"is_secret": False, "label": "Absender-Name"},
+    # Firmendaten — landen auf allen Belegen (§ 14 UStG)
+    "COMPANY_NAME":         {"is_secret": False, "label": "Firmenname (Briefkopf)"},
+    "COMPANY_ADDRESS_LINE1": {"is_secret": False, "label": "Adresse Zeile 1 (Straße)"},
+    "COMPANY_ADDRESS_LINE2": {"is_secret": False, "label": "Adresse Zeile 2 (PLZ Ort)"},
+    "COMPANY_USTID":        {"is_secret": False, "label": "USt-IdNr. (DEXXXXXXXX)"},
+    "COMPANY_STEUERNR":     {"is_secret": False, "label": "Steuernummer (alternativ zur USt-IdNr.)"},
+    "COMPANY_PHONE":        {"is_secret": False, "label": "Telefon"},
+    "COMPANY_EMAIL":        {"is_secret": False, "label": "E-Mail"},
+    "COMPANY_WEBSITE":      {"is_secret": False, "label": "Website"},
+    # Bankverbindung (für Rechnung + Mahnung)
+    "COMPANY_BANK_NAME":  {"is_secret": False, "label": "Bank"},
+    "COMPANY_IBAN":       {"is_secret": False, "label": "IBAN"},
+    "COMPANY_BIC":        {"is_secret": False, "label": "BIC"},
 }
 
 

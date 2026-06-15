@@ -1,4 +1,5 @@
 from io import BytesIO
+from typing import Optional
 from reportlab.lib.pagesizes import A4
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -8,9 +9,72 @@ from app.models.invoice import Invoice, InvoiceType
 from app.models.order import Order
 from app.models.documents import OrderConfirmation, DeliveryNote, PackingList
 
+
+COMPANY_KEYS = (
+    "COMPANY_NAME", "COMPANY_ADDRESS_LINE1", "COMPANY_ADDRESS_LINE2",
+    "COMPANY_USTID", "COMPANY_STEUERNR", "COMPANY_PHONE", "COMPANY_EMAIL",
+    "COMPANY_WEBSITE", "COMPANY_BANK_NAME", "COMPANY_IBAN", "COMPANY_BIC",
+)
+
+
+def load_company_settings(db) -> dict[str, str]:
+    """Lädt alle COMPANY_*-Settings für PDF-Rendering. Robust gegen None."""
+    if db is None:
+        return {}
+    from app.services.settings_service import get_setting
+    return {k: (get_setting(db, k) or "") for k in COMPANY_KEYS}
+
+
+def render_company_header_block(settings: dict[str, str]):
+    """Rendert den Briefkopf-Block (Firmenname + Adresse)."""
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.platypus import Paragraph
+    name = settings.get("COMPANY_NAME") or "Minga Greens"
+    addr1 = settings.get("COMPANY_ADDRESS_LINE1") or ""
+    addr2 = settings.get("COMPANY_ADDRESS_LINE2") or ""
+    lines = [name]
+    if addr1: lines.append(addr1)
+    if addr2: lines.append(addr2)
+    style = ParagraphStyle('CompanyHeader', fontSize=10, leading=12, spaceAfter=6)
+    return Paragraph("<br/>".join(lines), style)
+
+
+def render_company_footer_block(settings: dict[str, str]):
+    """Rendert den Fußzeilen-Block mit Bankverbindung + USt-IdNr."""
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.platypus import Paragraph
+    parts: list[str] = []
+    if settings.get("COMPANY_NAME"):
+        parts.append(f"<b>{settings['COMPANY_NAME']}</b>")
+    if settings.get("COMPANY_ADDRESS_LINE2"):
+        parts.append(f"{settings.get('COMPANY_ADDRESS_LINE1', '')} · {settings['COMPANY_ADDRESS_LINE2']}")
+    contact_bits = []
+    if settings.get("COMPANY_PHONE"):   contact_bits.append(f"Tel.: {settings['COMPANY_PHONE']}")
+    if settings.get("COMPANY_EMAIL"):   contact_bits.append(f"E-Mail: {settings['COMPANY_EMAIL']}")
+    if settings.get("COMPANY_WEBSITE"): contact_bits.append(settings["COMPANY_WEBSITE"])
+    if contact_bits:
+        parts.append(" · ".join(contact_bits))
+    tax_bits = []
+    if settings.get("COMPANY_USTID"):    tax_bits.append(f"USt-IdNr.: {settings['COMPANY_USTID']}")
+    if settings.get("COMPANY_STEUERNR"): tax_bits.append(f"Steuernr.: {settings['COMPANY_STEUERNR']}")
+    if tax_bits:
+        parts.append(" · ".join(tax_bits))
+    bank_bits = []
+    if settings.get("COMPANY_BANK_NAME"): bank_bits.append(f"Bank: {settings['COMPANY_BANK_NAME']}")
+    if settings.get("COMPANY_IBAN"):      bank_bits.append(f"IBAN: {settings['COMPANY_IBAN']}")
+    if settings.get("COMPANY_BIC"):       bank_bits.append(f"BIC: {settings['COMPANY_BIC']}")
+    if bank_bits:
+        parts.append(" · ".join(bank_bits))
+    if not parts:
+        return None
+    style = ParagraphStyle('CompanyFooter', fontSize=7, leading=9, textColor=colors.grey, spaceBefore=8)
+    return Paragraph("<br/>".join(parts), style)
+
+
 class PDFService:
     @staticmethod
-    def generate_invoice_pdf(invoice: Invoice) -> bytes:
+    def generate_invoice_pdf(invoice: Invoice, settings: Optional[dict] = None) -> bytes:
+        settings = settings or {}
         buffer = BytesIO()
         doc = SimpleDocTemplate(
             buffer,
@@ -20,19 +84,13 @@ class PDFService:
             topMargin=2*cm,
             bottomMargin=2*cm
         )
-        
+
         styles = getSampleStyleSheet()
         elements = []
-        
-        # Header
-        # Assuming we have company info, putting placeholder for now
-        company_style = ParagraphStyle(
-            'CompanyHeader',
-            parent=styles['Heading1'],
-            fontSize=16,
-            spaceAfter=30
-        )
-        elements.append(Paragraph("Minga Greens", company_style))
+
+        # Briefkopf aus Settings
+        elements.append(render_company_header_block(settings))
+        elements.append(Spacer(1, 8))
         
         # Invoice Title
         title = "Rechnung" if invoice.invoice_type == InvoiceType.RECHNUNG else "Gutschrift"
@@ -101,18 +159,47 @@ class PDFService:
             ('LINEABOVE', (0,-1), (-1,-1), 1, colors.black),
         ]))
         elements.append(totals_table)
-        elements.append(Spacer(1, 24))
-        
-        # Footer
-        footer_style = ParagraphStyle(
-            'Footer',
-            parent=styles['Normal'],
-            fontSize=8,
-            textColor=colors.grey
-        )
+        elements.append(Spacer(1, 16))
+
+        # Skonto-Hinweis wenn Customer Skonto hat
+        skonto_pct = getattr(invoice.customer, 'skonto_percent', 0) or 0
+        skonto_days = getattr(invoice.customer, 'skonto_days', 0) or 0
+        if skonto_pct and skonto_days:
+            skonto_amount = float(invoice.total) * float(skonto_pct) / 100
+            skonto_text = (
+                f"<b>Skonto:</b> Bei Zahlung innerhalb von {skonto_days} Tagen "
+                f"gewähren wir {float(skonto_pct):.1f}% Skonto (entspricht "
+                f"{skonto_amount:.2f} {invoice.currency} Abzug)."
+            )
+            elements.append(Paragraph(skonto_text, styles['Normal']))
+            elements.append(Spacer(1, 8))
+
+        # Reverse-Charge-Vermerk bei steuerfreien Positionen
+        from app.models.enums import TaxRate
+        has_steuerfrei = any(line.tax_rate == TaxRate.STEUERFREI for line in (invoice.lines or []))
+        if has_steuerfrei:
+            elements.append(Paragraph(
+                "<b>Hinweis:</b> Steuerschuldnerschaft des Leistungsempfängers (Reverse Charge / § 13b UStG).",
+                styles['Normal']
+            ))
+            elements.append(Spacer(1, 8))
+
+        # Eigentumsvorbehalt
+        elements.append(Paragraph(
+            "<i>Ware bleibt bis zur vollständigen Bezahlung unser Eigentum (Eigentumsvorbehalt).</i>",
+            styles['Normal']
+        ))
+        elements.append(Spacer(1, 14))
         elements.append(Paragraph("Vielen Dank für Ihren Auftrag!", styles['Normal']))
-        elements.append(Spacer(1, 12))
-        elements.append(Paragraph("Minga Greens - Microgreens Farm München", footer_style))
+
+        # Footer: Firmendaten + Bankverbindung + USt-IdNr
+        elements.append(Spacer(1, 20))
+        footer_block = render_company_footer_block(settings)
+        if footer_block:
+            elements.append(footer_block)
+        else:
+            footer_style = ParagraphStyle('Footer', parent=styles['Normal'], fontSize=8, textColor=colors.grey)
+            elements.append(Paragraph("Minga Greens - Microgreens Farm München", footer_style))
 
         doc.build(elements)
         pdf = buffer.getvalue()
@@ -122,7 +209,8 @@ class PDFService:
     # ==================== BELEGKETTE: AB / Lieferschein / Packliste ====================
 
     @staticmethod
-    def _build_document(title: str, doc_number: str, order: Order, body_elements: list) -> bytes:
+    def _build_document(title: str, doc_number: str, order: Order, body_elements: list, settings: Optional[dict] = None) -> bytes:
+        settings = settings or {}
         buffer = BytesIO()
         doc = SimpleDocTemplate(
             buffer, pagesize=A4,
@@ -131,9 +219,9 @@ class PDFService:
         styles = getSampleStyleSheet()
         elements = []
 
-        company_style = ParagraphStyle('CompanyHeader', parent=styles['Heading1'], fontSize=16, spaceAfter=20)
-        elements.append(Paragraph("Minga Greens", company_style))
-        elements.append(Paragraph(f"{title} Nr. {doc_number}", styles['Heading2']))
+        # Firmenkopf (aus Settings, sonst Fallback)
+        elements.append(render_company_header_block(settings))
+        elements.append(Paragraph(f"<b>{title}</b> Nr. {doc_number}", styles['Heading2']))
         elements.append(Spacer(1, 10))
 
         # Meta
@@ -165,21 +253,27 @@ class PDFService:
         elements.extend(body_elements)
         elements.append(Spacer(1, 24))
 
-        footer_style = ParagraphStyle('Footer', parent=styles['Normal'], fontSize=8, textColor=colors.grey)
-        elements.append(Paragraph("Minga Greens - Microgreens Farm München", footer_style))
+        # Footer: Firmendaten + Bankverbindung + USt-IdNr
+        footer_block = render_company_footer_block(settings)
+        if footer_block:
+            elements.append(footer_block)
+        else:
+            footer_style = ParagraphStyle('Footer', parent=styles['Normal'], fontSize=8, textColor=colors.grey)
+            elements.append(Paragraph("Minga Greens - Microgreens Farm München", footer_style))
         doc.build(elements)
         pdf = buffer.getvalue()
         buffer.close()
         return pdf
 
     @staticmethod
-    def generate_payment_reminder_pdf(invoice: Invoice, reminder_level: int = 1, dunning_fee: float = 0.0) -> bytes:
+    def generate_payment_reminder_pdf(invoice: Invoice, reminder_level: int = 1, dunning_fee: float = 0.0, settings: Optional[dict] = None) -> bytes:
         """Generiert eine Zahlungserinnerung/Mahnung als PDF.
 
         reminder_level=1 → freundliche Zahlungserinnerung
         reminder_level=2 → erste Mahnung (mit Mahngebühr)
         reminder_level=3 → letzte Mahnung
         """
+        settings = settings or {}
         from datetime import date as _date
         buffer = BytesIO()
         doc = SimpleDocTemplate(
@@ -196,9 +290,10 @@ class PDFService:
         }
         title = title_map.get(reminder_level, "Zahlungserinnerung")
 
-        company_style = ParagraphStyle('Company', parent=styles['Heading1'], fontSize=16, spaceAfter=20)
-        elements.append(Paragraph("Minga Greens", company_style))
-        elements.append(Paragraph(title, styles['Heading2']))
+        # Briefkopf
+        elements.append(render_company_header_block(settings))
+        elements.append(Spacer(1, 8))
+        elements.append(Paragraph(f"<b>{title}</b>", styles['Heading2']))
         elements.append(Spacer(1, 12))
 
         days_overdue = 0
@@ -276,12 +371,17 @@ class PDFService:
         elements.append(Paragraph("Mit freundlichen Grüßen", styles['Normal']))
         elements.append(Paragraph("Ihr Minga-Greens-Team", styles['Normal']))
         elements.append(Spacer(1, 20))
-        footer = ParagraphStyle('Footer', parent=styles['Normal'], fontSize=8, textColor=colors.grey)
-        elements.append(Paragraph(
-            "Minga Greens · Microgreens Farm München · "
-            f"Erstellt am {_date.today().strftime('%d.%m.%Y')}",
-            footer
-        ))
+        # Footer mit Bankverbindung — bei Mahnung kritisch (Empfänger braucht IBAN)
+        footer_block = render_company_footer_block(settings)
+        if footer_block:
+            elements.append(footer_block)
+        else:
+            footer = ParagraphStyle('Footer', parent=styles['Normal'], fontSize=8, textColor=colors.grey)
+            elements.append(Paragraph(
+                "Minga Greens · Microgreens Farm München · "
+                f"Erstellt am {_date.today().strftime('%d.%m.%Y')}",
+                footer
+            ))
 
         doc.build(elements)
         pdf = buffer.getvalue()
@@ -289,7 +389,7 @@ class PDFService:
         return pdf
 
     @staticmethod
-    def generate_confirmation_pdf(conf: OrderConfirmation) -> bytes:
+    def generate_confirmation_pdf(conf: OrderConfirmation, settings: Optional[dict] = None) -> bytes:
         order = conf.order
         styles = getSampleStyleSheet()
         body = []
@@ -332,28 +432,39 @@ class PDFService:
             body.append(Spacer(1, 8))
             body.append(Paragraph(f"<i>{conf.notes}</i>", styles['Normal']))
 
-        return PDFService._build_document("Auftragsbestätigung", conf.confirmation_number, order, body)
+        return PDFService._build_document("Auftragsbestätigung", conf.confirmation_number, order, body, settings)
 
     @staticmethod
-    def generate_delivery_note_pdf(note: DeliveryNote) -> bytes:
+    def generate_delivery_note_pdf(note: DeliveryNote, settings: Optional[dict] = None) -> bytes:
         order = note.order
         styles = getSampleStyleSheet()
         body = []
 
-        data = [["Pos", "Beschreibung", "Menge", "Einheit"]]
+        # Spalten inkl. Charge + MHD (Rückverfolgbarkeit LMHV § 11)
+        data = [["Pos", "Beschreibung", "Menge", "Einheit", "Charge", "MHD"]]
         for line in order.lines:
+            charge = getattr(line, "batch_number", None) or "—"
+            mhd = "—"
+            harvest = getattr(line, "harvest", None)
+            if harvest:
+                seed_batch = getattr(harvest, "seed_batch", None)
+                if seed_batch and getattr(seed_batch, "mhd", None):
+                    mhd = seed_batch.mhd.strftime("%d.%m.%Y")
             data.append([
                 str(line.position),
                 line.beschreibung or "-",
                 f"{line.quantity:.2f}",
                 line.unit,
+                charge,
+                mhd,
             ])
-        table = Table(data, colWidths=[1.2*cm, 9*cm, 3*cm, 3*cm])
+        table = Table(data, colWidths=[1.0*cm, 6.5*cm, 2.2*cm, 1.8*cm, 2.5*cm, 2.5*cm])
         table.setStyle(TableStyle([
             ('BACKGROUND', (0,0), (-1,0), colors.lightgrey),
             ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-            ('ALIGN', (2,1), (-1,-1), 'RIGHT'),
+            ('ALIGN', (2,1), (3,-1), 'RIGHT'),
             ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
+            ('FONTSIZE', (0,0), (-1,-1), 8),
         ]))
         body.append(table)
         body.append(Spacer(1, 16))
@@ -375,10 +486,10 @@ class PDFService:
             body.append(Spacer(1, 12))
             body.append(Paragraph(f"<i>{note.notes}</i>", styles['Normal']))
 
-        return PDFService._build_document("Lieferschein", note.delivery_note_number, order, body)
+        return PDFService._build_document("Lieferschein", note.delivery_note_number, order, body, settings)
 
     @staticmethod
-    def generate_packing_list_pdf(packing: PackingList) -> bytes:
+    def generate_packing_list_pdf(packing: PackingList, settings: Optional[dict] = None) -> bytes:
         note = packing.delivery_note
         order = note.order
         styles = getSampleStyleSheet()
@@ -450,4 +561,4 @@ class PDFService:
             styles['Normal']
         ))
 
-        return PDFService._build_document("Verpackungsliste", packing.packing_list_number, order, body)
+        return PDFService._build_document("Verpackungsliste", packing.packing_list_number, order, body, settings)
