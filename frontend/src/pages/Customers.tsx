@@ -7,6 +7,7 @@ import { salesApi } from '../services/api';
 import { Customer, CustomerType, Contact, CustomerAddress, AddressType } from '../types';
 import { getErrorMessage } from '../services/errors';
 import { ExcelImport } from '../components/common/ExcelImport';
+import { useDebounce } from '../hooks/useDebounce';
 import { PageHeader, FilterBar } from '../components/common/Layout';
 import { CustomerCard } from '../components/domain/CustomerCard';
 import { CreateOrderModal } from '../components/domain/CreateOrderModal';
@@ -46,6 +47,7 @@ export default function Customers() {
   const queryClient = useQueryClient();
 
   const [search, setSearch] = useState('');
+  const debouncedSearch = useDebounce(search.trim(), 300);
   const [typeFilter, setTypeFilter] = useState<string>('all');
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
   const [pricesFor, setPricesFor] = useState<Customer | null>(null);
@@ -55,10 +57,11 @@ export default function Customers() {
 
   // Fetch customers
   const { data: customersData, isLoading } = useQuery({
-    queryKey: ['customers', { typ: typeFilter }],
+    queryKey: ['customers', { typ: typeFilter, search: debouncedSearch }],
     queryFn: () =>
       salesApi.listCustomers({
         typ: typeFilter === 'all' ? undefined : (typeFilter as CustomerType),
+        search: debouncedSearch || undefined,
       }),
   });
 
@@ -75,12 +78,8 @@ export default function Customers() {
     },
   });
 
+  // Suche + Typ-Filter laufen serverseitig (case-insensitive, umlaut-sicher via ILIKE)
   const customers = customersData?.items || [];
-  const filteredCustomers = customers.filter(
-    (customer) =>
-      customer.name.toLowerCase().includes(search.toLowerCase()) ||
-      customer.email?.toLowerCase().includes(search.toLowerCase())
-  );
 
   if (isLoading) {
     return <PageLoader />;
@@ -117,7 +116,7 @@ export default function Customers() {
         />
       </FilterBar>
 
-      {filteredCustomers.length === 0 ? (
+      {customers.length === 0 ? (
         <EmptyState
           title="Keine Kunden gefunden"
           description={search ? 'Versuche eine andere Suche.' : 'Erstelle deinen ersten Kunden.'}
@@ -131,7 +130,7 @@ export default function Customers() {
         />
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filteredCustomers.map((customer) => (
+          {customers.map((customer) => (
             <div key={customer.id} className="relative">
               <CustomerCard
                 customer={customer}

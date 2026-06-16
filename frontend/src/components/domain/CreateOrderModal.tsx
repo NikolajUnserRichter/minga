@@ -70,8 +70,8 @@ export function CreateOrderModal({ open, onClose, preselectedCustomer }: CreateO
             id: p.id,
             name: (p.is_bundle || p.is_variable_bundle) ? `📦 ${p.name}` : p.name,
             price: Number(p.base_price || 0),
-            // Bundles werden i.d.R. pro Stück verkauft, Microgreens in g
-            unit: (p.is_bundle || p.is_variable_bundle) ? 'STK' : (p.category === 'MICROGREEN' ? 'g' : 'STK'),
+            // Standard: Stück (es wird aktuell nichts abgewogen verkauft); pro Position überschreibbar
+            unit: 'STK',
             is_bundle: p.is_bundle,
             is_variable_bundle: p.is_variable_bundle,
             variable_bundle_min_slots: p.variable_bundle_min_slots,

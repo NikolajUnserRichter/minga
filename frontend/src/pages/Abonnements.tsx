@@ -42,7 +42,7 @@ export default function Abonnements() {
         seed_id: '',
         product_id: '',
         menge: '',
-        einheit: 'GRAMM',
+        einheit: 'STUECK',
         intervall: 'WOECHENTLICH' as SubscriptionInterval,
         liefertage: [] as number[],
         gueltig_von: new Date().toISOString().split('T')[0],
@@ -132,7 +132,7 @@ export default function Abonnements() {
             seed_id: '',
             product_id: '',
             menge: '',
-            einheit: 'GRAMM',
+            einheit: 'STUECK',
             intervall: 'WOECHENTLICH',
             liefertage: [],
             gueltig_von: new Date().toISOString().split('T')[0],
@@ -166,7 +166,7 @@ export default function Abonnements() {
                 liefertage: formData.liefertage.length > 0 ? formData.liefertage : undefined,
                 gueltig_von: formData.gueltig_von,
                 gueltig_bis: formData.gueltig_bis || undefined,
-            } as any);
+            });
         }
     };
 

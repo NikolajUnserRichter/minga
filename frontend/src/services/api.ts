@@ -155,7 +155,7 @@ export const productionApi = {
 
 // Sales API
 export const salesApi = {
-  listCustomers: (params?: { typ?: string; aktiv?: boolean; page_size?: number }) =>
+  listCustomers: (params?: { typ?: string; aktiv?: boolean; search?: string; page_size?: number }) =>
     api.get<ListResponse<Customer>>('/sales/customers', { params: { page_size: 500, ...params } }).then(r => r.data),
 
   getCustomer: (id: string) =>
@@ -647,7 +647,8 @@ export const subscriptionsApi = {
 
   create: (data: {
     kunde_id: string
-    seed_id: string
+    product_id?: string
+    seed_id?: string
     menge: number
     einheit: string
     intervall: 'TAEGLICH' | 'WOECHENTLICH' | 'ZWEIWOECHENTLICH' | 'MONATLICH'

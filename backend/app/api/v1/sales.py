@@ -7,7 +7,7 @@ from datetime import date, datetime, timezone
 from uuid import UUID
 from decimal import Decimal
 from fastapi import APIRouter, HTTPException, status, Query, Response
-from sqlalchemy import select, func
+from sqlalchemy import select, func, or_
 from sqlalchemy.orm import joinedload
 
 from app.api.deps import DBSession, Pagination, CurrentUser
@@ -64,7 +64,7 @@ async def list_customers(
     Filter:
     - **typ**: GASTRO, HANDEL, GEWERBE, PRIVAT
     - **aktiv**: Nur aktive/inaktive Kunden
-    - **search**: Suche nach Name
+    - **search**: Suche nach Name oder E-Mail (case-insensitive, umlaut-sicher via ILIKE)
     """
     query = select(Customer)
 
@@ -72,9 +72,12 @@ async def list_customers(
         query = query.where(Customer.typ == typ)
     if aktiv is not None:
         query = query.where(Customer.aktiv == aktiv)
-    if search:
-        safe_search = search.replace("%", "\\%").replace("_", "\\_")
-        query = query.where(Customer.name.ilike(f"%{safe_search}%"))
+    if search and search.strip():
+        safe_search = search.strip().replace("%", "\\%").replace("_", "\\_")
+        like = f"%{safe_search}%"
+        query = query.where(
+            or_(Customer.name.ilike(like), Customer.email.ilike(like))
+        )
 
     # Total Count
     count_query = select(func.count()).select_from(query.subquery())
