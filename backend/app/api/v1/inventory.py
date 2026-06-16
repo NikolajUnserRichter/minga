@@ -255,7 +255,7 @@ def list_finished_goods(
         query = query.where(FinishedGoodsInventory.location_id == location_id)
 
     if available_only:
-        query = query.where(FinishedGoodsInventory.available_quantity > 0)
+        query = query.where(FinishedGoodsInventory.current_quantity_g > 0)
 
     query = query.order_by(FinishedGoodsInventory.mhd.asc())
     query = query.offset(pagination.offset).limit(pagination.page_size)
@@ -279,7 +279,12 @@ def get_finished_goods_label(
     db: Session = Depends(DBSession)
 ):
     """Generiert ein PDF-Label für Fertigware."""
-    inventory = db.get(FinishedGoodsInventory, inventory_id)
+    from sqlalchemy.orm import joinedload
+    inventory = db.execute(
+        select(FinishedGoodsInventory)
+        .options(joinedload(FinishedGoodsInventory.product))
+        .where(FinishedGoodsInventory.id == inventory_id)
+    ).unique().scalar_one_or_none()
     if not inventory:
         raise HTTPException(status_code=404, detail="Fertigwaren-Bestand nicht gefunden")
     

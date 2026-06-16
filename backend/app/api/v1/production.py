@@ -127,7 +127,14 @@ def update_grow_batch_status(batch_id: UUID, status: GrowBatchStatus, db: DBSess
 @router.get("/grow-batches/{batch_id}/label")
 def get_grow_batch_label(batch_id: UUID, db: DBSession):
     """Generiert ein PDF-Label für die Charge."""
-    batch = db.get(GrowBatch, batch_id)
+    from sqlalchemy.orm import joinedload
+    from sqlalchemy import select
+    from app.models.seed import SeedBatch
+    batch = db.execute(
+        select(GrowBatch)
+        .options(joinedload(GrowBatch.seed_batch).joinedload(SeedBatch.seed))
+        .where(GrowBatch.id == batch_id)
+    ).unique().scalar_one_or_none()
     if not batch:
         raise HTTPException(status_code=404, detail="Charge nicht gefunden")
         

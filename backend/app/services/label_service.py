@@ -31,9 +31,15 @@ class LabelService:
         # Content
         y = LABEL_HEIGHT - 10 * units.mm
         
-        # Title: Sorte
+        # Title: Sorte (via seed_batch.seed.name; Fallback wenn Relation nicht geladen)
+        seed_name = "Unbekannte Sorte"
+        seed_batch = getattr(batch, "seed_batch", None)
+        if seed_batch is not None:
+            seed = getattr(seed_batch, "seed", None)
+            if seed is not None and getattr(seed, "name", None):
+                seed_name = seed.name
         c.setFont("Helvetica-Bold", 16)
-        c.drawString(5 * units.mm, y, batch.seed_name or "Unbekannte Sorte")
+        c.drawString(5 * units.mm, y, seed_name)
         y -= 8 * units.mm
 
         # Subtitle: Variety specific (if available, mostly part of name)
