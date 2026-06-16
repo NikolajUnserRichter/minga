@@ -87,26 +87,41 @@ export default function DocumentTemplates() {
   const [previewBlobUrl, setPreviewBlobUrl] = useState<string | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
+  // Ref auf die aktuell im iframe verwendete URL, damit wir bei Wechsel +
+  // Unmount immer die richtige URL revoken (closure-based Variable verliert
+  // die Referenz, wenn der Effect-Cleanup vor dem fetch-Resolve läuft).
+  const activeUrlRef = useRef<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    let urlToRevoke: string | null = null;
+    // 1. Sofort alte URL freigeben und iframe ausblenden — verhindert,
+    //    dass nach Tab-Switch noch das PDF des vorherigen Typs angezeigt wird.
+    if (activeUrlRef.current) {
+      URL.revokeObjectURL(activeUrlRef.current);
+      activeUrlRef.current = null;
+    }
+    setPreviewBlobUrl(null);
     setPreviewLoading(true);
     setPreviewError(null);
     api.get(`/document-templates/${activeType}/preview.pdf`, { responseType: 'blob' })
       .then(r => {
         if (cancelled) return;
         const url = URL.createObjectURL(r.data);
-        urlToRevoke = url;
+        activeUrlRef.current = url;
         setPreviewBlobUrl(url);
       })
       .catch(err => { if (!cancelled) setPreviewError(err?.message ?? 'Preview-Fehler'); })
       .finally(() => { if (!cancelled) setPreviewLoading(false); });
-    return () => {
-      cancelled = true;
-      if (urlToRevoke) URL.revokeObjectURL(urlToRevoke);
-    };
+    return () => { cancelled = true; };
   }, [activeType, previewRefreshKey]);
+
+  // Bei Unmount letzte URL definitiv freigeben.
+  useEffect(() => () => {
+    if (activeUrlRef.current) {
+      URL.revokeObjectURL(activeUrlRef.current);
+      activeUrlRef.current = null;
+    }
+  }, []);
 
   if (isLoading || !draft) {
     return <div className="p-6 text-gray-500">Lade Vorlagen…</div>;

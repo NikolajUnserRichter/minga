@@ -611,7 +611,11 @@ def list_inventory_counts(
         query = query.where(InventoryCount.location_id == location_id)
 
     if is_finalized is not None:
-        query = query.where(InventoryCount.is_finalized == is_finalized)
+        # InventoryCount hat keine boolesche Spalte — Status ABGESCHLOSSEN = finalized.
+        if is_finalized:
+            query = query.where(InventoryCount.status == "ABGESCHLOSSEN")
+        else:
+            query = query.where(InventoryCount.status != "ABGESCHLOSSEN")
 
     query = query.order_by(InventoryCount.count_date.desc())
     query = query.offset(pagination.offset).limit(pagination.page_size)
@@ -664,7 +668,7 @@ def add_count_item(
     if not count:
         raise HTTPException(status_code=404, detail="Inventur nicht gefunden")
 
-    if count.is_finalized:
+    if count.status == "ABGESCHLOSSEN":
         raise HTTPException(status_code=400, detail="Inventur ist bereits abgeschlossen")
 
     item = InventoryCountItem(
@@ -755,53 +759,41 @@ def correct_inventory(
         if not item:
             raise HTTPException(status_code=404, detail="Bestand nicht gefunden")
 
-        # Calculate difference (current_quantity is property or field?)
-        # Models check:
-        # SeedInventory: current_quantity (property: initial - used) or field? 
-        # Check model definition if needed. Assuming current_quantity field/hybrid.
-        # Actually SeedInventory has `initial_quantity` and `current_quantity`.
-        
-        # Let's check model first to be safe about property vs field.
-        # But InventoryService usually handles this.
-        # Let's look for a generic correction method or implement here.
-        
-        diff = actual_quantity - item.current_quantity
-        
-        if diff == 0:
-            return {"message": "Keine Änderung"}
+        # Spaltennamen je Typ (Models verwenden _kg / _g / generisch)
+        qty_field = {
+            InventoryItemType.SEED:           "current_quantity_kg",
+            InventoryItemType.FINISHED_GOODS: "current_quantity_g",
+            InventoryItemType.PACKAGING:      "current_quantity",
+        }[inventory_type]
+        fk_field = {
+            InventoryItemType.SEED:           "seed_inventory_id",
+            InventoryItemType.FINISHED_GOODS: "finished_goods_id",
+            InventoryItemType.PACKAGING:      "packaging_id",
+        }[inventory_type]
 
-        # Record movement
-        # If diff > 0, it's a gain (KORREKTUR +).
-        # If diff < 0, it's a loss (KORREKTUR/VERLUST -).
-        # We use KORREKTUR for both.
-        
-        # We need to update the item. 
-        # For SeedInventory, current_quantity might be computed? 
-        # If it's computed, we can't set it. We might need to adjust creating a movement.
-        # Wait, usually Inventory is: initial - sum(movements). 
-        # So to correct, we just add a movement of type KORREKTUR with quantity = diff.
-        
+        current_qty = Decimal(str(getattr(item, qty_field)))
+        diff = actual_quantity - current_qty
+
+        if diff == 0:
+            return {"message": "Keine Änderung", "new_quantity": float(current_qty)}
+
         movement = InventoryMovement(
-            inventory_id=inventory_id,
             item_type=inventory_type,
             movement_type=MovementType.KORREKTUR,
             quantity=abs(diff),
-            unit=getattr(item, 'unit', 'Stk'), # Fallback
+            quantity_before=current_qty,
+            quantity_after=actual_quantity,
             movement_date=date.today(),
-            notes=f"Korrektur: {reason} (Alt: {item.current_quantity}, Neu: {actual_quantity})"
+            reason=f"Korrektur: {reason}",
+            **{fk_field: inventory_id},
         )
-        
-        item.current_quantity = actual_quantity # If it's a settable column
-        # If it is NOT settable (computed), we rely on movement trigger or service.
-        # app/models/inventory.py:
-        # SeedInventory.current_quantity is a Column(Numeric, ...) ?
-        # Let's hope so. If not, we found a bug in plan.
-        
+        setattr(item, qty_field, actual_quantity)
+
         db.add(movement)
         db.commit()
         db.refresh(item)
-        
-        return {"new_quantity": item.current_quantity, "diff": diff}
+
+        return {"new_quantity": float(getattr(item, qty_field)), "diff": float(diff)}
 
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

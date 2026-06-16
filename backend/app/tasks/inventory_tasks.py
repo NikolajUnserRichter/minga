@@ -1,5 +1,19 @@
 """
 Celery Tasks für Lagerverwaltung
+
+TODO(Schema-Drift, dokumentiert nach Code-Review 2026-06-16): Mehrere Tasks
+referenzieren veraltete Spaltennamen, die im Modell nicht existieren und beim
+Worker-Run AttributeError werfen würden:
+  * FinishedGoodsInventory: .mhd → .best_before_date, .available_quantity /
+    .current_quantity → .current_quantity_g, .unit existiert nicht
+  * SeedInventory: .current_quantity → .current_quantity_kg, .min_quantity /
+    .unit existieren nicht
+  * PackagingInventory: .article_number → .sku
+  * InventoryMovement: .article_id existiert nicht — FK heißt finished_goods_id
+    bzw. seed_inventory_id / packaging_id; quantity_before / quantity_after
+    sind Pflichtfelder
+Aktuell läuft kein Celery-Worker im Demo-Deploy (keine REDIS-Env), daher
+nicht produktionskritisch. Vor Aktivierung des Workers Tasks updaten.
 """
 import logging
 from datetime import date, timedelta

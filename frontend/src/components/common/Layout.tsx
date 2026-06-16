@@ -243,8 +243,19 @@ export default function Layout() {
     return window.localStorage.getItem('sidebarCollapsed') === '1';
   });
   useEffect(() => {
+    if (typeof window === 'undefined') return;
     window.localStorage.setItem('sidebarCollapsed', sidebarCollapsed ? '1' : '0');
   }, [sidebarCollapsed]);
+
+  // Mobile-Sidebar-State zurücksetzen wenn auf Desktop-Breite gewechselt wird —
+  // sonst bleibt sie nach Resize → Mobile-Rückwärts geöffnet.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const mq = window.matchMedia('(min-width: 1024px)');
+    const handler = (e: MediaQueryListEvent) => { if (e.matches) setSidebarOpen(false); };
+    mq.addEventListener('change', handler);
+    return () => mq.removeEventListener('change', handler);
+  }, []);
   const [user, setUser] = useState<User>(mockUser);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [showScanner, setShowScanner] = useState(false);
