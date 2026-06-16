@@ -91,6 +91,15 @@ from app.models.app_setting import AppSetting
 # Customer-spezifische Preise
 from app.models.customer_price import CustomerPrice
 
+# Document-Templates (Custom-PDF-Layouts pro Belegart)
+from app.models.document_template import (
+    DocumentTemplate,
+    DocumentType,
+    DEFAULT_SECTIONS,
+    DEFAULT_COLUMNS,
+    DEFAULT_TEXTS,
+)
+
 # Production-Timeline-Events
 from app.models.growth_event import (
     GrowthBatchEvent,

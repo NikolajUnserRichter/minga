@@ -1091,4 +1091,59 @@ export const documentsApi = {
     _openPdfFromResponse(`/sales/delivery-notes/${note.id}/packing-list/pdf`, `${note.packing_list?.packing_list_number || note.delivery_note_number}-packing.pdf`),
 }
 
+// =============================================================================
+// Document-Templates (Belegvorlagen — Admin-Editor)
+// =============================================================================
+export type DocumentTypeKey =
+  | 'RECHNUNG' | 'AUFTRAGSBESTAETIGUNG' | 'LIEFERSCHEIN'
+  | 'VERPACKUNGSLISTE' | 'MAHNUNG';
+
+export interface DocTemplateSection { key: string; label: string; enabled: boolean; }
+export interface DocTemplateColumn  { key: string; label: string; enabled: boolean; }
+export interface DocumentTemplate {
+  id: string;
+  document_type: DocumentTypeKey;
+  logo_attachment_id: string | null;
+  logo_url: string | null;
+  primary_color: string;
+  accent_color: string;
+  texts: Record<string, string>;
+  sections: DocTemplateSection[];
+  columns: DocTemplateColumn[];
+  placeholders: string[];
+  updated_at: string;
+}
+export interface DocumentTemplateUpdate {
+  texts?: Record<string, string>;
+  sections?: DocTemplateSection[];
+  columns?: DocTemplateColumn[];
+  primary_color?: string;
+  accent_color?: string;
+}
+
+export const documentTemplatesApi = {
+  listAll: () =>
+    api.get<DocumentTemplate[]>('/document-templates').then(r => r.data),
+
+  get: (docType: DocumentTypeKey) =>
+    api.get<DocumentTemplate>(`/document-templates/${docType}`).then(r => r.data),
+
+  update: (docType: DocumentTypeKey, data: DocumentTemplateUpdate) =>
+    api.patch<DocumentTemplate>(`/document-templates/${docType}`, data).then(r => r.data),
+
+  uploadLogo: (docType: DocumentTypeKey, file: File) => {
+    const fd = new FormData();
+    fd.append('file', file);
+    return api.post<DocumentTemplate>(`/document-templates/${docType}/logo`, fd, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    }).then(r => r.data);
+  },
+
+  removeLogo: (docType: DocumentTypeKey) =>
+    api.delete<DocumentTemplate>(`/document-templates/${docType}/logo`).then(r => r.data),
+
+  previewUrl: (docType: DocumentTypeKey) =>
+    `${API_URL}/api/v1/document-templates/${docType}/preview.pdf?ts=${Date.now()}`,
+}
+
 export default api

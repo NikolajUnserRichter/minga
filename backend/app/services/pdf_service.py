@@ -8,6 +8,7 @@ from reportlab.lib.units import cm
 from app.models.invoice import Invoice, InvoiceType
 from app.models.order import Order
 from app.models.documents import OrderConfirmation, DeliveryNote, PackingList
+from app.models.document_template import DocumentType, DEFAULT_SECTIONS, DEFAULT_COLUMNS
 
 
 COMPANY_KEYS = (
@@ -25,18 +26,41 @@ def load_company_settings(db) -> dict[str, str]:
     return {k: (get_setting(db, k) or "") for k in COMPANY_KEYS}
 
 
-def render_company_header_block(settings: dict[str, str]):
-    """Rendert den Briefkopf-Block (Firmenname + Adresse)."""
+def render_company_header_block(settings: dict[str, str], logo_path: Optional[str] = None, custom_header_text: Optional[str] = None):
+    """Rendert den Briefkopf-Block — Logo (falls vorhanden) + Firmenname + Adresse
+    oder Custom-Header-Text aus Template."""
     from reportlab.lib.styles import ParagraphStyle
-    from reportlab.platypus import Paragraph
+    from reportlab.platypus import Paragraph, Image, Table, TableStyle
+    from reportlab.lib import colors
+
     name = settings.get("COMPANY_NAME") or "Minga Greens"
     addr1 = settings.get("COMPANY_ADDRESS_LINE1") or ""
     addr2 = settings.get("COMPANY_ADDRESS_LINE2") or ""
-    lines = [name]
-    if addr1: lines.append(addr1)
-    if addr2: lines.append(addr2)
+
+    if custom_header_text and custom_header_text.strip():
+        text_html = custom_header_text.replace("\n", "<br/>")
+    else:
+        lines = [f"<b>{name}</b>"]
+        if addr1: lines.append(addr1)
+        if addr2: lines.append(addr2)
+        text_html = "<br/>".join(lines)
+
     style = ParagraphStyle('CompanyHeader', fontSize=10, leading=12, spaceAfter=6)
-    return Paragraph("<br/>".join(lines), style)
+    text_para = Paragraph(text_html, style)
+
+    if logo_path:
+        try:
+            logo = Image(logo_path, width=3*cm, height=3*cm, kind="proportional")
+            tbl = Table([[logo, text_para]], colWidths=[3.5*cm, 13.5*cm])
+            tbl.setStyle(TableStyle([
+                ('VALIGN', (0,0), (-1,-1), 'TOP'),
+                ('LEFTPADDING', (0,0), (-1,-1), 0),
+                ('RIGHTPADDING', (0,0), (-1,-1), 0),
+            ]))
+            return tbl
+        except Exception:
+            pass  # bei kaputter Bilddatei → nur Text
+    return text_para
 
 
 def render_company_footer_block(settings: dict[str, str]):
@@ -73,8 +97,16 @@ def render_company_footer_block(settings: dict[str, str]):
 
 class PDFService:
     @staticmethod
-    def generate_invoice_pdf(invoice: Invoice, settings: Optional[dict] = None) -> bytes:
+    def generate_invoice_pdf(invoice: Invoice, settings: Optional[dict] = None, *, db=None) -> bytes:
         settings = settings or {}
+        # Template-Lookup
+        tmpl = None
+        logo_path = None
+        if db is not None:
+            from app.services.document_template_service import load_template, get_logo_path
+            tmpl = load_template(db, DocumentType.RECHNUNG)
+            logo_path = get_logo_path(db, tmpl)
+
         buffer = BytesIO()
         doc = SimpleDocTemplate(
             buffer,
@@ -88,8 +120,9 @@ class PDFService:
         styles = getSampleStyleSheet()
         elements = []
 
-        # Briefkopf aus Settings
-        elements.append(render_company_header_block(settings))
+        # Briefkopf — Logo + Custom-Header oder Settings-Fallback
+        custom_header = (tmpl.texts.get("header_text") if (tmpl and tmpl.texts) else None)
+        elements.append(render_company_header_block(settings, logo_path=logo_path, custom_header_text=custom_header))
         elements.append(Spacer(1, 8))
         
         # Invoice Title
@@ -209,8 +242,25 @@ class PDFService:
     # ==================== BELEGKETTE: AB / Lieferschein / Packliste ====================
 
     @staticmethod
-    def _build_document(title: str, doc_number: str, order: Order, body_elements: list, settings: Optional[dict] = None) -> bytes:
+    def _build_document(
+        title: str,
+        doc_number: str,
+        order: Order,
+        body_elements: list,
+        settings: Optional[dict] = None,
+        *,
+        document_type: Optional[DocumentType] = None,
+        db=None,
+    ) -> bytes:
         settings = settings or {}
+        # Template laden (optional — Code-Defaults greifen wenn keines existiert)
+        tmpl = None
+        logo_path = None
+        if document_type is not None and db is not None:
+            from app.services.document_template_service import load_template, get_logo_path, get_text, section_enabled
+            tmpl = load_template(db, document_type)
+            logo_path = get_logo_path(db, tmpl)
+
         buffer = BytesIO()
         doc = SimpleDocTemplate(
             buffer, pagesize=A4,
@@ -219,10 +269,18 @@ class PDFService:
         styles = getSampleStyleSheet()
         elements = []
 
-        # Firmenkopf (aus Settings, sonst Fallback)
-        elements.append(render_company_header_block(settings))
-        elements.append(Paragraph(f"<b>{title}</b> Nr. {doc_number}", styles['Heading2']))
-        elements.append(Spacer(1, 10))
+        # Header-Sektion (Logo + Briefkopf-Text aus Template oder Settings)
+        custom_header = None
+        if tmpl and tmpl.texts:
+            custom_header = tmpl.texts.get("header_text") or None
+        # Skip ganze Header-Sektion wenn explizit ausgeschaltet
+        from app.services.document_template_service import section_enabled as _en
+        if _en(tmpl, "header_logo", default=True):
+            elements.append(render_company_header_block(settings, logo_path=logo_path, custom_header_text=custom_header))
+
+        if _en(tmpl, "title", default=True):
+            elements.append(Paragraph(f"<b>{title}</b> Nr. {doc_number}", styles['Heading2']))
+            elements.append(Spacer(1, 10))
 
         # Meta
         meta_data = [
@@ -241,32 +299,39 @@ class PDFService:
         if order.requested_delivery_date:
             meta_data.append(["Lieferdatum:", order.requested_delivery_date.strftime("%d.%m.%Y")])
 
-        meta_table = Table(meta_data, colWidths=[4*cm, 13*cm])
-        meta_table.setStyle(TableStyle([
-            ('ALIGN', (0,0), (-1,-1), 'LEFT'),
-            ('FONTNAME', (0,0), (0,-1), 'Helvetica-Bold'),
-            ('BOTTOMPADDING', (0,0), (-1,-1), 8),
-        ]))
-        elements.append(meta_table)
-        elements.append(Spacer(1, 18))
+        if _en(tmpl, "meta_block", default=True):
+            meta_table = Table(meta_data, colWidths=[4*cm, 13*cm])
+            meta_table.setStyle(TableStyle([
+                ('ALIGN', (0,0), (-1,-1), 'LEFT'),
+                ('FONTNAME', (0,0), (0,-1), 'Helvetica-Bold'),
+                ('BOTTOMPADDING', (0,0), (-1,-1), 8),
+            ]))
+            elements.append(meta_table)
+            elements.append(Spacer(1, 18))
 
         elements.extend(body_elements)
         elements.append(Spacer(1, 24))
 
-        # Footer: Firmendaten + Bankverbindung + USt-IdNr
-        footer_block = render_company_footer_block(settings)
-        if footer_block:
-            elements.append(footer_block)
-        else:
-            footer_style = ParagraphStyle('Footer', parent=styles['Normal'], fontSize=8, textColor=colors.grey)
-            elements.append(Paragraph("Minga Greens - Microgreens Farm München", footer_style))
+        # Footer-Sektion
+        if _en(tmpl, "footer", default=True):
+            custom_footer = tmpl.texts.get("footer_text") if (tmpl and tmpl.texts) else None
+            if custom_footer and custom_footer.strip():
+                footer_style = ParagraphStyle('CustomFooter', fontSize=8, leading=10, textColor=colors.grey)
+                elements.append(Paragraph(custom_footer.replace("\n", "<br/>"), footer_style))
+            else:
+                footer_block = render_company_footer_block(settings)
+                if footer_block:
+                    elements.append(footer_block)
+                else:
+                    footer_style = ParagraphStyle('Footer', parent=styles['Normal'], fontSize=8, textColor=colors.grey)
+                    elements.append(Paragraph("Minga Greens - Microgreens Farm München", footer_style))
         doc.build(elements)
         pdf = buffer.getvalue()
         buffer.close()
         return pdf
 
     @staticmethod
-    def generate_payment_reminder_pdf(invoice: Invoice, reminder_level: int = 1, dunning_fee: float = 0.0, settings: Optional[dict] = None) -> bytes:
+    def generate_payment_reminder_pdf(invoice: Invoice, reminder_level: int = 1, dunning_fee: float = 0.0, settings: Optional[dict] = None, *, db=None) -> bytes:
         """Generiert eine Zahlungserinnerung/Mahnung als PDF.
 
         reminder_level=1 → freundliche Zahlungserinnerung
@@ -274,6 +339,14 @@ class PDFService:
         reminder_level=3 → letzte Mahnung
         """
         settings = settings or {}
+        # Template-Lookup
+        tmpl = None
+        logo_path = None
+        if db is not None:
+            from app.services.document_template_service import load_template, get_logo_path
+            tmpl = load_template(db, DocumentType.MAHNUNG)
+            logo_path = get_logo_path(db, tmpl)
+
         from datetime import date as _date
         buffer = BytesIO()
         doc = SimpleDocTemplate(
@@ -290,8 +363,9 @@ class PDFService:
         }
         title = title_map.get(reminder_level, "Zahlungserinnerung")
 
-        # Briefkopf
-        elements.append(render_company_header_block(settings))
+        # Briefkopf — Logo + Custom-Header
+        custom_header = (tmpl.texts.get("header_text") if (tmpl and tmpl.texts) else None)
+        elements.append(render_company_header_block(settings, logo_path=logo_path, custom_header_text=custom_header))
         elements.append(Spacer(1, 8))
         elements.append(Paragraph(f"<b>{title}</b>", styles['Heading2']))
         elements.append(Spacer(1, 12))
@@ -389,7 +463,7 @@ class PDFService:
         return pdf
 
     @staticmethod
-    def generate_confirmation_pdf(conf: OrderConfirmation, settings: Optional[dict] = None) -> bytes:
+    def generate_confirmation_pdf(conf: OrderConfirmation, settings: Optional[dict] = None, *, db=None) -> bytes:
         order = conf.order
         styles = getSampleStyleSheet()
         body = []
@@ -432,10 +506,10 @@ class PDFService:
             body.append(Spacer(1, 8))
             body.append(Paragraph(f"<i>{conf.notes}</i>", styles['Normal']))
 
-        return PDFService._build_document("Auftragsbestätigung", conf.confirmation_number, order, body, settings)
+        return PDFService._build_document("Auftragsbestätigung", conf.confirmation_number, order, body, settings, document_type=DocumentType.AUFTRAGSBESTAETIGUNG, db=db)
 
     @staticmethod
-    def generate_delivery_note_pdf(note: DeliveryNote, settings: Optional[dict] = None) -> bytes:
+    def generate_delivery_note_pdf(note: DeliveryNote, settings: Optional[dict] = None, *, db=None) -> bytes:
         order = note.order
         styles = getSampleStyleSheet()
         body = []
@@ -486,10 +560,10 @@ class PDFService:
             body.append(Spacer(1, 12))
             body.append(Paragraph(f"<i>{note.notes}</i>", styles['Normal']))
 
-        return PDFService._build_document("Lieferschein", note.delivery_note_number, order, body, settings)
+        return PDFService._build_document("Lieferschein", note.delivery_note_number, order, body, settings, document_type=DocumentType.LIEFERSCHEIN, db=db)
 
     @staticmethod
-    def generate_packing_list_pdf(packing: PackingList, settings: Optional[dict] = None) -> bytes:
+    def generate_packing_list_pdf(packing: PackingList, settings: Optional[dict] = None, *, db=None) -> bytes:
         note = packing.delivery_note
         order = note.order
         styles = getSampleStyleSheet()
@@ -561,4 +635,4 @@ class PDFService:
             styles['Normal']
         ))
 
-        return PDFService._build_document("Verpackungsliste", packing.packing_list_number, order, body, settings)
+        return PDFService._build_document("Verpackungsliste", packing.packing_list_number, order, body, settings, document_type=DocumentType.VERPACKUNGSLISTE, db=db)

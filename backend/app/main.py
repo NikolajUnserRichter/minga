@@ -22,7 +22,7 @@ from slowapi.errors import RateLimitExceeded
 
 from app.config import get_settings
 from app.database import engine, Base
-from app.api.v1 import seeds, production, sales, forecasting, products, invoices, inventory, analytics, capacity, suppliers, units, imports, documents, attachments, admin
+from app.api.v1 import seeds, production, sales, forecasting, products, invoices, inventory, analytics, capacity, suppliers, units, imports, documents, attachments, admin, document_templates
 from app.api.deps import get_current_user
 
 logger = logging.getLogger(__name__)
@@ -493,6 +493,12 @@ app.include_router(
     analytics.router,
     prefix="/api/v1/analytics",
     tags=["Analytics"],
+    dependencies=_auth_deps,
+)
+
+app.include_router(
+    document_templates.router,
+    prefix="/api/v1",
     dependencies=_auth_deps,
 )
 

@@ -20,6 +20,7 @@ import AccuracyReports from './pages/AccuracyReports';
 import Suppliers from './pages/Suppliers';
 import Locations from './pages/Locations';
 import Capacities from './pages/Capacities';
+import DocumentTemplates from './pages/DocumentTemplates';
 
 function App() {
   return (
@@ -56,6 +57,7 @@ function App() {
 
           {/* Admin */}
           <Route path="settings" element={<Settings />} />
+          <Route path="admin/templates" element={<DocumentTemplates />} />
           <Route path="users" element={<Users />} />
 
           {/* Catch all */}

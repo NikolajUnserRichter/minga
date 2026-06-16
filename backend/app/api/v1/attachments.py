@@ -37,7 +37,16 @@ ENTITY_MODELS = {
     "product": Product,
     "harvest": Harvest,
     "seed_inventory": SeedInventory,
+    # 'document_template' wird in attachments_api als virtueller Owner geprüft
 }
+
+
+def _ensure_doctemplate_exists(db, entity_id):
+    """Sonderbehandlung: document_template kann anhand DocumentType-Enum
+    aufgelöst werden — wir lookup über die Template-Tabelle."""
+    from app.models.document_template import DocumentTemplate
+    if not db.get(DocumentTemplate, entity_id):
+        raise HTTPException(status_code=404, detail="DocumentTemplate nicht gefunden")
 
 
 def _validate_entity_type(entity_type: str):
@@ -49,6 +58,9 @@ def _validate_entity_type(entity_type: str):
 
 
 def _ensure_entity_exists(db, entity_type: str, entity_id: UUID):
+    if entity_type == "document_template":
+        _ensure_doctemplate_exists(db, entity_id)
+        return
     model = ENTITY_MODELS[entity_type]
     if not db.get(model, entity_id):
         raise HTTPException(status_code=404, detail=f"{entity_type.capitalize()} nicht gefunden")

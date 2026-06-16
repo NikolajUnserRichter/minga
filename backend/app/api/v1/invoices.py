@@ -193,7 +193,7 @@ def generate_payment_reminder(
     if invoice.status in (InvoiceStatus.BEZAHLT, InvoiceStatus.STORNIERT):
         raise HTTPException(status_code=400, detail="Bezahlte/stornierte Rechnungen können nicht gemahnt werden")
 
-    pdf = PDFService.generate_payment_reminder_pdf(invoice, reminder_level=level, dunning_fee=dunning_fee, settings=load_company_settings(db))
+    pdf = PDFService.generate_payment_reminder_pdf(invoice, reminder_level=level, dunning_fee=dunning_fee, settings=load_company_settings(db), db=db)
 
     # Mahnstufe persistieren wenn höher
     if level > (invoice.reminder_level or 0):
@@ -237,7 +237,7 @@ def send_invoice_email(
         raise HTTPException(status_code=400, detail="Rechnung hat keine Positionen")
 
     try:
-        pdf = PDFService.generate_invoice_pdf(invoice, settings=load_company_settings(db))
+        pdf = PDFService.generate_invoice_pdf(invoice, settings=load_company_settings(db), db=db)
         send_email(
             db=db,
             to=to_email,
@@ -469,7 +469,7 @@ def get_invoice_pdf(
         raise HTTPException(status_code=404, detail="Rechnung nicht gefunden")
 
     from app.services.pdf_service import PDFService
-    pdf_content = PDFService.generate_invoice_pdf(invoice, settings=load_company_settings(db))
+    pdf_content = PDFService.generate_invoice_pdf(invoice, settings=load_company_settings(db), db=db)
     
     filename = f"Rechnung_{invoice.invoice_number}.pdf"
     

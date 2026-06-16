@@ -17,7 +17,7 @@ from app.database import Base
 
 
 # Erlaubte entity_types
-ATTACHMENT_ENTITY_TYPES = ("supplier", "product", "harvest", "seed_inventory")
+ATTACHMENT_ENTITY_TYPES = ("supplier", "product", "harvest", "seed_inventory", "document_template")
 
 # Erlaubte certificate_types
 CERTIFICATE_TYPES = (

@@ -13,6 +13,7 @@ import {
   BarChart3,
   Settings,
   UserCog,
+  FileEdit,
   Menu,
   X,
   LogOut,
@@ -181,6 +182,12 @@ const navigationSections: NavSection[] = [
         name: 'Einstellungen',
         href: '/settings',
         icon: Settings,
+        roles: ['ADMIN'],
+      },
+      {
+        name: 'Belegvorlagen',
+        href: '/admin/templates',
+        icon: FileEdit,
         roles: ['ADMIN'],
       },
       {

@@ -129,7 +129,7 @@ def send_confirmation(conf_id: UUID, data: OrderConfirmationSend, db: DBSession)
 
     if data.sent_to_email:
         try:
-            pdf = PDFService.generate_confirmation_pdf(conf, settings=load_company_settings(db))
+            pdf = PDFService.generate_confirmation_pdf(conf, settings=load_company_settings(db), db=db)
             customer_name = conf.order.customer.name if conf.order and conf.order.customer else "Kunde"
             send_email(
                 db=db,
@@ -172,7 +172,7 @@ def download_confirmation_pdf(conf_id: UUID, db: DBSession):
         raise HTTPException(status_code=404, detail="Auftragsbestätigung nicht gefunden")
     # Lines laden
     _ = _load_order_with_lines(db, conf.order_id)
-    pdf = PDFService.generate_confirmation_pdf(conf, settings=load_company_settings(db))
+    pdf = PDFService.generate_confirmation_pdf(conf, settings=load_company_settings(db), db=db)
     return StreamingResponse(
         BytesIO(pdf),
         media_type="application/pdf",
@@ -337,7 +337,7 @@ def download_delivery_note_pdf(note_id: UUID, db: DBSession):
     ).unique().scalar_one_or_none()
     if not note:
         raise HTTPException(status_code=404, detail="Lieferschein nicht gefunden")
-    pdf = PDFService.generate_delivery_note_pdf(note, settings=load_company_settings(db))
+    pdf = PDFService.generate_delivery_note_pdf(note, settings=load_company_settings(db), db=db)
     return StreamingResponse(
         BytesIO(pdf),
         media_type="application/pdf",
@@ -357,7 +357,7 @@ def download_packing_list_pdf(note_id: UUID, db: DBSession):
     ).unique().scalar_one_or_none()
     if not note or not note.packing_list:
         raise HTTPException(status_code=404, detail="Verpackungsliste nicht gefunden")
-    pdf = PDFService.generate_packing_list_pdf(note.packing_list, settings=load_company_settings(db))
+    pdf = PDFService.generate_packing_list_pdf(note.packing_list, settings=load_company_settings(db), db=db)
     return StreamingResponse(
         BytesIO(pdf),
         media_type="application/pdf",
