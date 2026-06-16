@@ -82,11 +82,14 @@ export default function DocumentTemplates() {
     },
   });
 
+  const previewUrl = useMemo(
+    () => `${documentTemplatesApi.previewUrl(activeType)}?r=${previewRefreshKey}`,
+    [activeType, previewRefreshKey],
+  );
+
   if (isLoading || !draft) {
     return <div className="p-6 text-gray-500">Lade Vorlagen…</div>;
   }
-
-  const previewUrl = `${documentTemplatesApi.previewUrl(activeType)}&r=${previewRefreshKey}`;
 
   return (
     <div className="p-4 max-w-[1600px] mx-auto">

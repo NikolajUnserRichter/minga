@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 
 from app.models.document_template import DocumentTemplate, DocumentType
 from app.models.enums import TaxRate, ConfirmationStatus, DeliveryNoteStatus, OrderStatus
+from app.models.invoice import InvoiceType
 
 
 # ---------- Placeholder-Replacement ---------------------------------------
@@ -78,11 +79,11 @@ def get_logo_path(db: Session, tmpl: Optional[DocumentTemplate]) -> Optional[str
         return None
     from app.services.storage_service import get_storage
     storage = get_storage()
-    try:
-        path = storage._resolve(att.storage_key)
-        return str(path) if path.is_file() else None
-    except Exception:
-        return None
+    resolver = getattr(storage, "resolve_path", None)
+    if resolver is None:
+        return None  # S3 oder anderes Backend → ReportLab kann keinen Pfad nutzen
+    path = resolver(att.storage_key)
+    return str(path) if path else None
 
 
 # ---------- Dummy-Builder für Live-Preview --------------------------------
@@ -169,7 +170,7 @@ def build_dummy_invoice():
     return SimpleNamespace(
         id=uuid4(),
         invoice_number="RE-2026-99999",
-        invoice_type=SimpleNamespace(value="RECHNUNG"),
+        invoice_type=InvoiceType.RECHNUNG,
         customer=cust,
         customer_id=None,
         order_id=None,

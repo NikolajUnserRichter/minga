@@ -13,7 +13,7 @@ import os
 import shutil
 import uuid as uuid_pkg
 from pathlib import Path
-from typing import BinaryIO
+from typing import BinaryIO, Optional
 
 
 class LocalStorage:
@@ -64,6 +64,18 @@ class LocalStorage:
         if not path.is_file():
             raise FileNotFoundError(storage_key)
         return open(path, "rb")
+
+    def resolve_path(self, storage_key: str) -> Optional[Path]:
+        """Public: liefert absoluten Filesystem-Pfad oder None.
+
+        Für Nicht-Local-Backends (S3) gibt diese Methode None zurück; Caller
+        müssen auf storage.open() ausweichen.
+        """
+        try:
+            path = self._resolve(storage_key)
+            return path if path.is_file() else None
+        except Exception:
+            return None
 
     def delete(self, storage_key: str) -> None:
         try:

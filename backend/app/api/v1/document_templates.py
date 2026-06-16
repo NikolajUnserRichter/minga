@@ -50,7 +50,12 @@ PLACEHOLDERS_BY_TYPE: dict[str, list[str]] = {
 
 
 def _seed_default(db, document_type: DocumentType) -> DocumentTemplate:
-    """Legt ein Default-Template an wenn noch keines existiert."""
+    """Legt ein Default-Template an wenn noch keines existiert.
+
+    Race-safe: bei parallelen Requests gewinnt der erste INSERT, alle anderen
+    fangen die IntegrityError ab und lesen das vom Sieger angelegte Row.
+    """
+    from sqlalchemy.exc import IntegrityError
     tmpl = db.execute(
         select(DocumentTemplate).where(DocumentTemplate.document_type == document_type)
     ).scalar_one_or_none()
@@ -65,7 +70,14 @@ def _seed_default(db, document_type: DocumentType) -> DocumentTemplate:
         accent_color="#6b7280",    # Grau-500
     )
     db.add(tmpl)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        tmpl = db.execute(
+            select(DocumentTemplate).where(DocumentTemplate.document_type == document_type)
+        ).scalar_one()
+        return tmpl
     db.refresh(tmpl)
     return tmpl
 
@@ -117,6 +129,13 @@ async def upload_logo(
         raise HTTPException(status_code=413, detail="Logo zu groß (max. 5 MB)")
     if not contents:
         raise HTTPException(status_code=400, detail="Leere Datei")
+
+    # Magic-Byte-Check — Content-Type-Header ist Client-supplied und nicht vertrauenswürdig
+    head = contents[:16]
+    is_png  = head.startswith(b"\x89PNG\r\n\x1a\n")
+    is_jpeg = head.startswith(b"\xff\xd8\xff")
+    if not (is_png or is_jpeg):
+        raise HTTPException(status_code=415, detail="Nur PNG- oder JPEG-Logos werden akzeptiert")
 
     storage = get_storage()
     storage_key, size = storage.save(BytesIO(contents), "document_template", str(tmpl.id), file.filename or "logo.png")

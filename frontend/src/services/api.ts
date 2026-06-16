@@ -1143,7 +1143,7 @@ export const documentTemplatesApi = {
     api.delete<DocumentTemplate>(`/document-templates/${docType}/logo`).then(r => r.data),
 
   previewUrl: (docType: DocumentTypeKey) =>
-    `${API_URL}/api/v1/document-templates/${docType}/preview.pdf?ts=${Date.now()}`,
+    `${API_URL}/api/v1/document-templates/${docType}/preview.pdf`,
 }
 
 export default api
