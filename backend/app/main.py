@@ -85,6 +85,7 @@ async def lifespan(app: FastAPI):
             logger.warning(f"[auto-migrate] {table}.{column} added")
 
         # Customer master-data extensions (Skonto, Verpackungsgebühr)
+        _add_col_if_missing("customers", "customer_number",       "VARCHAR(20)")
         _add_col_if_missing("customers", "skonto_percent",        "NUMERIC(5,2)", "0")
         _add_col_if_missing("customers", "skonto_days",           "INTEGER",      "0")
         _add_col_if_missing("customers", "packaging_fee_amount",  "NUMERIC(10,2)", "0")
@@ -95,6 +96,44 @@ async def lifespan(app: FastAPI):
         # werden via create_all neu angelegt.
     except Exception as e:
         logger.error(f"[auto-migrate] failed: {e}")
+
+    # Idempotenter Backfill: Bestandskunden ohne customer_number bekommen
+    # fortlaufende KD-NNNNN-Nummern (gleiches Schema wie sales.create_customer),
+    # anknüpfend an die höchste vorhandene KD-Nummer. Läuft bei jedem Start,
+    # fasst aber nur NULL/leere Werte an -> idempotent, kein Effekt im Normalfall.
+    try:
+        from sqlalchemy import text
+        with engine.begin() as conn:
+            existing = conn.execute(
+                text("SELECT customer_number FROM customers WHERE customer_number LIKE 'KD-%'")
+            ).fetchall()
+            max_num = 10000
+            for (cn,) in existing:
+                try:
+                    n = int(str(cn).split("-")[-1])
+                except (ValueError, IndexError):
+                    continue
+                max_num = max(max_num, n)
+
+            missing = conn.execute(
+                text(
+                    "SELECT id FROM customers "
+                    "WHERE customer_number IS NULL OR customer_number = '' "
+                    "ORDER BY created_at, name, id"
+                )
+            ).fetchall()
+
+            next_num = max_num + 1
+            for (cid,) in missing:
+                conn.execute(
+                    text("UPDATE customers SET customer_number = :cn WHERE id = :id"),
+                    {"cn": f"KD-{next_num:05d}", "id": cid},
+                )
+                next_num += 1
+            if missing:
+                logger.warning(f"[customer-backfill] {len(missing)} Kundennummern vergeben")
+    except Exception as e:
+        logger.error(f"[customer-backfill] failed: {e}")
 
     # Stammdaten-Seed für Demo-Deploys: Einheiten, falls Tabelle leer.
     try:
