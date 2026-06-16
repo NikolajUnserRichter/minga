@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { Plus, Search, Trash, Tag } from 'lucide-react';
 import { CustomerPricesModal } from '../components/domain/CustomerPricesModal';
 import { salesApi } from '../services/api';
@@ -63,6 +63,9 @@ export default function Customers() {
         typ: typeFilter === 'all' ? undefined : (typeFilter as CustomerType),
         search: debouncedSearch || undefined,
       }),
+    // Vorherige Treffer sichtbar lassen, während die nächste Suche lädt —
+    // verhindert das Vollbild-Loader-Flackern + Fokusverlust pro Tastendruck.
+    placeholderData: keepPreviousData,
   });
 
   // Delete mutation
