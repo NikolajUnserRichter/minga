@@ -14,6 +14,8 @@ import {
   Settings,
   UserCog,
   FileEdit,
+  ChevronLeft,
+  ChevronRight,
   Menu,
   X,
   LogOut,
@@ -235,6 +237,14 @@ const mockUser: User = {
 
 export default function Layout() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  // Desktop: zusammenklappen auf reine Icon-Leiste, Wert wird gespeichert
+  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    return window.localStorage.getItem('sidebarCollapsed') === '1';
+  });
+  useEffect(() => {
+    window.localStorage.setItem('sidebarCollapsed', sidebarCollapsed ? '1' : '0');
+  }, [sidebarCollapsed]);
   const [user, setUser] = useState<User>(mockUser);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [showScanner, setShowScanner] = useState(false);
@@ -299,14 +309,13 @@ export default function Layout() {
 
         {/* Sidebar */}
         <aside
-          className={`fixed inset-y-0 left-0 z-50 w-64 bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 transform transition-transform duration-200 lg:translate-x-0 flex flex-col ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'
-            }`}
+          className={`fixed inset-y-0 left-0 z-50 bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 transform transition-all duration-200 lg:translate-x-0 flex flex-col w-64 ${sidebarCollapsed ? 'lg:w-16' : 'lg:w-64'} ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}
         >
           {/* Logo */}
-          <div className="flex items-center justify-between h-16 px-6 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
-            <NavLink to="/dashboard" className="flex items-center gap-3">
+          <div className={`flex items-center h-16 border-b border-gray-200 dark:border-gray-700 flex-shrink-0 ${sidebarCollapsed ? 'lg:justify-center lg:px-2 px-6 justify-between' : 'px-6 justify-between'}`}>
+            <NavLink to="/dashboard" className="flex items-center gap-3" title="Minga-Greens">
               <img src="/logo.png" alt="Minga Greens" className="w-8 h-8 rounded-lg object-contain invert dark:invert-0" />
-              <span className="text-lg font-bold text-gray-900 dark:text-white">Minga-Greens</span>
+              <span className={`text-lg font-bold text-gray-900 dark:text-white ${sidebarCollapsed ? 'lg:hidden' : ''}`}>Minga-Greens</span>
             </NavLink>
             <button
               className="lg:hidden p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700"
@@ -320,8 +329,11 @@ export default function Layout() {
           <nav className="flex-1 overflow-y-auto py-4 scrollbar-thin">
             {filteredNavigation.map((section, idx) => (
               <div key={idx} className="nav-section">
-                {section.title && (
+                {section.title && !sidebarCollapsed && (
                   <p className="nav-section-title">{section.title}</p>
+                )}
+                {section.title && sidebarCollapsed && (
+                  <div className="lg:mx-3 lg:my-2 lg:border-t lg:border-gray-200 lg:dark:border-gray-700" />
                 )}
                 <div className="space-y-1">
                   {section.items.map((item) => (
@@ -329,12 +341,13 @@ export default function Layout() {
                       key={item.name}
                       to={item.href}
                       className={({ isActive }) =>
-                        `nav-item ${isActive ? 'nav-item-active' : ''}`
+                        `nav-item ${isActive ? 'nav-item-active' : ''} ${sidebarCollapsed ? 'lg:justify-center lg:px-2' : ''}`
                       }
                       onClick={() => setSidebarOpen(false)}
+                      title={sidebarCollapsed ? item.name : undefined}
                     >
                       <item.icon className="nav-item-icon" />
-                      {item.name}
+                      <span className={sidebarCollapsed ? 'lg:hidden' : ''}>{item.name}</span>
                     </NavLink>
                   ))}
                 </div>
@@ -342,12 +355,23 @@ export default function Layout() {
             ))}
           </nav>
 
+          {/* Collapse-Toggle — nur Desktop */}
+          <button
+            type="button"
+            onClick={() => setSidebarCollapsed(c => !c)}
+            className="hidden lg:flex items-center justify-center h-8 mx-2 mb-1 rounded-lg text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+            title={sidebarCollapsed ? 'Navigation ausklappen' : 'Navigation einklappen'}
+          >
+            {sidebarCollapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
+          </button>
+
           {/* User Info */}
-          <div className="border-t border-gray-200 dark:border-gray-700 p-4 flex-shrink-0">
+          <div className={`border-t border-gray-200 dark:border-gray-700 flex-shrink-0 ${sidebarCollapsed ? 'lg:p-2 p-4' : 'p-4'}`}>
             <div className="relative">
               <button
                 onClick={() => setUserMenuOpen(!userMenuOpen)}
-                className="w-full flex items-center gap-3 p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                className={`w-full flex items-center gap-3 p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors ${sidebarCollapsed ? 'lg:justify-center' : ''}`}
+                title={sidebarCollapsed ? user.name : undefined}
               >
                 <div className="avatar avatar-md bg-minga-100 text-minga-700 dark:bg-minga-900/50 dark:text-minga-400">
                   {user.name
@@ -355,13 +379,12 @@ export default function Layout() {
                     .map((n) => n[0])
                     .join('')}
                 </div>
-                <div className="flex-1 text-left">
+                <div className={`flex-1 text-left ${sidebarCollapsed ? 'lg:hidden' : ''}`}>
                   <p className="text-sm font-medium text-gray-900 dark:text-white">{user.name}</p>
                   <p className="text-xs text-gray-500 dark:text-gray-400">{roleDisplayNames[user.role]}</p>
                 </div>
                 <ChevronDown
-                  className={`w-4 h-4 text-gray-400 transition-transform ${userMenuOpen ? 'rotate-180' : ''
-                    }`}
+                  className={`w-4 h-4 text-gray-400 transition-transform ${userMenuOpen ? 'rotate-180' : ''} ${sidebarCollapsed ? 'lg:hidden' : ''}`}
                 />
               </button>
 
@@ -403,7 +426,7 @@ export default function Layout() {
         </aside>
 
         {/* Main Content */}
-        <div className="lg:pl-64">
+        <div className={`transition-[padding] duration-200 ${sidebarCollapsed ? 'lg:pl-16' : 'lg:pl-64'}`}>
           {/* Top Bar */}
           <header className="sticky top-0 z-30 h-16 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 flex items-center px-6 transition-colors">
             <button
