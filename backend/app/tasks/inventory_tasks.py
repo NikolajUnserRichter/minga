@@ -1,22 +1,16 @@
 """
-Celery Tasks für Lagerverwaltung
+Celery Tasks für Lagerverwaltung.
 
-TODO(Schema-Drift, dokumentiert nach Code-Review 2026-06-16): Mehrere Tasks
-referenzieren veraltete Spaltennamen, die im Modell nicht existieren und beim
-Worker-Run AttributeError werfen würden:
-  * FinishedGoodsInventory: .mhd → .best_before_date, .available_quantity /
-    .current_quantity → .current_quantity_g, .unit existiert nicht
-  * SeedInventory: .current_quantity → .current_quantity_kg, .min_quantity /
-    .unit existieren nicht
-  * PackagingInventory: .article_number → .sku
-  * InventoryMovement: .article_id existiert nicht — FK heißt finished_goods_id
-    bzw. seed_inventory_id / packaging_id; quantity_before / quantity_after
-    sind Pflichtfelder
-Aktuell läuft kein Celery-Worker im Demo-Deploy (keine REDIS-Env), daher
-nicht produktionskritisch. Vor Aktivierung des Workers Tasks updaten.
+Wird durch celery-beat aufgerufen (siehe celery_app.py). Spaltennamen
+entsprechen dem aktuellen Inventory-Schema:
+
+  SeedInventory:           current_quantity_kg, best_before_date  (kein unit, kein min_quantity)
+  FinishedGoodsInventory:  current_quantity_g,  best_before_date  (kein unit, kein available_quantity)
+  PackagingInventory:      current_quantity,    min_quantity, unit, sku
+  InventoryMovement:       FK je Typ + quantity_before + quantity_after + reason (Pflichtfeld unit)
 """
 import logging
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
 from sqlalchemy import select, func
@@ -25,11 +19,16 @@ from app.celery_app import celery_app
 from app.database import SessionLocal
 from app.models.inventory import (
     SeedInventory, FinishedGoodsInventory, PackagingInventory,
-    InventoryMovement, InventoryItemType, MovementType
+    InventoryMovement, InventoryItemType, MovementType,
 )
 from app.models.seed import Seed
 
 logger = logging.getLogger(__name__)
+
+
+# Konstanten für „Niedriger Saatgut-Bestand" – SeedInventory hat kein min_quantity-Feld.
+# Wir warnen, wenn weniger als 0.5 kg übrig sind UND MHD nicht überschritten ist.
+SEED_LOW_THRESHOLD_KG = Decimal("0.5")
 
 
 @celery_app.task(
@@ -42,24 +41,20 @@ logger = logging.getLogger(__name__)
     soft_time_limit=240,
 )
 def check_low_stock():
-    """
-    Prüft Lagerbestände und erstellt Warnungen für niedrige Bestände.
-    Wird täglich um 7:00 ausgeführt.
-    """
+    """Prüft Lagerbestände, sammelt Alerts und versendet ggf. eine Sammel-Mail."""
     logger.info("Prüfe Lagerbestände")
 
     db = SessionLocal()
     try:
-        alerts = []
+        alerts: list[dict] = []
 
-        # Saatgut prüfen
+        # Saatgut — feste Schwelle, da Modell kein min_quantity besitzt.
         low_seeds = db.execute(
             select(SeedInventory)
             .join(Seed)
             .where(
                 SeedInventory.is_active == True,
-                SeedInventory.min_quantity != None,
-                SeedInventory.current_quantity < SeedInventory.min_quantity
+                SeedInventory.current_quantity_kg < SEED_LOW_THRESHOLD_KG,
             )
         ).scalars().all()
 
@@ -68,10 +63,10 @@ def check_low_stock():
                 "type": "SAATGUT",
                 "article_name": inv.seed.name if inv.seed else "Unbekannt",
                 "batch_number": inv.batch_number,
-                "current_quantity": float(inv.current_quantity),
-                "min_quantity": float(inv.min_quantity),
-                "unit": inv.unit,
-                "deficit": float(inv.min_quantity - inv.current_quantity)
+                "current_quantity": float(inv.current_quantity_kg),
+                "min_quantity": float(SEED_LOW_THRESHOLD_KG),
+                "unit": "kg",
+                "deficit": float(SEED_LOW_THRESHOLD_KG - inv.current_quantity_kg),
             }
             alerts.append(alert)
             logger.warning(
@@ -79,13 +74,13 @@ def check_low_stock():
                 f"({alert['current_quantity']}{alert['unit']} / min {alert['min_quantity']}{alert['unit']})"
             )
 
-        # Verpackung prüfen
+        # Verpackung — hat min_quantity am Modell.
         low_packaging = db.execute(
             select(PackagingInventory)
             .where(
                 PackagingInventory.is_active == True,
                 PackagingInventory.min_quantity != None,
-                PackagingInventory.current_quantity < PackagingInventory.min_quantity
+                PackagingInventory.current_quantity < PackagingInventory.min_quantity,
             )
         ).scalars().all()
 
@@ -93,12 +88,12 @@ def check_low_stock():
             alert = {
                 "type": "VERPACKUNG",
                 "article_name": inv.name,
-                "article_number": inv.article_number,
+                "article_number": inv.sku,
                 "current_quantity": float(inv.current_quantity),
                 "min_quantity": float(inv.min_quantity),
                 "reorder_quantity": float(inv.reorder_quantity) if inv.reorder_quantity else None,
                 "unit": inv.unit,
-                "deficit": float(inv.min_quantity - inv.current_quantity)
+                "deficit": float(inv.min_quantity - inv.current_quantity),
             }
             alerts.append(alert)
             logger.warning(
@@ -106,77 +101,76 @@ def check_low_stock():
                 f"({alert['current_quantity']} / min {alert['min_quantity']})"
             )
 
-        # Alerts per E-Mail versenden
+        # Alerts per E-Mail versenden (best effort — fehlende Settings dürfen Task nicht killen)
         if alerts:
-            from app.core.email import email_service
-            from app.config import get_settings
-            
-            settings = get_settings()
-            
-            # Simple HTML list construction
-            items_html = ""
-            for alert in alerts:
-                items_html += f"<li><strong>{alert['article_name']}</strong> ({alert.get('batch_number', 'N/A')}): {alert['current_quantity']} {alert['unit']} (Min: {alert['min_quantity']} {alert['unit']})</li>"
-            
-            email_body = f"""
-            <h3>Niedriger Lagerbestand erkannt</h3>
-            <p>Folgende Artikel haben den Mindestbestand unterschritten:</p>
-            <ul>
-                {items_html}
-            </ul>
-            <p>Bitte Nachbestellung prüfen.</p>
-            """
-            
-            email_service.send_email(
-                email_to=settings.emails_from_email, # Send to self/admin for now
-                subject=f"⚠️ Lagerbestand Warnung ({len(alerts)} Artikel)",
-                template_str=email_body,
-                template_data={} # Already formatted
-            )
+            try:
+                from app.core.email import email_service  # type: ignore
+                from app.config import get_settings
 
-        return {
-            "status": "success",
-            "alerts_count": len(alerts),
-            "alerts": alerts
-        }
+                settings = get_settings()
 
+                items_html = ""
+                for alert in alerts:
+                    items_html += (
+                        f"<li><strong>{alert['article_name']}</strong> "
+                        f"({alert.get('batch_number', alert.get('article_number', 'N/A'))}): "
+                        f"{alert['current_quantity']} {alert['unit']} "
+                        f"(Min: {alert['min_quantity']} {alert['unit']})</li>"
+                    )
+
+                email_body = f"""
+                <h3>Niedriger Lagerbestand erkannt</h3>
+                <p>Folgende Artikel haben den Mindestbestand unterschritten:</p>
+                <ul>
+                    {items_html}
+                </ul>
+                <p>Bitte Nachbestellung prüfen.</p>
+                """
+
+                email_service.send_email(
+                    email_to=settings.emails_from_email,
+                    subject=f"⚠️ Lagerbestand Warnung ({len(alerts)} Artikel)",
+                    template_str=email_body,
+                    template_data={},
+                )
+            except Exception as e:
+                logger.warning(f"E-Mail-Versand für Low-Stock-Alerts fehlgeschlagen: {e}")
+
+        return {"status": "success", "alerts_count": len(alerts), "alerts": alerts}
     finally:
         db.close()
 
 
 @celery_app.task(name="app.tasks.inventory_tasks.check_expiring_goods")
 def check_expiring_goods(days_threshold: int = 3):
-    """
-    Prüft Fertigware auf ablaufende MHD.
-    """
+    """Prüft Fertigware auf nahende MHD."""
     logger.info(f"Prüfe ablaufende Fertigware (Schwelle: {days_threshold} Tage)")
 
     db = SessionLocal()
     try:
         threshold_date = date.today() + timedelta(days=days_threshold)
 
-        # Fertigware mit nahem MHD
         expiring = db.execute(
             select(FinishedGoodsInventory)
             .where(
                 FinishedGoodsInventory.is_active == True,
-                FinishedGoodsInventory.current_quantity > 0,
-                FinishedGoodsInventory.mhd <= threshold_date
+                FinishedGoodsInventory.current_quantity_g > 0,
+                FinishedGoodsInventory.best_before_date <= threshold_date,
             )
-            .order_by(FinishedGoodsInventory.mhd)
+            .order_by(FinishedGoodsInventory.best_before_date)
         ).scalars().all()
 
-        alerts = []
+        alerts: list[dict] = []
         for inv in expiring:
-            days_until = (inv.mhd - date.today()).days
+            days_until = (inv.best_before_date - date.today()).days
             alert = {
                 "product_name": inv.product.name if inv.product else "Unbekannt",
                 "batch_number": inv.batch_number,
-                "mhd": inv.mhd.isoformat(),
+                "best_before_date": inv.best_before_date.isoformat(),
                 "days_until_expiry": days_until,
-                "current_quantity": float(inv.current_quantity),
-                "unit": inv.unit,
-                "location": inv.location.name if inv.location else None
+                "current_quantity_g": float(inv.current_quantity_g),
+                "unit": "g",
+                "location": inv.location.name if inv.location else None,
             }
             alerts.append(alert)
 
@@ -185,56 +179,52 @@ def check_expiring_goods(days_threshold: int = 3):
             else:
                 logger.warning(
                     f"Läuft ab in {days_until} Tagen: {alert['product_name']} "
-                    f"({alert['batch_number']}, MHD: {alert['mhd']})"
+                    f"({alert['batch_number']}, MHD: {alert['best_before_date']})"
                 )
 
-        return {
-            "status": "success",
-            "expiring_count": len(alerts),
-            "alerts": alerts
-        }
-
+        return {"status": "success", "expiring_count": len(alerts), "alerts": alerts}
     finally:
         db.close()
 
 
 @celery_app.task(name="app.tasks.inventory_tasks.generate_inventory_report")
 def generate_inventory_report():
-    """
-    Generiert täglichen Bestandsbericht.
-    """
+    """Generiert einen täglichen Bestandsbericht."""
     logger.info("Generiere Bestandsbericht")
 
     db = SessionLocal()
     try:
         today = date.today()
 
-        # Saatgut-Bestand
         seed_stats = db.execute(
             select(
                 func.count(SeedInventory.id).label("batches"),
-                func.sum(SeedInventory.current_quantity).label("total_quantity")
-            )
-            .where(SeedInventory.is_active == True)
+                func.sum(SeedInventory.current_quantity_kg).label("total_kg"),
+            ).where(SeedInventory.is_active == True)
         ).first()
 
-        # Fertigware-Bestand
         goods_stats = db.execute(
             select(
                 func.count(FinishedGoodsInventory.id).label("batches"),
-                func.sum(FinishedGoodsInventory.current_quantity).label("total_quantity"),
-                func.sum(FinishedGoodsInventory.available_quantity).label("available_quantity")
-            )
-            .where(FinishedGoodsInventory.is_active == True)
+                func.sum(FinishedGoodsInventory.current_quantity_g).label("total_g"),
+            ).where(FinishedGoodsInventory.is_active == True)
         ).first()
 
-        # Verpackungs-Bestand
+        # Verfügbar = aktiv + MHD nicht überschritten
+        available_stats = db.execute(
+            select(
+                func.sum(FinishedGoodsInventory.current_quantity_g).label("available_g"),
+            ).where(
+                FinishedGoodsInventory.is_active == True,
+                FinishedGoodsInventory.best_before_date >= today,
+            )
+        ).first()
+
         packaging_stats = db.execute(
             select(
                 func.count(PackagingInventory.id).label("articles"),
-                func.sum(PackagingInventory.current_quantity).label("total_quantity")
-            )
-            .where(PackagingInventory.is_active == True)
+                func.sum(PackagingInventory.current_quantity).label("total_quantity"),
+            ).where(PackagingInventory.is_active == True)
         ).first()
 
         # Bewegungen heute
@@ -242,7 +232,7 @@ def generate_inventory_report():
             select(
                 InventoryMovement.movement_type,
                 func.count(InventoryMovement.id).label("count"),
-                func.sum(InventoryMovement.quantity).label("total")
+                func.sum(InventoryMovement.quantity).label("total"),
             )
             .where(func.date(InventoryMovement.movement_date) == today)
             .group_by(InventoryMovement.movement_type)
@@ -252,156 +242,140 @@ def generate_inventory_report():
             "datum": today.isoformat(),
             "saatgut": {
                 "chargen": seed_stats.batches or 0,
-                "gesamtmenge_gramm": float(seed_stats.total_quantity or 0)
+                "gesamtmenge_kg": float(seed_stats.total_kg or 0),
             },
             "fertigware": {
                 "chargen": goods_stats.batches or 0,
-                "gesamtmenge": float(goods_stats.total_quantity or 0),
-                "verfuegbar": float(goods_stats.available_quantity or 0)
+                "gesamtmenge_g": float(goods_stats.total_g or 0),
+                "verfuegbar_g": float(available_stats.available_g or 0),
             },
             "verpackung": {
                 "artikel": packaging_stats.articles or 0,
-                "gesamtmenge": float(packaging_stats.total_quantity or 0)
+                "gesamtmenge": float(packaging_stats.total_quantity or 0),
             },
             "bewegungen_heute": [
                 {
                     "typ": row.movement_type.value if hasattr(row.movement_type, 'value') else str(row.movement_type),
                     "anzahl": row.count,
-                    "menge": float(row.total or 0)
+                    "menge": float(row.total or 0),
                 }
                 for row in movements_today
-            ]
+            ],
         }
 
         logger.info(
-            f"Bestandsbericht: {report['saatgut']['gesamtmenge_gramm']:.0f}g Saatgut, "
-            f"{report['fertigware']['gesamtmenge']:.0f}g Fertigware"
+            f"Bestandsbericht: {report['saatgut']['gesamtmenge_kg']:.2f}kg Saatgut, "
+            f"{report['fertigware']['gesamtmenge_g']:.0f}g Fertigware"
         )
-
-        return {
-            "status": "success",
-            "report": report
-        }
-
+        return {"status": "success", "report": report}
     finally:
         db.close()
 
 
 @celery_app.task(name="app.tasks.inventory_tasks.cleanup_expired_goods")
 def cleanup_expired_goods():
-    """
-    Markiert abgelaufene Fertigware als inaktiv und erstellt Verlust-Buchung.
-    Wird täglich ausgeführt.
-    """
+    """Markiert abgelaufene Fertigware als inaktiv und protokolliert Verlust."""
     logger.info("Bereinige abgelaufene Fertigware")
 
     db = SessionLocal()
     try:
         today = date.today()
 
-        # Abgelaufene Fertigware
         expired = db.execute(
             select(FinishedGoodsInventory)
             .where(
                 FinishedGoodsInventory.is_active == True,
-                FinishedGoodsInventory.current_quantity > 0,
-                FinishedGoodsInventory.mhd < today
+                FinishedGoodsInventory.current_quantity_g > 0,
+                FinishedGoodsInventory.best_before_date < today,
             )
         ).scalars().all()
 
         processed = 0
-        total_loss = Decimal("0")
+        total_loss_g = Decimal("0")
 
         for inv in expired:
-            # Verlust-Bewegung erstellen
+            qty_before = Decimal(str(inv.current_quantity_g))
             movement = InventoryMovement(
                 item_type=InventoryItemType.FERTIGWARE,
-                article_id=inv.id,
+                finished_goods_id=inv.id,
                 movement_type=MovementType.VERLUST,
-                quantity=-inv.current_quantity,
-                unit=inv.unit,
-                movement_date=today,
-                notes=f"MHD abgelaufen am {inv.mhd.isoformat()}"
+                quantity=-qty_before,            # negativ = Abgang
+                quantity_before=qty_before,
+                quantity_after=Decimal("0"),
+                unit="g",
+                movement_date=datetime.now(timezone.utc),
+                reason=f"MHD abgelaufen am {inv.best_before_date.isoformat()}",
             )
             db.add(movement)
 
-            total_loss += inv.current_quantity
-            inv.current_quantity = Decimal("0")
-            inv.available_quantity = Decimal("0")
+            total_loss_g += qty_before
+            inv.current_quantity_g = Decimal("0")
             inv.is_active = False
+            processed += 1
 
             logger.warning(
-                f"Abgelaufene Ware bereinigt: {inv.product.name if inv.product else 'Unbekannt'} "
-                f"({inv.batch_number}), MHD: {inv.mhd}"
+                f"Abgelaufene Ware bereinigt: "
+                f"{inv.product.name if inv.product else 'Unbekannt'} "
+                f"({inv.batch_number}), MHD: {inv.best_before_date}"
             )
-            processed += 1
 
         db.commit()
 
         return {
             "status": "success",
             "processed_count": processed,
-            "total_loss_quantity": float(total_loss)
+            "total_loss_g": float(total_loss_g),
         }
-
     finally:
         db.close()
 
 
 @celery_app.task(name="app.tasks.inventory_tasks.calculate_fifo_consumption")
-def calculate_fifo_consumption(product_id: str, required_quantity: float):
-    """
-    Berechnet FIFO-basierte Entnahme aus Lagerbeständen.
-    Gibt Liste der zu entnehmenden Chargen zurück.
-    """
+def calculate_fifo_consumption(product_id: str, required_quantity_g: float):
+    """Berechnet FIFO-basierte Entnahme aus Fertigware-Beständen (g)."""
     db = SessionLocal()
     try:
-        remaining = Decimal(str(required_quantity))
+        remaining = Decimal(str(required_quantity_g))
 
-        # Verfügbare Chargen nach FIFO (ältestes MHD zuerst)
         available = db.execute(
             select(FinishedGoodsInventory)
             .where(
                 FinishedGoodsInventory.product_id == product_id,
                 FinishedGoodsInventory.is_active == True,
-                FinishedGoodsInventory.available_quantity > 0,
-                FinishedGoodsInventory.mhd >= date.today()
+                FinishedGoodsInventory.current_quantity_g > 0,
+                FinishedGoodsInventory.best_before_date >= date.today(),
             )
-            .order_by(FinishedGoodsInventory.mhd.asc())
+            .order_by(FinishedGoodsInventory.best_before_date.asc())
         ).scalars().all()
 
-        consumption_plan = []
-        fulfilled = True
-
+        consumption_plan: list[dict] = []
         for inv in available:
             if remaining <= 0:
                 break
-
-            take_quantity = min(remaining, inv.available_quantity)
+            take = min(remaining, Decimal(str(inv.current_quantity_g)))
             consumption_plan.append({
                 "inventory_id": str(inv.id),
                 "batch_number": inv.batch_number,
-                "mhd": inv.mhd.isoformat(),
-                "available": float(inv.available_quantity),
-                "take": float(take_quantity)
+                "best_before_date": inv.best_before_date.isoformat(),
+                "available_g": float(inv.current_quantity_g),
+                "take_g": float(take),
             })
-            remaining -= take_quantity
+            remaining -= take
 
-        if remaining > 0:
-            fulfilled = False
+        fulfilled = remaining <= 0
+        if not fulfilled:
             logger.warning(
-                f"FIFO-Berechnung: Nur {required_quantity - float(remaining):.2f} "
-                f"von {required_quantity:.2f} verfügbar"
+                f"FIFO-Berechnung: Nur {required_quantity_g - float(remaining):.2f}g "
+                f"von {required_quantity_g:.2f}g verfügbar"
             )
 
         return {
             "status": "success",
             "fulfilled": fulfilled,
-            "required": float(required_quantity),
-            "available": float(required_quantity - float(remaining)),
-            "shortage": float(remaining) if remaining > 0 else 0,
-            "consumption_plan": consumption_plan
+            "required_g": float(required_quantity_g),
+            "available_g": float(required_quantity_g - float(remaining)),
+            "shortage_g": float(remaining) if remaining > 0 else 0,
+            "consumption_plan": consumption_plan,
         }
-
     finally:
         db.close()
