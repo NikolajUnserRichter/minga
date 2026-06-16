@@ -99,9 +99,10 @@ class PDFService:
     @staticmethod
     def generate_invoice_pdf(invoice: Invoice, settings: Optional[dict] = None, *, db=None) -> bytes:
         settings = settings or {}
-        # Template-Lookup
+        # Template-Lookup + Section-Toggle-Helper
         tmpl = None
         logo_path = None
+        from app.services.document_template_service import section_enabled as _en
         if db is not None:
             from app.services.document_template_service import load_template, get_logo_path
             tmpl = load_template(db, DocumentType.RECHNUNG)
@@ -126,113 +127,129 @@ class PDFService:
         elements.append(Spacer(1, 8))
         
         # Invoice Title
-        title = "Rechnung" if invoice.invoice_type == InvoiceType.RECHNUNG else "Gutschrift"
-        elements.append(Paragraph(f"{title} Nr. {invoice.invoice_number}", styles['Heading2']))
-        elements.append(Spacer(1, 12))
-        
+        if _en(tmpl, "title", default=True):
+            title = "Rechnung" if invoice.invoice_type == InvoiceType.RECHNUNG else "Gutschrift"
+            elements.append(Paragraph(f"{title} Nr. {invoice.invoice_number}", styles['Heading2']))
+            elements.append(Spacer(1, 12))
+
         # Meta Info (Date, Customer)
-        meta_data = [
-            ["Datum:", invoice.invoice_date.strftime("%d.%m.%Y")],
-            ["Kunde:", invoice.customer.name],
-            ["Kundennummer:", invoice.customer.customer_number or "-"],
-        ]
-        
-        if invoice.customer.billing_address:
-             addr = invoice.customer.billing_address
-             addr_str = f"{addr.strasse} {addr.hausnummer or ''}, {addr.plz} {addr.ort}"
-             meta_data.append(["Anschrift:", addr_str])
-             
-        meta_table = Table(meta_data, colWidths=[4*cm, 10*cm])
-        meta_table.setStyle(TableStyle([
-            ('ALIGN', (0,0), (-1,-1), 'LEFT'),
-            ('FONTNAME', (0,0), (0,-1), 'Helvetica-Bold'),
-            ('BOTTOMPADDING', (0,0), (-1,-1), 12),
-        ]))
-        elements.append(meta_table)
-        elements.append(Spacer(1, 24))
-        
+        if _en(tmpl, "meta_block", default=True):
+            meta_data = [
+                ["Datum:", invoice.invoice_date.strftime("%d.%m.%Y")],
+                ["Kunde:", invoice.customer.name],
+                ["Kundennummer:", invoice.customer.customer_number or "-"],
+            ]
+            if invoice.customer.billing_address:
+                 addr = invoice.customer.billing_address
+                 addr_str = f"{addr.strasse} {addr.hausnummer or ''}, {addr.plz} {addr.ort}"
+                 meta_data.append(["Anschrift:", addr_str])
+            meta_table = Table(meta_data, colWidths=[4*cm, 10*cm])
+            meta_table.setStyle(TableStyle([
+                ('ALIGN', (0,0), (-1,-1), 'LEFT'),
+                ('FONTNAME', (0,0), (0,-1), 'Helvetica-Bold'),
+                ('BOTTOMPADDING', (0,0), (-1,-1), 12),
+            ]))
+            elements.append(meta_table)
+            elements.append(Spacer(1, 24))
+
         # Line Items
-        data = [["Pos", "Beschreibung", "Menge", "Einheit", "Einzelpreis", "Gesamt (Netto)"]]
-        
-        for idx, line in enumerate(invoice.lines, 1):
-            data.append([
-                str(idx),
-                line.description,
-                f"{line.quantity:.2f}",
-                line.unit,
-                f"{line.unit_price:.2f} €",
-                f"{line.line_total:.2f} €"
-            ])
-            
-        table = Table(data, colWidths=[1.5*cm, 6*cm, 2*cm, 2*cm, 2.5*cm, 3*cm])
-        table.setStyle(TableStyle([
-            ('BACKGROUND', (0,0), (-1,0), colors.lightgrey),
-            ('TEXTCOLOR', (0,0), (-1,0), colors.black),
-            ('ALIGN', (0,0), (-1,-1), 'LEFT'),
-            ('ALIGN', (2,1), (-1,-1), 'RIGHT'), # Numbers right aligned
-            ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-            ('BOTTOMPADDING', (0,0), (-1,0), 12),
-            ('BACKGROUND', (0,1), (-1,-1), colors.white),
-            ('GRID', (0,0), (-1,-1), 1, colors.black),
-        ]))
-        elements.append(table)
-        elements.append(Spacer(1, 24))
-        
+        if _en(tmpl, "lines_table", default=True):
+            data = [["Pos", "Beschreibung", "Menge", "Einheit", "Einzelpreis", "Gesamt (Netto)"]]
+            for idx, line in enumerate(invoice.lines, 1):
+                data.append([
+                    str(idx),
+                    line.description,
+                    f"{line.quantity:.2f}",
+                    line.unit,
+                    f"{line.unit_price:.2f} €",
+                    f"{line.line_total:.2f} €"
+                ])
+            table = Table(data, colWidths=[1.5*cm, 6*cm, 2*cm, 2*cm, 2.5*cm, 3*cm])
+            table.setStyle(TableStyle([
+                ('BACKGROUND', (0,0), (-1,0), colors.lightgrey),
+                ('TEXTCOLOR', (0,0), (-1,0), colors.black),
+                ('ALIGN', (0,0), (-1,-1), 'LEFT'),
+                ('ALIGN', (2,1), (-1,-1), 'RIGHT'),
+                ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+                ('BOTTOMPADDING', (0,0), (-1,0), 12),
+                ('BACKGROUND', (0,1), (-1,-1), colors.white),
+                ('GRID', (0,0), (-1,-1), 1, colors.black),
+            ]))
+            elements.append(table)
+            elements.append(Spacer(1, 24))
+
         # Totals
-        totals_data = [
-            ["Netto:", f"{invoice.subtotal:.2f} €"],
-            ["USt:", f"{invoice.tax_amount:.2f} €"],
-            ["Gesamtbetrag:", f"{invoice.total:.2f} €"]
-        ]
-        
-        totals_table = Table(totals_data, colWidths=[13.5*cm, 3.5*cm])
-        totals_table.setStyle(TableStyle([
-            ('ALIGN', (0,0), (-1,-1), 'RIGHT'),
-            ('FONTNAME', (-1,-1), (-1,-1), 'Helvetica-Bold'), # Total bold
-            ('LINEABOVE', (0,-1), (-1,-1), 1, colors.black),
-        ]))
-        elements.append(totals_table)
-        elements.append(Spacer(1, 16))
+        if _en(tmpl, "totals_block", default=True):
+            totals_data = [
+                ["Netto:", f"{invoice.subtotal:.2f} €"],
+                ["USt:", f"{invoice.tax_amount:.2f} €"],
+                ["Gesamtbetrag:", f"{invoice.total:.2f} €"]
+            ]
+            totals_table = Table(totals_data, colWidths=[13.5*cm, 3.5*cm])
+            totals_table.setStyle(TableStyle([
+                ('ALIGN', (0,0), (-1,-1), 'RIGHT'),
+                ('FONTNAME', (-1,-1), (-1,-1), 'Helvetica-Bold'),
+                ('LINEABOVE', (0,-1), (-1,-1), 1, colors.black),
+            ]))
+            elements.append(totals_table)
+            elements.append(Spacer(1, 16))
 
         # Skonto-Hinweis wenn Customer Skonto hat
-        skonto_pct = getattr(invoice.customer, 'skonto_percent', 0) or 0
-        skonto_days = getattr(invoice.customer, 'skonto_days', 0) or 0
-        if skonto_pct and skonto_days:
-            skonto_amount = float(invoice.total) * float(skonto_pct) / 100
-            skonto_text = (
-                f"<b>Skonto:</b> Bei Zahlung innerhalb von {skonto_days} Tagen "
-                f"gewähren wir {float(skonto_pct):.1f}% Skonto (entspricht "
-                f"{skonto_amount:.2f} {invoice.currency} Abzug)."
-            )
-            elements.append(Paragraph(skonto_text, styles['Normal']))
-            elements.append(Spacer(1, 8))
+        if _en(tmpl, "skonto_hint", default=True):
+            skonto_pct = getattr(invoice.customer, 'skonto_percent', 0) or 0
+            skonto_days = getattr(invoice.customer, 'skonto_days', 0) or 0
+            if skonto_pct and skonto_days:
+                skonto_amount = float(invoice.total) * float(skonto_pct) / 100
+                skonto_text = (
+                    f"<b>Skonto:</b> Bei Zahlung innerhalb von {skonto_days} Tagen "
+                    f"gewähren wir {float(skonto_pct):.1f}% Skonto (entspricht "
+                    f"{skonto_amount:.2f} {invoice.currency} Abzug)."
+                )
+                elements.append(Paragraph(skonto_text, styles['Normal']))
+                elements.append(Spacer(1, 8))
 
         # Reverse-Charge-Vermerk bei steuerfreien Positionen
-        from app.models.enums import TaxRate
-        has_steuerfrei = any(line.tax_rate == TaxRate.STEUERFREI for line in (invoice.lines or []))
-        if has_steuerfrei:
-            elements.append(Paragraph(
-                "<b>Hinweis:</b> Steuerschuldnerschaft des Leistungsempfängers (Reverse Charge / § 13b UStG).",
-                styles['Normal']
-            ))
-            elements.append(Spacer(1, 8))
+        if _en(tmpl, "reverse_charge", default=True):
+            from app.models.enums import TaxRate
+            has_steuerfrei = any(line.tax_rate == TaxRate.STEUERFREI for line in (invoice.lines or []))
+            if has_steuerfrei:
+                elements.append(Paragraph(
+                    "<b>Hinweis:</b> Steuerschuldnerschaft des Leistungsempfängers (Reverse Charge / § 13b UStG).",
+                    styles['Normal']
+                ))
+                elements.append(Spacer(1, 8))
 
-        # Eigentumsvorbehalt
-        elements.append(Paragraph(
-            "<i>Ware bleibt bis zur vollständigen Bezahlung unser Eigentum (Eigentumsvorbehalt).</i>",
-            styles['Normal']
-        ))
-        elements.append(Spacer(1, 14))
-        elements.append(Paragraph("Vielen Dank für Ihren Auftrag!", styles['Normal']))
+        # Eigentumsvorbehalt — custom text aus Template wenn gesetzt
+        if _en(tmpl, "ownership", default=True):
+            ownership_text = (
+                (tmpl.texts.get("ownership_text") if (tmpl and tmpl.texts) else None)
+                or "Ware bleibt bis zur vollständigen Bezahlung unser Eigentum (Eigentumsvorbehalt)."
+            )
+            elements.append(Paragraph(f"<i>{ownership_text}</i>", styles['Normal']))
+            elements.append(Spacer(1, 14))
 
-        # Footer: Firmendaten + Bankverbindung + USt-IdNr
-        elements.append(Spacer(1, 20))
-        footer_block = render_company_footer_block(settings)
-        if footer_block:
-            elements.append(footer_block)
-        else:
-            footer_style = ParagraphStyle('Footer', parent=styles['Normal'], fontSize=8, textColor=colors.grey)
-            elements.append(Paragraph("Minga Greens - Microgreens Farm München", footer_style))
+        # Danke-Text — custom text aus Template wenn gesetzt
+        if _en(tmpl, "thanks", default=True):
+            thanks_text = (
+                (tmpl.texts.get("thanks_text") if (tmpl and tmpl.texts) else None)
+                or "Vielen Dank für Ihren Auftrag!"
+            )
+            elements.append(Paragraph(thanks_text, styles['Normal']))
+
+        # Footer: Custom-Text oder Firmendaten + Bankverbindung
+        if _en(tmpl, "footer", default=True):
+            elements.append(Spacer(1, 20))
+            custom_footer = tmpl.texts.get("footer_text") if (tmpl and tmpl.texts) else None
+            if custom_footer and custom_footer.strip():
+                footer_style = ParagraphStyle('CustomFooter', fontSize=8, leading=10, textColor=colors.grey)
+                elements.append(Paragraph(custom_footer.replace("\n", "<br/>"), footer_style))
+            else:
+                footer_block = render_company_footer_block(settings)
+                if footer_block:
+                    elements.append(footer_block)
+                else:
+                    footer_style = ParagraphStyle('Footer', parent=styles['Normal'], fontSize=8, textColor=colors.grey)
+                    elements.append(Paragraph("Minga Greens - Microgreens Farm München", footer_style))
 
         doc.build(elements)
         pdf = buffer.getvalue()
@@ -363,34 +380,39 @@ class PDFService:
         }
         title = title_map.get(reminder_level, "Zahlungserinnerung")
 
+        from app.services.document_template_service import section_enabled as _en
+
         # Briefkopf — Logo + Custom-Header
-        custom_header = (tmpl.texts.get("header_text") if (tmpl and tmpl.texts) else None)
-        elements.append(render_company_header_block(settings, logo_path=logo_path, custom_header_text=custom_header))
-        elements.append(Spacer(1, 8))
-        elements.append(Paragraph(f"<b>{title}</b>", styles['Heading2']))
-        elements.append(Spacer(1, 12))
+        if _en(tmpl, "header_logo", default=True):
+            custom_header = (tmpl.texts.get("header_text") if (tmpl and tmpl.texts) else None)
+            elements.append(render_company_header_block(settings, logo_path=logo_path, custom_header_text=custom_header))
+            elements.append(Spacer(1, 8))
+        if _en(tmpl, "title", default=True):
+            elements.append(Paragraph(f"<b>{title}</b>", styles['Heading2']))
+            elements.append(Spacer(1, 12))
 
         days_overdue = 0
         if invoice.due_date:
             days_overdue = max(0, (_date.today() - invoice.due_date).days)
 
-        meta = [
-            ["Rechnung:", invoice.invoice_number],
-            ["Rechnungsdatum:", invoice.invoice_date.strftime("%d.%m.%Y")],
-            ["Fällig am:", invoice.due_date.strftime("%d.%m.%Y") if invoice.due_date else "—"],
-            ["Tage überfällig:", str(days_overdue)],
-            ["Kunde:", invoice.customer.name if invoice.customer else "—"],
-        ]
-        if invoice.customer and invoice.customer.customer_number:
-            meta.append(["Kundennummer:", invoice.customer.customer_number])
-        meta_table = Table(meta, colWidths=[4*cm, 13*cm])
-        meta_table.setStyle(TableStyle([
-            ('ALIGN', (0,0), (-1,-1), 'LEFT'),
-            ('FONTNAME', (0,0), (0,-1), 'Helvetica-Bold'),
-            ('BOTTOMPADDING', (0,0), (-1,-1), 6),
-        ]))
-        elements.append(meta_table)
-        elements.append(Spacer(1, 20))
+        if _en(tmpl, "meta_block", default=True):
+            meta = [
+                ["Rechnung:", invoice.invoice_number],
+                ["Rechnungsdatum:", invoice.invoice_date.strftime("%d.%m.%Y")],
+                ["Fällig am:", invoice.due_date.strftime("%d.%m.%Y") if invoice.due_date else "—"],
+                ["Tage überfällig:", str(days_overdue)],
+                ["Kunde:", invoice.customer.name if invoice.customer else "—"],
+            ]
+            if invoice.customer and invoice.customer.customer_number:
+                meta.append(["Kundennummer:", invoice.customer.customer_number])
+            meta_table = Table(meta, colWidths=[4*cm, 13*cm])
+            meta_table.setStyle(TableStyle([
+                ('ALIGN', (0,0), (-1,-1), 'LEFT'),
+                ('FONTNAME', (0,0), (0,-1), 'Helvetica-Bold'),
+                ('BOTTOMPADDING', (0,0), (-1,-1), 6),
+            ]))
+            elements.append(meta_table)
+            elements.append(Spacer(1, 20))
 
         # Begründungs-Text je nach Stufe
         if reminder_level == 1:
@@ -420,42 +442,51 @@ class PDFService:
                 "an unseren Anwalt zur gerichtlichen Geltendmachung übergeben."
             )
 
-        elements.append(Paragraph(body_text, styles['Normal']))
-        elements.append(Spacer(1, 18))
+        if _en(tmpl, "body_text", default=True):
+            elements.append(Paragraph(body_text, styles['Normal']))
+            elements.append(Spacer(1, 18))
 
         # Betrags-Übersicht
-        open_amount = float(invoice.total) - float(invoice.paid_amount or 0)
-        totals = [
-            ["Rechnungsbetrag:", f"{invoice.total:.2f} {invoice.currency}"],
-            ["Bereits gezahlt:", f"{float(invoice.paid_amount or 0):.2f} {invoice.currency}"],
-            ["Offener Betrag:", f"{open_amount:.2f} {invoice.currency}"],
-        ]
-        if dunning_fee > 0:
-            totals.append(["Mahngebühr:", f"{dunning_fee:.2f} {invoice.currency}"])
-            totals.append(["<b>Zu zahlen gesamt:</b>", f"<b>{open_amount + dunning_fee:.2f} {invoice.currency}</b>"])
-        tt = Table(totals, colWidths=[12*cm, 5*cm])
-        tt.setStyle(TableStyle([
-            ('ALIGN', (0,0), (-1,-1), 'RIGHT'),
-            ('FONTNAME', (0,-1), (-1,-1), 'Helvetica-Bold'),
-            ('LINEABOVE', (0,-1), (-1,-1), 1, colors.black),
-        ]))
-        elements.append(tt)
-        elements.append(Spacer(1, 24))
+        if _en(tmpl, "amount_block", default=True):
+            open_amount = float(invoice.total) - float(invoice.paid_amount or 0)
+            totals = [
+                ["Rechnungsbetrag:", f"{invoice.total:.2f} {invoice.currency}"],
+                ["Bereits gezahlt:", f"{float(invoice.paid_amount or 0):.2f} {invoice.currency}"],
+                ["Offener Betrag:", f"{open_amount:.2f} {invoice.currency}"],
+            ]
+            if dunning_fee > 0:
+                totals.append(["Mahngebühr:", f"{dunning_fee:.2f} {invoice.currency}"])
+                totals.append(["<b>Zu zahlen gesamt:</b>", f"<b>{open_amount + dunning_fee:.2f} {invoice.currency}</b>"])
+            tt = Table(totals, colWidths=[12*cm, 5*cm])
+            tt.setStyle(TableStyle([
+                ('ALIGN', (0,0), (-1,-1), 'RIGHT'),
+                ('FONTNAME', (0,-1), (-1,-1), 'Helvetica-Bold'),
+                ('LINEABOVE', (0,-1), (-1,-1), 1, colors.black),
+            ]))
+            elements.append(tt)
+            elements.append(Spacer(1, 24))
 
-        elements.append(Paragraph("Mit freundlichen Grüßen", styles['Normal']))
-        elements.append(Paragraph("Ihr Minga-Greens-Team", styles['Normal']))
-        elements.append(Spacer(1, 20))
+        if _en(tmpl, "regards", default=True):
+            elements.append(Paragraph("Mit freundlichen Grüßen", styles['Normal']))
+            elements.append(Paragraph("Ihr Minga-Greens-Team", styles['Normal']))
+            elements.append(Spacer(1, 20))
         # Footer mit Bankverbindung — bei Mahnung kritisch (Empfänger braucht IBAN)
-        footer_block = render_company_footer_block(settings)
-        if footer_block:
-            elements.append(footer_block)
-        else:
-            footer = ParagraphStyle('Footer', parent=styles['Normal'], fontSize=8, textColor=colors.grey)
-            elements.append(Paragraph(
-                "Minga Greens · Microgreens Farm München · "
-                f"Erstellt am {_date.today().strftime('%d.%m.%Y')}",
-                footer
-            ))
+        if _en(tmpl, "footer", default=True):
+            custom_footer = tmpl.texts.get("footer_text") if (tmpl and tmpl.texts) else None
+            if custom_footer and custom_footer.strip():
+                footer_style = ParagraphStyle('CustomFooter', fontSize=8, leading=10, textColor=colors.grey)
+                elements.append(Paragraph(custom_footer.replace("\n", "<br/>"), footer_style))
+            else:
+                footer_block = render_company_footer_block(settings)
+                if footer_block:
+                    elements.append(footer_block)
+                else:
+                    footer = ParagraphStyle('Footer', parent=styles['Normal'], fontSize=8, textColor=colors.grey)
+                    elements.append(Paragraph(
+                        "Minga Greens · Microgreens Farm München · "
+                        f"Erstellt am {_date.today().strftime('%d.%m.%Y')}",
+                        footer
+                    ))
 
         doc.build(elements)
         pdf = buffer.getvalue()
@@ -467,41 +498,51 @@ class PDFService:
         order = conf.order
         styles = getSampleStyleSheet()
         body = []
-        # Positions-Tabelle
-        data = [["Pos", "Beschreibung", "Menge", "Einheit", "Einzelpreis", "Gesamt (Netto)"]]
-        for line in order.lines:
-            data.append([
-                str(line.position),
-                line.beschreibung or "-",
-                f"{line.quantity:.2f}",
-                line.unit,
-                f"{line.unit_price:.2f} €",
-                f"{line.line_net:.2f} €",
-            ])
-        table = Table(data, colWidths=[1.2*cm, 7*cm, 2*cm, 2*cm, 2.5*cm, 2.5*cm])
-        table.setStyle(TableStyle([
-            ('BACKGROUND', (0,0), (-1,0), colors.lightgrey),
-            ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-            ('ALIGN', (2,1), (-1,-1), 'RIGHT'),
-            ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
-        ]))
-        body.append(table)
-        body.append(Spacer(1, 16))
+        # Template + Section-Toggles für Body
+        from app.services.document_template_service import load_template, section_enabled as _en
+        tmpl = load_template(db, DocumentType.AUFTRAGSBESTAETIGUNG) if db is not None else None
 
-        totals_data = [
-            ["Netto:", f"{order.total_net:.2f} €"],
-            [f"MwSt:", f"{order.total_vat:.2f} €"],
-            ["Gesamt:", f"{order.total_gross:.2f} €"],
-        ]
-        totals_table = Table(totals_data, colWidths=[13*cm, 3.5*cm])
-        totals_table.setStyle(TableStyle([
-            ('ALIGN', (0,0), (-1,-1), 'RIGHT'),
-            ('FONTNAME', (0,-1), (-1,-1), 'Helvetica-Bold'),
-            ('LINEABOVE', (0,-1), (-1,-1), 1, colors.black),
-        ]))
-        body.append(totals_table)
-        body.append(Spacer(1, 12))
-        body.append(Paragraph("Wir bestätigen hiermit Ihren Auftrag wie oben aufgeführt.", styles['Normal']))
+        # Positions-Tabelle
+        if _en(tmpl, "lines_table", default=True):
+            data = [["Pos", "Beschreibung", "Menge", "Einheit", "Einzelpreis", "Gesamt (Netto)"]]
+            for line in order.lines:
+                data.append([
+                    str(line.position),
+                    line.beschreibung or "-",
+                    f"{line.quantity:.2f}",
+                    line.unit,
+                    f"{line.unit_price:.2f} €",
+                    f"{line.line_net:.2f} €",
+                ])
+            table = Table(data, colWidths=[1.2*cm, 7*cm, 2*cm, 2*cm, 2.5*cm, 2.5*cm])
+            table.setStyle(TableStyle([
+                ('BACKGROUND', (0,0), (-1,0), colors.lightgrey),
+                ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+                ('ALIGN', (2,1), (-1,-1), 'RIGHT'),
+                ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
+            ]))
+            body.append(table)
+            body.append(Spacer(1, 16))
+
+        if _en(tmpl, "totals_block", default=True):
+            totals_data = [
+                ["Netto:", f"{order.total_net:.2f} €"],
+                [f"MwSt:", f"{order.total_vat:.2f} €"],
+                ["Gesamt:", f"{order.total_gross:.2f} €"],
+            ]
+            totals_table = Table(totals_data, colWidths=[13*cm, 3.5*cm])
+            totals_table.setStyle(TableStyle([
+                ('ALIGN', (0,0), (-1,-1), 'RIGHT'),
+                ('FONTNAME', (0,-1), (-1,-1), 'Helvetica-Bold'),
+                ('LINEABOVE', (0,-1), (-1,-1), 1, colors.black),
+            ]))
+            body.append(totals_table)
+            body.append(Spacer(1, 12))
+
+        if _en(tmpl, "confirm_text", default=True):
+            confirm_text = (tmpl.texts.get("confirm_text") if (tmpl and tmpl.texts) else None) \
+                or "Wir bestätigen hiermit Ihren Auftrag wie oben aufgeführt."
+            body.append(Paragraph(confirm_text, styles['Normal']))
         if conf.notes:
             body.append(Spacer(1, 8))
             body.append(Paragraph(f"<i>{conf.notes}</i>", styles['Normal']))
@@ -513,49 +554,51 @@ class PDFService:
         order = note.order
         styles = getSampleStyleSheet()
         body = []
+        from app.services.document_template_service import load_template, section_enabled as _en
+        tmpl = load_template(db, DocumentType.LIEFERSCHEIN) if db is not None else None
 
         # Spalten inkl. Charge + MHD (Rückverfolgbarkeit LMHV § 11)
-        data = [["Pos", "Beschreibung", "Menge", "Einheit", "Charge", "MHD"]]
-        for line in order.lines:
-            charge = getattr(line, "batch_number", None) or "—"
-            mhd = "—"
-            harvest = getattr(line, "harvest", None)
-            if harvest:
-                seed_batch = getattr(harvest, "seed_batch", None)
-                if seed_batch and getattr(seed_batch, "mhd", None):
-                    mhd = seed_batch.mhd.strftime("%d.%m.%Y")
-            data.append([
-                str(line.position),
-                line.beschreibung or "-",
-                f"{line.quantity:.2f}",
-                line.unit,
-                charge,
-                mhd,
-            ])
-        table = Table(data, colWidths=[1.0*cm, 6.5*cm, 2.2*cm, 1.8*cm, 2.5*cm, 2.5*cm])
-        table.setStyle(TableStyle([
-            ('BACKGROUND', (0,0), (-1,0), colors.lightgrey),
-            ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-            ('ALIGN', (2,1), (3,-1), 'RIGHT'),
-            ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
-            ('FONTSIZE', (0,0), (-1,-1), 8),
-        ]))
-        body.append(table)
-        body.append(Spacer(1, 16))
+        if _en(tmpl, "lines_table", default=True):
+            data = [["Pos", "Beschreibung", "Menge", "Einheit", "Charge", "MHD"]]
+            for line in order.lines:
+                charge = getattr(line, "batch_number", None) or "—"
+                mhd = "—"
+                harvest = getattr(line, "harvest", None)
+                if harvest:
+                    seed_batch = getattr(harvest, "seed_batch", None)
+                    if seed_batch and getattr(seed_batch, "mhd", None):
+                        mhd = seed_batch.mhd.strftime("%d.%m.%Y")
+                data.append([
+                    str(line.position),
+                    line.beschreibung or "-",
+                    f"{line.quantity:.2f}",
+                    line.unit,
+                    charge,
+                    mhd,
+                ])
+            table = Table(data, colWidths=[1.0*cm, 6.5*cm, 2.2*cm, 1.8*cm, 2.5*cm, 2.5*cm])
+            table.setStyle(TableStyle([
+                ('BACKGROUND', (0,0), (-1,0), colors.lightgrey),
+                ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+                ('ALIGN', (2,1), (3,-1), 'RIGHT'),
+                ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
+                ('FONTSIZE', (0,0), (-1,-1), 8),
+            ]))
+            body.append(table)
+            body.append(Spacer(1, 16))
 
-        body.append(Paragraph(
-            "Bitte prüfen Sie die Ware bei Annahme und quittieren Sie den Empfang.",
-            styles['Normal']
-        ))
-        body.append(Spacer(1, 30))
-
-        sig_data = [
-            ["Datum / Unterschrift Empfänger:", ""],
-            ["", "_" * 40],
-        ]
-        sig_table = Table(sig_data, colWidths=[7*cm, 10*cm])
-        sig_table.setStyle(TableStyle([('VALIGN', (0,0), (-1,-1), 'BOTTOM')]))
-        body.append(sig_table)
+        if _en(tmpl, "signature", default=True):
+            sig_hint = (tmpl.texts.get("signature_hint") if (tmpl and tmpl.texts) else None) \
+                or "Bitte prüfen Sie die Ware bei Annahme und quittieren Sie den Empfang."
+            body.append(Paragraph(sig_hint, styles['Normal']))
+            body.append(Spacer(1, 30))
+            sig_data = [
+                ["Datum / Unterschrift Empfänger:", ""],
+                ["", "_" * 40],
+            ]
+            sig_table = Table(sig_data, colWidths=[7*cm, 10*cm])
+            sig_table.setStyle(TableStyle([('VALIGN', (0,0), (-1,-1), 'BOTTOM')]))
+            body.append(sig_table)
         if note.notes:
             body.append(Spacer(1, 12))
             body.append(Paragraph(f"<i>{note.notes}</i>", styles['Normal']))
@@ -568,36 +611,39 @@ class PDFService:
         order = note.order
         styles = getSampleStyleSheet()
         body = []
+        from app.services.document_template_service import load_template, section_enabled as _en
+        tmpl = load_template(db, DocumentType.VERPACKUNGSLISTE) if db is not None else None
 
         # Produkt-Items
         product_items = [i for i in packing.items if not i.is_returnable_container]
         container_items = [i for i in packing.items if i.is_returnable_container]
 
-        body.append(Paragraph("<b>Inhalt</b>", styles['Normal']))
-        body.append(Spacer(1, 6))
-        if product_items:
-            data = [["Pos", "Produkt", "Menge", "Einheit", "Charge"]]
-            for item in product_items:
-                data.append([
-                    str(item.sort_order or "—"),
-                    item.product_name,
-                    f"{item.quantity:.2f}",
-                    item.unit,
-                    item.batch_number or "—",
-                ])
-            t = Table(data, colWidths=[1.2*cm, 8*cm, 2.5*cm, 2*cm, 3*cm])
-            t.setStyle(TableStyle([
-                ('BACKGROUND', (0,0), (-1,0), colors.lightgrey),
-                ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-                ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
-                ('ALIGN', (2,1), (3,-1), 'RIGHT'),
-            ]))
-            body.append(t)
-        else:
-            body.append(Paragraph("Keine Produkt-Positionen.", styles['Normal']))
-        body.append(Spacer(1, 16))
+        if _en(tmpl, "products_table", default=True):
+            body.append(Paragraph("<b>Inhalt</b>", styles['Normal']))
+            body.append(Spacer(1, 6))
+            if product_items:
+                data = [["Pos", "Produkt", "Menge", "Einheit", "Charge"]]
+                for item in product_items:
+                    data.append([
+                        str(item.sort_order or "—"),
+                        item.product_name,
+                        f"{item.quantity:.2f}",
+                        item.unit,
+                        item.batch_number or "—",
+                    ])
+                t = Table(data, colWidths=[1.2*cm, 8*cm, 2.5*cm, 2*cm, 3*cm])
+                t.setStyle(TableStyle([
+                    ('BACKGROUND', (0,0), (-1,0), colors.lightgrey),
+                    ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+                    ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
+                    ('ALIGN', (2,1), (3,-1), 'RIGHT'),
+                ]))
+                body.append(t)
+            else:
+                body.append(Paragraph("Keine Produkt-Positionen.", styles['Normal']))
+            body.append(Spacer(1, 16))
 
-        if container_items:
+        if _en(tmpl, "containers", default=True) and container_items:
             body.append(Paragraph("<b>Pfand-Container (Mehrweg)</b>", styles['Normal']))
             body.append(Spacer(1, 6))
             data = [["Container-Typ", "Anzahl"]]
@@ -614,15 +660,16 @@ class PDFService:
             body.append(Spacer(1, 16))
 
         # Summenblock
-        summary = []
-        if packing.total_weight_g is not None:
-            summary.append(["Gesamtgewicht:", f"{packing.total_weight_g:.0f} g"])
-        if packing.total_packages is not None:
-            summary.append(["Anzahl Packstücke:", str(packing.total_packages)])
-        if summary:
-            t = Table(summary, colWidths=[5*cm, 4*cm])
-            t.setStyle(TableStyle([('FONTNAME', (0,0), (0,-1), 'Helvetica-Bold')]))
-            body.append(t)
+        if _en(tmpl, "summary", default=True):
+            summary = []
+            if packing.total_weight_g is not None:
+                summary.append(["Gesamtgewicht:", f"{packing.total_weight_g:.0f} g"])
+            if packing.total_packages is not None:
+                summary.append(["Anzahl Packstücke:", str(packing.total_packages)])
+            if summary:
+                t = Table(summary, colWidths=[5*cm, 4*cm])
+                t.setStyle(TableStyle([('FONTNAME', (0,0), (0,-1), 'Helvetica-Bold')]))
+                body.append(t)
 
         if packing.notes:
             body.append(Spacer(1, 10))
