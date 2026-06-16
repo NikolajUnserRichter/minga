@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import {
+import api, {
   documentTemplatesApi, type DocumentTemplate, type DocumentTypeKey,
 } from '../services/api';
 
@@ -82,10 +82,31 @@ export default function DocumentTemplates() {
     },
   });
 
-  const previewUrl = useMemo(
-    () => `${documentTemplatesApi.previewUrl(activeType)}?r=${previewRefreshKey}`,
-    [activeType, previewRefreshKey],
-  );
+  // PDF via authentifizierten fetch laden → Blob-URL für iframe (Basic-Auth
+  // wird sonst nicht auf iframe-Subresource übertragen, würde 401 ergeben).
+  const [previewBlobUrl, setPreviewBlobUrl] = useState<string | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    let urlToRevoke: string | null = null;
+    setPreviewLoading(true);
+    setPreviewError(null);
+    api.get(`/document-templates/${activeType}/preview.pdf`, { responseType: 'blob' })
+      .then(r => {
+        if (cancelled) return;
+        const url = URL.createObjectURL(r.data);
+        urlToRevoke = url;
+        setPreviewBlobUrl(url);
+      })
+      .catch(err => { if (!cancelled) setPreviewError(err?.message ?? 'Preview-Fehler'); })
+      .finally(() => { if (!cancelled) setPreviewLoading(false); });
+    return () => {
+      cancelled = true;
+      if (urlToRevoke) URL.revokeObjectURL(urlToRevoke);
+    };
+  }, [activeType, previewRefreshKey]);
 
   if (isLoading || !draft) {
     return <div className="p-6 text-gray-500">Lade Vorlagen…</div>;
@@ -287,13 +308,25 @@ export default function DocumentTemplates() {
                 Neu laden
               </button>
             </div>
-            <iframe
-              key={previewUrl}
-              src={previewUrl}
-              title="PDF-Vorschau"
-              className="w-full"
-              style={{ height: '85vh', border: 0 }}
-            />
+            {previewLoading && !previewBlobUrl && (
+              <div className="flex items-center justify-center text-sm text-gray-500" style={{ height: '85vh' }}>
+                Lade Vorschau…
+              </div>
+            )}
+            {previewError && (
+              <div className="flex items-center justify-center text-sm text-red-600" style={{ height: '85vh' }}>
+                Fehler: {previewError}
+              </div>
+            )}
+            {previewBlobUrl && (
+              <iframe
+                key={previewBlobUrl}
+                src={previewBlobUrl}
+                title="PDF-Vorschau"
+                className="w-full"
+                style={{ height: '85vh', border: 0, opacity: previewLoading ? 0.5 : 1 }}
+              />
+            )}
             <div className="px-3 py-2 text-xs text-gray-500 border-t border-gray-200 dark:border-gray-700">
               Vorschau zeigt gespeicherte Werte — nach „Speichern" wird automatisch aktualisiert.
             </div>
