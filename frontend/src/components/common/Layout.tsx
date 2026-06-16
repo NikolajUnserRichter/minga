@@ -1,4 +1,5 @@
 import { Outlet, NavLink } from 'react-router-dom';
+import { ReadOnlyBanner } from './ReadOnlyBanner';
 import {
   LayoutDashboard,
   Sprout,
@@ -468,6 +469,9 @@ export default function Layout() {
               onClose={() => setShowScanner(false)}
             />
           )}
+
+          {/* Read-Only Demo Banner */}
+          <ReadOnlyBanner />
 
           {/* Page Content */}
           <main className="p-6">

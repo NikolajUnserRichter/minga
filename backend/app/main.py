@@ -8,6 +8,7 @@ import uuid
 import base64
 import binascii
 import secrets
+from typing import Optional
 from pathlib import Path
 from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI, Request
@@ -195,33 +196,53 @@ app.add_middleware(
 )
 
 
-def _is_basic_auth_valid(request: Request) -> bool:
+def _identify_basic_auth_user(request: Request) -> Optional[dict]:
+    """Decodet den Authorization-Header, prüft gegen alle Account-Slots
+    und gibt {username, role} zurück. role ∈ {"FULL", "READONLY"}.
+    None = nicht authentifiziert."""
     auth_header = request.headers.get("Authorization", "")
     if not auth_header.startswith("Basic "):
-        return False
+        return None
 
     token = auth_header[6:].strip()
     try:
         decoded = base64.b64decode(token).decode("utf-8")
     except (binascii.Error, UnicodeDecodeError):
-        return False
+        return None
 
     if ":" not in decoded:
-        return False
+        return None
 
     username, password = decoded.split(":", 1)
-    allowed_pairs = [
+    # FULL-Access Accounts
+    full_pairs = [
         (settings.basic_auth_user_1, settings.basic_auth_password_1),
         (settings.basic_auth_user_2, settings.basic_auth_password_2),
     ]
-
-    for allowed_user, allowed_password in allowed_pairs:
+    for allowed_user, allowed_password in full_pairs:
         if not allowed_user or not allowed_password:
             continue
         if secrets.compare_digest(username, allowed_user) and secrets.compare_digest(password, allowed_password):
-            return True
+            return {"username": username, "role": "FULL"}
 
-    return False
+    # READONLY Demo-Account
+    if (
+        settings.basic_auth_user_readonly
+        and settings.basic_auth_password_readonly
+        and secrets.compare_digest(username, settings.basic_auth_user_readonly)
+        and secrets.compare_digest(password, settings.basic_auth_password_readonly)
+    ):
+        return {"username": username, "role": "READONLY"}
+
+    return None
+
+
+# READ-only Methoden + Whitelist für Pfade die ein READONLY-User trotzdem
+# triggern darf (z.B. PDF-Download via POST in seltenen Fällen — hier keiner)
+_WRITE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+_READONLY_PATH_ALLOWLIST = {
+    # nichts — alle Schreib-Routen sind für Demo-User gesperrt
+}
 
 
 @app.middleware("http")
@@ -232,11 +253,26 @@ async def basic_auth_middleware(request: Request, call_next):
     if request.url.path.startswith("/health"):
         return await call_next(request)
 
-    if not _is_basic_auth_valid(request):
+    user = _identify_basic_auth_user(request)
+    if user is None:
         return JSONResponse(
             status_code=401,
             content={"detail": "Authentication required"},
             headers={"WWW-Authenticate": 'Basic realm="Minga Greens Demo"'},
+        )
+
+    # User-Identity in der Request-State ablegen — Endpoints + /whoami können sie auslesen
+    request.state.basic_auth_user = user
+
+    # READONLY-Demo: alle Schreib-Methoden blocken
+    if (
+        user["role"] == "READONLY"
+        and request.method in _WRITE_METHODS
+        and request.url.path not in _READONLY_PATH_ALLOWLIST
+    ):
+        return JSONResponse(
+            status_code=403,
+            content={"detail": "Demo-Account hat nur Leserechte. Bitte als Vollnutzer einloggen, um Änderungen zu speichern."},
         )
 
     return await call_next(request)
@@ -266,6 +302,16 @@ async def health_check():
     Wird von Docker für Health Checks verwendet.
     """
     return {"status": "healthy", "version": settings.app_version}
+
+
+@app.get("/api/v1/auth/whoami", tags=["System"])
+async def whoami(request: Request):
+    """Liefert username + role (FULL/READONLY) für UI-Banner und
+    Frontend-Write-Gating. Wenn Basic-Auth aus ist → FULL."""
+    user = getattr(request.state, "basic_auth_user", None)
+    if user is None:
+        return {"username": None, "role": "FULL"}
+    return user
 
 
 @app.get("/health/detailed", tags=["System"])

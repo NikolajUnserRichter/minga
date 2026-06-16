@@ -841,6 +841,17 @@ export interface GrowthEvent {
   created_at: string
 }
 
+// ==================== AUTH / WHOAMI ====================
+
+export interface WhoAmI {
+  username: string | null
+  role: 'FULL' | 'READONLY'
+}
+
+export const authApi = {
+  whoami: () => api.get<WhoAmI>('/auth/whoami').then(r => r.data),
+}
+
 // ==================== CUSTOMER-PRICING ====================
 
 export interface CustomerPrice {

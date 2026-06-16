@@ -30,6 +30,9 @@ class Settings(BaseSettings):
     basic_auth_password_1: str = ""
     basic_auth_user_2: str = ""
     basic_auth_password_2: str = ""
+    # Read-only Demo-Account: kann alles sehen, aber keine POST/PATCH/PUT/DELETE
+    basic_auth_user_readonly: str = ""
+    basic_auth_password_readonly: str = ""
 
     # Keycloak
     keycloak_url: str = "http://localhost:8080"
