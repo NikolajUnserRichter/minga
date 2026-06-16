@@ -257,7 +257,7 @@ def list_finished_goods(
     if available_only:
         query = query.where(FinishedGoodsInventory.current_quantity_g > 0)
 
-    query = query.order_by(FinishedGoodsInventory.mhd.asc())
+    query = query.order_by(FinishedGoodsInventory.best_before_date.asc())
     query = query.offset(pagination.offset).limit(pagination.page_size)
 
     inventory = db.execute(query).scalars().all()
