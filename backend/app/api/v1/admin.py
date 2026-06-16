@@ -107,3 +107,28 @@ def send_test_email(db: DBSession, to: str = Query(..., description="Empfänger 
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"SMTP-Test fehlgeschlagen: {e}")
     return {"sent_to": to, "ok": True}
+
+
+# ============== Scheduler-Debug ==============
+
+@router.get("/scheduler/jobs")
+def list_scheduled_jobs():
+    """Liefert die aktuell geplanten Hintergrund-Jobs + nächste Fire-Time."""
+    from app.services.scheduler_service import get_jobs
+    return {"jobs": get_jobs()}
+
+
+@router.post("/scheduler/run/{job_id}")
+def run_scheduled_job_now(job_id: str):
+    """Triggert einen geplanten Job einmalig sofort (für Admin-UI / Test)."""
+    from app.services.scheduler_service import _scheduler  # type: ignore
+    if _scheduler is None:
+        raise HTTPException(status_code=503, detail="Scheduler ist nicht aktiv")
+    job = _scheduler.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail=f"Job '{job_id}' nicht gefunden")
+    try:
+        job.func()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Job-Ausführung fehlgeschlagen: {e}")
+    return {"job_id": job_id, "status": "ok"}

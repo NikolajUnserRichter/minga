@@ -164,8 +164,21 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"[SEED] units seeding failed: {e}")
 
+    # In-Process-Scheduler starten (Celery-Ersatz im Demo-Deploy)
+    try:
+        from app.services.scheduler_service import start_scheduler
+        start_scheduler()
+    except Exception as e:
+        logger.error(f"[scheduler] start failed: {e}")
+
     yield
-    # Shutdown: Cleanup falls nötig
+
+    # Shutdown: Scheduler sauber stoppen
+    try:
+        from app.services.scheduler_service import shutdown_scheduler
+        shutdown_scheduler()
+    except Exception as e:
+        logger.warning(f"[scheduler] shutdown failed: {e}")
 
 
 # Serialize Decimals as JSON numbers (not strings) so the frontend can call
