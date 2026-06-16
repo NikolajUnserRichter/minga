@@ -81,29 +81,59 @@ export default function Production() {
   });
 
   const createSowingMutation = useMutation({
-    mutationFn: (data: { seed_id: string; seed_batch_id?: string; tray_anzahl: number; aussaat_datum: string; regal_position?: string }) => {
+    mutationFn: async (data: {
+      seed_id: string;
+      seed_batch_id?: string;
+      tray_anzahl: number;
+      aussaat_datum: string;
+      regal_position?: string;
+      needs_soaking?: boolean;
+      soaking_started_at?: string;
+      soaking_employee?: string;
+    }) => {
       if (!data.seed_batch_id) {
-        return Promise.reject({
+        throw {
           response: {
             data: {
               detail: 'Bitte eine Saatgut-Charge auswählen. Falls keine vorhanden ist: erst Lager → Saatgut-Wareneingang erfassen.',
             },
           },
-        });
+        };
       }
-      return productionApi.createGrowBatch({
+      const batch = await productionApi.createGrowBatch({
         seed_batch_id: data.seed_batch_id,
         tray_anzahl: data.tray_anzahl,
         aussaat_datum: data.aussaat_datum,
         regal_position: data.regal_position || undefined,
       });
+      // Bei Soaking-Workflow: gleich SOAKING_STARTED-Event mit User-Eingabe schreiben
+      if (data.needs_soaking) {
+        try {
+          await productionApi.createEvent(batch.id, {
+            event_type: 'SOAKING_STARTED',
+            occurred_at: data.soaking_started_at
+              ? new Date(data.soaking_started_at).toISOString()
+              : undefined,
+            employee_name: data.soaking_employee || undefined,
+            notes: 'Saatgut zum Einweichen ins Wasser gelegt.',
+          });
+        } catch (e) {
+          // Wenn Event-Anlage scheitert, ist die GrowBatch trotzdem da → nicht abbrechen
+          console.warn('SOAKING_STARTED-Event konnte nicht angelegt werden:', e);
+        }
+      }
+      return batch;
     },
-    onSuccess: () => {
+    onSuccess: (_batch, vars) => {
       queryClient.invalidateQueries({ queryKey: ['growBatches'] });
       queryClient.invalidateQueries({ queryKey: ['capacity'] });
       queryClient.invalidateQueries({ queryKey: ['seed-batches'] });
       setIsCreating(false);
-      toast.success('Aussaat angelegt');
+      toast.success(
+        vars.needs_soaking
+          ? 'Aussaat angelegt — Einweichen läuft, Aussaat morgen abschließen'
+          : 'Aussaat angelegt'
+      );
     },
     onError: (err: any) => {
       const detail = err?.response?.data?.detail || 'Fehler beim Anlegen der Aussaat';
@@ -428,6 +458,13 @@ export default function Production() {
                               Ernten
                             </button>
                           )}
+                          <button
+                            onClick={() => setTimelineBatch(batch)}
+                            className="text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white"
+                            title="Timeline / Produktionsschritte (Einweichen, Aussaat, Keimraum, Growroom, Kühlung, Verpackung)"
+                          >
+                            Timeline
+                          </button>
                         </div>
                       </td>
                     </tr>

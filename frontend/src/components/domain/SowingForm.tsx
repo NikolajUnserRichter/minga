@@ -19,6 +19,10 @@ export interface SowingFormData {
   tray_anzahl: number;
   aussaat_datum: string;
   regal_position: string;
+  // Soaking-Workflow: optional, sonst direkte Aussaat heute
+  needs_soaking?: boolean;
+  soaking_started_at?: string; // ISO datetime-local
+  soaking_employee?: string;
 }
 
 export function SowingForm({
@@ -33,12 +37,22 @@ export function SowingForm({
   // TODO: zukünftig auf Seed bzw. GrowPlan hinterlegt
   const DEFAULT_SEED_PER_TRAY = 12;
 
+  // Default-Einweich-Zeit: jetzt (für "datetime-local"-Input)
+  const nowLocal = (() => {
+    const d = new Date();
+    d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+    return d.toISOString().slice(0, 16);
+  })();
+
   const [formData, setFormData] = useState<SowingFormData>({
     seed_id: defaultSeedId || '',
     seed_batch_id: '',
     tray_anzahl: 1,
     aussaat_datum: today,
     regal_position: '',
+    needs_soaking: false,
+    soaking_started_at: nowLocal,
+    soaking_employee: '',
   });
 
   const [errors, setErrors] = useState<Partial<Record<keyof SowingFormData, string>>>({});
@@ -199,9 +213,44 @@ export function SowingForm({
         )}
       </div>
 
+      {/* Soaking-Workflow */}
+      <div className="border rounded-lg p-3 dark:border-gray-700 bg-gray-50/40 dark:bg-gray-800/40 space-y-2">
+        <label className="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300">
+          <input
+            type="checkbox"
+            checked={formData.needs_soaking || false}
+            onChange={(e) => setFormData({ ...formData, needs_soaking: e.target.checked })}
+            className="rounded"
+          />
+          💧 Saatgut wird vor der Aussaat eingeweicht (über Nacht)
+        </label>
+        {formData.needs_soaking && (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-2 pl-6">
+            <Input
+              label="Einweichen gestartet am"
+              type="datetime-local"
+              value={formData.soaking_started_at || ''}
+              onChange={(e) => setFormData({ ...formData, soaking_started_at: e.target.value })}
+            />
+            <Input
+              label="Mitarbeiter:in"
+              placeholder="z.B. Anna"
+              value={formData.soaking_employee || ''}
+              onChange={(e) => setFormData({ ...formData, soaking_employee: e.target.value })}
+            />
+            <p className="text-xs text-gray-500 dark:text-gray-400 md:col-span-2">
+              Charge wird heute angelegt. Aussaat startet morgen — das
+              SOAKING_STARTED-Event wird sofort in die Timeline geschrieben.
+              Über die Timeline kannst du dann morgen „Aussaat gestartet" und
+              „Aussaat abgeschlossen" eintragen.
+            </p>
+          </div>
+        )}
+      </div>
+
       {/* Date */}
       <DatePicker
-        label="Aussaat-Datum"
+        label={formData.needs_soaking ? "Geplantes Aussaat-Datum (üblicherweise morgen)" : "Aussaat-Datum"}
         required
         value={formData.aussaat_datum}
         onChange={(e) => setFormData({ ...formData, aussaat_datum: e.target.value })}
