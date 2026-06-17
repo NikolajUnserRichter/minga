@@ -82,11 +82,37 @@ def _seed_default(db, document_type: DocumentType) -> DocumentTemplate:
     return tmpl
 
 
+def _label_for(default_list: list[dict], key: str) -> str:
+    """Findet das Default-Label für einen Section-/Spalten-Key."""
+    for entry in default_list:
+        if entry.get("key") == key:
+            return entry.get("label", key)
+    return key
+
+
 def _enrich(db, tmpl: DocumentTemplate) -> DocumentTemplateResponse:
     resp = DocumentTemplateResponse.model_validate(tmpl)
     if tmpl.logo_attachment_id:
         resp.logo_url = f"/api/v1/attachments/{tmpl.logo_attachment_id}/download"
     resp.placeholders = PLACEHOLDERS_BY_TYPE.get(tmpl.document_type.value, [])
+
+    # Fallback: Wenn ein Label leer / "x" / Whitespace ist (z.B. nach einem
+    # PATCH ohne korrekte Labels), wird das UI-Label aus den DEFAULT_SECTIONS
+    # / DEFAULT_COLUMNS ergänzt — ohne die DB anzufassen.
+    default_sections = DEFAULT_SECTIONS.get(tmpl.document_type.value, [])
+    default_columns = DEFAULT_COLUMNS.get(tmpl.document_type.value, [])
+    if resp.sections:
+        resp.sections = [
+            {**s, "label": s.get("label") if (s.get("label") or "").strip() and (s.get("label") or "").strip() != "x"
+                          else _label_for(default_sections, s.get("key", ""))}
+            for s in resp.sections
+        ]
+    if resp.columns:
+        resp.columns = [
+            {**c, "label": c.get("label") if (c.get("label") or "").strip() and (c.get("label") or "").strip() != "x"
+                          else _label_for(default_columns, c.get("key", ""))}
+            for c in resp.columns
+        ]
     return resp
 
 
