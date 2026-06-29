@@ -23,14 +23,19 @@ DBSession = Annotated[Session, Depends(_tenant_db)]
 settings = get_settings()
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token", auto_error=False) # URL is just for Swagger UI hint
 
-async def get_current_user(token: Annotated[str | None, Depends(oauth2_scheme)]):
+async def get_current_user(
+    request: Request,
+    token: Annotated[str | None, Depends(oauth2_scheme)],
+):
     """
     Dependency für authentifizierten Benutzer.
-    Verifiziert das JWT Token gegen Keycloak.
+
+    Reihenfolge:
+      1. AUTH_DISABLED → Sentinel-Admin (Dev-Modus)
+      2. Basic-Auth-User aus Request-State (gesetzt von basic_auth_middleware) → akzeptieren
+      3. Bearer-JWT aus Keycloak → validieren + tenant_slug-Cross-Check vs Subdomain
     """
     if settings.auth_disabled:
-        # Sentinel UUID so callers that wrap user["id"] in UUID(...) don't crash.
-        # Order/Invoice.created_by has no FK constraint, so any valid UUID is fine.
         dev_user_id = "00000000-0000-0000-0000-000000000001"
         return {
             "id": dev_user_id,
@@ -38,6 +43,17 @@ async def get_current_user(token: Annotated[str | None, Depends(oauth2_scheme)])
             "email": "admin@minga-greens.de",
             "roles": ["admin", "sales", "production_planner", "production_staff", "accounting"],
             "raw": {"sub": dev_user_id},
+        }
+
+    # Falls Basic-Auth-Middleware bereits einen User gesetzt hat → übernehmen
+    basic_user = getattr(request.state, "basic_auth_user", None)
+    if basic_user is not None:
+        return {
+            "id": "basic-auth:" + basic_user["username"],
+            "username": basic_user["username"],
+            "email": basic_user["username"],
+            "roles": ["admin"] if basic_user["role"] == "FULL" else ["readonly"],
+            "raw": {"basic_auth": True, "role": basic_user["role"]},
         }
 
     if not token:
@@ -48,24 +64,37 @@ async def get_current_user(token: Annotated[str | None, Depends(oauth2_scheme)])
         )
 
     payload = verify_token(token)
-    
-    # Extrahiere Rollen aus Keycloak Token
-    # Struktur: realm_access: { roles: [...] } oder resource_access: { client: { roles: [...] } }
-    roles = []
-    
-    # Realm Roles
+
+    # === Multi-Tenant Cross-Check ===
+    # JWT-Claim 'tenant_slug' muss zur Subdomain des aktuellen Requests passen.
+    # Verhindert dass ein User mit Token für Tenant A bei Tenant B reinkommt.
+    from app.tenancy import get_request_tenant
+    request_tenant = get_request_tenant(request)
+    token_tenant = payload.get("tenant_slug")
+
+    # Wenn beide leer → ok (z.B. Dev-Localhost-Default-Tenant)
+    if request_tenant and token_tenant and request_tenant != token_tenant:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Token gehört zu Tenant '{token_tenant}', Request ist für Tenant '{request_tenant}'.",
+        )
+    if request_tenant and not token_tenant:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Token enthält keinen tenant_slug-Claim — User ist keinem Workspace zugeordnet.",
+        )
+
+    roles: list[str] = []
     if "realm_access" in payload and "roles" in payload["realm_access"]:
         roles.extend(payload["realm_access"]["roles"])
-        
-    # Resource (Client) Roles - optional, falls wir client-spezifische Rollen nutzen
-    # Für Einfachheit nehmen wir erstmal Realm Roles
-    
+
     return {
-        "id": payload.get("sub"), # Keycloak User ID
+        "id": payload.get("sub"),
         "username": payload.get("preferred_username"),
         "email": payload.get("email"),
+        "tenant_slug": token_tenant,
         "roles": roles,
-        "raw": payload
+        "raw": payload,
     }
 
 

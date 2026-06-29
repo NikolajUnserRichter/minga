@@ -307,6 +307,12 @@ async def basic_auth_middleware(request: Request, call_next):
     if _is_apex_request(request):
         return await call_next(request)
 
+    # Bearer-Token (Keycloak-JWT) → basic_auth-Gate überspringen, JWT-Verifizierung
+    # passiert in get_current_user/verify_token.
+    auth_hdr = request.headers.get("Authorization", "")
+    if auth_hdr.startswith("Bearer "):
+        return await call_next(request)
+
     user = _identify_basic_auth_user(request)
     if user is None:
         return JSONResponse(
