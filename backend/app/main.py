@@ -29,6 +29,7 @@ from app.tenancy import (
 )
 from app.api.v1 import seeds, production, sales, forecasting, products, invoices, inventory, analytics, capacity, suppliers, units, imports, documents, attachments, admin, document_templates, platform
 from app.api.deps import get_current_user
+from app.core.security import verify_token
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -307,11 +308,20 @@ async def basic_auth_middleware(request: Request, call_next):
     if _is_apex_request(request):
         return await call_next(request)
 
-    # Bearer-Token (Keycloak-JWT) → basic_auth-Gate überspringen, JWT-Verifizierung
-    # passiert in get_current_user/verify_token.
+    # Bearer-Token (Keycloak-JWT) darf das Basic-Auth-Gate NUR überspringen,
+    # wenn das Token kryptographisch gültig ist. Sonst würde ein gefälschter
+    # "Authorization: Bearer x"-Header das Gate aushebeln.
+    # Im auth_disabled-Modus (Demo) liefert verify_token einen Dummy-Admin für
+    # JEDES Token — dort ist Basic-Auth die einzige Schutzschicht, deshalb wird
+    # ein Bearer-Header in diesem Modus ignoriert und das Gate erzwungen.
     auth_hdr = request.headers.get("Authorization", "")
-    if auth_hdr.startswith("Bearer "):
-        return await call_next(request)
+    if not settings.auth_disabled and auth_hdr.startswith("Bearer "):
+        token = auth_hdr.split(" ", 1)[1].strip()
+        try:
+            verify_token(token)
+            return await call_next(request)
+        except Exception:
+            pass  # ungültiges Token → unten auf Basic-Auth zurückfallen (401)
 
     user = _identify_basic_auth_user(request)
     if user is None:
@@ -583,6 +593,10 @@ async def spa_fallback(full_path: str, request: Request):
         requested = marketing_dist / full_path
         if requested.exists() and requested.is_file():
             return FileResponse(requested)
+        # Saubere URLs ohne .html mappen: /impressum → impressum.html
+        html_variant = marketing_dist / f"{full_path}.html"
+        if html_variant.exists() and html_variant.is_file():
+            return FileResponse(html_variant)
         # Sonst: Marketing-Index ausliefern
         if (marketing_dist / "index.html").exists():
             return FileResponse(marketing_dist / "index.html")
