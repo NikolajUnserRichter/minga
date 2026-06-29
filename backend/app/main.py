@@ -180,12 +180,27 @@ marketing_dist = Path("/app/static_marketing")
 if not marketing_dist.exists():
     marketing_dist = Path(__file__).parent.parent / "static_marketing"
 
+# Platform-Admin-UI (admin.novaerp.de) — eigener Static-Dir.
+admin_dist = Path("/app/static_admin")
+if not admin_dist.exists():
+    admin_dist = Path(__file__).parent.parent / "static_admin"
+
+
+def _root_domain() -> str:
+    return os.environ.get("SPROUDDESK_ROOT_DOMAIN", "novaerp.de").lower()
+
+
 def _is_apex_request(request: Request) -> bool:
     """Apex = novaerp.de ohne Subdomain (oder ROOT_DOMAIN-env-Vorgabe)."""
     host = (request.headers.get("host") or "").split(":")[0].lower()
-    import os as _o
-    root = _o.environ.get("SPROUDDESK_ROOT_DOMAIN", "novaerp.de").lower()
-    return host == root
+    return host == _root_domain()
+
+
+def _is_admin_request(request: Request) -> bool:
+    """admin.novaerp.de → Platform-Admin-UI. Die UI selbst ist statisch;
+    alle Aktionen sind durch den X-Platform-Admin-Key geschützt."""
+    host = (request.headers.get("host") or "").split(":")[0].lower()
+    return host == f"admin.{_root_domain()}"
 
 # Rate limiting
 app.state.limiter = limiter
@@ -213,9 +228,13 @@ async def tenant_middleware(request: Request, call_next):
     # Plattform-Pfade die kein Tenant brauchen: /health, /api/v1/platform/*, /docs
     # + apex-Routes (Marketing-Seite serviert SPA-Files ohne Tenant)
     path = request.url.path
-    is_apex = host and host.split(":")[0].lower() == os.getenv("SPROUDDESK_ROOT_DOMAIN", "novaerp.de").lower()
+    _root = os.getenv("SPROUDDESK_ROOT_DOMAIN", "novaerp.de").lower()
+    _host_only = host.split(":")[0].lower() if host else ""
+    is_apex = _host_only == _root
+    is_admin_host = _host_only == f"admin.{_root}"
     is_platform_path = (
         is_apex
+        or is_admin_host
         or path.startswith("/health")
         or path.startswith("/api/v1/platform")
         or path.startswith("/docs")
@@ -304,8 +323,10 @@ async def basic_auth_middleware(request: Request, call_next):
     if request.url.path.startswith("/health"):
         return await call_next(request)
 
-    # Apex (novaerp.de) ist die öffentliche Marketing-Seite — kein Auth
-    if _is_apex_request(request):
+    # Apex (novaerp.de) = öffentliche Marketing-Seite. admin.novaerp.de =
+    # Platform-Admin-UI (statisch; Aktionen sind durch X-Platform-Admin-Key
+    # geschützt). Beide ohne Basic-Auth-Gate.
+    if _is_apex_request(request) or _is_admin_request(request):
         return await call_next(request)
 
     # Bearer-Token (Keycloak-JWT) darf das Basic-Auth-Gate NUR überspringen,
@@ -439,7 +460,10 @@ async def health_check_detailed():
 
 @app.get("/", tags=["System"])
 async def root(request: Request):
-    """Root-Handler — apex serviert Marketing, Subdomains die App."""
+    """Root-Handler — apex=Marketing, admin=Admin-UI, Subdomains=App."""
+    if _is_admin_request(request):
+        if (admin_dist / "index.html").exists():
+            return FileResponse(admin_dist / "index.html")
     if _is_apex_request(request):
         if (marketing_dist / "index.html").exists():
             return FileResponse(marketing_dist / "index.html")
@@ -586,6 +610,14 @@ async def spa_fallback(full_path: str, request: Request):
     """Serve SPA/marketing index — apex zeigt Marketing-Seite, Subdomains die App."""
     if full_path.startswith(("api/", "docs", "redoc", "openapi.json", "health")):
         return JSONResponse(status_code=404, content={"detail": "Not Found"})
+
+    # admin.novaerp.de → Platform-Admin-UI
+    if _is_admin_request(request) and admin_dist.exists():
+        requested = admin_dist / full_path
+        if requested.exists() and requested.is_file():
+            return FileResponse(requested)
+        if (admin_dist / "index.html").exists():
+            return FileResponse(admin_dist / "index.html")
 
     # Apex (novaerp.de) → Marketing-Seite
     if _is_apex_request(request) and marketing_dist.exists():

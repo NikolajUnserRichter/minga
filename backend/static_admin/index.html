@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robots" content="noindex" />
+  <title>NovaERP — Platform Admin</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='26' fill='none' stroke='%23F6F1EA' stroke-width='3'/%3E%3Cpath d='M32 7 L36 28 L57 32 L36 36 L32 57 L28 36 L7 32 L28 28 Z' fill='%23C0814F'/%3E%3C/svg%3E" />
+  <style>
+    :root{
+      --abyss:#0a0a0a; --panel:#121212; --panel-2:#181818;
+      --ink-0:#F6F1EA; --ink-1:#CDC5BB; --ink-2:#9A9288; --ink-3:#6C655C;
+      --bronze:#C0814F; --bronze-glow:#D8A06E; --bronze-dim:rgba(192,129,79,.14);
+      --line:rgba(246,241,234,.08); --ok:#4ade80; --no:#f87171;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;background:var(--abyss);color:var(--ink-1);
+      font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;line-height:1.55}
+    a{color:var(--bronze-glow);text-decoration:none}
+    .wrap{max-width:1000px;margin:0 auto;padding:2rem 1.5rem 5rem}
+    /* Header */
+    header{display:flex;align-items:center;justify-content:space-between;
+      padding:1.25rem 0;border-bottom:1px solid var(--line);margin-bottom:2.5rem}
+    .logo{display:inline-flex;align-items:center;gap:.65rem;font-weight:800;font-size:1.15rem;letter-spacing:-.02em;color:var(--ink-0)}
+    .logo .erp{color:var(--bronze)}
+    .pill{font-size:.72rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;
+      color:var(--bronze-glow);background:var(--bronze-dim);padding:.3rem .7rem;border-radius:999px;border:1px solid rgba(192,129,79,.3)}
+    /* Login gate */
+    .gate{max-width:420px;margin:6rem auto;text-align:center}
+    .gate svg{filter:drop-shadow(0 0 12px rgba(216,160,110,.4));margin-bottom:1.5rem}
+    .gate h1{color:var(--ink-0);font-size:1.6rem;font-weight:800;letter-spacing:-.02em;margin:0 0 .5rem}
+    .gate p{color:var(--ink-2);margin:0 0 2rem;font-size:.95rem}
+    /* Inputs */
+    input[type=text],input[type=password]{
+      width:100%;background:var(--panel-2);border:1px solid var(--line);border-radius:.6rem;
+      color:var(--ink-0);padding:.8rem 1rem;font-size:.95rem;font-family:inherit;outline:none;transition:border-color .15s}
+    input:focus{border-color:var(--bronze)}
+    label{display:block;text-align:left;font-size:.82rem;color:var(--ink-2);margin:0 0 .4rem;font-weight:600}
+    .btn{display:inline-flex;align-items:center;justify-content:center;gap:.5rem;
+      font-weight:700;font-size:.92rem;padding:.75rem 1.3rem;border-radius:.6rem;border:1px solid transparent;
+      cursor:pointer;font-family:inherit;transition:transform .12s,background .15s,opacity .15s}
+    .btn:active{transform:translateY(1px)}
+    .btn-bronze{background:var(--bronze);color:#1c1206}
+    .btn-bronze:hover{background:var(--bronze-glow)}
+    .btn-ghost{background:transparent;border-color:var(--line);color:var(--ink-1)}
+    .btn-ghost:hover{background:var(--panel-2)}
+    .btn-danger{background:transparent;border-color:rgba(248,113,113,.3);color:var(--no);font-size:.8rem;padding:.4rem .8rem}
+    .btn-danger:hover{background:rgba(248,113,113,.1)}
+    .btn:disabled{opacity:.4;cursor:not-allowed}
+    .btn-full{width:100%}
+    /* Cards / sections */
+    .grid{display:grid;gap:1rem;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));margin-bottom:2.5rem}
+    .stat{background:var(--panel);border:1px solid var(--line);border-radius:.8rem;padding:1.25rem}
+    .stat .num{font-size:2rem;font-weight:800;color:var(--ink-0);letter-spacing:-.02em;line-height:1}
+    .stat .lbl{font-size:.78rem;color:var(--ink-2);margin-top:.4rem;text-transform:uppercase;letter-spacing:.06em}
+    .section{background:var(--panel);border:1px solid var(--line);border-radius:.9rem;padding:1.5rem;margin-bottom:1.5rem}
+    .section h2{color:var(--ink-0);font-size:1.1rem;font-weight:700;margin:0 0 1rem;letter-spacing:-.01em}
+    /* Table */
+    table{width:100%;border-collapse:collapse;font-size:.9rem}
+    th{text-align:left;color:var(--ink-3);font-weight:600;font-size:.74rem;text-transform:uppercase;letter-spacing:.06em;padding:.5rem .75rem;border-bottom:1px solid var(--line)}
+    td{padding:.85rem .75rem;border-bottom:1px solid var(--line);color:var(--ink-1);vertical-align:middle}
+    tr:last-child td{border-bottom:none}
+    .slug{font-weight:700;color:var(--ink-0)}
+    .url{color:var(--bronze-glow);font-size:.85rem}
+    .muted{color:var(--ink-3);font-size:.82rem}
+    /* Create form */
+    .create-row{display:flex;gap:.75rem;align-items:flex-end;flex-wrap:wrap}
+    .create-row .field{flex:1;min-width:200px}
+    .checkbox-row{display:flex;align-items:center;gap:.5rem;margin:.75rem 0;font-size:.88rem;color:var(--ink-1)}
+    .checkbox-row input{width:auto}
+    /* Toast */
+    .toast{position:fixed;bottom:1.5rem;left:50%;transform:translateX(-50%);
+      background:var(--panel-2);border:1px solid var(--line);border-radius:.6rem;
+      padding:.85rem 1.25rem;font-size:.9rem;color:var(--ink-0);box-shadow:0 10px 40px rgba(0,0,0,.5);
+      opacity:0;pointer-events:none;transition:opacity .25s,transform .25s;z-index:100}
+    .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+    .toast.ok{border-color:rgba(74,222,128,.4)}
+    .toast.err{border-color:rgba(248,113,113,.4)}
+    .hidden{display:none}
+    .spin{display:inline-block;width:14px;height:14px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:s .6s linear infinite}
+    @keyframes s{to{transform:rotate(360deg)}}
+    .empty{text-align:center;color:var(--ink-3);padding:2rem;font-size:.9rem}
+  </style>
+</head>
+<body>
+
+  <!-- ============ LOGIN GATE ============ -->
+  <div id="gate" class="gate">
+    <svg viewBox="0 0 64 64" width="56" height="56"><circle cx="32" cy="32" r="26" fill="none" stroke="#F6F1EA" stroke-width="3"/><path d="M32 7 L36 28 L57 32 L36 36 L32 57 L28 36 L7 32 L28 28 Z" fill="#C0814F"/></svg>
+    <h1>Platform Admin</h1>
+    <p>Verwaltung der NovaERP-Mandanten. Zugang nur mit Platform-Admin-Key.</p>
+    <div style="text-align:left">
+      <label for="keyInput">Platform-Admin-Key</label>
+      <input id="keyInput" type="password" placeholder="••••••••••••••••••••" autocomplete="off" />
+      <button class="btn btn-bronze btn-full" style="margin-top:1rem" onclick="login()">Anmelden</button>
+    </div>
+  </div>
+
+  <!-- ============ DASHBOARD ============ -->
+  <div id="app" class="hidden">
+    <div class="wrap">
+      <header>
+        <span class="logo">
+          <svg viewBox="0 0 64 64" width="28" height="28"><circle cx="32" cy="32" r="26" fill="none" stroke="currentColor" stroke-width="3"/><path d="M32 7 L36 28 L57 32 L36 36 L32 57 L28 36 L7 32 L28 28 Z" fill="#C0814F"/></svg>
+          Nova<span class="erp">ERP</span> <span class="pill" style="margin-left:.5rem">Platform</span>
+        </span>
+        <button class="btn btn-ghost" onclick="logout()">Abmelden</button>
+      </header>
+
+      <!-- Stats -->
+      <div class="grid" id="stats"></div>
+
+      <!-- Create -->
+      <div class="section">
+        <h2>Neuen Mandanten anlegen</h2>
+        <div class="create-row">
+          <div class="field">
+            <label for="newSlug">Slug (Subdomain)</label>
+            <input id="newSlug" type="text" placeholder="z.B. hotel-mueller" oninput="previewUrl()" />
+            <div class="muted" id="urlPreview" style="margin-top:.5rem"></div>
+          </div>
+          <button class="btn btn-bronze" id="createBtn" onclick="createTenant()">Mandant anlegen</button>
+        </div>
+        <div class="checkbox-row">
+          <input type="checkbox" id="seedDefaults" checked />
+          <label for="seedDefaults" style="margin:0">Standard-Einheiten (g, kg, Stk …) mit anlegen</label>
+        </div>
+      </div>
+
+      <!-- Tenants -->
+      <div class="section">
+        <h2>Mandanten</h2>
+        <div id="tenantList"><div class="empty">Lädt…</div></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast"></div>
+
+  <script>
+    const API = '/api/v1/platform';
+    let ROOT_DOMAIN = 'novaerp.de';
+
+    function key(){ return sessionStorage.getItem('novaerp_admin_key') || ''; }
+    function headers(){ return { 'X-Platform-Admin-Key': key(), 'Content-Type':'application/json' }; }
+
+    function toast(msg, kind){
+      const t = document.getElementById('toast');
+      t.textContent = msg;
+      t.className = 'toast show ' + (kind||'');
+      setTimeout(()=>{ t.className = 'toast ' + (kind||''); }, 3200);
+    }
+
+    async function login(){
+      const k = document.getElementById('keyInput').value.trim();
+      if(!k){ toast('Bitte Key eingeben','err'); return; }
+      sessionStorage.setItem('novaerp_admin_key', k);
+      const ok = await loadAll();
+      if(ok){
+        document.getElementById('gate').classList.add('hidden');
+        document.getElementById('app').classList.remove('hidden');
+      } else {
+        sessionStorage.removeItem('novaerp_admin_key');
+        toast('Ungültiger Key','err');
+      }
+    }
+
+    function logout(){
+      sessionStorage.removeItem('novaerp_admin_key');
+      location.reload();
+    }
+
+    async function loadAll(){
+      try {
+        const [infoRes, tenantsRes] = await Promise.all([
+          fetch(API + '/info', { headers: headers() }),
+          fetch(API + '/tenants', { headers: headers() }),
+        ]);
+        if(infoRes.status === 401) return false;
+        const info = await infoRes.json();
+        const data = await tenantsRes.json();
+        ROOT_DOMAIN = data.root_domain || info.root_domain || 'novaerp.de';
+        renderStats(info);
+        renderTenants(data.tenants || []);
+        return true;
+      } catch(e){
+        toast('Verbindungsfehler: ' + e.message, 'err');
+        return false;
+      }
+    }
+
+    function renderStats(info){
+      document.getElementById('stats').innerHTML = `
+        <div class="stat"><div class="num">${info.tenants_count ?? '–'}</div><div class="lbl">Mandanten</div></div>
+        <div class="stat"><div class="num">${(info.total_size_mb ?? 0).toFixed(1)} MB</div><div class="lbl">Gesamt-Daten</div></div>
+        <div class="stat"><div class="num">${info.default_tenant ?? '–'}</div><div class="lbl">Default-Mandant</div></div>
+        <div class="stat"><div class="num">🇩🇪</div><div class="lbl">${info.root_domain ?? ''}</div></div>
+      `;
+    }
+
+    function renderTenants(tenants){
+      const el = document.getElementById('tenantList');
+      if(!tenants.length){ el.innerHTML = '<div class="empty">Noch keine Mandanten angelegt.</div>'; return; }
+      el.innerHTML = `
+        <table>
+          <thead><tr><th>Slug</th><th>URL</th><th>Größe</th><th>Zuletzt geändert</th><th></th></tr></thead>
+          <tbody>
+            ${tenants.map(t => `
+              <tr>
+                <td class="slug">${t.slug}</td>
+                <td><a class="url" href="${t.url}" target="_blank">${t.url.replace('https://','')}</a></td>
+                <td>${(t.size_mb ?? 0).toFixed(2)} MB</td>
+                <td class="muted">${t.last_modified ? new Date(t.last_modified).toLocaleString('de-DE') : '–'}</td>
+                <td style="text-align:right">
+                  <button class="btn btn-danger" onclick="deleteTenant('${t.slug}')">Löschen</button>
+                </td>
+              </tr>`).join('')}
+          </tbody>
+        </table>`;
+    }
+
+    function previewUrl(){
+      const slug = document.getElementById('newSlug').value.trim().toLowerCase().replace(/[^a-z0-9-]/g,'');
+      document.getElementById('urlPreview').textContent = slug ? `→ https://${slug}.${ROOT_DOMAIN}` : '';
+    }
+
+    async function createTenant(){
+      const raw = document.getElementById('newSlug').value.trim().toLowerCase().replace(/[^a-z0-9-]/g,'');
+      if(!raw || raw.length < 2){ toast('Slug zu kurz (min. 2 Zeichen, a-z 0-9 -)','err'); return; }
+      const seed = document.getElementById('seedDefaults').checked;
+      const btn = document.getElementById('createBtn');
+      btn.disabled = true; btn.innerHTML = '<span class="spin"></span> Lege an…';
+      try {
+        const res = await fetch(`${API}/tenants?slug=${encodeURIComponent(raw)}&seed_defaults=${seed}`, {
+          method: 'POST', headers: headers()
+        });
+        const body = await res.json();
+        if(res.ok){
+          toast(`Mandant „${raw}" angelegt → ${body.url}`, 'ok');
+          document.getElementById('newSlug').value = '';
+          previewUrl();
+          await loadAll();
+        } else {
+          toast(body.detail || 'Fehler beim Anlegen', 'err');
+        }
+      } catch(e){ toast('Fehler: ' + e.message, 'err'); }
+      finally { btn.disabled = false; btn.textContent = 'Mandant anlegen'; }
+    }
+
+    async function deleteTenant(slug){
+      if(!confirm(`Mandant „${slug}" UNWIDERRUFLICH löschen?\n\nDie komplette Datenbank wird entfernt (DSGVO-konform). Vorher Backup prüfen!`)) return;
+      try {
+        const res = await fetch(`${API}/tenants/${encodeURIComponent(slug)}`, { method:'DELETE', headers: headers() });
+        if(res.status === 204){
+          toast(`Mandant „${slug}" gelöscht`, 'ok');
+          await loadAll();
+        } else {
+          const body = await res.json().catch(()=>({}));
+          toast(body.detail || 'Löschen fehlgeschlagen', 'err');
+        }
+      } catch(e){ toast('Fehler: ' + e.message, 'err'); }
+    }
+
+    // Auto-login if key present
+    if(key()){
+      loadAll().then(ok => {
+        if(ok){
+          document.getElementById('gate').classList.add('hidden');
+          document.getElementById('app').classList.remove('hidden');
+        }
+      });
+    }
+    document.getElementById('keyInput')?.addEventListener('keydown', e=>{ if(e.key==='Enter') login(); });
+  </script>
+</body>
+</html>
