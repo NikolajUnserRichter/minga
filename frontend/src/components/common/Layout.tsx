@@ -32,6 +32,7 @@ import { useState, useEffect, createContext, useContext, ReactNode } from 'react
 import { useNavigate } from 'react-router-dom';
 import QRScanner from './QRScanner';
 import CommandPalette from './CommandPalette';
+import { NovaLogo } from './Logo';
 import { UserRole, User } from '../../types';
 import { useTheme } from '../../context/ThemeContext';
 import { useToast } from '../ui';
@@ -324,9 +325,11 @@ export default function Layout() {
         >
           {/* Logo */}
           <div className={`flex items-center h-16 border-b border-gray-200 dark:border-gray-700 flex-shrink-0 ${sidebarCollapsed ? 'lg:justify-center lg:px-2 px-6 justify-between' : 'px-6 justify-between'}`}>
-            <NavLink to="/dashboard" className="flex items-center gap-3" title="Minga-Greens">
-              <img src="/logo.png" alt="Minga Greens" className="w-8 h-8 rounded-lg object-contain invert dark:invert-0" />
-              <span className={`text-lg font-bold text-gray-900 dark:text-white ${sidebarCollapsed ? 'lg:hidden' : ''}`}>Minga-Greens</span>
+            <NavLink to="/dashboard" className="flex items-center gap-3 text-gray-900 dark:text-white" title="NovaERP">
+              <NovaLogo size={32} />
+              <span className={`text-lg font-bold tracking-tight ${sidebarCollapsed ? 'lg:hidden' : ''}`}>
+                Nova<span className="text-amber-600">ERP</span>
+              </span>
             </NavLink>
             <button
               className="lg:hidden p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700"

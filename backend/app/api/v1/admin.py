@@ -94,12 +94,12 @@ def send_test_email(db: DBSession, to: str = Query(..., description="Empfänger 
         send_email(
             db=db,
             to=to,
-            subject="Minga-Greens — SMTP-Test",
+            subject="NovaERP — SMTP-Test",
             body=(
                 "Hallo,\n\n"
-                "dies ist eine Test-Mail aus dem Minga-Greens-ERP.\n"
+                "dies ist eine Test-Mail aus NovaERP.\n"
                 "Wenn du diese Nachricht erhältst, sind die SMTP-Einstellungen korrekt.\n\n"
-                "Viele Grüße\nMinga-Greens-Backend"
+                "Viele Grüße\nNovaERP-Backend"
             ),
         )
     except EmailNotConfiguredError as e:

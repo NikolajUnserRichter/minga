@@ -1,8 +1,9 @@
 """
-Minga-Greens ERP - FastAPI Backend
+NovaERP - FastAPI Backend
 Hauptanwendung und Router-Konfiguration
 """
 import logging
+import os
 import time
 import uuid
 import base64
@@ -148,7 +149,7 @@ app = FastAPI(
     title=settings.app_name,
     version=settings.app_version,
     description="""
-    ## Minga-Greens ERP API
+    ## NovaERP API
 
     Open-Source ERP-System für Microgreens-Produktion.
 
@@ -172,6 +173,18 @@ if frontend_dist.exists():
     assets_path = frontend_dist / "assets"
     if assets_path.exists():
         app.mount("/assets", StaticFiles(directory=str(assets_path)), name="assets")
+
+# Marketing-Seite (apex novaerp.de) — separate Static-Dir, kein Auth nötig.
+marketing_dist = Path("/app/static_marketing")
+if not marketing_dist.exists():
+    marketing_dist = Path(__file__).parent.parent / "static_marketing"
+
+def _is_apex_request(request: Request) -> bool:
+    """Apex = novaerp.de ohne Subdomain (oder ROOT_DOMAIN-env-Vorgabe)."""
+    host = (request.headers.get("host") or "").split(":")[0].lower()
+    import os as _o
+    root = _o.environ.get("SPROUDDESK_ROOT_DOMAIN", "novaerp.de").lower()
+    return host == root
 
 # Rate limiting
 app.state.limiter = limiter
@@ -197,9 +210,12 @@ async def tenant_middleware(request: Request, call_next):
     slug = resolve_slug_from_host(host)
 
     # Plattform-Pfade die kein Tenant brauchen: /health, /api/v1/platform/*, /docs
+    # + apex-Routes (Marketing-Seite serviert SPA-Files ohne Tenant)
     path = request.url.path
+    is_apex = host and host.split(":")[0].lower() == os.getenv("SPROUDDESK_ROOT_DOMAIN", "novaerp.de").lower()
     is_platform_path = (
-        path.startswith("/health")
+        is_apex
+        or path.startswith("/health")
         or path.startswith("/api/v1/platform")
         or path.startswith("/docs")
         or path.startswith("/redoc")
@@ -287,12 +303,16 @@ async def basic_auth_middleware(request: Request, call_next):
     if request.url.path.startswith("/health"):
         return await call_next(request)
 
+    # Apex (novaerp.de) ist die öffentliche Marketing-Seite — kein Auth
+    if _is_apex_request(request):
+        return await call_next(request)
+
     user = _identify_basic_auth_user(request)
     if user is None:
         return JSONResponse(
             status_code=401,
             content={"detail": "Authentication required"},
-            headers={"WWW-Authenticate": 'Basic realm="Minga Greens Demo"'},
+            headers={"WWW-Authenticate": 'Basic realm="NovaERP"'},
         )
 
     # User-Identity in der Request-State ablegen — Endpoints + /whoami können sie auslesen
@@ -402,13 +422,15 @@ async def health_check_detailed():
 
 
 @app.get("/", tags=["System"])
-async def root():
-    """API Root - Zeigt Willkommensnachricht"""
+async def root(request: Request):
+    """Root-Handler — apex serviert Marketing, Subdomains die App."""
+    if _is_apex_request(request):
+        if (marketing_dist / "index.html").exists():
+            return FileResponse(marketing_dist / "index.html")
     if (frontend_dist / "index.html").exists():
         return FileResponse(frontend_dist / "index.html")
-
     return {
-        "message": "Willkommen bei Minga-Greens ERP",
+        "message": "Willkommen bei NovaERP",
         "version": settings.app_version,
         "docs": "/docs",
     }
@@ -544,11 +566,22 @@ app.include_router(
 
 
 @app.get("/{full_path:path}")
-async def spa_fallback(full_path: str):
-    """Serve SPA index for non-API routes in single-container deployment."""
+async def spa_fallback(full_path: str, request: Request):
+    """Serve SPA/marketing index — apex zeigt Marketing-Seite, Subdomains die App."""
     if full_path.startswith(("api/", "docs", "redoc", "openapi.json", "health")):
         return JSONResponse(status_code=404, content={"detail": "Not Found"})
 
+    # Apex (novaerp.de) → Marketing-Seite
+    if _is_apex_request(request) and marketing_dist.exists():
+        # Direkte Dateianforderung (z.B. /assets/foo.png) prüfen
+        requested = marketing_dist / full_path
+        if requested.exists() and requested.is_file():
+            return FileResponse(requested)
+        # Sonst: Marketing-Index ausliefern
+        if (marketing_dist / "index.html").exists():
+            return FileResponse(marketing_dist / "index.html")
+
+    # Subdomains → React-SPA
     if (frontend_dist / "index.html").exists():
         requested = frontend_dist / full_path
         if requested.exists() and requested.is_file():

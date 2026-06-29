@@ -1,5 +1,5 @@
 """
-Konfiguration für Minga-Greens ERP Backend
+Konfiguration für NovaERP Backend
 """
 from functools import lru_cache
 from pydantic_settings import BaseSettings
@@ -9,7 +9,7 @@ class Settings(BaseSettings):
     """Anwendungseinstellungen aus Umgebungsvariablen"""
 
     # Anwendung
-    app_name: str = "Minga-Greens ERP"
+    app_name: str = "NovaERP"
     app_version: str = "1.0.0"
     debug: bool = False
 
