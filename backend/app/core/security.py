@@ -60,33 +60,34 @@ def verify_token(token: str) -> Dict[str, Any]:
         }
 
     try:
-        # Get public key (should be cached in production)
         public_key = get_public_key()
-        
-        # Decode and verify
-        # python-keycloak decode_token is a wrapper around python-jose/jwt
-        # options = {"verify_signature": True, "verify_aud": True, "exp": True}
-        # But verify_aud works differently depending on library versions.
-        # Let's use python-jose directly for maximum control if needed, 
-        # or use the wrapper. Wrapper is easier.
-        
-        options = {
-            "verify_signature": True,
-            "verify_aud": True,
-            "verify_exp": True
-        }
-        
-        token_info = keycloak_openid.decode_token(
+
+        # Manuelle Verifizierung mit python-jose — verify_aud=False, weil Keycloaks
+        # Default-Audience "account" nicht zwingend dem Client-ID entspricht.
+        # Audience-Mapper im Realm kann zusätzlich client_id in aud aufnehmen, aber
+        # die Tokens sind ohnehin signaturgesichert (RS256) + Issuer-gebunden.
+        expected_iss = f"{settings.keycloak_url.rstrip('/')}/realms/{settings.keycloak_realm}"
+        token_info = jwt.decode(
             token,
-            key=public_key,
-            options=options
+            public_key,
+            algorithms=["RS256"],
+            options={
+                "verify_signature": True,
+                "verify_aud": False,
+                "verify_exp": True,
+                "verify_iss": True,
+            },
+            issuer=expected_iss,
         )
-        
         return token_info
-        
-    except Exception as e:
-        # Log error in production
-        # print(f"Token verification failed: {e}")
+
+    except JWTError as e:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"Token-Verifizierung fehlgeschlagen: {e}",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    except Exception:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid authentication credentials",
