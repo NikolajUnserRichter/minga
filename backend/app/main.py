@@ -22,7 +22,11 @@ from slowapi.errors import RateLimitExceeded
 
 from app.config import get_settings
 from app.database import engine, Base
-from app.api.v1 import seeds, production, sales, forecasting, products, invoices, inventory, analytics, capacity, suppliers, units, imports, documents, attachments, admin, document_templates
+from app.tenancy import (
+    init_all_existing_tenants, provision_tenant, registry as tenant_registry,
+    resolve_slug_from_host, set_request_tenant, DEFAULT_TENANT_SLUG,
+)
+from app.api.v1 import seeds, production, sales, forecasting, products, invoices, inventory, analytics, capacity, suppliers, units, imports, documents, attachments, admin, document_templates, platform
 from app.api.deps import get_current_user
 
 logger = logging.getLogger(__name__)
@@ -43,126 +47,61 @@ async def lifespan(app: FastAPI):
     for w in warnings:
         logger.warning(f"[CONFIG] {w}")
 
-    # Optional: SQLite-DB-Datei beim Start zurücksetzen (für Demo-Deploys).
-    # Wird per Env RESET_DB=true ausgelöst und erwartet eine SQLite-URL.
+    # Multi-Tenant Init: alle existierenden Tenant-DBs entdecken + Tabellen
+    # erstellen + auto-migrate. Pro Tenant eine SQLite-Datei in TENANTS_DIR.
+    existing = init_all_existing_tenants()
+    logger.info(f"[startup] {len(existing)} existing tenants initialized: {existing}")
+
+    # Default-Tenants beim ersten Start auto-provisionieren — komma-separierte Slugs in env.
     import os as _os
-    if _os.environ.get("RESET_DB", "").lower() == "true":
-        db_url = settings.database_url
-        if db_url.startswith("sqlite:///"):
-            db_path = db_url.replace("sqlite:///", "", 1)
-            if db_path.startswith("/"):
-                sqlite_file = db_path
-            else:
-                sqlite_file = _os.path.abspath(db_path)
-            try:
-                if _os.path.exists(sqlite_file):
-                    _os.remove(sqlite_file)
-                    logger.warning(f"[RESET_DB] removed {sqlite_file}")
-            except Exception as e:
-                logger.error(f"[RESET_DB] failed: {e}")
+    default_tenants = [s.strip() for s in _os.environ.get("DEFAULT_TENANTS", "").split(",") if s.strip()]
+    if default_tenants:
+        for slug in default_tenants:
+            if not tenant_registry.exists(slug):
+                try:
+                    provision_tenant(slug, seed_defaults=True)
+                    logger.warning(f"[startup] auto-provisioned default tenant '{slug}'")
+                except Exception as e:
+                    logger.error(f"[startup] could not provision '{slug}': {e}")
 
-    # Startup: Tabellen erstellen (für Entwicklung)
-    # In Produktion: Alembic Migrations verwenden
-    Base.metadata.create_all(bind=engine)
-
-    # Idempotente Auto-Migration: fügt fehlende Spalten zu bestehenden Tabellen
-    # hinzu (SQLite-Demo überlebt damit Modell-Erweiterungen ohne RESET_DB).
-    try:
-        from sqlalchemy import text, inspect
-        inspector = inspect(engine)
-
-        def _add_col_if_missing(table: str, column: str, ddl_type: str, default: str = ""):
-            if not inspector.has_table(table):
-                return
-            cols = {c["name"] for c in inspector.get_columns(table)}
-            if column in cols:
-                return
-            stmt = f"ALTER TABLE {table} ADD COLUMN {column} {ddl_type}"
-            if default:
-                stmt += f" DEFAULT {default}"
-            with engine.begin() as conn:
-                conn.execute(text(stmt))
-            logger.warning(f"[auto-migrate] {table}.{column} added")
-
-        # Customer master-data extensions (Skonto, Verpackungsgebühr)
-        _add_col_if_missing("customers", "customer_number",       "VARCHAR(20)")
-        _add_col_if_missing("customers", "skonto_percent",        "NUMERIC(5,2)", "0")
-        _add_col_if_missing("customers", "skonto_days",           "INTEGER",      "0")
-        _add_col_if_missing("customers", "packaging_fee_amount",  "NUMERIC(10,2)", "0")
-        _add_col_if_missing("customers", "packaging_fee_percent", "NUMERIC(5,2)", "0")
-        # Fulfillment-Idempotenz auf Order
-        _add_col_if_missing("orders", "inventory_deducted_at", "DATETIME")
-        # GrowthBatchEvent + customer_prices + andere neue Tabellen
-        # werden via create_all neu angelegt.
-    except Exception as e:
-        logger.error(f"[auto-migrate] failed: {e}")
-
-    # Idempotenter Backfill: Bestandskunden ohne customer_number bekommen
-    # fortlaufende KD-NNNNN-Nummern (gleiches Schema wie sales.create_customer),
-    # anknüpfend an die höchste vorhandene KD-Nummer. Läuft bei jedem Start,
-    # fasst aber nur NULL/leere Werte an -> idempotent, kein Effekt im Normalfall.
+    # Idempotenter Backfill für Kundennummern (pro Tenant).
     try:
         from sqlalchemy import text
-        with engine.begin() as conn:
-            existing = conn.execute(
-                text("SELECT customer_number FROM customers WHERE customer_number LIKE 'KD-%'")
-            ).fetchall()
-            max_num = 10000
-            for (cn,) in existing:
-                try:
-                    n = int(str(cn).split("-")[-1])
-                except (ValueError, IndexError):
-                    continue
-                max_num = max(max_num, n)
+        from app.database import get_tenant_session
+        for slug in tenant_registry.known_slugs():
+            with get_tenant_session(slug) as _db:
+                conn = _db.connection()
+                existing_nums = conn.execute(
+                    text("SELECT customer_number FROM customers WHERE customer_number LIKE 'KD-%'")
+                ).fetchall()
+                max_num = 10000
+                for (cn,) in existing_nums:
+                    try:
+                        n = int(str(cn).split("-")[-1])
+                    except (ValueError, IndexError):
+                        continue
+                    max_num = max(max_num, n)
 
-            missing = conn.execute(
-                text(
-                    "SELECT id FROM customers "
-                    "WHERE customer_number IS NULL OR customer_number = '' "
-                    "ORDER BY created_at, name, id"
-                )
-            ).fetchall()
+                missing = conn.execute(
+                    text(
+                        "SELECT id FROM customers "
+                        "WHERE customer_number IS NULL OR customer_number = '' "
+                        "ORDER BY created_at, name, id"
+                    )
+                ).fetchall()
 
-            next_num = max_num + 1
-            for (cid,) in missing:
-                conn.execute(
-                    text("UPDATE customers SET customer_number = :cn WHERE id = :id"),
-                    {"cn": f"KD-{next_num:05d}", "id": cid},
-                )
-                next_num += 1
-            if missing:
-                logger.warning(f"[customer-backfill] {len(missing)} Kundennummern vergeben")
+                next_num = max_num + 1
+                for (cid,) in missing:
+                    conn.execute(
+                        text("UPDATE customers SET customer_number = :cn WHERE id = :id"),
+                        {"cn": f"KD-{next_num:05d}", "id": cid},
+                    )
+                    next_num += 1
+                if missing:
+                    _db.commit()
+                    logger.warning(f"[customer-backfill][{slug}] {len(missing)} Kundennummern vergeben")
     except Exception as e:
         logger.error(f"[customer-backfill] failed: {e}")
-
-    # Stammdaten-Seed für Demo-Deploys: Einheiten, falls Tabelle leer.
-    try:
-        from sqlalchemy import select, func
-        from app.database import SessionLocal
-        from app.models.unit import UnitOfMeasure, UnitCategory
-
-        with SessionLocal() as _db:
-            count = _db.execute(select(func.count()).select_from(UnitOfMeasure)).scalar() or 0
-            if count == 0:
-                seeds = [
-                    ("G", "Gramm", "g", UnitCategory.WEIGHT, 1, True, 10),
-                    ("KG", "Kilogramm", "kg", UnitCategory.WEIGHT, 1000, False, 20),
-                    ("STK", "Stück", "Stk", UnitCategory.COUNT, 1, True, 30),
-                    ("SCHALE", "Schale", "Schale", UnitCategory.CONTAINER, 1, True, 40),
-                    ("TRAY", "Tray (8 Schalen)", "Tray", UnitCategory.CONTAINER, 8, False, 50),
-                    ("KISTE_12", "Mehrwegkiste 12 Schalen", "Kiste 12", UnitCategory.CONTAINER, 12, False, 60),
-                    ("KISTE_6", "Mehrwegkiste 6 Schalen", "Kiste 6", UnitCategory.CONTAINER, 6, False, 70),
-                    ("KARTON_6", "Karton 6 Schalen", "Karton 6", UnitCategory.CONTAINER, 6, False, 80),
-                ]
-                for code, name, symbol, cat, factor, is_base, order in seeds:
-                    _db.add(UnitOfMeasure(
-                        code=code, name=name, symbol=symbol, category=cat,
-                        conversion_factor=factor, is_base_unit=is_base, is_active=True, sort_order=order,
-                    ))
-                _db.commit()
-                logger.info("[SEED] units_of_measure: 8 standard units inserted")
-    except Exception as e:
-        logger.error(f"[SEED] units seeding failed: {e}")
 
     # In-Process-Scheduler starten (Celery-Ersatz im Demo-Deploy)
     try:
@@ -246,6 +185,49 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "Accept", "X-Correlation-ID"],
 )
+
+
+# === Tenant-Routing-Middleware ===========================================
+# Liest den Host-Header, leitet Slug ab und legt ihn in request.state ab.
+# Muss VOR dem basic_auth_middleware sitzen (= später hinzugefügt), damit
+# alle nachfolgenden Middlewares + Dependencies ihn auslesen können.
+@app.middleware("http")
+async def tenant_middleware(request: Request, call_next):
+    host = request.headers.get("host") or request.url.hostname
+    slug = resolve_slug_from_host(host)
+
+    # Plattform-Pfade die kein Tenant brauchen: /health, /api/v1/platform/*, /docs
+    path = request.url.path
+    is_platform_path = (
+        path.startswith("/health")
+        or path.startswith("/api/v1/platform")
+        or path.startswith("/docs")
+        or path.startswith("/redoc")
+        or path == "/openapi.json"
+    )
+
+    if slug is None and not is_platform_path:
+        # Unbekannte Subdomain → 404, sofern nicht statische Frontend-Datei
+        if path.startswith("/api/"):
+            return JSONResponse(
+                status_code=404,
+                content={"detail": f"Tenant nicht gefunden für Host '{host}'"},
+            )
+        # SPA-Routes bekommen den Default-Tenant — sonst kann der User die
+        # Marketing-Seite des apex-Hosts nicht laden.
+        slug = DEFAULT_TENANT_SLUG
+
+    if slug is not None:
+        # Wenn die Slug-DB noch nicht existiert (Tenant nicht provisioniert),
+        # 404 statt SQLite-Fehler.
+        if not tenant_registry.exists(slug) and slug != DEFAULT_TENANT_SLUG and not is_platform_path:
+            return JSONResponse(
+                status_code=404,
+                content={"detail": f"Tenant '{slug}' ist nicht bereitgestellt"},
+            )
+        set_request_tenant(request, slug)
+
+    return await call_next(request)
 
 
 def _identify_basic_auth_user(request: Request) -> Optional[dict]:
@@ -552,6 +534,12 @@ app.include_router(
     document_templates.router,
     prefix="/api/v1",
     dependencies=_auth_deps,
+)
+
+# Platform-Admin: KEINE _auth_deps — eigener X-Platform-Admin-Key
+app.include_router(
+    platform.router,
+    prefix="/api/v1",
 )
 
 

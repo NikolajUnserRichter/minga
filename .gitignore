@@ -105,3 +105,4 @@ temp/
 # Jupyter
 .ipynb_checkpoints/
 .playwright-mcp/
+agentdb.rvf*

@@ -1,8 +1,8 @@
 """
 API Dependencies - Gemeinsame Abhängigkeiten für Endpoints
 """
-from typing import Annotated
-from fastapi import Depends, HTTPException, status
+from typing import Annotated, Generator
+from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -10,8 +10,15 @@ from app.config import get_settings
 
 from fastapi.security import OAuth2PasswordBearer
 from app.core.security import verify_token
-# Type Alias für DB Session Dependency
-DBSession = Annotated[Session, Depends(get_db)]
+
+
+def _tenant_db(request: Request) -> Generator[Session, None, None]:
+    """Wrappt get_db() und reicht den Request für Tenant-Routing durch."""
+    yield from get_db(request)
+
+
+# Type Alias für DB Session Dependency — pro Request automatisch tenant-scoped.
+DBSession = Annotated[Session, Depends(_tenant_db)]
 
 settings = get_settings()
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token", auto_error=False) # URL is just for Swagger UI hint

@@ -66,7 +66,17 @@ class Settings(BaseSettings):
         "http://localhost:3000",
         "http://localhost:3002",
         "http://localhost:5173",
+        "https://sprouddesk.de",
+        "https://minga.sprouddesk.de",
+        "https://demo.sprouddesk.de",
     ]
+
+    # Multi-Tenant (siehe app/tenancy.py)
+    sprouddesk_root_domain: str = "sprouddesk.de"
+    tenants_dir: str = "./data/tenants"
+    default_tenant_slug: str = "dev"
+    default_tenants: str = ""            # komma-separierte Slugs die beim Boot auto-provisioniert werden
+    platform_admin_key: str = ""          # API-Key für /api/v1/platform/*
 
     class Config:
         env_file = ".env"
