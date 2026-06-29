@@ -8,6 +8,7 @@ der Env.
 from __future__ import annotations
 
 import os
+import secrets
 from datetime import datetime
 from typing import Optional
 
@@ -28,8 +29,17 @@ def _require_admin(x_platform_admin_key: Optional[str] = Header(default=None)) -
             status_code=503,
             detail="PLATFORM_ADMIN_KEY ist nicht konfiguriert — Platform-Admin deaktiviert.",
         )
-    if not x_platform_admin_key or x_platform_admin_key != expected:
+    # Constant-time-Vergleich gegen Timing-Attack
+    if not x_platform_admin_key or not secrets.compare_digest(x_platform_admin_key, expected):
         raise HTTPException(status_code=401, detail="Ungültiger Platform-Admin-Key")
+
+
+def _validated_slug(slug: str) -> str:
+    """Pfad-Traversal-Schutz: jede Slug-Quelle (URL-Param) muss durch is_valid_slug."""
+    slug = slug.lower().strip()
+    if not is_valid_slug(slug):
+        raise HTTPException(status_code=400, detail=f"Ungültiger Tenant-Slug: '{slug}'")
+    return slug
 
 
 @router.get("/tenants")
@@ -59,12 +69,7 @@ def create_tenant(
 ):
     """Provisioniert einen neuen Tenant: legt SQLite-Datei an, läuft create_all
     + auto-migrate, seedet Einheiten (optional)."""
-    slug = slug.lower().strip()
-    if not is_valid_slug(slug):
-        raise HTTPException(
-            status_code=400,
-            detail=f"Ungültiger Slug. Erlaubt: a-z, 0-9, '-', 2-32 Zeichen. Reserviert: {sorted(RESERVED_SUBDOMAINS)}",
-        )
+    slug = _validated_slug(slug)
     if registry.exists(slug):
         raise HTTPException(status_code=409, detail=f"Tenant '{slug}' existiert bereits")
 
@@ -79,6 +84,7 @@ def create_tenant(
 
 @router.get("/tenants/{slug}")
 def get_tenant(slug: str, _: None = Depends(_require_admin)):
+    slug = _validated_slug(slug)
     if not registry.exists(slug):
         raise HTTPException(status_code=404, detail=f"Tenant '{slug}' nicht gefunden")
     path = registry.path_for(slug)
@@ -94,6 +100,7 @@ def get_tenant(slug: str, _: None = Depends(_require_admin)):
 @router.delete("/tenants/{slug}", status_code=204)
 def delete_tenant(slug: str, _: None = Depends(_require_admin)):
     """DSGVO-konform: löscht die Tenant-DB-Datei vollständig."""
+    slug = _validated_slug(slug)
     if slug == DEFAULT_TENANT_SLUG:
         raise HTTPException(status_code=400, detail="Default-Tenant kann nicht gelöscht werden")
     if not registry.exists(slug):
