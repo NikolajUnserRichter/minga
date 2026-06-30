@@ -119,11 +119,22 @@
             <input id="newSlug" type="text" placeholder="z.B. hotel-mueller" oninput="previewUrl()" />
             <div class="muted" id="urlPreview" style="margin-top:.5rem"></div>
           </div>
+          <div class="field">
+            <label for="adminEmail">Admin-Email des Kunden (optional)</label>
+            <input id="adminEmail" type="text" placeholder="chef@kunde.de" />
+            <div class="muted" style="margin-top:.5rem">Legt direkt einen Login an (Rolle Admin). Leer = nur DB.</div>
+          </div>
           <button class="btn btn-bronze" id="createBtn" onclick="createTenant()">Mandant anlegen</button>
         </div>
         <div class="checkbox-row">
           <input type="checkbox" id="seedDefaults" checked />
           <label for="seedDefaults" style="margin:0">Standard-Einheiten (g, kg, Stk …) mit anlegen</label>
+        </div>
+        <!-- Credentials-Box nach erfolgreichem Anlegen -->
+        <div id="credBox" class="hidden" style="margin-top:1.25rem;background:var(--panel-2);border:1px solid rgba(192,129,79,.4);border-radius:.6rem;padding:1.1rem 1.25rem">
+          <div style="font-weight:700;color:var(--ink-0);margin-bottom:.6rem">✓ Zugangsdaten — jetzt notieren (Passwort wird nur einmal angezeigt!)</div>
+          <div id="credContent" style="font-family:ui-monospace,monospace;font-size:.85rem;color:var(--ink-1);line-height:1.8"></div>
+          <button class="btn btn-ghost" style="margin-top:.75rem;font-size:.8rem;padding:.4rem .8rem" onclick="copyCreds()">In Zwischenablage kopieren</button>
         </div>
       </div>
 
@@ -224,20 +235,38 @@
       document.getElementById('urlPreview').textContent = slug ? `→ https://${slug}.${ROOT_DOMAIN}` : '';
     }
 
+    let lastCreds = '';
     async function createTenant(){
       const raw = document.getElementById('newSlug').value.trim().toLowerCase().replace(/[^a-z0-9-]/g,'');
       if(!raw || raw.length < 2){ toast('Slug zu kurz (min. 2 Zeichen, a-z 0-9 -)','err'); return; }
       const seed = document.getElementById('seedDefaults').checked;
+      const adminEmail = document.getElementById('adminEmail').value.trim().toLowerCase();
       const btn = document.getElementById('createBtn');
       btn.disabled = true; btn.innerHTML = '<span class="spin"></span> Lege an…';
+      document.getElementById('credBox').classList.add('hidden');
       try {
-        const res = await fetch(`${API}/tenants?slug=${encodeURIComponent(raw)}&seed_defaults=${seed}`, {
-          method: 'POST', headers: headers()
-        });
+        const url = `${API}/tenants?slug=${encodeURIComponent(raw)}&seed_defaults=${seed}`;
+        // Sensible Felder im JSON-Body (nicht im Query-String → kein Logging).
+        const payload = adminEmail ? { admin_email: adminEmail } : {};
+        const res = await fetch(url, { method: 'POST', headers: headers(), body: JSON.stringify(payload) });
         const body = await res.json();
         if(res.ok){
-          toast(`Mandant „${raw}" angelegt → ${body.url}`, 'ok');
+          toast(`Mandant „${raw}" angelegt`, 'ok');
+          // Credentials anzeigen falls User mit angelegt
+          if(body.admin_user){
+            const u = body.admin_user;
+            lastCreds = `NovaERP Zugang\nURL: ${u.login_url}\nEmail: ${u.email}\nPasswort: ${u.password}${u.temporary ? '\n(temporär — beim ersten Login ändern)' : ''}`;
+            document.getElementById('credContent').innerHTML =
+              `URL: <a class="url" href="${u.login_url}" target="_blank">${u.login_url}</a><br>`+
+              `Email: <b style="color:var(--ink-0)">${u.email}</b><br>`+
+              `Passwort: <b style="color:var(--bronze-glow)">${u.password}</b>`+
+              (u.temporary ? '<br><span style="color:var(--ink-2)">temporär — beim ersten Login ändern</span>' : '');
+            document.getElementById('credBox').classList.remove('hidden');
+          } else if(body.user_warning){
+            toast(body.user_warning, 'err');
+          }
           document.getElementById('newSlug').value = '';
+          document.getElementById('adminEmail').value = '';
           previewUrl();
           await loadAll();
         } else {
@@ -245,6 +274,10 @@
         }
       } catch(e){ toast('Fehler: ' + e.message, 'err'); }
       finally { btn.disabled = false; btn.textContent = 'Mandant anlegen'; }
+    }
+
+    function copyCreds(){
+      navigator.clipboard.writeText(lastCreds).then(()=>toast('Zugangsdaten kopiert','ok'));
     }
 
     async function deleteTenant(slug){

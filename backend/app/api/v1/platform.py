@@ -13,6 +13,7 @@ from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException
+from pydantic import BaseModel
 
 from app.tenancy import (
     DEFAULT_TENANT_SLUG, RESERVED_SUBDOMAINS, ROOT_DOMAIN,
@@ -61,25 +62,65 @@ def list_tenants(_: None = Depends(_require_admin)):
     return {"tenants": tenants, "root_domain": ROOT_DOMAIN, "default": DEFAULT_TENANT_SLUG}
 
 
+class CreateTenantBody(BaseModel):
+    admin_email: Optional[str] = None
+    admin_password: Optional[str] = None
+
+
 @router.post("/tenants", status_code=201)
 def create_tenant(
     slug: str,
     seed_defaults: bool = True,
+    body: Optional[CreateTenantBody] = None,
     _: None = Depends(_require_admin),
 ):
-    """Provisioniert einen neuen Tenant: legt SQLite-Datei an, läuft create_all
-    + auto-migrate, seedet Einheiten (optional)."""
+    """Provisioniert einen neuen Tenant: DB anlegen + create_all + auto-migrate
+    + Einheiten-Seed. Wenn ``admin_email`` gesetzt ist, wird zusätzlich ein
+    Keycloak-Login-User (Rolle admin, tenant_slug=slug) angelegt — dann ist der
+    Kunde sofort einsatzbereit (Zero-Touch).
+
+    Sensible Felder (admin_email/admin_password) kommen ausschließlich aus dem
+    JSON-Body — nicht aus dem Query-String, damit sie nicht in Server-/Proxy-Logs
+    oder im Browser-Verlauf landen."""
+    admin_email = body.admin_email if body else None
+    admin_password = body.admin_password if body else None
     slug = _validated_slug(slug)
     if registry.exists(slug):
         raise HTTPException(status_code=409, detail=f"Tenant '{slug}' existiert bereits")
 
     path = provision_tenant(slug, seed_defaults=seed_defaults)
-    return {
+
+    result = {
         "slug": slug,
         "db_path": str(path),
         "url": f"https://{slug}.{ROOT_DOMAIN}",
         "status": "created",
     }
+
+    # Optional: Keycloak-Admin-User für den Tenant anlegen
+    if admin_email:
+        from app.services.keycloak_admin import create_tenant_user, is_configured, KeycloakAdminError
+        if not is_configured():
+            result["user_warning"] = "Keycloak-Admin nicht konfiguriert — User nicht angelegt. Bitte manuell in Keycloak."
+        else:
+            try:
+                user = create_tenant_user(
+                    email=admin_email.strip().lower(),
+                    tenant_slug=slug,
+                    role="admin",
+                    password=admin_password,
+                    temporary_password=bool(not admin_password),
+                )
+                result["admin_user"] = {
+                    "email": user["email"],
+                    "password": user["password"],
+                    "temporary": user["temporary"],
+                    "login_url": f"https://{slug}.{ROOT_DOMAIN}",
+                }
+            except KeycloakAdminError as e:
+                result["user_warning"] = f"Tenant angelegt, aber User-Anlage fehlgeschlagen: {e}"
+
+    return result
 
 
 @router.get("/tenants/{slug}")
