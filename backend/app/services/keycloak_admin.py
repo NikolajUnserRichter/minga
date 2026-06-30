@@ -12,6 +12,7 @@ Keycloak-Basis-URL: KEYCLOAK_URL
 from __future__ import annotations
 
 import os
+import re
 import secrets
 import string
 from typing import Optional
@@ -21,6 +22,19 @@ import httpx
 
 class KeycloakAdminError(Exception):
     pass
+
+
+# Defense-in-Depth: Slug-Validierung direkt in diesem Modul, damit URLs/Attribute
+# nie aus ungeprüftem Input gebaut werden (OAuth-Redirect-URI-Injection / Open-Redirect),
+# unabhängig davon ob der Caller bereits validiert hat.
+_SLUG_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$")
+
+
+def _require_safe_slug(slug: str) -> str:
+    slug = (slug or "").strip().lower()
+    if not _SLUG_RE.match(slug):
+        raise KeycloakAdminError(f"Ungültiger Tenant-Slug für Keycloak-Operation: {slug!r}")
+    return slug
 
 
 def _cfg() -> dict:
@@ -73,6 +87,7 @@ def create_tenant_user(
     Returns: {username, email, tenant_slug, role, password, temporary}
     Raises: KeycloakAdminError
     """
+    tenant_slug = _require_safe_slug(tenant_slug)
     c = _cfg()
     realm = c["realm"]
     pw = password or _gen_password()
@@ -151,12 +166,16 @@ def add_tenant_redirect_uri(slug: str, *, client_id: str = "novaerp-frontend") -
 
     Returns: True wenn etwas hinzugefügt wurde, False wenn schon vorhanden / nicht konfiguriert.
     """
+    slug = _require_safe_slug(slug)
     try:
         c = _cfg()
     except KeycloakAdminError:
         return False
     realm = c["realm"]
-    root = os.environ.get("SPROUDDESK_ROOT_DOMAIN", "novaerp.de")
+    # Root-Domain ebenfalls validieren (kommt aus Env, aber defensiv).
+    root = os.environ.get("SPROUDDESK_ROOT_DOMAIN", "novaerp.de").strip().lower()
+    if not re.match(r"^[a-z0-9.-]+$", root):
+        raise KeycloakAdminError(f"Ungültige ROOT_DOMAIN: {root!r}")
     redirect = f"https://{slug}.{root}/*"
     origin = f"https://{slug}.{root}"
 
