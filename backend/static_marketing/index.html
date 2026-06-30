@@ -104,6 +104,11 @@
       --sprout-light: #86CB3C;
       --sprout-haze:  rgba(95,191,46,0.14);
 
+      /* Tradesk Handel sub-brand (blue) */
+      --trade:        #3B82F6;
+      --trade-light:  #60A5FA;
+      --trade-haze:   rgba(59,130,246,0.14);
+
       /* Ink — warm neutrals, never pure white */
       --ink-0: #F6F1EA;
       --ink-1: #CDC5BB;
@@ -428,6 +433,25 @@
     .quote .who .mg { display: inline-flex; align-items: center; gap: 0.4rem; font-weight: 700; color: var(--sprout-light); }
     .draft-badge { position: absolute; top: 1rem; right: 1rem; font-family: var(--font-mono); font-size: 0.58rem; letter-spacing: 0.1em; text-transform: uppercase; color: #0c130c; background: var(--sprout-light); padding: 0.2rem 0.5rem; border-radius: 0.3rem; }
 
+    /* ——— Tradesk (Handel sub-brand, blue) ——— */
+    .trade-sec { background: linear-gradient(180deg, #0a0d12, var(--abyss)); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+    .trade-tag { font-family: var(--font-mono); font-size: 0.72rem; letter-spacing: 0.2em; text-transform: uppercase; color: var(--trade-light); display: inline-flex; align-items: center; gap: 0.5rem; margin-bottom: 1rem; }
+    .trade-tag::before { content:''; width: 6px; height: 6px; border-radius: 50%; background: var(--trade); box-shadow: 0 0 8px var(--trade-light); }
+    .trade-brand { display: inline-flex; align-items: center; gap: 0.6rem; margin-bottom: 1.1rem; }
+    .trade-brand .wm { font-weight: 800; font-size: 1.6rem; letter-spacing: -0.02em; }
+    .trade-brand .wm .a { color: #4F8FF0; } .trade-brand .wm .b { color: var(--trade-light); }
+    .trade-sec h2 { color: var(--ink-0); }
+    .trade-sec .card:hover { border-color: rgba(59,130,246,0.4); }
+    .trade-sec .card .ico { color: var(--trade-light); border-color: rgba(59,130,246,0.3); }
+    .trade-sec .card:hover .ico { box-shadow: 0 0 18px -2px var(--trade-haze); }
+    .pilot { margin-top: 2.2rem; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 1.2rem; background: var(--trench); border: 1px solid var(--line); border-left: 3px solid var(--trade); border-radius: var(--r-card); padding: 1.5rem 1.7rem; }
+    .pilot .txt { max-width: 640px; }
+    .pilot .txt b { color: var(--trade-light); }
+    .pilot h3 { margin: 0 0 0.35rem; color: var(--ink-0); font-size: 1.15rem; font-weight: 700; }
+    .pilot p { margin: 0; color: var(--ink-2); font-size: 0.95rem; }
+    .pilot .btn-trade { background: linear-gradient(100deg, #2563EB, #3B82F6 55%, #60A5FA); color: #04122e; font-weight: 700; flex: none; }
+    .pilot .btn-trade:hover { transform: translateY(-2px); box-shadow: 0 0 26px 0 rgba(96,165,250,0.3); }
+
     /* ——— Entrance ——— */
     @media (prefers-reduced-motion: no-preference) {
       [data-rise] { animation: rise 0.8s var(--ease) backwards; }
@@ -450,7 +474,7 @@
       </a>
       <nav class="nav" aria-label="Hauptnavigation">
         <a href="#features">Funktionen</a>
-        <a href="#farmen">Für Farmen</a>
+        <a href="#farmen">Branchen</a>
         <a href="#vergleich">Vergleich</a>
         <a href="#foerderung">Förderung</a>
         <a href="#preise">Preise</a>
@@ -464,7 +488,7 @@
     </div>
     <nav class="mobile-menu" aria-label="Mobile Navigation">
       <a href="#features">Funktionen</a>
-      <a href="#farmen">Für Farmen</a>
+      <a href="#farmen">Branchen</a>
       <a href="#vergleich">Vergleich</a>
       <a href="#foerderung">Förderung</a>
       <a href="#preise">Preise</a>
@@ -612,6 +636,52 @@
           <span class="who-txt"><b>Thomas Heller</b> · Geschäftsführer<br><span class="mg">🌱 MingaGreens GmbH</span> · München</span>
         </figcaption>
       </figure>
+    </div>
+  </section>
+
+  <!-- =================== TRADESK (Handel-Sub-Brand) =================== -->
+  <section id="handel" class="trade-sec">
+    <div class="container">
+      <div class="section-head" style="max-width:680px;">
+        <div class="trade-tag">Für Handel &amp; Distribution · Neu</div>
+        <div class="trade-brand">
+          <svg width="32" height="32" viewBox="0 0 48 48" fill="none" aria-hidden="true">
+            <path d="M7 19 H35" stroke="#60A5FA" stroke-width="3.2" stroke-linecap="round"/>
+            <path d="M29 12 L37 19 L29 26" stroke="#60A5FA" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M41 29 H13" stroke="#2563EB" stroke-width="3.2" stroke-linecap="round"/>
+            <path d="M19 36 L11 29 L19 22" stroke="#2563EB" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <span class="wm"><span class="a">Trade</span><span class="b">sk</span></span>
+        </div>
+        <h2>Speziell für den Handel: Sell smart. Run your trade.</h2>
+        <p>Die Branchen-Edition von NovaERP für Groß- und Einzelhandel: Einkauf, Lager, B2B-Vertrieb und Rechnung in einem System — mit Echtzeit-Beständen, individuellen Preislisten und automatischer Nachbestellung.</p>
+      </div>
+
+      <div class="grid-3">
+        <div class="card">
+          <div class="ico"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 18a2 2 0 1 0 4 0 2 2 0 0 0-4 0M15 18a2 2 0 1 0 4 0 2 2 0 0 0-4 0"/><path d="M5 17H3V5a1 1 0 0 1 1-1h10v13M14 9h4l3 3v5h-2M14 17h1"/></svg></div>
+          <h3>Einkauf &amp; Lieferanten</h3>
+          <p>Bestellungen, Wareneingang und Lieferanten-Konditionen an einem Ort — inkl. Eingangsbelege und Preis-Historie.</p>
+        </div>
+        <div class="card">
+          <div class="ico"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m7.5 4.27 9 5.15"/><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></svg></div>
+          <h3>Bestand &amp; Nachbestellung</h3>
+          <p>Echtzeit-Bestände über alle Standorte, automatische Meldebestände und Nachbestell-Vorschläge — nie wieder out of stock.</p>
+        </div>
+        <div class="card">
+          <div class="ico"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2v20l2-1 2 1 2-1 2 1 2-1 2 1 2-1 2 1V2l-2 1-2-1-2 1-2-1-2 1-2-1-2 1Z"/><path d="M8 7h8M8 11h8M8 15h5"/></svg></div>
+          <h3>B2B-Vertrieb &amp; Rechnung</h3>
+          <p>Individuelle Preislisten, Aufträge, Lieferscheine und Rechnungen in einem Durchlauf — mit DATEV-Export.</p>
+        </div>
+      </div>
+
+      <div class="pilot">
+        <div class="txt">
+          <h3>🚀 Tradesk ist gerade gestartet — wir suchen <b>3 Pilot-Händler</b>.</h3>
+          <p>Als Pilotbetrieb: vergünstigtes Onboarding, Mitsprache bei den Funktionen und direkter Draht zum Gründer.</p>
+        </div>
+        <a href="#kontakt" class="btn btn-lg btn-trade">Pilot-Platz anfragen <span class="arr">→</span></a>
+      </div>
     </div>
   </section>
 
