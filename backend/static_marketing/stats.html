@@ -1,0 +1,100 @@
+<!DOCTYPE html><html lang="de"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<meta name="robots" content="noindex"/>
+<title>NovaERP — Statistik</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='26' fill='none' stroke='%23F6F1EA' stroke-width='3'/%3E%3Cpath d='M32 7 L36 28 L57 32 L36 36 L32 57 L28 36 L7 32 L28 28 Z' fill='%23C0814F'/%3E%3C/svg%3E"/>
+<style>
+:root{--abyss:#0a0a0a;--trench:#131211;--reef:#1b1815;--ink-0:#F6F1EA;--ink-1:#CDC5BB;--ink-2:#9A9288;--ink-3:#6C655C;--bronze:#C0814F;--bronze-glow:#D8A06E;--line:rgba(246,241,234,.08)}
+*{box-sizing:border-box}body{margin:0;background:var(--abyss);color:var(--ink-1);font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;line-height:1.5}
+.wrap{max-width:920px;margin:0 auto;padding:2.5rem 1.5rem 5rem}
+h1{color:var(--ink-0);font-size:1.6rem;font-weight:800;letter-spacing:-.02em;margin:0 0 .3rem;display:flex;align-items:center;gap:.5rem}
+h1 .s{color:var(--bronze)}
+.sub{color:var(--ink-2);font-size:.9rem;margin:0 0 2rem;font-family:ui-monospace,Menlo,monospace}
+.gate{background:var(--trench);border:1px solid var(--line);border-radius:.8rem;padding:1.5rem;max-width:420px}
+.gate label{display:block;font-size:.8rem;color:var(--ink-2);margin-bottom:.4rem;font-weight:600}
+.gate input{width:100%;font:inherit;color:var(--ink-0);background:var(--reef);border:1px solid var(--line);border-radius:.5rem;padding:.65rem .8rem}
+.gate input:focus{outline:none;border-color:var(--bronze)}
+.gate button{margin-top:.9rem;width:100%;font:inherit;font-weight:700;color:#1c1206;background:linear-gradient(100deg,#9A6238,#C0814F 50%,#D8A06E);border:0;border-radius:.5rem;padding:.7rem;cursor:pointer}
+.err{color:#C75D5D;font-size:.85rem;margin-top:.6rem;min-height:1em}
+.cards{display:grid;gap:1rem;grid-template-columns:1fr 1fr;margin-bottom:1.5rem}
+@media(min-width:640px){.cards{grid-template-columns:repeat(4,1fr)}}
+.card{background:var(--trench);border:1px solid var(--line);border-radius:.8rem;padding:1.1rem 1.2rem}
+.card .k{font-family:ui-monospace,Menlo,monospace;font-size:.62rem;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3)}
+.card .v{font-size:1.9rem;font-weight:800;letter-spacing:-.02em;color:var(--ink-0);margin-top:.2rem}
+.card .v b{color:var(--bronze-glow)}
+.panel{background:var(--trench);border:1px solid var(--line);border-radius:.8rem;padding:1.2rem 1.3rem;margin-bottom:1.2rem}
+.panel h2{font-size:.95rem;color:var(--ink-0);margin:0 0 1rem}
+.bars{display:grid;gap:.45rem}
+.bar{display:grid;grid-template-columns:90px 1fr 48px;align-items:center;gap:.7rem;font-size:.82rem}
+.bar .d{color:var(--ink-2);font-family:ui-monospace,Menlo,monospace;font-size:.72rem}
+.bar .track{height:8px;background:var(--reef);border-radius:99px;overflow:hidden}
+.bar .fill{height:100%;background:linear-gradient(90deg,#9A6238,#D8A06E);border-radius:99px}
+.bar .n{text-align:right;color:var(--ink-0);font-weight:600}
+.row{display:flex;justify-content:space-between;padding:.45rem 0;border-bottom:1px solid var(--line);font-size:.88rem}
+.row:last-child{border:0}.row span:first-child{color:var(--ink-1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.row span:last-child{color:var(--bronze-glow);font-weight:600;margin-left:1rem}
+.grid2{display:grid;gap:1.2rem;grid-template-columns:1fr}@media(min-width:720px){.grid2{grid-template-columns:1fr 1fr}}
+.muted{color:var(--ink-3);font-size:.8rem}
+.bar-empty{color:var(--ink-3);font-size:.85rem}
+</style></head><body><div class="wrap">
+<h1>Nova<span class="s">ERP</span> · Statistik</h1>
+<p class="sub" id="range">cookielos · ohne Drittanbieter · self-hosted</p>
+
+<div id="gate" class="gate">
+  <label for="key">Platform-Admin-Key</label>
+  <input id="key" type="password" placeholder="PLATFORM_ADMIN_KEY" autocomplete="off"/>
+  <button id="go">Anzeigen</button>
+  <div class="err" id="err"></div>
+</div>
+
+<div id="dash" hidden>
+  <div class="cards">
+    <div class="card"><div class="k">Seitenaufrufe</div><div class="v"><b id="t-views">–</b></div></div>
+    <div class="card"><div class="k">Besucher</div><div class="v" id="t-vis">–</div></div>
+    <div class="card"><div class="k">Ø Aufrufe/Besucher</div><div class="v" id="t-ratio">–</div></div>
+    <div class="card"><div class="k">Zeitraum</div><div class="v" id="t-days" style="font-size:1.1rem">30 T</div></div>
+  </div>
+  <div class="panel">
+    <h2>Aufrufe pro Tag</h2>
+    <div class="bars" id="perday"></div>
+  </div>
+  <div class="grid2">
+    <div class="panel"><h2>Top-Seiten</h2><div id="paths"></div></div>
+    <div class="panel"><h2>Top-Referrer</h2><div id="refs"></div></div>
+  </div>
+  <p class="muted">Hinweis: Es werden keine Cookies gesetzt und keine IP-Adressen gespeichert. Besuche werden über einen täglich wechselnden Hash unterschieden.</p>
+</div>
+
+<script>
+(function(){
+  var gate=document.getElementById('gate'),dash=document.getElementById('dash'),err=document.getElementById('err');
+  var keyInput=document.getElementById('key');
+  function esc(s){var d=document.createElement('div');d.textContent=s;return d.innerHTML;}
+  function load(key){
+    err.textContent='Lädt …';
+    fetch('/api/stats?days=30',{headers:{'X-Platform-Admin-Key':key}})
+      .then(function(r){ if(!r.ok) throw new Error(r.status===401?'Ungültiger Key':('Fehler '+r.status)); return r.json(); })
+      .then(function(d){
+        sessionStorage.setItem('nk',key);
+        gate.hidden=true; dash.hidden=false; err.textContent='';
+        document.getElementById('range').textContent='Seit '+d.since+' · cookielos · self-hosted';
+        var tv=d.totals.views, tu=d.totals.visitors;
+        document.getElementById('t-views').textContent=tv.toLocaleString('de-DE');
+        document.getElementById('t-vis').textContent=tu.toLocaleString('de-DE');
+        document.getElementById('t-ratio').textContent=tu?(tv/tu).toFixed(1):'–';
+        var max=Math.max(1,Math.max.apply(null,d.per_day.map(function(x){return x.views;})||[1]));
+        var pd=document.getElementById('perday');
+        pd.innerHTML = d.per_day.length? d.per_day.map(function(x){
+          return '<div class="bar"><span class="d">'+x.day.slice(5)+'</span><span class="track"><span class="fill" style="width:'+(x.views/max*100)+'%"></span></span><span class="n">'+x.views+'</span></div>';
+        }).join('') : '<div class="bar-empty">Noch keine Daten — sobald Besucher kommen, erscheinen sie hier.</div>';
+        function rows(arr,label){ return arr.length? arr.map(function(x){return '<div class="row"><span>'+esc(x[label]||'(direkt)')+'</span><span>'+x.views+'</span></div>';}).join('') : '<div class="bar-empty">—</div>'; }
+        document.getElementById('paths').innerHTML=rows(d.top_paths,'path');
+        document.getElementById('refs').innerHTML=rows(d.top_referrers,'ref');
+      })
+      .catch(function(e){ gate.hidden=false; dash.hidden=true; err.textContent=e.message; });
+  }
+  document.getElementById('go').addEventListener('click',function(){ if(keyInput.value) load(keyInput.value); });
+  keyInput.addEventListener('keydown',function(e){ if(e.key==='Enter'&&keyInput.value) load(keyInput.value); });
+  var saved=sessionStorage.getItem('nk'); if(saved){ keyInput.value=saved; load(saved); }
+})();
+</script>
+</div></body></html>

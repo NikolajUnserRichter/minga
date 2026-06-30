@@ -732,6 +732,53 @@ async def contact_submit(request: Request, payload: _ContactIn):
     return {"ok": True}
 
 
+# === Cookielose First-Party-Reichweitenmessung ==========================
+from fastapi import Header as _Header
+from urllib.parse import urlparse as _urlparse
+from app.core import webstats as _webstats
+
+
+class _TrackIn(_BaseModel):
+    p: str = "/"   # Pfad
+    r: str = ""    # Referrer (volle URL, wird serverseitig auf Host reduziert)
+
+
+@app.post("/api/track", tags=["System"])
+@limiter.limit("600/hour")
+async def track(request: Request, payload: _TrackIn):
+    """Nimmt einen Seitenaufruf-Beacon entgegen. Kein Cookie, keine IP-Speicherung."""
+    try:
+        ip = (request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+              or (request.client.host if request.client else ""))
+        ua = request.headers.get("user-agent", "")
+        host = ""
+        if payload.r:
+            host = (_urlparse(payload.r).netloc or "").lower()
+            if host.endswith(_root_domain()):
+                host = ""  # eigene Domain ist kein Referrer
+        _webstats.record(payload.p, host, ip, ua)
+    except Exception as e:  # noqa: BLE001
+        logger.error("[track] %s", e)
+    return {"ok": True}
+
+
+@app.get("/api/stats", tags=["System"])
+async def stats_view(request: Request, days: int = 30,
+                     x_platform_admin_key: Optional[str] = _Header(default=None)):
+    """Aggregierte Statistik. Geschützt durch denselben PLATFORM_ADMIN_KEY."""
+    expected = os.environ.get("PLATFORM_ADMIN_KEY", "").strip()
+    if not expected:
+        return JSONResponse(status_code=503, content={"detail": "PLATFORM_ADMIN_KEY nicht gesetzt"})
+    key = x_platform_admin_key or request.query_params.get("key", "")
+    if not key or not secrets.compare_digest(key, expected):
+        return JSONResponse(status_code=401, content={"detail": "Ungültiger Key"})
+    try:
+        days = max(1, min(int(days), 365))
+    except (TypeError, ValueError):
+        days = 30
+    return _webstats.stats(days)
+
+
 @app.get("/{full_path:path}")
 async def spa_fallback(full_path: str, request: Request):
     """Serve SPA/marketing index — apex zeigt Marketing-Seite, Subdomains die App."""

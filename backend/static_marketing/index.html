@@ -7,13 +7,20 @@
   <meta name="description" content="NovaERP ist die moderne ERP-Plattform für KMU und Start-ups: Produktion, Lager, Vertrieb, Buchhaltung und KI-Forecasting in einem System. Hosting in Deutschland, DSGVO-konform, in 5 Minuten startklar." />
   <meta name="theme-color" content="#0a0a0a" />
 
-  <!-- Analytics (privacy-first, DSGVO-freundlich, ohne Cookie-Banner). Aktivieren:
-       1) Umami via Coolify (One-Click) selbst hosten, z. B. unter stats.novaerp.de
-       2) Diese Zeile einkommentieren und data-website-id einsetzen:
-  <script defer src="https://stats.novaerp.de/script.js" data-website-id="DEINE-WEBSITE-ID"></script>
-       Alternativ Plausible (self-hosted):
-  <script defer data-domain="novaerp.de" src="https://stats.novaerp.de/js/script.js"></script>
-  -->
+  <!-- First-Party-Reichweitenmessung: cookielos, ohne Drittanbieter, DSGVO-freundlich.
+       Beacon an die eigene API (/api/track). Auswertung unter /stats.html. -->
+  <script>
+    (function () {
+      try {
+        var d = JSON.stringify({ p: location.pathname, r: document.referrer });
+        if (navigator.sendBeacon) {
+          navigator.sendBeacon('/api/track', new Blob([d], { type: 'application/json' }));
+        } else {
+          fetch('/api/track', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: d, keepalive: true });
+        }
+      } catch (e) {}
+    })();
+  </script>
 
   <link rel="canonical" href="https://novaerp.de/" />
 
