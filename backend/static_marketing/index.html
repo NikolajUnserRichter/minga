@@ -34,7 +34,7 @@
         "@id": "https://novaerp.de/#org",
         "name": "NovaERP",
         "url": "https://novaerp.de/",
-        "email": "hello@novaerp.de",
+        "email": "info@novaerp.de",
         "slogan": "Das ERP, das mit deinem Start-up mitwächst.",
         "address": { "@type": "PostalAddress", "addressLocality": "Karlsruhe", "addressCountry": "DE" }
       },
@@ -82,6 +82,11 @@
       --bronze-glow:  #D8A06E;
       --bronze-bloom: #E8C39A;
       --bronze-haze:  rgba(192,129,79,0.16);
+
+      /* Sprouddesk farming sub-brand (green) */
+      --sprout:       #4FB02A;
+      --sprout-light: #86CB3C;
+      --sprout-haze:  rgba(95,191,46,0.14);
 
       /* Ink — warm neutrals, never pure white */
       --ink-0: #F6F1EA;
@@ -359,6 +364,32 @@
     footer .desc { max-width: 320px; font-size: 0.85rem; line-height: 1.6; margin: 0.6rem 0 0; }
     footer .copy { border-top: 1px solid var(--line); padding-top: 1.5rem; display: flex; flex-wrap: wrap; justify-content: space-between; gap: 1rem; font-size: 0.8rem; color: var(--ink-3); }
 
+    /* ——— Sprouddesk (farming sub-brand) ——— */
+    .sprout-sec { background: linear-gradient(180deg, #0c110c, var(--abyss)); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+    .sprout-tag { font-family: var(--font-mono); font-size: 0.72rem; letter-spacing: 0.2em; text-transform: uppercase; color: var(--sprout-light); display: inline-flex; align-items: center; gap: 0.5rem; margin-bottom: 1rem; }
+    .sprout-tag::before { content:''; width: 6px; height: 6px; border-radius: 50%; background: var(--sprout); box-shadow: 0 0 8px var(--sprout-light); }
+    .sprout-brand { display: inline-flex; align-items: center; gap: 0.6rem; margin-bottom: 1.1rem; }
+    .sprout-brand .wm { font-weight: 800; font-size: 1.6rem; letter-spacing: -0.02em; }
+    .sprout-brand .wm .a { color: #1F7A3D; } .sprout-brand .wm .a { color: #2E9A4B; } .sprout-brand .wm .b { color: var(--sprout-light); }
+    .sprout-sec h2 { color: var(--ink-0); }
+    .shots { display: grid; gap: 1rem; grid-template-columns: 1fr; margin-top: 0.5rem; }
+    @media (min-width: 760px) { .shots { grid-template-columns: repeat(3, 1fr); } }
+    .shot { border: 1px solid var(--line); border-radius: 0.8rem; overflow: hidden; background: var(--trench); transition: border-color 0.25s var(--ease), transform 0.25s var(--ease); }
+    .shot:hover { border-color: rgba(95,191,46,0.4); transform: translateY(-3px); }
+    .shot .bar { display: flex; gap: 0.4rem; align-items: center; padding: 0.6rem 0.8rem; border-bottom: 1px solid var(--line); background: var(--reef); }
+    .shot .bar i { width: 9px; height: 9px; border-radius: 50%; background: var(--ink-3); }
+    .shot .frame { aspect-ratio: 16/10; display: flex; align-items: center; justify-content: center; color: var(--ink-3); font-family: var(--font-mono); font-size: 0.68rem; letter-spacing: 0.14em; background: radial-gradient(ellipse at 50% 0%, var(--sprout-haze), transparent 70%), repeating-linear-gradient(45deg, rgba(255,255,255,0.015) 0 10px, transparent 10px 20px); }
+    .shot img { display: block; width: 100%; height: auto; }
+    .shot .cap { padding: 0.7rem 0.9rem; font-size: 0.84rem; color: var(--ink-2); border-top: 1px solid var(--line); }
+    .quote { margin-top: 2.5rem; background: var(--trench); border: 1px solid var(--line); border-left: 3px solid var(--sprout); border-radius: var(--r-card); padding: 1.9rem; position: relative; }
+    .quote p.q { font-size: 1.18rem; line-height: 1.55; color: var(--ink-0); font-weight: 500; margin: 0.4rem 0 0; }
+    .quote .who { margin-top: 1.2rem; display: flex; align-items: center; gap: 0.6rem; color: var(--ink-2); font-size: 0.9rem; flex-wrap: wrap; }
+    .quote .who b { color: var(--ink-0); }
+    .quote .who .avatar { width: 54px; height: 54px; border-radius: 50%; object-fit: cover; border: 2px solid var(--sprout); flex: none; }
+    .quote .who .who-txt { line-height: 1.45; }
+    .quote .who .mg { display: inline-flex; align-items: center; gap: 0.4rem; font-weight: 700; color: var(--sprout-light); }
+    .draft-badge { position: absolute; top: 1rem; right: 1rem; font-family: var(--font-mono); font-size: 0.58rem; letter-spacing: 0.1em; text-transform: uppercase; color: #0c130c; background: var(--sprout-light); padding: 0.2rem 0.5rem; border-radius: 0.3rem; }
+
     /* ——— Entrance ——— */
     @media (prefers-reduced-motion: no-preference) {
       [data-rise] { animation: rise 0.8s var(--ease) backwards; }
@@ -381,6 +412,7 @@
       </a>
       <nav class="nav" aria-label="Hauptnavigation">
         <a href="#features">Funktionen</a>
+        <a href="#farmen">Für Farmen</a>
         <a href="#vergleich">Vergleich</a>
         <a href="#foerderung">Förderung</a>
         <a href="#preise">Preise</a>
@@ -394,6 +426,7 @@
     </div>
     <nav class="mobile-menu" aria-label="Mobile Navigation">
       <a href="#features">Funktionen</a>
+      <a href="#farmen">Für Farmen</a>
       <a href="#vergleich">Vergleich</a>
       <a href="#foerderung">Förderung</a>
       <a href="#preise">Preise</a>
@@ -494,6 +527,53 @@
           <p>Interaktive Auswertungen zu Mengenentwicklung, Artikelaufteilung und Wirtschaftlichkeit.</p>
         </div>
       </div>
+    </div>
+  </section>
+
+  <!-- =================== SPROUDDESK (Farming-Sub-Brand) =================== -->
+  <section id="farmen" class="sprout-sec">
+    <div class="container">
+      <div class="section-head" style="max-width:680px;">
+        <div class="sprout-tag">Für Farmen &amp; Manufakturen</div>
+        <div class="sprout-brand">
+          <svg width="34" height="34" viewBox="0 0 48 48" fill="none" aria-hidden="true">
+            <path d="M24 43 V25" stroke="#1F7A3D" stroke-width="3" stroke-linecap="round"/>
+            <path d="M23 27 C23 17 13.5 12.5 7 12.5 C7 22.5 15 28.5 23 26.5 Z" fill="#3FA52A"/>
+            <path d="M25 25 C25 14.5 35 9.5 42 9.5 C42 19.5 32.5 26.5 25 24.5 Z" fill="#86CB3C"/>
+          </svg>
+          <span class="wm"><span class="a">Sproud</span><span class="b">desk</span></span>
+        </div>
+        <h2>Speziell für Farmen: Grow smart. Run your farm.</h2>
+        <p>Die Branchen-Edition von NovaERP für Microgreens, Direktvermarkter und Lebensmittel-Manufakturen — vom Saatgut über die Charge bis zur Rechnung. Genau das System, mit dem MingaGreens täglich produziert.</p>
+      </div>
+
+      <div class="shots">
+        <div class="shot">
+          <div class="bar"><i></i><i></i><i></i></div>
+          <img src="/shot-produktion.jpg" width="800" height="500" alt="NovaERP-Produktion: Saatgutsorten und Wachstumschargen" loading="lazy" />
+          <div class="cap">Produktion &amp; Wachstumschargen</div>
+        </div>
+        <div class="shot">
+          <div class="bar"><i></i><i></i><i></i></div>
+          <img src="/shot-lager.jpg" width="800" height="500" alt="NovaERP-Lagerverwaltung: Bestände, Chargen und Lagerorte" loading="lazy" />
+          <div class="cap">Echtzeit-Lager &amp; Chargen</div>
+        </div>
+        <div class="shot">
+          <div class="bar"><i></i><i></i><i></i></div>
+          <img src="/shot-dashboard.jpg" width="800" height="500" alt="NovaERP-Dashboard: erntereife Chargen und Tagesübersicht" loading="lazy" />
+          <div class="cap">Dashboard &amp; erntereife Chargen</div>
+        </div>
+      </div>
+
+      <figure class="quote">
+        <blockquote style="margin:0; border:0; padding:0;">
+          <p class="q">„Seit wir mit Sprouddesk arbeiten, läuft unsere komplette Produktion — von der Samencharge bis zur Rechnung — in einem System. Die Chargen-Rückverfolgung und die automatische Tagesplanung sparen uns jede Woche Stunden Excel-Arbeit."</p>
+        </blockquote>
+        <figcaption class="who">
+          <img class="avatar" src="/thomas-heller.jpg" width="54" height="54" alt="Thomas Heller, MingaGreens GmbH" loading="lazy" />
+          <span class="who-txt"><b>Thomas Heller</b> · Geschäftsführer<br><span class="mg">🌱 MingaGreens GmbH</span> · München</span>
+        </figcaption>
+      </figure>
     </div>
   </section>
 
@@ -692,7 +772,7 @@
           <div class="eyebrow">Kontakt</div>
           <h2>Lass uns reden.</h2>
           <p class="lead">Eine kurze E-Mail reicht. Wir melden uns binnen 24&thinsp;h zurück und richten dir einen kostenfreien Demo-Workspace ein.</p>
-          <a href="mailto:hello@novaerp.de" class="mail-pill">✉ hello@novaerp.de</a>
+          <a href="mailto:info@novaerp.de" class="mail-pill">✉ info@novaerp.de</a>
         </div>
         <div class="kontakt-card">
           <h3>Was du wissen solltest</h3>
@@ -720,7 +800,7 @@
         </div>
         <div><h4>Produkt</h4><ul><li><a href="#features">Funktionen</a></li><li><a href="#vergleich">Vergleich</a></li><li><a href="#foerderung">Förderung</a></li><li><a href="#preise">Preise</a></li><li><a href="https://demo.novaerp.de">Demo</a></li></ul></div>
         <div><h4>Rechtliches</h4><ul><li><a href="/impressum.html">Impressum</a></li><li><a href="/datenschutz.html">Datenschutz</a></li><li><a href="/agb.html">AGB</a></li></ul></div>
-        <div><h4>Kontakt</h4><ul><li><a href="mailto:hello@novaerp.de">hello@novaerp.de</a></li></ul></div>
+        <div><h4>Kontakt</h4><ul><li><a href="mailto:info@novaerp.de">info@novaerp.de</a></li></ul></div>
       </div>
       <div class="copy">
         <p>© 2026 NovaERP. Alle Rechte vorbehalten.</p>
