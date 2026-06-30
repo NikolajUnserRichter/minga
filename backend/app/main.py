@@ -315,8 +315,44 @@ _READONLY_PATH_ALLOWLIST = {
 }
 
 
+def _jwt_readonly_blocked(request: Request) -> Optional[JSONResponse]:
+    """Prüft Keycloak-Bearer-Token auf 'readonly'-Rolle und blockt Schreibmethoden.
+
+    Läuft UNABHÄNGIG von basic_auth_enabled, damit die Demo-Read-Only-Sperre auch
+    im reinen Keycloak-Betrieb greift. Gibt eine 403-Response zurück wenn geblockt,
+    sonst None.
+    """
+    if settings.auth_disabled:
+        return None
+    auth_hdr = request.headers.get("Authorization", "")
+    if not auth_hdr.startswith("Bearer "):
+        return None
+    if request.method not in _WRITE_METHODS or request.url.path in _READONLY_PATH_ALLOWLIST:
+        return None
+    token = auth_hdr.split(" ", 1)[1].strip()
+    try:
+        payload = verify_token(token)
+    except Exception:
+        return None  # ungültiges Token → andere Schichten lehnen ab (401)
+    roles = payload.get("realm_access", {}).get("roles", [])
+    write_roles = {"admin", "sales", "production_planner", "production_staff", "accounting"}
+    if "readonly" in roles and not (write_roles & set(roles)):
+        return JSONResponse(
+            status_code=403,
+            content={"detail": "Demo-Account hat nur Leserechte. Bitte als Vollnutzer einloggen, um Änderungen zu speichern."},
+        )
+    return None
+
+
 @app.middleware("http")
 async def basic_auth_middleware(request: Request, call_next):
+    # READONLY-Enforcement für Keycloak-Tokens läuft IMMER (auch wenn Basic-Auth
+    # aus ist — reiner Keycloak-Betrieb).
+    if not _is_apex_request(request) and not _is_admin_request(request) and not request.url.path.startswith("/health"):
+        ro = _jwt_readonly_blocked(request)
+        if ro is not None:
+            return ro
+
     if not settings.basic_auth_enabled:
         return await call_next(request)
 
@@ -330,29 +366,12 @@ async def basic_auth_middleware(request: Request, call_next):
         return await call_next(request)
 
     # Bearer-Token (Keycloak-JWT) darf das Basic-Auth-Gate NUR überspringen,
-    # wenn das Token kryptographisch gültig ist. Sonst würde ein gefälschter
-    # "Authorization: Bearer x"-Header das Gate aushebeln.
-    # Im auth_disabled-Modus (Demo) liefert verify_token einen Dummy-Admin für
-    # JEDES Token — dort ist Basic-Auth die einzige Schutzschicht, deshalb wird
-    # ein Bearer-Header in diesem Modus ignoriert und das Gate erzwungen.
+    # wenn das Token kryptographisch gültig ist (readonly schon oben geprüft).
     auth_hdr = request.headers.get("Authorization", "")
     if not settings.auth_disabled and auth_hdr.startswith("Bearer "):
         token = auth_hdr.split(" ", 1)[1].strip()
         try:
-            payload = verify_token(token)
-            # READONLY via Keycloak-Rolle: Schreibmethoden blocken (Demo-User)
-            roles = payload.get("realm_access", {}).get("roles", [])
-            write_roles = {"admin", "sales", "production_planner", "production_staff", "accounting"}
-            is_readonly = "readonly" in roles and not (write_roles & set(roles))
-            if (
-                is_readonly
-                and request.method in _WRITE_METHODS
-                and request.url.path not in _READONLY_PATH_ALLOWLIST
-            ):
-                return JSONResponse(
-                    status_code=403,
-                    content={"detail": "Demo-Account hat nur Leserechte. Bitte als Vollnutzer einloggen, um Änderungen zu speichern."},
-                )
+            verify_token(token)
             return await call_next(request)
         except Exception:
             pass  # ungültiges Token → unten auf Basic-Auth zurückfallen (401)
@@ -641,6 +660,76 @@ def _safe_static_file(base: Path, rel_path: str) -> Optional[Path]:
     if not candidate.is_file():
         return None
     return candidate
+
+
+# === Kontakt-Formular (Marketing-Seite, apex, ohne Auth) =================
+import re as _re
+import html as _htmllib
+from pydantic import BaseModel as _BaseModel
+from app.core.email import email_service as _email_service
+
+_CONTACT_EMAIL_RE = _re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+class _ContactIn(_BaseModel):
+    name: str = ""
+    betrieb: str = ""
+    email: str = ""
+    message: str = ""
+    website: str = ""  # Honeypot — von Bots ausgefüllt, von Menschen nicht
+
+
+@app.post("/api/contact", tags=["System"])
+@limiter.limit("5/hour")
+async def contact_submit(request: Request, payload: _ContactIn):
+    """Nimmt Anfragen vom Marketing-Kontaktformular entgegen und mailt sie an
+    CONTACT_EMAIL. Kein Auth (apex). Spam-Schutz: Honeypot + Rate-Limit."""
+    # Honeypot: Bots füllen das versteckte Feld → still "ok", nichts weiter tun.
+    if payload.website.strip():
+        return {"ok": True}
+
+    name = payload.name.strip()[:120]
+    email = payload.email.strip()[:160]
+    betrieb = payload.betrieb.strip()[:160]
+    message = payload.message.strip()[:2000]
+
+    if not name or not _CONTACT_EMAIL_RE.match(email):
+        return JSONResponse(
+            status_code=422,
+            content={"ok": False, "detail": "Bitte Namen und eine gültige E-Mail angeben."},
+        )
+
+    # Lead IMMER loggen — so geht keine Anfrage verloren, auch wenn SMTP fehlt.
+    logger.warning("[contact] name=%r betrieb=%r email=%r message=%r", name, betrieb, email, message)
+
+    def _esc(s: str) -> str:
+        return _htmllib.escape(s, quote=False)
+
+    recipient = os.environ.get("CONTACT_EMAIL", "info@novaerp.de")
+    subject_name = _re.sub(r"[\r\n]+", " ", name)[:80]
+    html_body = (
+        "<h3>Neue Anfrage über novaerp.de</h3>"
+        "<p><b>Name:</b> {{ name }}<br>"
+        "<b>Betrieb:</b> {{ betrieb }}<br>"
+        "<b>E-Mail:</b> {{ email }}</p>"
+        "<p><b>Nachricht:</b><br>{{ message }}</p>"
+    )
+    try:
+        _email_service.send_email(
+            email_to=recipient,
+            subject=f"Neue Anfrage von {subject_name}",
+            template_str=html_body,
+            template_data={
+                "name": _esc(name),
+                "betrieb": _esc(betrieb) or "—",
+                "email": _esc(email),
+                "message": _esc(message).replace("\n", "<br>") or "—",
+            },
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.error("[contact] E-Mail-Versand fehlgeschlagen: %s", e)
+
+    return {"ok": True}
 
 
 @app.get("/{full_path:path}")
