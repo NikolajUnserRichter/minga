@@ -154,6 +154,8 @@
 
     function key(){ return sessionStorage.getItem('novaerp_admin_key') || ''; }
     function headers(){ return { 'X-Platform-Admin-Key': key(), 'Content-Type':'application/json' }; }
+    // HTML-Escaping gegen XSS, wenn API-Antworten (z.B. E-Mail) per innerHTML gerendert werden.
+    function esc(s){ return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
     function toast(msg, kind){
       const t = document.getElementById('toast');
@@ -204,8 +206,8 @@
       document.getElementById('stats').innerHTML = `
         <div class="stat"><div class="num">${info.tenants_count ?? '–'}</div><div class="lbl">Mandanten</div></div>
         <div class="stat"><div class="num">${(info.total_size_mb ?? 0).toFixed(1)} MB</div><div class="lbl">Gesamt-Daten</div></div>
-        <div class="stat"><div class="num">${info.default_tenant ?? '–'}</div><div class="lbl">Default-Mandant</div></div>
-        <div class="stat"><div class="num">🇩🇪</div><div class="lbl">${info.root_domain ?? ''}</div></div>
+        <div class="stat"><div class="num">${esc(info.default_tenant ?? '–')}</div><div class="lbl">Default-Mandant</div></div>
+        <div class="stat"><div class="num">🇩🇪</div><div class="lbl">${esc(info.root_domain ?? '')}</div></div>
       `;
     }
 
@@ -218,8 +220,8 @@
           <tbody>
             ${tenants.map(t => `
               <tr>
-                <td class="slug">${t.slug}</td>
-                <td><a class="url" href="${t.url}" target="_blank">${t.url.replace('https://','')}</a></td>
+                <td class="slug">${esc(t.slug)}</td>
+                <td><a class="url" href="${esc(t.url)}" target="_blank">${esc(t.url.replace('https://',''))}</a></td>
                 <td>${(t.size_mb ?? 0).toFixed(2)} MB</td>
                 <td class="muted">${t.last_modified ? new Date(t.last_modified).toLocaleString('de-DE') : '–'}</td>
                 <td style="text-align:right">
@@ -257,9 +259,9 @@
             const u = body.admin_user;
             lastCreds = `NovaERP Zugang\nURL: ${u.login_url}\nEmail: ${u.email}\nPasswort: ${u.password}${u.temporary ? '\n(temporär — beim ersten Login ändern)' : ''}`;
             document.getElementById('credContent').innerHTML =
-              `URL: <a class="url" href="${u.login_url}" target="_blank">${u.login_url}</a><br>`+
-              `Email: <b style="color:var(--ink-0)">${u.email}</b><br>`+
-              `Passwort: <b style="color:var(--bronze-glow)">${u.password}</b>`+
+              `URL: <a class="url" href="${esc(u.login_url)}" target="_blank">${esc(u.login_url)}</a><br>`+
+              `Email: <b style="color:var(--ink-0)">${esc(u.email)}</b><br>`+
+              `Passwort: <b style="color:var(--bronze-glow)">${esc(u.password)}</b>`+
               (u.temporary ? '<br><span style="color:var(--ink-2)">temporär — beim ersten Login ändern</span>' : '');
             document.getElementById('credBox').classList.remove('hidden');
           } else if(body.user_warning){
