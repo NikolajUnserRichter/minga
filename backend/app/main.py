@@ -339,7 +339,20 @@ async def basic_auth_middleware(request: Request, call_next):
     if not settings.auth_disabled and auth_hdr.startswith("Bearer "):
         token = auth_hdr.split(" ", 1)[1].strip()
         try:
-            verify_token(token)
+            payload = verify_token(token)
+            # READONLY via Keycloak-Rolle: Schreibmethoden blocken (Demo-User)
+            roles = payload.get("realm_access", {}).get("roles", [])
+            write_roles = {"admin", "sales", "production_planner", "production_staff", "accounting"}
+            is_readonly = "readonly" in roles and not (write_roles & set(roles))
+            if (
+                is_readonly
+                and request.method in _WRITE_METHODS
+                and request.url.path not in _READONLY_PATH_ALLOWLIST
+            ):
+                return JSONResponse(
+                    status_code=403,
+                    content={"detail": "Demo-Account hat nur Leserechte. Bitte als Vollnutzer einloggen, um Änderungen zu speichern."},
+                )
             return await call_next(request)
         except Exception:
             pass  # ungültiges Token → unten auf Basic-Auth zurückfallen (401)
