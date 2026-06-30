@@ -769,7 +769,9 @@ async def stats_view(request: Request, days: int = 30,
     expected = os.environ.get("PLATFORM_ADMIN_KEY", "").strip()
     if not expected:
         return JSONResponse(status_code=503, content={"detail": "PLATFORM_ADMIN_KEY nicht gesetzt"})
-    key = x_platform_admin_key or request.query_params.get("key", "")
+    # Key NUR aus dem Header — kein Query-Param-Fallback (Secrets würden sonst
+    # in Server-/Proxy-Logs, Browser-Verlauf und Referer landen).
+    key = x_platform_admin_key or ""
     if not key or not secrets.compare_digest(key, expected):
         return JSONResponse(status_code=401, content={"detail": "Ungültiger Key"})
     try:
