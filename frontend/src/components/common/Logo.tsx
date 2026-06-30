@@ -39,11 +39,11 @@ function NovaMark({ size, className }: { size: number; className?: string }) {
       className={className}
       aria-label="NovaERP"
     >
-      {/* Outer ring */}
-      <circle cx="32" cy="32" r="28" fill="none" stroke="currentColor" strokeWidth="3" />
-      {/* Four-point sparkle (Nova-Stern) */}
+      {/* Dünner Ring — passt sich dem Theme an (currentColor) */}
+      <circle cx="32" cy="32" r="26" fill="none" stroke="currentColor" strokeWidth="2.5" opacity="0.85" />
+      {/* Eleganter, schlanker 4-Zack-Kompass-Stern (Kupfer) — wie im echten NOVA-Logo */}
       <path
-        d="M 32 12 L 35 29 L 52 32 L 35 35 L 32 52 L 29 35 L 12 32 L 29 29 Z"
+        d="M 32 7 L 35.5 28.5 L 57 32 L 35.5 35.5 L 32 57 L 28.5 35.5 L 7 32 L 28.5 28.5 Z"
         fill={COPPER}
       />
     </svg>

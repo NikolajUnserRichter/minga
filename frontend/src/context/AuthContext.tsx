@@ -63,8 +63,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                     <div className="text-gray-900 dark:text-white mx-auto mb-4 inline-flex">
                       {/* Inline NovaERP-Logo */}
                       <svg viewBox="0 0 64 64" width="64" height="64" xmlns="http://www.w3.org/2000/svg">
-                        <circle cx="32" cy="32" r="28" fill="none" stroke="currentColor" strokeWidth="3" />
-                        <path d="M 32 12 L 35 29 L 52 32 L 35 35 L 32 52 L 29 35 L 12 32 L 29 29 Z" fill="#C57A3B" />
+                        <circle cx="32" cy="32" r="26" fill="none" stroke="currentColor" strokeWidth="2.5" opacity="0.85" />
+                        <path d="M 32 7 L 35.5 28.5 L 57 32 L 35.5 35.5 L 32 57 L 28.5 35.5 L 7 32 L 28.5 28.5 Z" fill="#C57A3B" />
                       </svg>
                     </div>
                     <div className="text-2xl font-bold tracking-tight mb-2"><span className="text-gray-900 dark:text-white">Nova</span><span className="text-amber-600">ERP</span></div>
