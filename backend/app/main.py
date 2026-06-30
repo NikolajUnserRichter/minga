@@ -34,6 +34,21 @@ from app.core.security import verify_token
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
+# Sentry — Error-Tracking. Inert ohne SENTRY_DSN-Env (kein Overhead, kein Fehler).
+_sentry_dsn = os.environ.get("SENTRY_DSN", "").strip()
+if _sentry_dsn:
+    try:
+        import sentry_sdk
+        sentry_sdk.init(
+            dsn=_sentry_dsn,
+            environment=os.environ.get("SENTRY_ENV", "production"),
+            traces_sample_rate=float(os.environ.get("SENTRY_TRACES_RATE", "0.0")),
+            send_default_pii=False,
+        )
+        logger.info("[sentry] Error-Tracking aktiv")
+    except Exception as e:
+        logger.warning(f"[sentry] init fehlgeschlagen: {e}")
+
 # Rate limiter
 limiter = Limiter(key_func=get_remote_address, default_limits=["120/minute"])
 
