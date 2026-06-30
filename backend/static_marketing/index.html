@@ -960,15 +960,30 @@
       f(); window.addEventListener('scroll', f, { passive: true });
     })();
 
-    /* Demo-Buchung: BOOK_URL setzen (Cal.com/Calendly) → alle "Demo buchen"-Buttons
-       öffnen den Kalender. Leer = Buttons führen zum Kontaktformular (#kontakt). */
+    /* Demo-Buchung via Calendly — Lazy-Load: Calendlys Script/Cookies werden ERST
+       beim Klick auf "Demo buchen" geladen. Beim normalen Besuch bleibt die Seite
+       cookielos & ohne Drittanbieter. Fällt ohne JS auf #kontakt zurück. */
     (function () {
-      var BOOK_URL = ''; // ← hier Buchungslink eintragen, z.B. 'https://cal.com/novaerp/demo'
-      if (BOOK_URL) {
-        document.querySelectorAll('[data-book]').forEach(function (a) {
-          a.href = BOOK_URL; a.target = '_blank'; a.rel = 'noopener';
-        });
+      var CAL_URL = 'https://calendly.com/nikolaj-unser/30min';
+      var loaded = false, loading = false, queue = [];
+      function ready(cb) {
+        if (loaded) return cb();
+        queue.push(cb);
+        if (loading) return;
+        loading = true;
+        var css = document.createElement('link');
+        css.rel = 'stylesheet'; css.href = 'https://assets.calendly.com/assets/external/widget.css';
+        document.head.appendChild(css);
+        var s = document.createElement('script');
+        s.src = 'https://assets.calendly.com/assets/external/widget.js'; s.async = true;
+        s.onload = function () { loaded = true; queue.forEach(function (fn) { fn(); }); queue = []; };
+        document.head.appendChild(s);
       }
+      function openCal(e) {
+        e.preventDefault();
+        ready(function () { if (window.Calendly) window.Calendly.initPopupWidget({ url: CAL_URL }); });
+      }
+      document.querySelectorAll('[data-book]').forEach(function (a) { a.addEventListener('click', openCal); });
     })();
 
     /* Contact form → POST /api/contact (same-origin, no third party) */
