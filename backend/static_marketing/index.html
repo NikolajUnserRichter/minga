@@ -6,6 +6,15 @@
   <title>NovaERP — ERP für KMU und Start-ups in DACH | Hosting Deutschland</title>
   <meta name="description" content="NovaERP ist die moderne ERP-Plattform für KMU und Start-ups: Produktion, Lager, Vertrieb, Buchhaltung und KI-Forecasting in einem System. Hosting in Deutschland, DSGVO-konform, in 5 Minuten startklar." />
   <meta name="theme-color" content="#0a0a0a" />
+
+  <!-- Analytics (privacy-first, DSGVO-freundlich, ohne Cookie-Banner). Aktivieren:
+       1) Umami via Coolify (One-Click) selbst hosten, z. B. unter stats.novaerp.de
+       2) Diese Zeile einkommentieren und data-website-id einsetzen:
+  <script defer src="https://stats.novaerp.de/script.js" data-website-id="DEINE-WEBSITE-ID"></script>
+       Alternativ Plausible (self-hosted):
+  <script defer data-domain="novaerp.de" src="https://stats.novaerp.de/js/script.js"></script>
+  -->
+
   <link rel="canonical" href="https://novaerp.de/" />
 
   <!-- Open Graph -->
@@ -353,6 +362,28 @@
     .kontakt-card li { display: flex; gap: 0.6rem; padding: 0.4rem 0; font-size: 0.94rem; color: var(--ink-2); }
     .kontakt-card li::before { content:'→'; color: var(--bronze); font-weight: 700; }
 
+    /* ——— Contact form ——— */
+    .contact-form { display: grid; gap: 0.9rem; margin-top: 1.5rem; }
+    .contact-form .row2 { display: grid; gap: 0.9rem; grid-template-columns: 1fr; }
+    @media (min-width: 520px) { .contact-form .row2 { grid-template-columns: 1fr 1fr; } }
+    .contact-form label { display: flex; flex-direction: column; gap: 0.35rem; font-size: 0.78rem; color: var(--ink-2); font-weight: 600; letter-spacing: 0.01em; }
+    .contact-form input, .contact-form textarea { font: inherit; color: var(--ink-0); background: var(--reef); border: 1px solid var(--line); border-radius: var(--r-control); padding: 0.7rem 0.85rem; transition: border-color 0.2s, box-shadow 0.2s; resize: vertical; }
+    .contact-form input:focus, .contact-form textarea:focus { outline: none; border-color: var(--bronze); box-shadow: 0 0 0 3px var(--bronze-haze); }
+    .contact-form input::placeholder, .contact-form textarea::placeholder { color: var(--ink-3); }
+    .contact-form .hp { position: absolute; left: -9999px; width: 1px; height: 1px; opacity: 0; }
+    .contact-form button { justify-content: center; margin-top: 0.3rem; }
+    .contact-form button[disabled] { opacity: 0.6; cursor: progress; }
+    .form-status { font-size: 0.88rem; margin: 0.2rem 0 0; }
+    .form-status.ok { color: var(--ok); }
+    .form-status.err { color: var(--no); }
+    .contact-alt { margin-top: 1rem; font-size: 0.85rem; color: var(--ink-2); }
+    .contact-alt a { color: var(--bronze-glow); }
+
+    /* ——— Pricing Förderung/ROI banner ——— */
+    .price-foerder { margin: -1.5rem 0 2.5rem; padding: 1rem 1.25rem; background: var(--bronze-haze); border: 1px solid var(--line-warm); border-radius: var(--r-control); font-size: 0.95rem; color: var(--ink-1); line-height: 1.55; }
+    .price-foerder strong { color: var(--bronze-glow); }
+    .price-foerder a { color: var(--bronze-glow); text-decoration: underline; }
+
     /* ——— Footer ——— */
     footer { background: #070707; color: var(--ink-2); padding: 3.5rem 0 2rem; font-size: 0.9rem; border-top: 1px solid var(--line); }
     footer .grid { display: grid; gap: 2rem; grid-template-columns: 1fr; margin-bottom: 2.5rem; }
@@ -658,6 +689,9 @@
         <h2>Faire Preise. Keine versteckten Kosten.</h2>
         <p>Monatlicher Festpreis <strong style="color:var(--ink-1)">pro Betrieb</strong> (kein Preis pro Nutzer). Gehostet, gewartet und automatisch aktualisiert — ohne eigene IT-Infrastruktur.</p>
       </div>
+      <div class="price-foerder">
+        <strong>💡 Bis zu 50&nbsp;% förderfähig.</strong> Die ERP-Einführung ist in Baden-Württemberg über die <a href="#foerderung">Digitalisierungsfinanzierung</a> förderfähig — und ersetzt meist mehr Excel- und Verwaltungsstunden, als der Monatspreis kostet.
+      </div>
 
       <div class="pricing">
         <div class="price">
@@ -771,8 +805,19 @@
         <div>
           <div class="eyebrow">Kontakt</div>
           <h2>Lass uns reden.</h2>
-          <p class="lead">Eine kurze E-Mail reicht. Wir melden uns binnen 24&thinsp;h zurück und richten dir einen kostenfreien Demo-Workspace ein.</p>
-          <a href="mailto:info@novaerp.de" class="mail-pill">✉ info@novaerp.de</a>
+          <p class="lead">Sag uns kurz, wer du bist — wir melden uns binnen 24&thinsp;h und richten dir einen kostenfreien Demo-Workspace ein.</p>
+          <form id="contactForm" class="contact-form" novalidate>
+            <div class="row2">
+              <label>Name<input name="name" autocomplete="name" placeholder="Dein Name" required /></label>
+              <label>Betrieb<input name="betrieb" autocomplete="organization" placeholder="Firma / Hof" /></label>
+            </div>
+            <label>E-Mail<input type="email" name="email" autocomplete="email" placeholder="du@betrieb.de" required /></label>
+            <label>Nachricht<textarea name="message" rows="3" placeholder="Worum geht's? (optional)"></textarea></label>
+            <input type="text" name="website" class="hp" tabindex="-1" autocomplete="off" aria-hidden="true" />
+            <button type="submit" class="btn btn-bronze btn-lg">Anfrage senden <span class="arr">→</span></button>
+            <p class="form-status" role="status" aria-live="polite" hidden></p>
+          </form>
+          <p class="contact-alt">Lieber direkt? <a href="mailto:info@novaerp.de">info@novaerp.de</a></p>
         </div>
         <div class="kontakt-card">
           <h3>Was du wissen solltest</h3>
@@ -828,6 +873,41 @@
       const h = document.getElementById('header');
       const f = function () { h.classList.toggle('scrolled', window.scrollY > 12); };
       f(); window.addEventListener('scroll', f, { passive: true });
+    })();
+
+    /* Contact form → POST /api/contact (same-origin, no third party) */
+    (function () {
+      const f = document.getElementById('contactForm');
+      if (!f) return;
+      const status = f.querySelector('.form-status');
+      const btn = f.querySelector('button[type=submit]');
+      f.addEventListener('submit', async function (e) {
+        e.preventDefault();
+        status.hidden = false; status.className = 'form-status'; status.textContent = 'Senden …';
+        btn.disabled = true;
+        const data = Object.fromEntries(new FormData(f).entries());
+        try {
+          const r = await fetch('/api/contact', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+          });
+          if (r.ok) {
+            f.reset();
+            status.classList.add('ok');
+            status.textContent = '✓ Danke! Wir melden uns binnen 24 h.';
+          } else {
+            const j = await r.json().catch(function () { return {}; });
+            status.classList.add('err');
+            status.textContent = j.detail || 'Bitte Name und gültige E-Mail prüfen.';
+          }
+        } catch (_) {
+          status.classList.add('err');
+          status.textContent = 'Senden fehlgeschlagen — schreib uns direkt an info@novaerp.de.';
+        } finally {
+          btn.disabled = false;
+        }
+      });
     })();
 
     /* Bronze data-constellation */
