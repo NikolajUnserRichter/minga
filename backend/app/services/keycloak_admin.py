@@ -64,6 +64,8 @@ def create_tenant_user(
     role: str = "admin",
     password: Optional[str] = None,
     temporary_password: bool = True,
+    first_name: Optional[str] = None,
+    last_name: Optional[str] = None,
 ) -> dict:
     """Legt einen User im Ziel-Realm an: Email als Username, tenant_slug-Attribut,
     Realm-Rolle, Passwort (generiert falls None).
@@ -74,6 +76,11 @@ def create_tenant_user(
     c = _cfg()
     realm = c["realm"]
     pw = password or _gen_password()
+    # Default-Namen aus der Email ableiten, damit VERIFY_PROFILE den ersten Login
+    # nicht blockt (Realm verlangt firstName/lastName).
+    local = email.split("@", 1)[0]
+    fname = first_name or (local.split(".")[0].capitalize() if local else "Admin")
+    lname = last_name or (tenant_slug.replace("-", " ").title())
 
     with httpx.Client(verify=True) as client:
         token = _admin_token(c, client)
@@ -86,6 +93,8 @@ def create_tenant_user(
             json={
                 "username": email,
                 "email": email,
+                "firstName": fname,
+                "lastName": lname,
                 "enabled": True,
                 "emailVerified": True,
                 "requiredActions": [],
@@ -132,6 +141,54 @@ def create_tenant_user(
         "password": pw,
         "temporary": temporary_password,
     }
+
+
+def add_tenant_redirect_uri(slug: str, *, client_id: str = "novaerp-frontend") -> bool:
+    """Fügt die konkrete Redirect-URI + Web-Origin eines Tenants zum Frontend-Client.
+
+    Keycloak honoriert Host-Wildcards (*.domain) in Redirect-URIs nicht zuverlässig,
+    deshalb wird pro Tenant die exakte URI ergänzt. Idempotent.
+
+    Returns: True wenn etwas hinzugefügt wurde, False wenn schon vorhanden / nicht konfiguriert.
+    """
+    try:
+        c = _cfg()
+    except KeycloakAdminError:
+        return False
+    realm = c["realm"]
+    root = os.environ.get("SPROUDDESK_ROOT_DOMAIN", "novaerp.de")
+    redirect = f"https://{slug}.{root}/*"
+    origin = f"https://{slug}.{root}"
+
+    with httpx.Client(verify=True) as client:
+        token = _admin_token(c, client)
+        h = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+        # Client per clientId finden
+        lookup = client.get(
+            f"{c['url']}/admin/realms/{realm}/clients",
+            headers=h, params={"clientId": client_id}, timeout=15,
+        )
+        clients = lookup.json() if lookup.status_code == 200 else []
+        if not clients:
+            return False
+        cl = clients[0]
+        cid = cl["id"]
+        redirects = set(cl.get("redirectUris") or [])
+        origins = set(cl.get("webOrigins") or [])
+        changed = False
+        if redirect not in redirects:
+            redirects.add(redirect); changed = True
+        if origin not in origins and "+" not in origins:
+            origins.add(origin); changed = True
+        if not changed:
+            return False
+        upd = client.put(
+            f"{c['url']}/admin/realms/{realm}/clients/{cid}",
+            headers=h,
+            json={**cl, "redirectUris": sorted(redirects), "webOrigins": sorted(origins)},
+            timeout=15,
+        )
+        return upd.status_code in (200, 204)
 
 
 def is_configured() -> bool:

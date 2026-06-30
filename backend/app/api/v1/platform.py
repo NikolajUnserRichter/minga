@@ -97,6 +97,14 @@ def create_tenant(
         "status": "created",
     }
 
+    # Redirect-URI des Tenants beim Keycloak-Frontend-Client registrieren —
+    # immer, damit der Login-Flow auf der neuen Subdomain funktioniert.
+    try:
+        from app.services.keycloak_admin import add_tenant_redirect_uri
+        add_tenant_redirect_uri(slug)
+    except Exception:
+        pass  # Keycloak nicht konfiguriert / nicht erreichbar → kein harter Fehler
+
     # Optional: Keycloak-Admin-User für den Tenant anlegen
     if admin_email:
         from app.services.keycloak_admin import create_tenant_user, is_configured, KeycloakAdminError
