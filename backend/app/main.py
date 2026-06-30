@@ -605,6 +605,31 @@ app.include_router(
 )
 
 
+def _safe_static_file(base: Path, rel_path: str) -> Optional[Path]:
+    """Löst rel_path innerhalb von base auf und schützt vor Path-Traversal.
+
+    Gibt den Pfad nur zurück, wenn er eine existierende Datei IST und garantiert
+    innerhalb von `base` liegt (kein ../, keine Symlink-Flucht, kein absoluter Pfad).
+    Sonst None.
+    """
+    if not rel_path:
+        return None
+    # Frühe Ablehnung offensichtlicher Traversal-Versuche
+    if ".." in rel_path.split("/") or "\\" in rel_path or rel_path.startswith("/"):
+        return None
+    try:
+        base_resolved = base.resolve()
+        candidate = (base / rel_path).resolve(strict=True)
+    except (FileNotFoundError, RuntimeError, OSError):
+        return None
+    # Containment-Check: candidate muss unterhalb von base liegen
+    if base_resolved != candidate and base_resolved not in candidate.parents:
+        return None
+    if not candidate.is_file():
+        return None
+    return candidate
+
+
 @app.get("/{full_path:path}")
 async def spa_fallback(full_path: str, request: Request):
     """Serve SPA/marketing index — apex zeigt Marketing-Seite, Subdomains die App."""
@@ -613,31 +638,31 @@ async def spa_fallback(full_path: str, request: Request):
 
     # admin.novaerp.de → Platform-Admin-UI
     if _is_admin_request(request) and admin_dist.exists():
-        requested = admin_dist / full_path
-        if requested.exists() and requested.is_file():
-            return FileResponse(requested)
+        safe = _safe_static_file(admin_dist, full_path)
+        if safe:
+            return FileResponse(safe)
         if (admin_dist / "index.html").exists():
             return FileResponse(admin_dist / "index.html")
 
     # Apex (novaerp.de) → Marketing-Seite
     if _is_apex_request(request) and marketing_dist.exists():
         # Direkte Dateianforderung (z.B. /assets/foo.png) prüfen
-        requested = marketing_dist / full_path
-        if requested.exists() and requested.is_file():
-            return FileResponse(requested)
+        safe = _safe_static_file(marketing_dist, full_path)
+        if safe:
+            return FileResponse(safe)
         # Saubere URLs ohne .html mappen: /impressum → impressum.html
-        html_variant = marketing_dist / f"{full_path}.html"
-        if html_variant.exists() and html_variant.is_file():
-            return FileResponse(html_variant)
+        safe_html = _safe_static_file(marketing_dist, f"{full_path}.html")
+        if safe_html:
+            return FileResponse(safe_html)
         # Sonst: Marketing-Index ausliefern
         if (marketing_dist / "index.html").exists():
             return FileResponse(marketing_dist / "index.html")
 
     # Subdomains → React-SPA
     if (frontend_dist / "index.html").exists():
-        requested = frontend_dist / full_path
-        if requested.exists() and requested.is_file():
-            return FileResponse(requested)
+        safe = _safe_static_file(frontend_dist, full_path)
+        if safe:
+            return FileResponse(safe)
         return FileResponse(frontend_dist / "index.html")
 
     return JSONResponse(status_code=404, content={"detail": "Not Found"})
