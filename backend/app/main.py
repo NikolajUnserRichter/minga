@@ -27,7 +27,7 @@ from app.tenancy import (
     init_all_existing_tenants, provision_tenant, registry as tenant_registry,
     resolve_slug_from_host, set_request_tenant, DEFAULT_TENANT_SLUG,
 )
-from app.api.v1 import seeds, production, sales, forecasting, products, invoices, inventory, analytics, capacity, suppliers, units, imports, documents, attachments, admin, document_templates, platform
+from app.api.v1 import seeds, production, sales, forecasting, products, invoices, inventory, analytics, capacity, suppliers, units, imports, documents, attachments, admin, document_templates, platform, procurement
 from app.api.deps import get_current_user
 from app.core.security import verify_token
 
@@ -626,6 +626,12 @@ app.include_router(
 
 app.include_router(
     suppliers.router,
+    prefix="/api/v1",
+    dependencies=_auth_deps,
+)
+
+app.include_router(
+    procurement.router,
     prefix="/api/v1",
     dependencies=_auth_deps,
 )

@@ -35,6 +35,13 @@ from app.models.customer import (
 )
 from app.models.order import Order, OrderLine
 
+# Einkauf / Wareneingang (Procurement)
+from app.models.procurement import (
+    PurchaseOrder,
+    PurchaseOrderLine,
+    PurchaseOrderStatus,
+)
+
 # Rechnungen (Accounting)
 from app.models.invoice import (
     Invoice,
@@ -137,6 +144,10 @@ __all__ = [
     "SubscriptionInterval",
     "Order",
     "OrderLine",
+    # Procurement (Einkauf)
+    "PurchaseOrder",
+    "PurchaseOrderLine",
+    "PurchaseOrderStatus",
     # Invoice & Accounting
     "Invoice",
     "InvoiceLine",
