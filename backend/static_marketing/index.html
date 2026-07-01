@@ -476,6 +476,12 @@
     .craft-sec .pilot { border-left-color: var(--craft); }
     .craft-sec .pilot .txt b { color: var(--craft-light); }
 
+    /* Integrationen-Streifen */
+    .integrations { margin-top: 2.6rem; padding-top: 2rem; border-top: 1px solid var(--line); display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 0.7rem 1.6rem; }
+    .integrations .int-label { font-family: var(--font-mono); font-size: 0.72rem; letter-spacing: 0.2em; text-transform: uppercase; color: var(--ink-3); }
+    .integrations .int-item { display: inline-flex; align-items: center; gap: 0.45rem; color: var(--ink-1); font-weight: 600; font-size: 1.02rem; }
+    .integrations .int-tag { font-size: 0.6rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--bronze-glow); border: 1px solid rgba(192,129,79,0.4); border-radius: 1rem; padding: 0.06rem 0.42rem; }
+
     /* ——— Entrance ——— */
     @media (prefers-reduced-motion: no-preference) {
       [data-rise] { animation: rise 0.8s var(--ease) backwards; }
@@ -605,13 +611,19 @@
         <div class="card">
           <div class="ico"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m7.5 4.27 9 5.15"/><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></svg></div>
           <h3>Lagerverwaltung</h3>
-          <p>Echtzeit-Bestände für Saatgut, Substrate und Verpackung mit automatischer Nachbestellung.</p>
+          <p>Echtzeit-Bestände über alle Artikel und Standorte mit automatischer Nachbestellung und Meldebeständen.</p>
         </div>
         <div class="card">
           <div class="ico"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><line x1="18" x2="18" y1="20" y2="10"/><line x1="12" x2="12" y1="20" y2="4"/><line x1="6" x2="6" y1="20" y2="14"/></svg></div>
           <h3>BI-Dashboards</h3>
           <p>Interaktive Auswertungen zu Mengenentwicklung, Artikelaufteilung und Wirtschaftlichkeit.</p>
         </div>
+      </div>
+      <div class="integrations">
+        <span class="int-label">Integrationen</span>
+        <span class="int-item">DATEV</span>
+        <span class="int-item">lexoffice <span class="int-tag">Beta</span></span>
+        <span class="int-item">Shopify <span class="int-tag">Beta</span></span>
       </div>
     </div>
   </section>
@@ -683,7 +695,7 @@
           <span class="wm"><span class="a">Trade</span><span class="b">sk</span></span>
         </div>
         <h2>Speziell für den Handel: Sell smart. Run your trade.</h2>
-        <p>Die Branchen-Edition von NovaERP für Groß- und Einzelhandel: Einkauf, Lager, B2B-Vertrieb und Rechnung in einem System — mit Echtzeit-Beständen, individuellen Preislisten und automatischer Nachbestellung.</p>
+        <p>Die Branchen-Edition von NovaERP für Groß- und Einzelhandel: Einkauf, Lager, B2B-Vertrieb und Rechnung in einem System — mit Echtzeit-Beständen, individuellen Preislisten und automatischer Nachbestellung. Neu: <strong>Shopify-Anbindung (Beta)</strong> — neue Shop-Bestellungen erscheinen automatisch als Vorschau im ERP.</p>
       </div>
 
       <div class="grid-3">
@@ -932,6 +944,7 @@
         <details><summary>Zahle ich pro Nutzer?</summary><p>Nein. NovaERP kostet einen Festpreis pro Betrieb — zusätzliche Nutzer (im Rahmen des Pakets) kosten 0 €. Das macht die Kosten planbar, auch wenn dein Team wächst.</p></details>
         <details><summary>Bin ich an einen Vertrag gebunden?</summary><p>NovaERP ist monatlich kündbar. Wahlweise gibt es eine 12-Monats-Laufzeit mit Rabatt (bei Jahreszahlung 2 Monate geschenkt). Deine Daten kannst du jederzeit exportieren — kein Lock-in.</p></details>
         <details><summary>Für welche Betriebe ist NovaERP gemacht?</summary><p>Für KMU in der DACH-Region — mit fertigen Editionen für Lebensmittel, Handel und Produktion (z.&thinsp;B. Manufakturen, Groß- &amp; Einzelhandel, Fertigungsbetriebe). Dank Chargen-Rückverfolgbarkeit und DATEV-Export passt es dort, wo Standard-Tools an Grenzen stoßen.</p></details>
+        <details><summary>Welche Schnittstellen gibt es?</summary><p>NovaERP exportiert Buchungsdaten per <strong>DATEV</strong> und übergibt Rechnungen als Entwurf an <strong>lexoffice</strong> (Lexware Office). Für den Handel importiert die <strong>Shopify</strong>-Anbindung neue Bestellungen als Vorschau ins ERP. Die lexoffice- und Shopify-Anbindung befinden sich aktiv im Ausbau (Beta) — weitere Schnittstellen auf Anfrage.</p></details>
       </div>
     </div>
   </section>
