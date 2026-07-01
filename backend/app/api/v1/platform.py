@@ -65,6 +65,7 @@ def list_tenants(_: None = Depends(_require_admin)):
 class CreateTenantBody(BaseModel):
     admin_email: Optional[str] = None
     admin_password: Optional[str] = None
+    edition: Optional[str] = None  # sprouddesk | tradesk | novaerp — steuert Branding
 
 
 @router.post("/tenants", status_code=201)
@@ -84,9 +85,21 @@ def create_tenant(
     oder im Browser-Verlauf landen."""
     admin_email = body.admin_email if body else None
     admin_password = body.admin_password if body else None
+    edition = (body.edition if body else None)
     slug = _validated_slug(slug)
     if registry.exists(slug):
         raise HTTPException(status_code=409, detail=f"Tenant '{slug}' existiert bereits")
+
+    # Edition (Branding) gegen die bekannten Presets validieren, bevor irgendetwas
+    # angelegt wird — ungültige Werte sollen den Onboarding-Call sofort ablehnen.
+    if edition is not None:
+        from app.branding import EDITIONS
+        edition = edition.strip().lower()
+        if edition not in EDITIONS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unbekannte Edition '{edition}'. Erlaubt: {', '.join(sorted(EDITIONS))}",
+            )
 
     path = provision_tenant(slug, seed_defaults=seed_defaults)
 
@@ -96,6 +109,19 @@ def create_tenant(
         "url": f"https://{slug}.{ROOT_DOMAIN}",
         "status": "created",
     }
+
+    # Branding-Edition in die frische Tenant-DB schreiben (nur wenn explizit gesetzt;
+    # ohne Wert bleibt der Sprouddesk-Default aktiv).
+    if edition is not None:
+        try:
+            from app.services.settings_service import set_setting
+            SessionFactory = registry.get_sessionmaker(slug)
+            with SessionFactory() as db:
+                set_setting(db, "BRAND_EDITION", edition, is_secret=False)
+                db.commit()
+            result["edition"] = edition
+        except Exception as e:
+            result["edition_warning"] = f"Tenant angelegt, aber Edition konnte nicht gesetzt werden: {e}"
 
     # Redirect-URI des Tenants beim Keycloak-Frontend-Client registrieren —
     # immer, damit der Login-Flow auf der neuen Subdomain funktioniert.
@@ -137,11 +163,24 @@ def get_tenant(slug: str, _: None = Depends(_require_admin)):
     if not registry.exists(slug):
         raise HTTPException(status_code=404, detail=f"Tenant '{slug}' nicht gefunden")
     path = registry.path_for(slug)
+
+    # Aktuelle Branding-Edition (Default sprouddesk, wenn nichts gesetzt).
+    edition = None
+    try:
+        from app.branding import DEFAULT_EDITION
+        from app.services.settings_service import get_setting
+        SessionFactory = registry.get_sessionmaker(slug)
+        with SessionFactory() as db:
+            edition = get_setting(db, "BRAND_EDITION", env_fallback=False) or DEFAULT_EDITION
+    except Exception:
+        pass
+
     return {
         "slug": slug,
         "db_path": str(path),
         "size_bytes": path.stat().st_size,
         "url": f"https://{slug}.{ROOT_DOMAIN}",
+        "edition": edition,
         "last_modified": datetime.fromtimestamp(path.stat().st_mtime).isoformat(),
     }
 
