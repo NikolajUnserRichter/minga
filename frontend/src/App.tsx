@@ -18,6 +18,7 @@ import Users from './pages/Users';
 import Abonnements from './pages/Abonnements';
 import AccuracyReports from './pages/AccuracyReports';
 import Suppliers from './pages/Suppliers';
+import Purchasing from './pages/Purchasing';
 import Locations from './pages/Locations';
 import Capacities from './pages/Capacities';
 import DocumentTemplates from './pages/DocumentTemplates';
@@ -47,6 +48,7 @@ function App() {
           <Route path="customers" element={<Customers />} />
           <Route path="orders" element={<Orders />} />
           <Route path="subscriptions" element={<Abonnements />} />
+          <Route path="purchasing" element={<Purchasing />} />
           <Route path="invoices" element={<Invoices />} />
           <Route path="sales" element={<Sales />} />
 

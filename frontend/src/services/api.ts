@@ -8,7 +8,8 @@ import type {
   PackagingInventory, InventoryMovement, StockOverview,
   ArticleType, LocationType, TraceabilityChain, Capacity,
   RevenueStats, YieldStats, Subscription, AccuracySummary, AccuracyDetail,
-  Contact, Supplier, ProductVariant, UnitOfMeasure, CustomerAddress, BundleComponent
+  Contact, Supplier, ProductVariant, UnitOfMeasure, CustomerAddress, BundleComponent,
+  PurchaseOrder, PurchaseOrderListItem, PurchaseOrderStatus
 } from '../types'
 
 import keycloak from './auth';
@@ -243,6 +244,45 @@ export const suppliersApi = {
 
   delete: (id: string) =>
     api.delete(`/suppliers/${id}`),
+}
+
+// Einkauf / Wareneingang (Procurement)
+export interface PurchaseOrderLinePayload {
+  product_id?: string | null
+  product_sku?: string | null
+  beschreibung?: string | null
+  quantity: number
+  unit: string
+  unit_price: number
+  tax_rate?: string
+  discount_percent?: number
+}
+
+export interface PurchaseOrderCreatePayload {
+  supplier_id: string
+  supplier_reference?: string | null
+  requested_delivery_date?: string | null
+  notes?: string | null
+  discount_percent?: number
+  currency?: string
+  lines: PurchaseOrderLinePayload[]
+}
+
+export const purchasingApi = {
+  list: (params?: { status_filter?: PurchaseOrderStatus; supplier_id?: string }) =>
+    api.get<{ items: PurchaseOrderListItem[]; total: number }>('/procurement/purchase-orders', { params }).then(r => r.data),
+
+  get: (id: string) =>
+    api.get<PurchaseOrder>(`/procurement/purchase-orders/${id}`).then(r => r.data),
+
+  create: (data: PurchaseOrderCreatePayload) =>
+    api.post<PurchaseOrder>('/procurement/purchase-orders', data).then(r => r.data),
+
+  receive: (id: string, receipts: { line_id: string; quantity: number }[]) =>
+    api.post<PurchaseOrder>(`/procurement/purchase-orders/${id}/receive`, { receipts }).then(r => r.data),
+
+  cancel: (id: string) =>
+    api.delete(`/procurement/purchase-orders/${id}`),
 }
 
 // Forecasting API

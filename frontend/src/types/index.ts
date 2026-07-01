@@ -164,6 +164,66 @@ export interface Order {
 
 export type OrderStatus = 'OFFEN' | 'BESTAETIGT' | 'IN_PRODUKTION' | 'BEREIT' | 'GELIEFERT' | 'STORNIERT'
 
+// Einkauf / Wareneingang (Procurement)
+export type PurchaseOrderStatus =
+  | 'ENTWURF' | 'BESTELLT' | 'TEILWEISE_ERHALTEN' | 'ERHALTEN' | 'STORNIERT'
+
+export interface PurchaseOrderLine {
+  id: string
+  position: number
+  product_id?: string | null
+  product_sku?: string | null
+  beschreibung?: string | null
+  quantity: number | string
+  unit: string
+  quantity_received: number | string
+  quantity_open: number | string
+  is_fully_received: boolean
+  unit_price: number | string
+  tax_rate: string
+  discount_percent: number | string
+  line_net: number | string
+  line_vat: number | string
+  line_gross: number | string
+  margin_per_unit?: number | string | null
+  margin_percent?: number | string | null
+}
+
+export interface PurchaseOrder {
+  id: string
+  po_number: string
+  supplier_id: string
+  supplier_name?: string | null
+  supplier_reference?: string | null
+  status: PurchaseOrderStatus
+  order_date: string
+  requested_delivery_date?: string | null
+  confirmed_delivery_date?: string | null
+  total_net: number | string
+  total_vat: number | string
+  total_gross: number | string
+  discount_percent: number | string
+  discount_amount: number | string
+  currency: string
+  notes?: string | null
+  internal_notes?: string | null
+  created_at: string
+  updated_at: string
+  lines: PurchaseOrderLine[]
+}
+
+export interface PurchaseOrderListItem {
+  id: string
+  po_number: string
+  supplier_id: string
+  supplier_name?: string | null
+  status: PurchaseOrderStatus
+  order_date: string
+  requested_delivery_date?: string | null
+  total_gross: number | string
+  currency: string
+}
+
 export interface OrderItem {
   id: string
   order_id: string

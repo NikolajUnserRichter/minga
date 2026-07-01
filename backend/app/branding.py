@@ -29,7 +29,8 @@ EDITIONS: dict[str, dict] = {
         "wordmark": ["Sproud", "desk"],
         "colors": {"a": "#1F7A3D", "b": "#86CB3C", "mid": "#3FA52A", "primary": "#2E9A4B"},
         "icon": "sprout",
-        "hidden_modules": [],
+        # Farming züchtet Ware statt sie einzukaufen → Einkaufsmodul aus.
+        "hidden_modules": ["/purchasing"],
         "tagline": "Grow smart. Run your farm.",
     },
     "tradesk": {

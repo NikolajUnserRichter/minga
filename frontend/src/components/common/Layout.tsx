@@ -27,6 +27,7 @@ import {
   Moon,
   Sun,
   Search,
+  ShoppingCart,
 } from 'lucide-react';
 import { useState, useEffect, createContext, useContext, ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -124,6 +125,17 @@ const navigationSections: NavSection[] = [
         href: '/capacities',
         icon: Layers,
         roles: ['ADMIN', 'PRODUCTION_PLANNER'],
+      },
+    ],
+  },
+  {
+    title: 'Einkauf',
+    items: [
+      {
+        name: 'Bestellungen',
+        href: '/purchasing',
+        icon: ShoppingCart,
+        roles: ['ADMIN', 'PRODUCTION_PLANNER', 'ACCOUNTING'],
       },
     ],
   },
