@@ -16,6 +16,7 @@ from app.services.lexoffice_service import (
     LexofficeError,
     sync_invoice,
 )
+from app.services.shopify_service import ShopifyConnector, ShopifyError
 from app.services.settings_service import get_setting, set_setting
 
 router = APIRouter(prefix="/integrations", tags=["Integrationen"])
@@ -106,3 +107,83 @@ async def lexoffice_push_invoice(invoice_id: UUID, db: DBSession, force: bool = 
         return sync_invoice(db, invoice, LexofficeConnector(key), customer_name=customer_name, force=force)
     except LexofficeError as e:
         raise HTTPException(status_code=502, detail=f"lexoffice: {e}")
+
+
+# ---------- Shopify ----------
+
+class ShopifyStatus(BaseModel):
+    enabled: bool
+    configured: bool
+    shop_domain: Optional[str] = None
+
+
+class ShopifyConfigUpdate(BaseModel):
+    enabled: Optional[bool] = None
+    shop_domain: Optional[str] = None
+    access_token: Optional[str] = None  # None/"" = unverändert, "***" = unverändert
+
+
+class ShopifyTestResult(BaseModel):
+    ok: bool
+    shop_name: Optional[str] = None
+    currency: Optional[str] = None
+    error: Optional[str] = None
+
+
+def _shopify_creds(db) -> tuple[Optional[str], Optional[str]]:
+    return (
+        get_setting(db, "SHOPIFY_SHOP_DOMAIN", env_fallback=False),
+        get_setting(db, "SHOPIFY_ACCESS_TOKEN", env_fallback=False),
+    )
+
+
+@router.get("/shopify", response_model=ShopifyStatus)
+async def shopify_status(db: DBSession):
+    domain, token = _shopify_creds(db)
+    enabled = (get_setting(db, "SHOPIFY_ENABLED", env_fallback=False) or "").lower() in ("1", "true", "yes")
+    return ShopifyStatus(enabled=enabled, configured=bool(domain and token), shop_domain=domain)
+
+
+@router.put("/shopify", response_model=ShopifyStatus)
+async def shopify_configure(data: ShopifyConfigUpdate, db: DBSession):
+    if data.shop_domain is not None:
+        set_setting(db, "SHOPIFY_SHOP_DOMAIN", data.shop_domain.strip() or None, is_secret=False)
+    if data.access_token is not None and data.access_token != "***":
+        if data.access_token.strip() == "":
+            from app.models.app_setting import AppSetting
+            existing = db.get(AppSetting, "SHOPIFY_ACCESS_TOKEN")
+            if existing:
+                db.delete(existing)
+        else:
+            set_setting(db, "SHOPIFY_ACCESS_TOKEN", data.access_token.strip(), is_secret=True)
+    if data.enabled is not None:
+        set_setting(db, "SHOPIFY_ENABLED", "true" if data.enabled else "false", is_secret=False)
+    db.commit()
+
+    domain, token = _shopify_creds(db)
+    enabled = (get_setting(db, "SHOPIFY_ENABLED", env_fallback=False) or "").lower() in ("1", "true", "yes")
+    return ShopifyStatus(enabled=enabled, configured=bool(domain and token), shop_domain=domain)
+
+
+@router.post("/shopify/test", response_model=ShopifyTestResult)
+async def shopify_test(db: DBSession):
+    domain, token = _shopify_creds(db)
+    if not (domain and token):
+        raise HTTPException(status_code=400, detail="Shop-Domain und Access-Token erforderlich")
+    try:
+        result = ShopifyConnector(domain, token).test_connection()
+        return ShopifyTestResult(ok=True, shop_name=result.get("shop_name"), currency=result.get("currency"))
+    except ShopifyError as e:
+        return ShopifyTestResult(ok=False, error=str(e))
+
+
+@router.get("/shopify/orders", response_model=list[dict])
+async def shopify_orders(db: DBSession, limit: int = 20):
+    """Jüngste Shopify-Bestellungen als Vorschau (read-only)."""
+    domain, token = _shopify_creds(db)
+    if not (domain and token):
+        raise HTTPException(status_code=400, detail="Shopify nicht konfiguriert")
+    try:
+        return ShopifyConnector(domain, token).list_recent_orders(limit=limit)
+    except ShopifyError as e:
+        raise HTTPException(status_code=502, detail=f"Shopify: {e}")

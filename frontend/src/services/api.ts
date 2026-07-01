@@ -301,6 +301,18 @@ export const integrationsApi = {
 
   lexofficePushInvoice: (invoiceId: string, force = false) =>
     api.post<{ status: string; lexoffice_id?: string }>(`/integrations/lexoffice/invoices/${invoiceId}`, null, { params: { force } }).then(r => r.data),
+
+  shopifyStatus: () =>
+    api.get<{ enabled: boolean; configured: boolean; shop_domain?: string | null }>('/integrations/shopify').then(r => r.data),
+
+  shopifyConfigure: (data: { enabled?: boolean; shop_domain?: string; access_token?: string }) =>
+    api.put<{ enabled: boolean; configured: boolean; shop_domain?: string | null }>('/integrations/shopify', data).then(r => r.data),
+
+  shopifyTest: () =>
+    api.post<{ ok: boolean; shop_name?: string; currency?: string; error?: string }>('/integrations/shopify/test').then(r => r.data),
+
+  shopifyOrders: (limit = 20) =>
+    api.get<Array<{ order_number: string; created_at: string; customer?: string; total?: string; currency?: string; financial_status?: string }>>('/integrations/shopify/orders', { params: { limit } }).then(r => r.data),
 }
 
 // Forecasting API

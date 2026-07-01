@@ -43,6 +43,10 @@ KNOWN_SETTINGS: dict[str, dict] = {
     # Integration: Lexware Office (lexoffice) — Kunde hinterlegt eigenen API-Key
     "LEXOFFICE_ENABLED":  {"is_secret": False, "label": "Lexware Office aktiv"},
     "LEXOFFICE_API_KEY":  {"is_secret": True,  "label": "lexoffice API-Key"},
+    # Integration: Shopify — Kunde hinterlegt eigenen Shop + Access-Token
+    "SHOPIFY_ENABLED":       {"is_secret": False, "label": "Shopify aktiv"},
+    "SHOPIFY_SHOP_DOMAIN":   {"is_secret": False, "label": "Shopify Shop-Domain"},
+    "SHOPIFY_ACCESS_TOKEN":  {"is_secret": True,  "label": "Shopify Access-Token"},
 }
 
 

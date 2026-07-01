@@ -5,7 +5,7 @@ import { PageHeader } from '../components/common/Layout';
 import { CapacityIndicator, Input, Select, SelectOption, Button, useToast } from '../components/ui';
 import { SkeletonStatCard } from '../components/ui/Skeleton';
 import { CapacityModal } from '../components/domain/CapacityModal';
-import { Database, Server, Key, Bell, Pencil, Building2, Save, Globe, Hash, Mail, Send, Plug, CheckCircle2, XCircle } from 'lucide-react';
+import { Database, Server, Key, Bell, Pencil, Building2, Save, Globe, Hash, Mail, Send, Plug, CheckCircle2, XCircle, ShoppingBag } from 'lucide-react';
 import { Capacity } from '../types';
 
 const forecastModelOptions: SelectOption[] = [
@@ -95,6 +95,9 @@ export default function Settings() {
 
         {/* Integration: Lexware Office */}
         <LexofficeIntegrationCard />
+
+        {/* Integration: Shopify */}
+        <ShopifyIntegrationCard />
 
         {/* Company Profile */}
         <div className="card lg:col-span-2">
@@ -400,6 +403,111 @@ export function LexofficeIntegrationCard() {
                 onClick={() => saveMutation.mutate({ api_key: apiKey.trim(), enabled: true })}
               >
                 Key speichern
+              </Button>
+              <Button
+                variant="secondary"
+                icon={<Plug className="w-4 h-4" />}
+                loading={testMutation.isPending}
+                disabled={!configured}
+                onClick={() => testMutation.mutate()}
+              >
+                Verbindung testen
+              </Button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ==================== Integration: Shopify ====================
+
+export function ShopifyIntegrationCard() {
+  const toast = useToast();
+  const queryClient = useQueryClient();
+  const { data: status, isLoading } = useQuery({
+    queryKey: ['integration', 'shopify'],
+    queryFn: () => integrationsApi.shopifyStatus(),
+  });
+
+  const [domain, setDomain] = useState('');
+  const [token, setToken] = useState('');
+  const [testResult, setTestResult] = useState<{ ok: boolean; shop_name?: string; error?: string } | null>(null);
+
+  const saveMutation = useMutation({
+    mutationFn: (data: { enabled?: boolean; shop_domain?: string; access_token?: string }) => integrationsApi.shopifyConfigure(data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['integration', 'shopify'] });
+      setToken('');
+      toast.success('Shopify-Einstellungen gespeichert');
+    },
+    onError: () => toast.error('Speichern fehlgeschlagen'),
+  });
+
+  const testMutation = useMutation({
+    mutationFn: () => integrationsApi.shopifyTest(),
+    onSuccess: (res) => {
+      setTestResult(res);
+      if (res.ok) toast.success(`Verbunden mit ${res.shop_name || 'Shopify'}`);
+      else toast.error(res.error || 'Verbindung fehlgeschlagen');
+    },
+    onError: () => toast.error('Test fehlgeschlagen'),
+  });
+
+  const configured = status?.configured;
+
+  return (
+    <div className="card">
+      <div className="card-header flex items-center gap-2">
+        <ShoppingBag className="w-5 h-5 text-emerald-600" />
+        <h3 className="font-semibold">Shopify</h3>
+        {configured && (
+          <span className="ml-auto text-xs px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-400">
+            Verbunden
+          </span>
+        )}
+      </div>
+      <div className="card-body space-y-4">
+        <p className="text-sm text-gray-500 dark:text-gray-400">
+          Verbinde deinen eigenen Shopify-Shop. Erstelle im Shopify-Admin unter{' '}
+          <span className="font-medium">Apps → Entwickeln → Custom App</span> einen Admin-API-Token.
+          Aktuell werden Online-Bestellungen als Vorschau eingelesen (read-only).
+        </p>
+
+        {isLoading ? (
+          <div className="text-sm text-gray-500">Lädt…</div>
+        ) : (
+          <>
+            <Input
+              label="Shop-Domain"
+              value={domain || status?.shop_domain || ''}
+              onChange={(e) => setDomain(e.target.value)}
+              placeholder="meinshop.myshopify.com"
+            />
+            <Input
+              label="Admin-API Access-Token"
+              type="password"
+              value={token}
+              onChange={(e) => setToken(e.target.value)}
+              placeholder={configured ? '•••••••• (hinterlegt – neu eingeben zum Ändern)' : 'shpat_…'}
+            />
+
+            {testResult && (
+              <div className={`flex items-center gap-2 text-sm ${testResult.ok ? 'text-emerald-600' : 'text-red-600'}`}>
+                {testResult.ok ? <CheckCircle2 className="w-4 h-4" /> : <XCircle className="w-4 h-4" />}
+                {testResult.ok ? `Verbunden mit ${testResult.shop_name || 'Shopify'}` : (testResult.error || 'Fehler')}
+              </div>
+            )}
+
+            <div className="flex gap-2 pt-2 border-t dark:border-gray-700">
+              <Button
+                icon={<Save className="w-4 h-4" />}
+                loading={saveMutation.isPending}
+                disabled={!(domain || status?.shop_domain) || !token.trim()}
+                onClick={() => saveMutation.mutate({ shop_domain: domain || status?.shop_domain || '', access_token: token.trim(), enabled: true })}
+              >
+                Speichern
               </Button>
               <Button
                 variant="secondary"
