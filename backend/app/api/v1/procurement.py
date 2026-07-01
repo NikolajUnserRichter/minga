@@ -8,7 +8,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
 from app.api.deps import DBSession, Pagination
-from app.models.procurement import PurchaseOrder, PurchaseOrderStatus
+from app.models.procurement import PurchaseOrder, PurchaseOrderStatus, TradeGoodsInventory
 from app.models.seed import Supplier
 from app.schemas.procurement import (
     GoodsReceiptRequest,
@@ -18,6 +18,8 @@ from app.schemas.procurement import (
     PurchaseOrderListResponse,
     PurchaseOrderResponse,
     PurchaseOrderUpdate,
+    TradeGoodsStockResponse,
+    TradeGoodsStockListResponse,
 )
 from app.services.procurement_service import ProcurementService
 
@@ -133,3 +135,24 @@ async def cancel_purchase_order(po_id: UUID, db: DBSession):
         raise HTTPException(status_code=409, detail="Vollständig erhaltene Bestellung kann nicht storniert werden")
     po.status = PurchaseOrderStatus.STORNIERT
     db.commit()
+
+
+# ---------- Handelsware-Bestand ----------
+
+stock_router = APIRouter(prefix="/procurement/stock", tags=["Einkauf"])
+
+
+@stock_router.get("", response_model=TradeGoodsStockListResponse)
+async def list_trade_goods_stock(db: DBSession, pagination: Pagination):
+    """Aktueller Handelsware-Bestand (durch Wareneingänge fortgeschrieben)."""
+    query = select(TradeGoodsInventory).where(TradeGoodsInventory.is_active.is_(True))
+    total = db.execute(select(func.count()).select_from(query.subquery())).scalar() or 0
+    query = query.order_by(TradeGoodsInventory.name).offset(pagination.offset).limit(pagination.page_size)
+    rows = db.execute(query).scalars().all()
+
+    items = []
+    for s in rows:
+        item = TradeGoodsStockResponse.model_validate(s)
+        item.stock_value = s.stock_value
+        items.append(item)
+    return TradeGoodsStockListResponse(items=items, total=total)

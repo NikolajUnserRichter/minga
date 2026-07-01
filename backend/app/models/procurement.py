@@ -183,3 +183,47 @@ class PurchaseOrderLine(Base):
 
     def __repr__(self) -> str:
         return f"<PurchaseOrderLine(pos={self.position}, qty={self.quantity})>"
+
+
+class TradeGoodsInventory(Base):
+    """Bestand zugekaufter Handelsware (Tradesk).
+
+    Anders als das farming-spezifische FinishedGoodsInventory (Gramm,
+    Ernte-/MHD-Pflichtfelder) ein generischer Warenbestand pro Produkt:
+    Der Wareneingang einer Bestellung schreibt hier den Bestand fort.
+    """
+
+    __tablename__ = "trade_goods_inventory"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    product_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("products.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    sku: Mapped[Optional[str]] = mapped_column(String(50))
+    name: Mapped[Optional[str]] = mapped_column(String(200))
+
+    quantity_on_hand: Mapped[Decimal] = mapped_column(Numeric(12, 3), default=Decimal("0"), nullable=False)
+    unit: Mapped[str] = mapped_column(String(20), nullable=False)
+    location_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid, ForeignKey("inventory_locations.id", ondelete="SET NULL")
+    )
+
+    # zuletzt gezahlter Einkaufspreis (Netto) – für Bestandsbewertung/Marge
+    last_purchase_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 4))
+
+    is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc)
+    )
+
+    product: Mapped["Product"] = relationship("Product")
+
+    @property
+    def stock_value(self) -> Optional[Decimal]:
+        if self.last_purchase_price is None:
+            return None
+        return (self.quantity_on_hand * self.last_purchase_price).quantize(Decimal("0.01"))
+
+    def __repr__(self) -> str:
+        return f"<TradeGoodsInventory(product={self.product_id}, qty={self.quantity_on_hand})>"

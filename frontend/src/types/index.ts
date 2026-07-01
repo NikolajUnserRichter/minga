@@ -212,6 +212,18 @@ export interface PurchaseOrder {
   lines: PurchaseOrderLine[]
 }
 
+export interface TradeGoodsStock {
+  id: string
+  product_id: string
+  sku?: string | null
+  name?: string | null
+  quantity_on_hand: number | string
+  unit: string
+  last_purchase_price?: number | string | null
+  stock_value?: number | string | null
+  updated_at: string
+}
+
 export interface PurchaseOrderListItem {
   id: string
   po_number: string

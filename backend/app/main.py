@@ -637,6 +637,12 @@ app.include_router(
 )
 
 app.include_router(
+    procurement.stock_router,
+    prefix="/api/v1",
+    dependencies=_auth_deps,
+)
+
+app.include_router(
     units.router,
     prefix="/api/v1",
     dependencies=_auth_deps,

@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, Trash, PackageCheck, Ban, Eye } from 'lucide-react';
 import { purchasingApi, suppliersApi, productsApi, PurchaseOrderCreatePayload } from '../services/api';
-import { PurchaseOrder, PurchaseOrderStatus } from '../types';
+import { PurchaseOrder, PurchaseOrderStatus, TradeGoodsStock } from '../types';
 import { PageHeader } from '../components/common/Layout';
 import {
   Button,
@@ -42,6 +42,7 @@ export default function Purchasing() {
   const [detailId, setDetailId] = useState<string | null>(null);
   const [cancelling, setCancelling] = useState<PurchaseOrder | null>(null);
   const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [tab, setTab] = useState<'orders' | 'stock'>('orders');
 
   const { data, isLoading } = useQuery({
     queryKey: ['purchase-orders', statusFilter],
@@ -79,6 +80,26 @@ export default function Purchasing() {
         }
       />
 
+      <div className="mb-4 flex gap-2 border-b border-gray-200 dark:border-gray-700">
+        {([['orders', 'Bestellungen'], ['stock', 'Handelsware-Bestand']] as const).map(([id, label]) => (
+          <button
+            key={id}
+            onClick={() => setTab(id)}
+            className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px ${
+              tab === id
+                ? 'border-blue-600 text-blue-600 dark:text-blue-400'
+                : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400'
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'stock' && <StockView />}
+
+      {tab === 'orders' && (
+      <>
       <div className="mb-4 max-w-xs">
         <Select options={statusOptions} value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} />
       </div>
@@ -130,6 +151,8 @@ export default function Purchasing() {
           </table>
         </div>
       )}
+      </>
+      )}
 
       <Modal open={creating} onClose={() => setCreating(false)} title="Neue Bestellung" size="lg">
         <CreatePurchaseOrderForm
@@ -175,6 +198,55 @@ interface LineDraft {
 }
 
 const emptyLine = (): LineDraft => ({ product_id: '', beschreibung: '', quantity: '1', unit: 'STK', unit_price: '0', tax_rate: 'STANDARD' });
+
+function StockView() {
+  const { data, isLoading } = useQuery({ queryKey: ['trade-goods-stock'], queryFn: () => purchasingApi.stock() });
+  if (isLoading) return <PageLoader />;
+  const rows: TradeGoodsStock[] = data?.items || [];
+  const totalValue = rows.reduce((s, r) => s + num(r.stock_value), 0);
+
+  if (rows.length === 0) {
+    return (
+      <EmptyState
+        title="Kein Bestand"
+        description="Sobald du einen Wareneingang zu einer produktbezogenen Bestellposition verbuchst, erscheint hier der Handelsware-Bestand."
+      />
+    );
+  }
+
+  return (
+    <div className="bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden">
+      <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+        <thead className="bg-gray-50 dark:bg-gray-700/50">
+          <tr>
+            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Artikel</th>
+            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">SKU</th>
+            <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Bestand</th>
+            <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Ø EK-Preis</th>
+            <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Bestandswert</th>
+          </tr>
+        </thead>
+        <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
+          {rows.map((r) => (
+            <tr key={r.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/50">
+              <td className="px-6 py-4 text-sm font-medium text-gray-900 dark:text-white">{r.name || '–'}</td>
+              <td className="px-6 py-4 text-sm text-gray-500 dark:text-gray-400">{r.sku || '–'}</td>
+              <td className="px-6 py-4 text-sm text-right text-gray-900 dark:text-white">{num(r.quantity_on_hand)} {r.unit}</td>
+              <td className="px-6 py-4 text-sm text-right text-gray-500 dark:text-gray-400">{r.last_purchase_price != null ? eur(r.last_purchase_price) : '–'}</td>
+              <td className="px-6 py-4 text-sm text-right text-gray-900 dark:text-white">{r.stock_value != null ? eur(r.stock_value) : '–'}</td>
+            </tr>
+          ))}
+        </tbody>
+        <tfoot className="bg-gray-50 dark:bg-gray-700/50">
+          <tr>
+            <td colSpan={4} className="px-6 py-3 text-sm font-medium text-right text-gray-700 dark:text-gray-300">Gesamt-Bestandswert</td>
+            <td className="px-6 py-3 text-sm font-bold text-right text-gray-900 dark:text-white">{eur(totalValue)}</td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  );
+}
 
 function CreatePurchaseOrderForm({ onDone, onCancel }: { onDone: () => void; onCancel: () => void }) {
   const toast = useToast();

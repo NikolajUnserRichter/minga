@@ -15,10 +15,12 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models.invoice import TaxRate
+from app.models.inventory import InventoryItemType, InventoryMovement, MovementType
 from app.models.procurement import (
     PurchaseOrder,
     PurchaseOrderLine,
     PurchaseOrderStatus,
+    TradeGoodsInventory,
 )
 
 
@@ -118,8 +120,57 @@ class ProcurementService:
                     f"für Position {line.position}"
                 )
             line.quantity_received = new_received
+            # Bestand fortschreiben (nur für produktbezogene Positionen)
+            if line.product_id is not None:
+                self._post_trade_goods_receipt(po, line, qty)
 
         po.recompute_receipt_status()
         self.db.commit()
         self.db.refresh(po)
         return po
+
+    def _post_trade_goods_receipt(
+        self, po: PurchaseOrder, line: PurchaseOrderLine, qty: Decimal
+    ) -> None:
+        """Handelsware-Bestand erhöhen + Lagerbewegung (EINGANG) erfassen.
+
+        Aggregiert je Produkt: eine aktive Bestandszeile pro product_id.
+        """
+        stock = self.db.execute(
+            select(TradeGoodsInventory).where(
+                TradeGoodsInventory.product_id == line.product_id,
+                TradeGoodsInventory.is_active.is_(True),
+            )
+        ).scalars().first()
+
+        if stock is None:
+            stock = TradeGoodsInventory(
+                product_id=line.product_id,
+                sku=line.product_sku or (line.product.sku if line.product else None),
+                name=line.beschreibung or (line.product.name if line.product else None),
+                quantity_on_hand=Decimal("0"),
+                unit=line.unit,
+                last_purchase_price=line.unit_price,
+            )
+            self.db.add(stock)
+            self.db.flush()
+
+        qty_before = stock.quantity_on_hand or Decimal("0")
+        qty_after = qty_before + qty
+        stock.quantity_on_hand = qty_after
+        stock.last_purchase_price = line.unit_price  # letzter EK-Preis
+
+        self.db.add(
+            InventoryMovement(
+                movement_type=MovementType.EINGANG,
+                item_type=InventoryItemType.HANDELSWARE,
+                trade_goods_id=stock.id,
+                quantity=qty,
+                unit=line.unit,
+                quantity_before=qty_before,
+                quantity_after=qty_after,
+                to_location_id=stock.location_id,
+                reference_number=po.po_number,
+                reason="Wareneingang Einkaufsbestellung",
+            )
+        )

@@ -125,3 +125,24 @@ class GoodsReceiptLine(BaseModel):
 
 class GoodsReceiptRequest(BaseModel):
     receipts: list[GoodsReceiptLine] = Field(..., min_length=1)
+
+
+# ---------- Handelsware-Bestand ----------
+
+class TradeGoodsStockResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    product_id: UUID
+    sku: Optional[str]
+    name: Optional[str]
+    quantity_on_hand: Decimal
+    unit: str
+    last_purchase_price: Optional[Decimal]
+    stock_value: Optional[Decimal] = None
+    updated_at: datetime
+
+
+class TradeGoodsStockListResponse(BaseModel):
+    items: list[TradeGoodsStockResponse]
+    total: int

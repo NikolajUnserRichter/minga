@@ -40,6 +40,7 @@ from app.models.procurement import (
     PurchaseOrder,
     PurchaseOrderLine,
     PurchaseOrderStatus,
+    TradeGoodsInventory,
 )
 
 # Rechnungen (Accounting)
@@ -148,6 +149,7 @@ __all__ = [
     "PurchaseOrder",
     "PurchaseOrderLine",
     "PurchaseOrderStatus",
+    "TradeGoodsInventory",
     # Invoice & Accounting
     "Invoice",
     "InvoiceLine",

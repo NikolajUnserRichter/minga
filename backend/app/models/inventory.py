@@ -43,6 +43,7 @@ class InventoryItemType(str, Enum):
     FERTIGWARE = "FERTIGWARE"     # Geerntete Microgreens
     SUBSTRAT = "SUBSTRAT"         # Erde, Hanfmatten, Schafwollsubstrat
     PFANDKISTE = "PFANDKISTE"     # Pfandfähige Mehrwegkisten
+    HANDELSWARE = "HANDELSWARE"   # Zugekaufte Handelsware (Tradesk-Einkauf)
     SONSTIGES = "SONSTIGES"       # Sonstige Materialien
 
 
@@ -377,6 +378,9 @@ class InventoryMovement(Base):
     )
     packaging_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         Uuid, ForeignKey("packaging_inventory.id", ondelete="SET NULL")
+    )
+    trade_goods_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid, ForeignKey("trade_goods_inventory.id", ondelete="SET NULL")
     )
 
     # Menge (positiv = Zugang, negativ = Abgang)

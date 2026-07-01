@@ -273,6 +273,8 @@ def _auto_migrate(engine: Engine) -> None:
         _add_col_if_missing("customers", "packaging_fee_amount",  "NUMERIC(10,2)", "0")
         _add_col_if_missing("customers", "packaging_fee_percent", "NUMERIC(5,2)", "0")
         _add_col_if_missing("orders", "inventory_deducted_at", "DATETIME")
+        # Handelsware-Bestandsbewegung (Tradesk-Einkauf) auf bestehenden Tenant-DBs
+        _add_col_if_missing("inventory_movements", "trade_goods_id", "CHAR(32)")
     except Exception as e:
         logger.error(f"[auto-migrate] failed: {e}")
 

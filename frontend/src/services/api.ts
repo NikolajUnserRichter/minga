@@ -9,7 +9,7 @@ import type {
   ArticleType, LocationType, TraceabilityChain, Capacity,
   RevenueStats, YieldStats, Subscription, AccuracySummary, AccuracyDetail,
   Contact, Supplier, ProductVariant, UnitOfMeasure, CustomerAddress, BundleComponent,
-  PurchaseOrder, PurchaseOrderListItem, PurchaseOrderStatus
+  PurchaseOrder, PurchaseOrderListItem, PurchaseOrderStatus, TradeGoodsStock
 } from '../types'
 
 import keycloak from './auth';
@@ -283,6 +283,9 @@ export const purchasingApi = {
 
   cancel: (id: string) =>
     api.delete(`/procurement/purchase-orders/${id}`),
+
+  stock: () =>
+    api.get<{ items: TradeGoodsStock[]; total: number }>('/procurement/stock').then(r => r.data),
 }
 
 // Forecasting API

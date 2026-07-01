@@ -19,7 +19,11 @@ from app.models.procurement import (
     PurchaseOrder,
     PurchaseOrderLine,
     PurchaseOrderStatus,
+    TradeGoodsInventory,
 )
+from app.models.inventory import InventoryMovement, MovementType, InventoryItemType
+from app.models.product import Product, ProductCategory
+from app.models.unit import UnitOfMeasure, UnitCategory
 from app.services.procurement_service import ProcurementService
 
 
@@ -47,6 +51,20 @@ def supplier(db):
     db.commit()
     db.refresh(s)
     return s
+
+
+@pytest.fixture
+def product(db):
+    unit = UnitOfMeasure(code="STK", name="Stück", category=UnitCategory.COUNT)
+    db.add(unit)
+    db.flush()
+    p = Product(sku="KAF-001", name="Kaffeebohnen 1kg",
+                category=ProductCategory.PACKAGING, base_unit_id=unit.id,
+                base_price=Decimal("25.00"))
+    db.add(p)
+    db.commit()
+    db.refresh(p)
+    return p
 
 
 # ---------- Modell-Ebene: Summen ----------
@@ -229,3 +247,90 @@ def test_api_create_unknown_supplier_404(api_client):
         "lines": [],
     })
     assert resp.status_code == 404
+
+
+# ---------- Bestands-Verbuchung generische Handelsware ----------
+
+def _po_with_product(svc, supplier, product, qty="10", price="15.00"):
+    return svc.create_purchase_order(
+        supplier_id=supplier.id,
+        lines=[{"product_id": product.id, "beschreibung": product.name,
+                "quantity": Decimal(qty), "unit": "STK",
+                "unit_price": Decimal(price), "tax_rate": TaxRate.STANDARD}],
+    )
+
+
+def test_receive_posts_trade_goods_stock(db, supplier, product):
+    svc = ProcurementService(db)
+    po = _po_with_product(svc, supplier, product)
+    line = po.lines[0]
+
+    svc.receive_goods(po.id, [{"line_id": line.id, "quantity": Decimal("4")}])
+
+    stock = db.query(TradeGoodsInventory).filter_by(product_id=product.id).one()
+    assert stock.quantity_on_hand == Decimal("4.000")
+    assert stock.unit == "STK"
+    assert stock.last_purchase_price == Decimal("15.0000")
+
+
+def test_receive_records_inventory_movement(db, supplier, product):
+    svc = ProcurementService(db)
+    po = _po_with_product(svc, supplier, product)
+    line = po.lines[0]
+
+    svc.receive_goods(po.id, [{"line_id": line.id, "quantity": Decimal("4")}])
+
+    mv = db.query(InventoryMovement).filter_by(item_type=InventoryItemType.HANDELSWARE).one()
+    assert mv.movement_type == MovementType.EINGANG
+    assert mv.quantity == Decimal("4.000")
+    assert mv.quantity_before == Decimal("0.000")
+    assert mv.quantity_after == Decimal("4.000")
+    assert mv.reference_number == po.po_number
+
+
+def test_receive_aggregates_stock_across_receipts(db, supplier, product):
+    svc = ProcurementService(db)
+    po = _po_with_product(svc, supplier, product, qty="10")
+    line = po.lines[0]
+
+    svc.receive_goods(po.id, [{"line_id": line.id, "quantity": Decimal("4")}])
+    svc.receive_goods(po.id, [{"line_id": line.id, "quantity": Decimal("6")}])
+
+    stock = db.query(TradeGoodsInventory).filter_by(product_id=product.id).one()
+    assert stock.quantity_on_hand == Decimal("10.000")
+    # zweite Bewegung startet beim vorherigen Stand
+    movements = db.query(InventoryMovement).filter_by(item_type=InventoryItemType.HANDELSWARE).order_by(InventoryMovement.quantity_before).all()
+    assert [m.quantity_before for m in movements] == [Decimal("0.000"), Decimal("4.000")]
+    assert [m.quantity_after for m in movements] == [Decimal("4.000"), Decimal("10.000")]
+
+
+def test_receive_line_without_product_skips_stock(db, supplier):
+    svc = ProcurementService(db)
+    po = svc.create_purchase_order(
+        supplier_id=supplier.id,
+        lines=[{"beschreibung": "Freitext-Ware", "quantity": Decimal("5"), "unit": "STK",
+                "unit_price": Decimal("2.00"), "tax_rate": TaxRate.STANDARD}],
+    )
+    line = po.lines[0]
+    svc.receive_goods(po.id, [{"line_id": line.id, "quantity": Decimal("5")}])
+
+    # Wareneingang trotzdem verbucht, aber kein Bestand ohne Produkt
+    db.refresh(line)
+    assert line.quantity_received == Decimal("5")
+    assert db.query(TradeGoodsInventory).count() == 0
+
+
+def test_api_stock_endpoint_reflects_receipt(api_client, db, supplier, product):
+    svc = ProcurementService(db)
+    po = _po_with_product(svc, supplier, product, qty="10", price="15.00")
+    line = po.lines[0]
+    svc.receive_goods(po.id, [{"line_id": line.id, "quantity": Decimal("7")}])
+
+    resp = api_client.get("/api/v1/procurement/stock")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["total"] == 1
+    row = body["items"][0]
+    assert row["product_id"] == str(product.id)
+    assert row["quantity_on_hand"] == "7.000"
+    assert row["stock_value"] == "105.00"  # 7 * 15.00
