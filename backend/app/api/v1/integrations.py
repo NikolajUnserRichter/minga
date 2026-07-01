@@ -14,7 +14,7 @@ from app.api.deps import DBSession
 from app.services.lexoffice_service import (
     LexofficeConnector,
     LexofficeError,
-    invoice_to_lexoffice,
+    sync_invoice,
 )
 from app.services.settings_service import get_setting, set_setting
 
@@ -84,8 +84,11 @@ async def lexoffice_test(db: DBSession):
 
 
 @router.post("/lexoffice/invoices/{invoice_id}", response_model=dict)
-async def lexoffice_push_invoice(invoice_id: UUID, db: DBSession):
-    """Eine Rechnung in das lexoffice-Konto des Kunden übertragen (Entwurf)."""
+async def lexoffice_push_invoice(invoice_id: UUID, db: DBSession, force: bool = False):
+    """Eine Rechnung in das lexoffice-Konto des Kunden übertragen (Entwurf).
+
+    Idempotent: bereits übertragene Rechnungen werden ohne erneuten API-Call
+    übersprungen; ``?force=true`` erzwingt eine erneute Übertragung."""
     key = _get_key(db)
     if not key:
         raise HTTPException(status_code=400, detail="Kein lexoffice-API-Key hinterlegt")
@@ -99,9 +102,7 @@ async def lexoffice_push_invoice(invoice_id: UUID, db: DBSession):
     customer = db.get(Customer, invoice.customer_id) if invoice.customer_id else None
     customer_name = customer.name if customer else "Kunde"
 
-    payload = invoice_to_lexoffice(invoice, customer_name=customer_name)
     try:
-        result = LexofficeConnector(key).create_invoice(payload, finalize=False)
+        return sync_invoice(db, invoice, LexofficeConnector(key), customer_name=customer_name, force=force)
     except LexofficeError as e:
         raise HTTPException(status_code=502, detail=f"lexoffice: {e}")
-    return {"status": "created", "lexoffice_id": result["id"]}

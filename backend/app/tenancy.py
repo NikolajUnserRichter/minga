@@ -275,6 +275,9 @@ def _auto_migrate(engine: Engine) -> None:
         _add_col_if_missing("orders", "inventory_deducted_at", "DATETIME")
         # Handelsware-Bestandsbewegung (Tradesk-Einkauf) auf bestehenden Tenant-DBs
         _add_col_if_missing("inventory_movements", "trade_goods_id", "CHAR(32)")
+        # lexoffice-Übertragungsstatus auf bestehenden Rechnungen
+        _add_col_if_missing("invoices", "lexoffice_id", "VARCHAR(64)")
+        _add_col_if_missing("invoices", "lexoffice_synced_at", "DATETIME")
     except Exception as e:
         logger.error(f"[auto-migrate] failed: {e}")
 

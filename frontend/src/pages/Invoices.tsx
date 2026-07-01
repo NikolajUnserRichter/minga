@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, Search, FileText, Download, AlertCircle, CheckCircle, Clock } from 'lucide-react';
-import { invoicesApi, salesApi, productsApi } from '../services/api';
+import { invoicesApi, salesApi, productsApi, integrationsApi } from '../services/api';
 import { Invoice, InvoiceStatus, InvoiceType, Customer } from '../types';
 import { PageHeader, FilterBar } from '../components/common/Layout';
 import {
@@ -90,6 +90,21 @@ export default function Invoices() {
     onError: () => {
       toast.error('Fehler beim Finalisieren');
     },
+  });
+
+  const { data: lexStatus } = useQuery({
+    queryKey: ['integration', 'lexoffice'],
+    queryFn: () => integrationsApi.lexofficeStatus(),
+    retry: false,
+  });
+
+  const lexPushMutation = useMutation({
+    mutationFn: (id: string) => integrationsApi.lexofficePushInvoice(id),
+    onSuccess: (res) => {
+      queryClient.invalidateQueries({ queryKey: ['invoices'] });
+      toast.success(res.status === 'already_synced' ? 'Bereits in lexoffice' : 'An lexoffice übertragen');
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.detail || 'Übertragung fehlgeschlagen'),
   });
 
   const filteredInvoices = invoices.filter(
@@ -313,6 +328,23 @@ export default function Invoices() {
                       >
                         PDF
                       </Button>
+                    )}
+                    {lexStatus?.enabled && ['OFFEN', 'TEILBEZAHLT', 'UEBERFAELLIG', 'BEZAHLT'].includes(invoice.status) && (
+                      invoice.lexoffice_id ? (
+                        <span className="ml-1 inline-block" title={`Übertragen am ${invoice.lexoffice_synced_at ? new Date(invoice.lexoffice_synced_at).toLocaleDateString('de-DE') : ''}`}>
+                          <Badge variant="info">In lexoffice</Badge>
+                        </span>
+                      ) : (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          title="An lexoffice übertragen"
+                          loading={lexPushMutation.isPending && lexPushMutation.variables === invoice.id}
+                          onClick={(e) => { e.stopPropagation(); lexPushMutation.mutate(invoice.id); }}
+                        >
+                          → lexoffice
+                        </Button>
+                      )
                     )}
                     {['OFFEN', 'TEILBEZAHLT', 'UEBERFAELLIG'].includes(invoice.status) && (
                       <Button

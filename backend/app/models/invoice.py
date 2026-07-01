@@ -90,6 +90,10 @@ class Invoice(Base):
     datev_export_date: Mapped[Optional[datetime]] = mapped_column(DateTime)
     buchungskonto: Mapped[Optional[str]] = mapped_column(String(10))  # Erlöskonto (z.B. 8400)
 
+    # Lexware Office (lexoffice) — Übertragungsstatus
+    lexoffice_id: Mapped[Optional[str]] = mapped_column(String(64))
+    lexoffice_synced_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+
     # Notizen
     header_text: Mapped[Optional[str]] = mapped_column(Text)  # Text vor Positionen
     footer_text: Mapped[Optional[str]] = mapped_column(Text)  # Text nach Positionen

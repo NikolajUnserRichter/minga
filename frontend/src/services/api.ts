@@ -298,6 +298,9 @@ export const integrationsApi = {
 
   lexofficeTest: () =>
     api.post<{ ok: boolean; company_name?: string; organization_id?: string; error?: string }>('/integrations/lexoffice/test').then(r => r.data),
+
+  lexofficePushInvoice: (invoiceId: string, force = false) =>
+    api.post<{ status: string; lexoffice_id?: string }>(`/integrations/lexoffice/invoices/${invoiceId}`, null, { params: { force } }).then(r => r.data),
 }
 
 // Forecasting API

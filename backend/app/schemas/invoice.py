@@ -179,6 +179,8 @@ class InvoiceResponse(InvoiceBase):
     datev_exported: bool
     datev_export_date: Optional[datetime]
     buchungskonto: Optional[str]
+    lexoffice_id: Optional[str] = None
+    lexoffice_synced_at: Optional[datetime] = None
 
     # Texte
     header_text: Optional[str]

@@ -15,7 +15,38 @@ from app.services.lexoffice_service import (
     LexofficeConnector,
     LexofficeError,
     invoice_to_lexoffice,
+    sync_invoice,
 )
+
+
+class _FakeConnector:
+    def __init__(self):
+        self.calls = 0
+
+    def create_invoice(self, payload, finalize=False):
+        self.calls += 1
+        return {"id": "lex-999"}
+
+
+class _FakeDB:
+    def __init__(self):
+        self.commits = 0
+
+    def commit(self):
+        self.commits += 1
+
+
+def _fake_invoice(**overrides):
+    line = SimpleNamespace(position=1, description="Ware", sku="X",
+                           quantity=Decimal("1"), unit="STK",
+                           unit_price=Decimal("10.00"),
+                           tax_rate=SimpleNamespace(value="STANDARD"))
+    inv = SimpleNamespace(invoice_date=date(2026, 7, 1), currency="EUR",
+                          header_text="", footer_text="", lines=[line],
+                          lexoffice_id=None, lexoffice_synced_at=None)
+    for k, v in overrides.items():
+        setattr(inv, k, v)
+    return inv
 
 
 def _client(handler) -> httpx.Client:
@@ -90,3 +121,31 @@ def test_invoice_mapping():
     assert item["quantity"] == 10.0
     assert item["unitPrice"]["netAmount"] == 15.0
     assert item["unitPrice"]["taxRatePercentage"] == 19
+
+
+def test_sync_invoice_stamps_status():
+    db, conn, inv = _FakeDB(), _FakeConnector(), _fake_invoice()
+    result = sync_invoice(db, inv, conn, customer_name="Café Central")
+    assert result["status"] == "created"
+    assert inv.lexoffice_id == "lex-999"
+    assert inv.lexoffice_synced_at is not None
+    assert conn.calls == 1
+    assert db.commits == 1
+
+
+def test_sync_invoice_idempotent_skips():
+    db, conn = _FakeDB(), _FakeConnector()
+    inv = _fake_invoice(lexoffice_id="already-there")
+    result = sync_invoice(db, inv, conn, customer_name="X")
+    assert result["status"] == "already_synced"
+    assert conn.calls == 0  # kein erneuter API-Call
+    assert db.commits == 0
+
+
+def test_sync_invoice_force_resyncs():
+    db, conn = _FakeDB(), _FakeConnector()
+    inv = _fake_invoice(lexoffice_id="old")
+    result = sync_invoice(db, inv, conn, customer_name="X", force=True)
+    assert result["status"] == "created"
+    assert inv.lexoffice_id == "lex-999"
+    assert conn.calls == 1

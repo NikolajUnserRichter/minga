@@ -571,6 +571,8 @@ export interface Invoice {
   internal_notes: string | null
   buchungskonto?: string | null
   datev_exported: boolean
+  lexoffice_id?: string | null
+  lexoffice_synced_at?: string | null
   customer_name?: string
   reminder_level?: number
   last_reminder_sent_at?: string | null

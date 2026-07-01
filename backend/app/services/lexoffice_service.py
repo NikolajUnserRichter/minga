@@ -11,6 +11,7 @@ API-Referenz: https://developers.lexoffice.io  (Basis https://api.lexoffice.io)
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, Optional
 
@@ -111,3 +112,23 @@ class LexofficeConnector:
             raise LexofficeError(f"lexoffice-Fehler {resp.status_code}: {resp.text[:200]}")
         data = resp.json()
         return {"id": data.get("id"), "resource_uri": data.get("resourceUri")}
+
+
+def sync_invoice(db, invoice, connector, *, customer_name: str, force: bool = False) -> dict:
+    """Rechnung nach lexoffice übertragen und den Status auf der Rechnung
+    stempeln. Idempotent: bereits übertragene Rechnungen werden ohne erneuten
+    API-Call übersprungen (außer ``force=True``)."""
+    if getattr(invoice, "lexoffice_id", None) and not force:
+        return {
+            "status": "already_synced",
+            "lexoffice_id": invoice.lexoffice_id,
+            "synced_at": invoice.lexoffice_synced_at,
+        }
+
+    payload = invoice_to_lexoffice(invoice, customer_name=customer_name)
+    result = connector.create_invoice(payload, finalize=False)
+
+    invoice.lexoffice_id = result["id"]
+    invoice.lexoffice_synced_at = datetime.now(timezone.utc)
+    db.commit()
+    return {"status": "created", "lexoffice_id": result["id"], "synced_at": invoice.lexoffice_synced_at}
