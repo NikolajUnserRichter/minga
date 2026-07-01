@@ -1,5 +1,7 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import keycloak from '../services/auth';
+import { useBranding } from './BrandingContext';
+import { EditionMark } from '../components/common/Logo';
 
 const AUTH_DISABLED = import.meta.env.VITE_AUTH_DISABLED === 'true';
 
@@ -30,6 +32,7 @@ const DEV_USER = {
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     const [authenticated, setAuthenticated] = useState(AUTH_DISABLED);
     const [loading, setLoading] = useState(!AUTH_DISABLED);
+    const brand = useBranding();
 
     useEffect(() => {
         if (AUTH_DISABLED) return;
@@ -60,15 +63,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return (
             <div className="flex items-center justify-center h-screen bg-gray-50 dark:bg-gray-900">
                 <div className="text-center">
-                    <div className="mx-auto mb-4 inline-flex">
-                      {/* Inline Sprouddesk-Logo (Sprossen-Blätter) */}
-                      <svg viewBox="0 0 48 48" width="64" height="64" fill="none" xmlns="http://www.w3.org/2000/svg">
-                        <path d="M24 43 V25" stroke="#1F7A3D" strokeWidth="3" strokeLinecap="round" />
-                        <path d="M23 27 C23 17 13.5 12.5 7 12.5 C7 22.5 15 28.5 23 26.5 Z" fill="#3FA52A" />
-                        <path d="M25 25 C25 14.5 35 9.5 42 9.5 C42 19.5 32.5 26.5 25 24.5 Z" fill="#86CB3C" />
-                      </svg>
+                    <div className="mx-auto mb-4 inline-flex justify-center">
+                      <EditionMark icon={brand.icon} colors={brand.colors} size={64} />
                     </div>
-                    <div className="text-2xl font-extrabold tracking-tight mb-2"><span style={{ color: '#1F7A3D' }}>Sproud</span><span style={{ color: '#86CB3C' }}>desk</span></div>
+                    <div className="text-2xl font-extrabold tracking-tight mb-2">
+                      <span style={{ color: brand.colors.a }}>{brand.wordmark[0]}</span>
+                      <span style={{ color: brand.colors.b }}>{brand.wordmark[1]}</span>
+                    </div>
                     <div className="text-gray-500 dark:text-gray-400">Authentifizierung läuft...</div>
                 </div>
             </div>

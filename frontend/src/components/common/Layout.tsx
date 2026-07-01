@@ -33,6 +33,7 @@ import { useNavigate } from 'react-router-dom';
 import QRScanner from './QRScanner';
 import CommandPalette from './CommandPalette';
 import { NovaLogo } from './Logo';
+import { useBranding } from '../../context/BrandingContext';
 import { UserRole, User } from '../../types';
 import { useTheme } from '../../context/ThemeContext';
 import { useToast } from '../ui';
@@ -264,6 +265,7 @@ export default function Layout() {
   const navigate = useNavigate();
   const { theme, toggleTheme } = useTheme();
   const toast = useToast();
+  const branding = useBranding();
 
   // Cmd+K / Ctrl+K global shortcut
   useEffect(() => {
@@ -293,11 +295,14 @@ export default function Layout() {
   };
 
 
-  // Filter navigation based on user role
+  // Filter navigation based on user role + Edition (versteckte Module).
+  const hidden = new Set(branding.hidden_modules || []);
   const filteredNavigation = navigationSections
     .map((section) => ({
       ...section,
-      items: section.items.filter((item) => item.roles.includes(user.role)),
+      items: section.items.filter(
+        (item) => item.roles.includes(user.role) && !hidden.has(item.href),
+      ),
     }))
     .filter((section) => section.items.length > 0);
 
@@ -325,10 +330,11 @@ export default function Layout() {
         >
           {/* Logo */}
           <div className={`flex items-center h-16 border-b border-gray-200 dark:border-gray-700 flex-shrink-0 ${sidebarCollapsed ? 'lg:justify-center lg:px-2 px-6 justify-between' : 'px-6 justify-between'}`}>
-            <NavLink to="/dashboard" className="flex items-center gap-3" title="Sprouddesk">
+            <NavLink to="/dashboard" className="flex items-center gap-3" title={branding.name}>
               <NovaLogo size={32} />
               <span className={`text-lg font-extrabold tracking-tight ${sidebarCollapsed ? 'lg:hidden' : ''}`}>
-                <span style={{ color: '#1F7A3D' }}>Sproud</span><span style={{ color: '#86CB3C' }}>desk</span>
+                <span style={{ color: branding.colors.a }}>{branding.wordmark[0]}</span>
+                <span style={{ color: branding.colors.b }}>{branding.wordmark[1]}</span>
               </span>
             </NavLink>
             <button

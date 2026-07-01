@@ -452,6 +452,35 @@ async def whoami(request: Request):
     return user
 
 
+@app.get("/api/v1/branding", tags=["System"])
+async def get_branding(request: Request):
+    """Öffentliches Tenant-Branding (Edition, Name, Farben, Icon, versteckte Module).
+
+    Ohne Auth erreichbar — das Frontend lädt es VOR dem Login (Logo/Titel).
+    Tenant kommt aus der Subdomain (tenant_middleware); Edition aus den
+    app_settings des Tenants (BRAND_EDITION), Default 'sprouddesk'.
+    """
+    from app.branding import resolve_branding, DEFAULT_EDITION
+    from app.tenancy import get_request_tenant, registry
+    slug = get_request_tenant(request)
+    edition = None
+    name_override = None
+    primary_override = None
+    if slug and registry.exists(slug):
+        try:
+            from app.services.settings_service import get_settings_bulk
+            SessionFactory = registry.get_sessionmaker(slug)
+            with SessionFactory() as db:
+                vals = get_settings_bulk(db, ["BRAND_EDITION", "BRAND_NAME", "BRAND_PRIMARY"])
+                edition = vals.get("BRAND_EDITION")
+                name_override = vals.get("BRAND_NAME")
+                primary_override = vals.get("BRAND_PRIMARY")
+        except Exception:
+            pass
+    return resolve_branding(edition or DEFAULT_EDITION,
+                            name_override=name_override, primary_override=primary_override)
+
+
 @app.get("/health/detailed", tags=["System"])
 async def health_check_detailed():
     """
