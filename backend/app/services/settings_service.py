@@ -40,6 +40,9 @@ KNOWN_SETTINGS: dict[str, dict] = {
     "COMPANY_BANK_NAME":  {"is_secret": False, "label": "Bank"},
     "COMPANY_IBAN":       {"is_secret": False, "label": "IBAN"},
     "COMPANY_BIC":        {"is_secret": False, "label": "BIC"},
+    # Integration: Lexware Office (lexoffice) — Kunde hinterlegt eigenen API-Key
+    "LEXOFFICE_ENABLED":  {"is_secret": False, "label": "Lexware Office aktiv"},
+    "LEXOFFICE_API_KEY":  {"is_secret": True,  "label": "lexoffice API-Key"},
 }
 
 

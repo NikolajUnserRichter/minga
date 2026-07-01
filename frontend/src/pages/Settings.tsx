@@ -1,11 +1,11 @@
 import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { capacityApi, adminApi } from '../services/api';
+import { capacityApi, adminApi, integrationsApi } from '../services/api';
 import { PageHeader } from '../components/common/Layout';
 import { CapacityIndicator, Input, Select, SelectOption, Button, useToast } from '../components/ui';
 import { SkeletonStatCard } from '../components/ui/Skeleton';
 import { CapacityModal } from '../components/domain/CapacityModal';
-import { Database, Server, Key, Bell, Pencil, Building2, Save, Globe, Hash, Mail, Send } from 'lucide-react';
+import { Database, Server, Key, Bell, Pencil, Building2, Save, Globe, Hash, Mail, Send, Plug, CheckCircle2, XCircle } from 'lucide-react';
 import { Capacity } from '../types';
 
 const forecastModelOptions: SelectOption[] = [
@@ -92,6 +92,9 @@ export default function Settings() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* SMTP Settings */}
         <SmtpSettingsCard />
+
+        {/* Integration: Lexware Office */}
+        <LexofficeIntegrationCard />
 
         {/* Company Profile */}
         <div className="card lg:col-span-2">
@@ -303,6 +306,114 @@ export default function Settings() {
         onClose={() => setCapacityModalOpen(false)}
         capacity={editingCapacity}
       />
+    </div>
+  );
+}
+
+// ==================== Integration: Lexware Office (lexoffice) ====================
+
+export function LexofficeIntegrationCard() {
+  const toast = useToast();
+  const queryClient = useQueryClient();
+  const { data: statusData, isLoading } = useQuery({
+    queryKey: ['integration', 'lexoffice'],
+    queryFn: () => integrationsApi.lexofficeStatus(),
+  });
+
+  const [apiKey, setApiKey] = useState('');
+  const [testResult, setTestResult] = useState<{ ok: boolean; company_name?: string; error?: string } | null>(null);
+
+  const saveMutation = useMutation({
+    mutationFn: (data: { enabled?: boolean; api_key?: string }) => integrationsApi.lexofficeConfigure(data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['integration', 'lexoffice'] });
+      setApiKey('');
+      toast.success('Lexware-Office-Einstellungen gespeichert');
+    },
+    onError: () => toast.error('Speichern fehlgeschlagen'),
+  });
+
+  const testMutation = useMutation({
+    mutationFn: () => integrationsApi.lexofficeTest(),
+    onSuccess: (res) => {
+      setTestResult(res);
+      if (res.ok) toast.success(`Verbunden mit ${res.company_name || 'lexoffice'}`);
+      else toast.error(res.error || 'Verbindung fehlgeschlagen');
+    },
+    onError: () => toast.error('Test fehlgeschlagen'),
+  });
+
+  const configured = statusData?.configured;
+  const enabled = statusData?.enabled;
+
+  return (
+    <div className="card">
+      <div className="card-header flex items-center gap-2">
+        <Plug className="w-5 h-5 text-blue-600" />
+        <h3 className="font-semibold">Lexware Office (lexoffice)</h3>
+        {configured && (
+          <span className="ml-auto text-xs px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-400">
+            Key hinterlegt
+          </span>
+        )}
+      </div>
+      <div className="card-body space-y-4">
+        <p className="text-sm text-gray-500 dark:text-gray-400">
+          Verbinde dein eigenes Lexware-Office-Konto. Den API-Key erstellst du in lexoffice unter{' '}
+          <span className="font-medium">Einstellungen → Öffentliche API</span>. Er wird verschlüsselt gespeichert und nie angezeigt.
+        </p>
+
+        {isLoading ? (
+          <div className="text-sm text-gray-500">Lädt…</div>
+        ) : (
+          <>
+            <Input
+              label="lexoffice API-Key"
+              type="password"
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              placeholder={configured ? '•••••••• (hinterlegt – neu eingeben zum Ändern)' : 'API-Key einfügen'}
+            />
+
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={!!enabled}
+                onChange={(e) => saveMutation.mutate({ enabled: e.target.checked })}
+                className="w-4 h-4 rounded border-gray-300 dark:border-gray-600"
+              />
+              <span className="text-gray-700 dark:text-gray-300">Integration aktiv</span>
+            </label>
+
+            {testResult && (
+              <div className={`flex items-center gap-2 text-sm ${testResult.ok ? 'text-emerald-600' : 'text-red-600'}`}>
+                {testResult.ok ? <CheckCircle2 className="w-4 h-4" /> : <XCircle className="w-4 h-4" />}
+                {testResult.ok ? `Verbunden mit ${testResult.company_name || 'lexoffice'}` : (testResult.error || 'Fehler')}
+              </div>
+            )}
+
+            <div className="flex gap-2 pt-2 border-t dark:border-gray-700">
+              <Button
+                icon={<Save className="w-4 h-4" />}
+                loading={saveMutation.isPending}
+                disabled={!apiKey.trim()}
+                onClick={() => saveMutation.mutate({ api_key: apiKey.trim(), enabled: true })}
+              >
+                Key speichern
+              </Button>
+              <Button
+                variant="secondary"
+                icon={<Plug className="w-4 h-4" />}
+                loading={testMutation.isPending}
+                disabled={!configured}
+                onClick={() => testMutation.mutate()}
+              >
+                Verbindung testen
+              </Button>
+            </div>
+          </>
+        )}
+      </div>
     </div>
   );
 }

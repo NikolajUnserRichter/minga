@@ -288,6 +288,18 @@ export const purchasingApi = {
     api.get<{ items: TradeGoodsStock[]; total: number }>('/procurement/stock').then(r => r.data),
 }
 
+// Integrationen (Self-Service): Lexware Office (lexoffice)
+export const integrationsApi = {
+  lexofficeStatus: () =>
+    api.get<{ enabled: boolean; configured: boolean }>('/integrations/lexoffice').then(r => r.data),
+
+  lexofficeConfigure: (data: { enabled?: boolean; api_key?: string }) =>
+    api.put<{ enabled: boolean; configured: boolean }>('/integrations/lexoffice', data).then(r => r.data),
+
+  lexofficeTest: () =>
+    api.post<{ ok: boolean; company_name?: string; organization_id?: string; error?: string }>('/integrations/lexoffice/test').then(r => r.data),
+}
+
 // Forecasting API
 export const forecastingApi = {
   listForecasts: (params?: { seed_id?: string; von_datum?: string; bis_datum?: string }) =>
