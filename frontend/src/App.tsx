@@ -8,6 +8,7 @@ import Settings from './pages/Settings';
 import Seeds from './pages/Seeds';
 import Customers from './pages/Customers';
 import Orders from './pages/Orders';
+import ShopifyOrders from './pages/ShopifyOrders';
 import ProductionSuggestions from './pages/ProductionSuggestions';
 import Products from './pages/Products';
 import Invoices from './pages/Invoices';
@@ -47,6 +48,7 @@ function App() {
           {/* Vertrieb */}
           <Route path="customers" element={<Customers />} />
           <Route path="orders" element={<Orders />} />
+          <Route path="shopify-orders" element={<ShopifyOrders />} />
           <Route path="subscriptions" element={<Abonnements />} />
           <Route path="purchasing" element={<Purchasing />} />
           <Route path="invoices" element={<Invoices />} />

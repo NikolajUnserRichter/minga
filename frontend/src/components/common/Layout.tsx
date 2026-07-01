@@ -28,6 +28,7 @@ import {
   Sun,
   Search,
   ShoppingCart,
+  ShoppingBag,
 } from 'lucide-react';
 import { useState, useEffect, createContext, useContext, ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -153,6 +154,12 @@ const navigationSections: NavSection[] = [
         href: '/orders',
         icon: FileText,
         roles: ['ADMIN', 'SALES', 'PRODUCTION_PLANNER', 'ACCOUNTING'],
+      },
+      {
+        name: 'Shopify',
+        href: '/shopify-orders',
+        icon: ShoppingBag,
+        roles: ['ADMIN', 'SALES', 'ACCOUNTING'],
       },
       {
         name: 'Abonnements',
