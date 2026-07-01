@@ -35,7 +35,9 @@ def override_get_db():
         db.close()
 
 
+from app.api.deps import _tenant_db
 app.dependency_overrides[get_db] = override_get_db
+app.dependency_overrides[_tenant_db] = override_get_db
 
 
 @pytest.fixture(scope="function")
@@ -52,9 +54,10 @@ def client():
         }
     
     app.dependency_overrides[get_current_user] = override_auth
+    app.dependency_overrides[_tenant_db] = override_get_db
 
     Base.metadata.create_all(bind=engine)
-    yield TestClient(app)
+    yield TestClient(app, base_url="http://localhost")
     Base.metadata.drop_all(bind=engine)
     
     # Cleanup

@@ -32,8 +32,12 @@ def override_get_db():
         db.close()
 
 
-# Dependency Override
+# Dependency Override. Router hängen an der tenant-gerouteten `_tenant_db`
+# (die intern get_db(request) aufruft) — daher muss BEIDES überschrieben
+# werden, damit die In-Memory-Test-DB überall greift.
+from app.api.deps import _tenant_db
 app.dependency_overrides[get_db] = override_get_db
+app.dependency_overrides[_tenant_db] = override_get_db
 
 
 @pytest.fixture(scope="function")
@@ -65,9 +69,13 @@ def client():
         }
     
     app.dependency_overrides[get_current_user] = override_auth
-    
+    # Pro Test neu setzen (robust gegen Cross-File-Pollution / pop im Teardown).
+    app.dependency_overrides[_tenant_db] = override_get_db
+
     Base.metadata.create_all(bind=engine)
-    yield TestClient(app)
+    # base_url=localhost → Tenant-Middleware löst auf DEFAULT_TENANT_SLUG auf
+    # und lässt den Request durch (statt Host 'testserver' abzulehnen).
+    yield TestClient(app, base_url="http://localhost")
     Base.metadata.drop_all(bind=engine)
     
     # Cleanup overrides
