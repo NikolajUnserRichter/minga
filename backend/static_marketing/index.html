@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>NovaERP — das Branchen-ERP für Manufaktur, Handel & Lebensmittel</title>
-  <meta name="description" content="NovaERP ist die moderne ERP-Plattform für KMU mit branchenfertigen Editionen für Lebensmittel-Manufakturen und Handel: Produktion, Lager, Vertrieb und Buchhaltung in einem System. Hosting in Deutschland, DSGVO-konform, in 5 Minuten startklar." />
+  <meta name="description" content="NovaERP ist die moderne ERP-Plattform für KMU mit branchenfertigen Editionen für Lebensmittel, Handel und Produktion: Produktion, Lager, Vertrieb und Buchhaltung in einem System. Hosting in Deutschland, DSGVO-konform, in 5 Minuten startklar." />
   <meta name="theme-color" content="#0a0a0a" />
 
   <!-- First-Party-Reichweitenmessung: cookielos, ohne Drittanbieter, DSGVO-freundlich.
@@ -28,13 +28,13 @@
   <meta property="og:type" content="website" />
   <meta property="og:url" content="https://novaerp.de/" />
   <meta property="og:title" content="NovaERP — das Branchen-ERP für Manufaktur, Handel & Lebensmittel" />
-  <meta property="og:description" content="ERP mit fertigen Branchen-Editionen für Lebensmittel-Manufakturen und Handel. Produktion, Lager, Vertrieb & Buchhaltung in einem System. Hosting in Deutschland · DSGVO." />
+  <meta property="og:description" content="ERP mit fertigen Branchen-Editionen für Lebensmittel, Handel und Produktion. Produktion, Lager, Vertrieb & Buchhaltung in einem System. Hosting in Deutschland · DSGVO." />
   <meta property="og:locale" content="de_DE" />
   <meta property="og:site_name" content="NovaERP" />
   <meta property="og:image" content="https://novaerp.de/og.png" />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="NovaERP — das Branchen-ERP für Manufaktur, Handel & Lebensmittel" />
-  <meta name="twitter:description" content="ERP mit fertigen Editionen für Lebensmittel-Manufakturen und Handel. Hosting in Deutschland, DSGVO-konform, in 5 Minuten startklar." />
+  <meta name="twitter:description" content="ERP mit fertigen Editionen für Lebensmittel, Handel und Produktion. Hosting in Deutschland, DSGVO-konform, in 5 Minuten startklar." />
   <meta name="twitter:image" content="https://novaerp.de/og.png" />
 
   <!-- Favicon: ringed nova-star, bronze on transparent -->
@@ -60,7 +60,7 @@
         "applicationCategory": "BusinessApplication",
         "operatingSystem": "Web",
         "url": "https://novaerp.de/",
-        "description": "Moderne ERP-Plattform für KMU mit branchenfertigen Editionen für Lebensmittel-Manufakturen und Handel: Produktion, Lager, Vertrieb und Buchhaltung. Hosting in Deutschland, DSGVO-konform.",
+        "description": "Moderne ERP-Plattform für KMU mit branchenfertigen Editionen für Lebensmittel, Handel und Produktion: Produktion, Lager, Vertrieb und Buchhaltung. Hosting in Deutschland, DSGVO-konform.",
         "offers": [
           { "@type": "Offer", "name": "Starter", "price": "99", "priceCurrency": "EUR", "description": "1 Standort, bis 3 Nutzer" },
           { "@type": "Offer", "name": "Professional", "price": "299", "priceCurrency": "EUR", "description": "bis 10 Nutzer, KI-Forecasting, BI-Dashboards" },
@@ -108,6 +108,11 @@
       --trade:        #3B82F6;
       --trade-light:  #60A5FA;
       --trade-haze:   rgba(59,130,246,0.14);
+
+      /* Craftdesk Produktion/Manufaktur sub-brand (teal) */
+      --craft:        #14B8A6;
+      --craft-light:  #2DD4BF;
+      --craft-haze:   rgba(20,184,166,0.14);
 
       /* Ink — warm neutrals, never pure white */
       --ink-0: #F6F1EA;
@@ -455,6 +460,20 @@
     .pilot .btn-trade { background: linear-gradient(100deg, #2563EB, #3B82F6 55%, #60A5FA); color: #04122e; font-weight: 700; flex: none; }
     .pilot .btn-trade:hover { transform: translateY(-2px); box-shadow: 0 0 26px 0 rgba(96,165,250,0.3); }
 
+    /* Craftdesk (Produktion/Manufaktur) — teal, mirrors the Tradesk block */
+    .craft-sec { background: linear-gradient(180deg, #081110, var(--abyss)); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+    .craft-tag { font-family: var(--font-mono); font-size: 0.72rem; letter-spacing: 0.2em; text-transform: uppercase; color: var(--craft-light); display: inline-flex; align-items: center; gap: 0.5rem; margin-bottom: 1rem; }
+    .craft-tag::before { content:''; width: 6px; height: 6px; border-radius: 50%; background: var(--craft); box-shadow: 0 0 8px var(--craft-light); }
+    .craft-brand { display: inline-flex; align-items: center; gap: 0.6rem; margin-bottom: 1.1rem; }
+    .craft-brand .wm { font-weight: 800; font-size: 1.6rem; letter-spacing: -0.02em; }
+    .craft-brand .wm .a { color: #0EA5A0; } .craft-brand .wm .b { color: var(--craft-light); }
+    .craft-sec h2 { color: var(--ink-0); }
+    .craft-sec .card:hover { border-color: rgba(20,184,166,0.4); }
+    .craft-sec .card .ico { color: var(--craft-light); border-color: rgba(20,184,166,0.3); }
+    .craft-sec .card:hover .ico { box-shadow: 0 0 18px -2px var(--craft-haze); }
+    .pilot .btn-craft { background: linear-gradient(100deg, #0D9488, #14B8A6 55%, #2DD4BF); color: #04211d; font-weight: 700; flex: none; }
+    .pilot .btn-craft:hover { transform: translateY(-2px); box-shadow: 0 0 26px 0 rgba(45,212,191,0.3); }
+
     /* ——— Entrance ——— */
     @media (prefers-reduced-motion: no-preference) {
       [data-rise] { animation: rise 0.8s var(--ease) backwards; }
@@ -511,7 +530,7 @@
         <div>
           <span class="badge" data-rise>🇩🇪 Hosting Deutschland · DSGVO · Made in Karlsruhe</span>
           <h1 data-rise>Das ERP, das deine <span class="accent">Branche</span> schon kennt.</h1>
-          <p class="lead" data-rise>Produktion, Lager, Vertrieb und Buchhaltung in einem System — mit fertigen Editionen für Lebensmittel-Manufakturen und Handel. In Deutschland gehostet, in 5 Minuten startklar, ohne SAP-Berater.</p>
+          <p class="lead" data-rise>Produktion, Lager, Vertrieb und Buchhaltung in einem System — mit fertigen Editionen für Lebensmittel, Handel und Produktion. In Deutschland gehostet, in 5 Minuten startklar, ohne SAP-Berater.</p>
           <div class="cta" data-rise>
             <a href="#kontakt" data-book class="btn btn-bronze btn-lg">Demo buchen <span class="arr">→</span></a>
             <a href="https://demo.novaerp.de" class="btn btn-ghost btn-lg">Live-Demo ansehen</a>
@@ -693,13 +712,57 @@
     </div>
   </section>
 
+  <!-- =================== CRAFTDESK (Produktion/Manufaktur-Sub-Brand) =================== -->
+  <section id="produktion" class="craft-sec">
+    <div class="container">
+      <div class="section-head" style="max-width:680px;">
+        <div class="craft-tag">Für Produktion &amp; Manufaktur · Neu</div>
+        <div class="craft-brand">
+          <svg width="32" height="32" viewBox="0 0 48 48" fill="none" aria-hidden="true">
+            <circle cx="24" cy="24" r="6.5" stroke="#2DD4BF" stroke-width="3.2"/>
+            <path d="M24 4.5V10M24 38v5.5M43.5 24H38M10 24H4.5M37.8 10.2l-3.9 3.9M14.1 33.9l-3.9 3.9M37.8 37.8l-3.9-3.9M14.1 14.1l-3.9-3.9" stroke="#14B8A6" stroke-width="3.2" stroke-linecap="round"/>
+          </svg>
+          <span class="wm"><span class="a">Craft</span><span class="b">desk</span></span>
+        </div>
+        <h2>Speziell für die Fertigung: Plan. Produce. Deliver.</h2>
+        <p>Die Branchen-Edition von NovaERP für produzierende Betriebe und Manufakturen: mehrstufige Stücklisten, Fertigungsaufträge, Kapazitätsplanung und lückenlose Rückverfolgung in einem System — vom Kundenauftrag bis zur Auslieferung.</p>
+      </div>
+
+      <div class="grid-3">
+        <div class="card">
+          <div class="ico"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m12 2 10 5-10 5L2 7l10-5Z"/><path d="m2 17 10 5 10-5M2 12l10 5 10-5"/></svg></div>
+          <h3>Stückliste &amp; Fertigung</h3>
+          <p>Mehrstufige Stücklisten (BOM), Fertigungsaufträge und automatische Materialentnahme aus dem Lager — Soll-Ist immer im Blick.</p>
+        </div>
+        <div class="card">
+          <div class="ico"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m12 14 4-4"/><path d="M3.34 19a10 10 0 1 1 17.32 0"/></svg></div>
+          <h3>Planung &amp; Kapazität</h3>
+          <p>Arbeitspläne, Maschinen- und Kapazitätsplanung für realistische Liefertermine — statt Bauchgefühl und Excel.</p>
+        </div>
+        <div class="card">
+          <div class="ico"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2"/><path d="M7 12h10"/></svg></div>
+          <h3>Rückverfolgung &amp; Nachkalkulation</h3>
+          <p>Chargen und Seriennummern lückenlos rückverfolgen, Ist-Kosten je Auftrag kalkulieren — DATEV-Export inklusive.</p>
+        </div>
+      </div>
+
+      <div class="pilot">
+        <div class="txt">
+          <h3>🚀 Craftdesk ist gerade gestartet — wir suchen <b>3 Pilot-Fertiger</b>.</h3>
+          <p>Als Pilotbetrieb: vergünstigtes Onboarding, Mitsprache bei den Funktionen und direkter Draht zum Gründer.</p>
+        </div>
+        <a href="#kontakt" class="btn btn-lg btn-craft">Pilot-Platz anfragen <span class="arr">→</span></a>
+      </div>
+    </div>
+  </section>
+
   <!-- =================== VERGLEICH =================== -->
   <section id="vergleich">
     <div class="container">
       <div class="section-head">
         <div class="eyebrow">Vergleich</div>
         <h2>NovaERP im direkten Vergleich.</h2>
-        <p>Objektiver Faktenvergleich — du entscheidest, was zu deinem Betrieb passt.</p>
+        <p>NovaERP ist <strong>eine Kern-ERP-Lösung</strong> — verfügbar in drei fertigen Branchen-Editionen: Sprouddesk (Lebensmittel), Tradesk (Handel) und Craftdesk (Produktion). Objektiver Faktenvergleich — du entscheidest, was zu deinem Betrieb passt.</p>
       </div>
       <div class="compare-wrap">
         <table class="compare">
@@ -720,7 +783,7 @@
             <tr><td>Setup-Zeit</td><td class="us">5 Minuten</td><td class="them">Stunden bis Tage</td><td class="them">Tage</td><td class="them">Wochen</td></tr>
             <tr><td>Updates, Wartung &amp; Hosting</td><td class="us">inklusive · managed</td><td class="them">inklusive (SaaS)</td><td class="them">inklusive (SaaS)</td><td class="them">selbst verwalten</td></tr>
             <tr><td>Unterstützung bei Förderung (DE)</td><td class="us"><span class="check">✓</span> Beratung inkl.</td><td class="them">—</td><td class="them">—</td><td class="them">—</td></tr>
-            <tr><td>Branchenfokus</td><td class="us">KMU &amp; Lebensmittel</td><td class="them">Fertigung</td><td class="them">Handel allgemein</td><td class="them">Universal</td></tr>
+            <tr><td>Branchenfokus</td><td class="us">Lebensmittel · Handel · Produktion</td><td class="them">Fertigung</td><td class="them">Handel allgemein</td><td class="them">Universal</td></tr>
           </tbody>
         </table>
       </div>
