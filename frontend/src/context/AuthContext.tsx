@@ -60,14 +60,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return (
             <div className="flex items-center justify-center h-screen bg-gray-50 dark:bg-gray-900">
                 <div className="text-center">
-                    <div className="text-gray-900 dark:text-white mx-auto mb-4 inline-flex">
-                      {/* Inline NovaERP-Logo */}
-                      <svg viewBox="0 0 64 64" width="64" height="64" xmlns="http://www.w3.org/2000/svg">
-                        <circle cx="32" cy="32" r="26" fill="none" stroke="currentColor" strokeWidth="2.5" opacity="0.85" />
-                        <path d="M 32 7 L 35.5 28.5 L 57 32 L 35.5 35.5 L 32 57 L 28.5 35.5 L 7 32 L 28.5 28.5 Z" fill="#C57A3B" />
+                    <div className="mx-auto mb-4 inline-flex">
+                      {/* Inline Sprouddesk-Logo (Sprossen-Blätter) */}
+                      <svg viewBox="0 0 48 48" width="64" height="64" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M24 43 V25" stroke="#1F7A3D" strokeWidth="3" strokeLinecap="round" />
+                        <path d="M23 27 C23 17 13.5 12.5 7 12.5 C7 22.5 15 28.5 23 26.5 Z" fill="#3FA52A" />
+                        <path d="M25 25 C25 14.5 35 9.5 42 9.5 C42 19.5 32.5 26.5 25 24.5 Z" fill="#86CB3C" />
                       </svg>
                     </div>
-                    <div className="text-2xl font-bold tracking-tight mb-2"><span className="text-gray-900 dark:text-white">Nova</span><span className="text-amber-600">ERP</span></div>
+                    <div className="text-2xl font-extrabold tracking-tight mb-2"><span style={{ color: '#1F7A3D' }}>Sproud</span><span style={{ color: '#86CB3C' }}>desk</span></div>
                     <div className="text-gray-500 dark:text-gray-400">Authentifizierung läuft...</div>
                 </div>
             </div>

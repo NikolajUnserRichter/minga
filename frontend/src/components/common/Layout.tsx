@@ -325,10 +325,10 @@ export default function Layout() {
         >
           {/* Logo */}
           <div className={`flex items-center h-16 border-b border-gray-200 dark:border-gray-700 flex-shrink-0 ${sidebarCollapsed ? 'lg:justify-center lg:px-2 px-6 justify-between' : 'px-6 justify-between'}`}>
-            <NavLink to="/dashboard" className="flex items-center gap-3 text-gray-900 dark:text-white" title="NovaERP">
+            <NavLink to="/dashboard" className="flex items-center gap-3" title="Sprouddesk">
               <NovaLogo size={32} />
-              <span className={`text-lg font-bold tracking-tight ${sidebarCollapsed ? 'lg:hidden' : ''}`}>
-                Nova<span className="text-amber-600">ERP</span>
+              <span className={`text-lg font-extrabold tracking-tight ${sidebarCollapsed ? 'lg:hidden' : ''}`}>
+                <span style={{ color: '#1F7A3D' }}>Sproud</span><span style={{ color: '#86CB3C' }}>desk</span>
               </span>
             </NavLink>
             <button
