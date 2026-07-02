@@ -221,3 +221,56 @@ def platform_info(_: None = Depends(_require_admin)):
         "total_size_mb": round(total_size / 1024 / 1024, 2),
         "tenants_dir": str(registry.path_for("").parent),
     }
+
+
+# ---------- Demo-Verwaltung: Golden-Seed + feste Demo-User ----------
+
+# Feste Demo-Logins (verschiedene Rollen, gemeinsamer Demo-Mandant).
+DEMO_USERS = [
+    {"email": "anna@demo.novaerp.de",  "role": "admin",              "first_name": "Anna",  "last_name": "Admin"},
+    {"email": "ben@demo.novaerp.de",   "role": "sales",              "first_name": "Ben",   "last_name": "Vertrieb"},
+    {"email": "clara@demo.novaerp.de", "role": "accounting",         "first_name": "Clara", "last_name": "Buchhaltung"},
+    {"email": "paul@demo.novaerp.de",  "role": "production_planner", "first_name": "Paul",  "last_name": "Planung"},
+]
+DEMO_PASSWORD = "demo1234"
+
+
+@router.post("/demo/snapshot")
+def demo_snapshot(slug: str = "demo", _: None = Depends(_require_admin)):
+    """Aktuellen Stand der Demo-DB als Golden-Seed einfrieren (einmalig beim
+    Einrichten). Der nächtliche Reset stellt genau diesen Stand wieder her."""
+    from app.services.demo_reset_service import snapshot_demo_seed
+    if not registry.exists(slug):
+        raise HTTPException(status_code=404, detail=f"Tenant '{slug}' nicht gefunden")
+    return snapshot_demo_seed(slug)
+
+
+@router.post("/demo/reset")
+def demo_reset(slug: str = "demo", _: None = Depends(_require_admin)):
+    """Demo-DB sofort auf den Golden-Seed zurücksetzen (manueller Trigger)."""
+    from app.services.demo_reset_service import reset_demo_from_seed
+    return reset_demo_from_seed(slug)
+
+
+@router.post("/demo/seed-users")
+def demo_seed_users(slug: str = "demo", _: None = Depends(_require_admin)):
+    """Feste Demo-Logins mit Schreibrechten idempotent anlegen (Anna/Ben/Clara/
+    Paul), alle auf dem Demo-Mandanten. Passwort ist nicht temporär, damit sich
+    mehrere Besucher gleichzeitig einloggen können."""
+    from app.services.keycloak_admin import create_tenant_user, is_configured, KeycloakAdminError
+    if not is_configured():
+        raise HTTPException(status_code=503, detail="Keycloak-Admin nicht konfiguriert")
+
+    results = []
+    for u in DEMO_USERS:
+        try:
+            create_tenant_user(
+                email=u["email"], tenant_slug=slug, role=u["role"],
+                password=DEMO_PASSWORD, temporary_password=False,
+                first_name=u["first_name"], last_name=u["last_name"],
+            )
+            results.append({"email": u["email"], "role": u["role"], "status": "created"})
+        except KeycloakAdminError as e:
+            # Meist: User existiert bereits → als vorhanden markieren.
+            results.append({"email": u["email"], "role": u["role"], "status": f"skipped ({e})"})
+    return {"password": DEMO_PASSWORD, "users": results}

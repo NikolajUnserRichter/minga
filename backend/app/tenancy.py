@@ -133,6 +133,19 @@ class _TenantRegistry:
 
         return eng
 
+    def dispose_tenant(self, slug: str) -> None:
+        """Schließt Engine + Sessionmaker eines einzelnen Tenants und entfernt sie
+        aus dem Cache. Danach wird beim nächsten Zugriff frisch verbunden — nötig
+        z.B. bevor die DB-Datei ausgetauscht wird (Demo-Reset)."""
+        with self._lock:
+            eng = self._engines.pop(slug, None)
+            self._sessions.pop(slug, None)
+        if eng is not None:
+            try:
+                eng.dispose()
+            except Exception as e:
+                logger.warning(f"[tenancy] dispose_tenant '{slug}': {e}")
+
     def dispose_all(self) -> None:
         """Schließt alle Engines (Shutdown)."""
         with self._lock:

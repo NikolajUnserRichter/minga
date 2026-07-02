@@ -115,6 +115,20 @@ def start_scheduler() -> Optional[BackgroundScheduler]:
             replace_existing=True,
         )
 
+    # Demo-Reset: setzt die offen beschreibbare Demo-DB nächtlich auf den
+    # Golden-Seed zurück. NICHT per-Tenant gewrappt — betrifft nur 'demo'.
+    if os.getenv("DEMO_RESET_ENABLED", "true").lower() in ("1", "true", "yes"):
+        from app.services.demo_reset_service import reset_demo_from_seed
+        sched.add_job(
+            reset_demo_from_seed,
+            trigger=CronTrigger(hour=3, minute=30),
+            id="demo-reset",
+            name="demo-reset",
+            coalesce=True,
+            max_instances=1,
+            replace_existing=True,
+        )
+
     sched.start()
     _scheduler = sched
     job_names = [j.id for j in sched.get_jobs()]
