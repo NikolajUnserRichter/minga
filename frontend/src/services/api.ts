@@ -312,7 +312,16 @@ export const integrationsApi = {
     api.post<{ ok: boolean; shop_name?: string; currency?: string; error?: string }>('/integrations/shopify/test').then(r => r.data),
 
   shopifyOrders: (limit = 20) =>
-    api.get<Array<{ order_number: string; created_at: string; customer?: string; total?: string; currency?: string; financial_status?: string }>>('/integrations/shopify/orders', { params: { limit } }).then(r => r.data),
+    api.get<Array<{ shopify_id?: number; order_number: string; created_at: string; customer?: string; total?: string; currency?: string; financial_status?: string; fulfillment_status?: string }>>('/integrations/shopify/orders', { params: { limit } }).then(r => r.data),
+
+  shopifyImportOrders: (limit = 50) =>
+    api.post<{ imported: number; skipped: number; total: number }>('/integrations/shopify/orders/import', null, { params: { limit } }).then(r => r.data),
+
+  shopifyPushProducts: () =>
+    api.post<{ pushed: number }>('/integrations/shopify/products/push').then(r => r.data),
+
+  lexofficePullStatus: (invoiceId: string) =>
+    api.post<{ lexoffice_status: string; erp_status: string; updated: boolean }>(`/integrations/lexoffice/invoices/${invoiceId}/pull-status`).then(r => r.data),
 }
 
 // Forecasting API

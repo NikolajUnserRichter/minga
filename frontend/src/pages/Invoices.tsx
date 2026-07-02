@@ -107,6 +107,15 @@ export default function Invoices() {
     onError: (e: any) => toast.error(e?.response?.data?.detail || 'Übertragung fehlgeschlagen'),
   });
 
+  const lexPullMutation = useMutation({
+    mutationFn: (id: string) => integrationsApi.lexofficePullStatus(id),
+    onSuccess: (res) => {
+      queryClient.invalidateQueries({ queryKey: ['invoices'] });
+      toast.success(res.updated ? 'Als bezahlt übernommen' : `lexoffice-Status: ${res.lexoffice_status}`);
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.detail || 'Statusabruf fehlgeschlagen'),
+  });
+
   const filteredInvoices = invoices.filter(
     (invoice) =>
       invoice.invoice_number.toLowerCase().includes(search.toLowerCase()) ||
@@ -331,8 +340,17 @@ export default function Invoices() {
                     )}
                     {lexStatus?.enabled && ['OFFEN', 'TEILBEZAHLT', 'UEBERFAELLIG', 'BEZAHLT'].includes(invoice.status) && (
                       invoice.lexoffice_id ? (
-                        <span className="ml-1 inline-block" title={`Übertragen am ${invoice.lexoffice_synced_at ? new Date(invoice.lexoffice_synced_at).toLocaleDateString('de-DE') : ''}`}>
+                        <span className="ml-1 inline-flex items-center gap-1" title={`Übertragen am ${invoice.lexoffice_synced_at ? new Date(invoice.lexoffice_synced_at).toLocaleDateString('de-DE') : ''}`}>
                           <Badge variant="info">In lexoffice</Badge>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            title="Zahlungsstatus aus lexoffice abrufen"
+                            loading={lexPullMutation.isPending && lexPullMutation.variables === invoice.id}
+                            onClick={(e) => { e.stopPropagation(); lexPullMutation.mutate(invoice.id); }}
+                          >
+                            Status
+                          </Button>
                         </span>
                       ) : (
                         <Button

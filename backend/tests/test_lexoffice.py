@@ -15,6 +15,7 @@ from app.services.lexoffice_service import (
     LexofficeConnector,
     LexofficeError,
     invoice_to_lexoffice,
+    pull_payment_status,
     sync_invoice,
 )
 
@@ -149,3 +150,48 @@ def test_sync_invoice_force_resyncs():
     assert result["status"] == "created"
     assert inv.lexoffice_id == "lex-999"
     assert conn.calls == 1
+
+
+# ---------- Zahlungsstatus zurückholen ----------
+
+def test_get_invoice_status():
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v1/invoices/inv-1"
+        return httpx.Response(200, json={"voucherStatus": "paid"})
+
+    conn = LexofficeConnector("KEY", client=_client(handler))
+    assert conn.get_invoice_status("inv-1") == "paid"
+
+
+def test_pull_payment_status_marks_paid():
+    from decimal import Decimal
+    from app.models.invoice import InvoiceStatus
+
+    class Conn:
+        def get_invoice_status(self, _id):
+            return "paid"
+
+    db = _FakeDB()
+    inv = SimpleNamespace(lexoffice_id="inv-1", status=InvoiceStatus.OFFEN,
+                          total=Decimal("100.00"), paid_amount=Decimal("0"))
+    result = pull_payment_status(db, inv, Conn())
+    assert result["updated"] is True
+    assert inv.status == InvoiceStatus.BEZAHLT
+    assert inv.paid_amount == Decimal("100.00")
+    assert db.commits == 1
+
+
+def test_pull_payment_status_open_no_change():
+    from decimal import Decimal
+    from app.models.invoice import InvoiceStatus
+
+    class Conn:
+        def get_invoice_status(self, _id):
+            return "open"
+
+    db = _FakeDB()
+    inv = SimpleNamespace(lexoffice_id="inv-1", status=InvoiceStatus.OFFEN,
+                          total=Decimal("100.00"), paid_amount=Decimal("0"))
+    result = pull_payment_status(db, inv, Conn())
+    assert result["updated"] is False
+    assert inv.status == InvoiceStatus.OFFEN

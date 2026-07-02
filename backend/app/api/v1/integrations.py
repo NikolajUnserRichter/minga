@@ -14,9 +14,15 @@ from app.api.deps import DBSession
 from app.services.lexoffice_service import (
     LexofficeConnector,
     LexofficeError,
+    pull_payment_status,
     sync_invoice,
 )
-from app.services.shopify_service import ShopifyConnector, ShopifyError
+from app.services.shopify_service import (
+    ShopifyConnector,
+    ShopifyError,
+    import_shopify_order,
+    push_products,
+)
 from app.services.settings_service import get_setting, set_setting
 
 router = APIRouter(prefix="/integrations", tags=["Integrationen"])
@@ -187,3 +193,53 @@ async def shopify_orders(db: DBSession, limit: int = 20):
         return ShopifyConnector(domain, token).list_recent_orders(limit=limit)
     except ShopifyError as e:
         raise HTTPException(status_code=502, detail=f"Shopify: {e}")
+
+
+@router.post("/shopify/orders/import", response_model=dict)
+async def shopify_import_orders(db: DBSession, limit: int = 50):
+    """Jüngste Shopify-Bestellungen ins ERP importieren (Kunde + Order).
+    Idempotent — bereits importierte Bestellungen werden übersprungen."""
+    domain, token = _shopify_creds(db)
+    if not (domain and token):
+        raise HTTPException(status_code=400, detail="Shopify nicht konfiguriert")
+    try:
+        orders = ShopifyConnector(domain, token).fetch_orders(limit=limit)
+    except ShopifyError as e:
+        raise HTTPException(status_code=502, detail=f"Shopify: {e}")
+
+    imported = skipped = 0
+    for o in orders:
+        res = import_shopify_order(db, o)
+        if res["status"] == "imported":
+            imported += 1
+        else:
+            skipped += 1
+    return {"imported": imported, "skipped": skipped, "total": len(orders)}
+
+
+@router.post("/shopify/products/push", response_model=dict)
+async def shopify_push_products(db: DBSession):
+    """Verkaufbare Produkte (mit Bestand) als Katalog in den Shop pushen."""
+    domain, token = _shopify_creds(db)
+    if not (domain and token):
+        raise HTTPException(status_code=400, detail="Shopify nicht konfiguriert")
+    try:
+        return push_products(db, ShopifyConnector(domain, token))
+    except ShopifyError as e:
+        raise HTTPException(status_code=502, detail=f"Shopify: {e}")
+
+
+@router.post("/lexoffice/invoices/{invoice_id}/pull-status", response_model=dict)
+async def lexoffice_pull_status(invoice_id: UUID, db: DBSession):
+    """Zahlungsstatus einer übertragenen Rechnung aus lexoffice zurückholen."""
+    key = _get_key(db)
+    if not key:
+        raise HTTPException(status_code=400, detail="Kein lexoffice-API-Key hinterlegt")
+    from app.models.invoice import Invoice
+    invoice = db.get(Invoice, invoice_id)
+    if not invoice:
+        raise HTTPException(status_code=404, detail="Rechnung nicht gefunden")
+    try:
+        return pull_payment_status(db, invoice, LexofficeConnector(key))
+    except LexofficeError as e:
+        raise HTTPException(status_code=502, detail=f"lexoffice: {e}")

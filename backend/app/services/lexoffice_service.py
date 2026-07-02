@@ -113,6 +113,20 @@ class LexofficeConnector:
         data = resp.json()
         return {"id": data.get("id"), "resource_uri": data.get("resourceUri")}
 
+    def get_invoice_status(self, lexoffice_id: str) -> str:
+        """GET /v1/invoices/{id} — voucherStatus (draft/open/paid/voided)."""
+        try:
+            resp = self._request("GET", f"/v1/invoices/{lexoffice_id}")
+        except httpx.HTTPError as e:
+            raise LexofficeError(f"Statusabruf fehlgeschlagen: {e}") from e
+        if resp.status_code == 401:
+            raise LexofficeError("Ungültiger API-Key")
+        if resp.status_code == 404:
+            raise LexofficeError("Rechnung in lexoffice nicht gefunden")
+        if resp.status_code >= 400:
+            raise LexofficeError(f"lexoffice-Fehler {resp.status_code}")
+        return resp.json().get("voucherStatus", "unknown")
+
 
 def sync_invoice(db, invoice, connector, *, customer_name: str, force: bool = False) -> dict:
     """Rechnung nach lexoffice übertragen und den Status auf der Rechnung
@@ -132,3 +146,21 @@ def sync_invoice(db, invoice, connector, *, customer_name: str, force: bool = Fa
     invoice.lexoffice_synced_at = datetime.now(timezone.utc)
     db.commit()
     return {"status": "created", "lexoffice_id": result["id"], "synced_at": invoice.lexoffice_synced_at}
+
+
+def pull_payment_status(db, invoice, connector) -> dict:
+    """Zahlungsstatus einer übertragenen Rechnung aus lexoffice zurückholen.
+    Bei ``paid`` wird die ERP-Rechnung auf BEZAHLT gesetzt (paid_amount=total)."""
+    if not getattr(invoice, "lexoffice_id", None):
+        raise LexofficeError("Rechnung wurde nicht nach lexoffice übertragen")
+
+    status = connector.get_invoice_status(invoice.lexoffice_id)
+    from app.models.invoice import InvoiceStatus
+
+    updated = False
+    if status == "paid" and invoice.status != InvoiceStatus.BEZAHLT:
+        invoice.status = InvoiceStatus.BEZAHLT
+        invoice.paid_amount = invoice.total
+        updated = True
+        db.commit()
+    return {"lexoffice_status": status, "erp_status": invoice.status.value, "updated": updated}

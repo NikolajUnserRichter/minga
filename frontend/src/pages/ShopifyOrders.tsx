@@ -1,6 +1,6 @@
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-import { ShoppingBag, RefreshCw, Settings as SettingsIcon } from 'lucide-react';
+import { ShoppingBag, RefreshCw, Settings as SettingsIcon, DownloadCloud, UploadCloud } from 'lucide-react';
 import { integrationsApi } from '../services/api';
 import { PageHeader } from '../components/common/Layout';
 import { ListPageSkeleton } from '../components/ui/Skeleton';
@@ -11,6 +11,7 @@ import {
   EmptyState,
   Table,
   formatDate,
+  useToast,
   type Column,
 } from '../components/ui';
 
@@ -51,6 +52,8 @@ function FinancialStatusBadge({ status }: { status?: string }) {
  */
 export default function ShopifyOrders() {
   const navigate = useNavigate();
+  const toast = useToast();
+  const queryClient = useQueryClient();
 
   const statusQuery = useQuery({
     queryKey: ['integration', 'shopify'],
@@ -58,6 +61,21 @@ export default function ShopifyOrders() {
   });
 
   const configured = statusQuery.data?.configured === true;
+
+  const importMutation = useMutation({
+    mutationFn: () => integrationsApi.shopifyImportOrders(50),
+    onSuccess: (r) => {
+      toast.success(`${r.imported} importiert, ${r.skipped} übersprungen`);
+      queryClient.invalidateQueries({ queryKey: ['orders'] });
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.detail || 'Import fehlgeschlagen'),
+  });
+
+  const pushMutation = useMutation({
+    mutationFn: () => integrationsApi.shopifyPushProducts(),
+    onSuccess: (r) => toast.success(`${r.pushed} Produkte in den Shop gepusht`),
+    onError: (e: any) => toast.error(e?.response?.data?.detail || 'Push fehlgeschlagen'),
+  });
 
   const ordersQuery = useQuery({
     queryKey: ['shopify-orders'],
@@ -96,16 +114,32 @@ export default function ShopifyOrders() {
 
   const headerActions = (
     <div className="flex items-center gap-2">
-      <Badge variant="purple">Beta</Badge>
       {configured && (
-        <Button
-          variant="secondary"
-          onClick={() => ordersQuery.refetch()}
-          disabled={ordersQuery.isFetching}
-        >
-          <RefreshCw className={`w-4 h-4 ${ordersQuery.isFetching ? 'animate-spin' : ''}`} />
-          Aktualisieren
-        </Button>
+        <>
+          <Button
+            variant="secondary"
+            onClick={() => ordersQuery.refetch()}
+            disabled={ordersQuery.isFetching}
+          >
+            <RefreshCw className={`w-4 h-4 ${ordersQuery.isFetching ? 'animate-spin' : ''}`} />
+            Aktualisieren
+          </Button>
+          <Button
+            variant="secondary"
+            icon={<UploadCloud className="w-4 h-4" />}
+            loading={pushMutation.isPending}
+            onClick={() => pushMutation.mutate()}
+          >
+            Produkte pushen
+          </Button>
+          <Button
+            icon={<DownloadCloud className="w-4 h-4" />}
+            loading={importMutation.isPending}
+            onClick={() => importMutation.mutate()}
+          >
+            Bestellungen importieren
+          </Button>
+        </>
       )}
     </div>
   );
@@ -150,9 +184,10 @@ export default function ShopifyOrders() {
       ) : (
         <>
           <Alert variant="info" className="mb-4">
-            <strong>Nur-Lese-Vorschau (Beta).</strong> Diese Bestellungen werden live aus
-            Shopify geladen und nicht im ERP gespeichert. Die Übernahme in ERP-Aufträge folgt
-            in Kürze.
+            Bestellungen werden live aus Shopify geladen. Mit <strong>„Bestellungen
+            importieren"</strong> werden fehlende als ERP-Kunde + Auftrag (Entwurf) angelegt
+            (bereits importierte werden übersprungen). <strong>„Produkte pushen"</strong>
+            überträgt verkaufbare Artikel mit Bestand in den Shop.
           </Alert>
           <Table
             columns={columns}
