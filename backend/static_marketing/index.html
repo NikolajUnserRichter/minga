@@ -72,7 +72,7 @@
         "mainEntity": [
           { "@type": "Question", "name": "Wo werden meine Daten gehostet?", "acceptedAnswer": { "@type": "Answer", "text": "Ausschließlich in Deutschland — im Hetzner-Rechenzentrum Falkenstein (ISO 27001). Jeder Kunde erhält eine eigene, isolierte Datenbank. AVV nach Art. 28 DSGVO ist inklusive." } },
           { "@type": "Question", "name": "Wie schnell bin ich startklar?", "acceptedAnswer": { "@type": "Answer", "text": "In rund 5 Minuten: Workspace mit eigener Subdomain anlegen, Stammdaten per Excel importieren, loslegen. Ein optionales Onboarding mit Datenmigration und Schulung ist buchbar." } },
-          { "@type": "Question", "name": "Ist die Anschaffung förderfähig?", "acceptedAnswer": { "@type": "Answer", "text": "Digitalisierungsvorhaben — inklusive ERP-Einführung — sind in Baden-Württemberg häufig über die Digitalisierungsfinanzierung der L-Bank förderfähig. Wir unterstützen bei der Auswahl und Antragstellung. Aktuelle Konditionen bitte direkt beim Fördergeber prüfen." } },
+          { "@type": "Question", "name": "Ist die Anschaffung förderfähig?", "acceptedAnswer": { "@type": "Answer", "text": "Digitalisierungsvorhaben — inklusive ERP-Einführung — sind in Deutschland häufig förderfähig: über Bundesprogramme (BMWK) und die Förderprogramme des jeweiligen Bundeslandes. Wir prüfen, was passt, und unterstützen bei Auswahl und Antragstellung. Aktuelle Konditionen bitte direkt beim Fördergeber prüfen." } },
           { "@type": "Question", "name": "Bin ich an einen Vertrag gebunden?", "acceptedAnswer": { "@type": "Answer", "text": "Nein. NovaERP ist monatlich kündbar. Wahlweise gibt es eine 12-Monats-Laufzeit mit Rabatt. Deine Daten kannst du jederzeit exportieren — kein Lock-in." } }
         ]
       }
@@ -487,6 +487,12 @@
     .integrations .int-label { font-family: var(--font-mono); font-size: 0.72rem; letter-spacing: 0.2em; text-transform: uppercase; color: var(--ink-3); }
     .integrations .int-item { display: inline-flex; align-items: center; gap: 0.45rem; color: var(--ink-1); font-weight: 600; font-size: 1.02rem; }
     .integrations .int-tag { font-size: 0.6rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--bronze-glow); border: 1px solid rgba(192,129,79,0.4); border-radius: 1rem; padding: 0.06rem 0.42rem; }
+    .integrations .int-grp { display: inline-flex; align-items: center; gap: 0.55rem; }
+    .integrations .int-cat { font-family: var(--font-mono); font-size: 0.62rem; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ink-3); }
+    .integrations .int-or { font-size: 0.8rem; font-style: italic; color: var(--ink-3); }
+    .integrations .int-sep { width: 1px; height: 22px; background: var(--line); }
+    .integrations .int-logo { width: 17px; height: 17px; fill: var(--ink-2); flex: none; opacity: 0.85; }
+    @media (max-width: 640px) { .integrations .int-sep { display: none; } }
 
     /* ——— Entrance ——— */
     @media (prefers-reduced-motion: no-preference) {
@@ -626,10 +632,18 @@
         </div>
       </div>
       <div class="integrations">
-        <span class="int-label">Integrationen</span>
-        <span class="int-item">DATEV</span>
-        <span class="int-item">lexoffice <span class="int-tag">Beta</span></span>
-        <span class="int-item">Shopify <span class="int-tag">Beta</span></span>
+        <span class="int-label">Integriert mit</span>
+        <span class="int-grp">
+          <span class="int-cat">Buchhaltung</span>
+          <span class="int-item"><svg class="int-logo" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M0 .165v16.9174h23.9147V.1651Zm.017 18.1842v5.4857h1.9809c1.4754 0 2.7429-1.1832 2.7429-2.7005-.042-1.686-1.0982-2.7852-2.5736-2.7852zm6.62 0-2.1079 5.4857H5.706l1.6422-4.3428 1.3546 3.454h-1.524v.8888h3.0392l-2.1502-5.4857Zm2.6498 0v.9312h1.7778v4.5545h1.219v-4.5545h1.727v-.9312zm5.1894 0v5.4857h3.7926v-.8889h-2.6159v-1.5153h2.3196v-.9313h-2.3196v-1.219h2.4889v-.9312zm3.962 0 2.1502 5.4857h1.3037L24 18.3492h-2.9037v.9312h1.3884l-1.2699 3.327-1.5577-4.2582zm-17.2869.9312h.9313c.9271 0 1.5576.6735 1.5153 1.8117-.042 1.1804-.8425 1.8116-1.8116 1.8116h-.635Z"/></svg>DATEV</span>
+          <span class="int-or">oder</span>
+          <span class="int-item">lexoffice <span class="int-tag">Beta</span></span>
+        </span>
+        <span class="int-sep" aria-hidden="true"></span>
+        <span class="int-grp">
+          <span class="int-cat">Shop</span>
+          <span class="int-item"><svg class="int-logo" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M15.337 23.979l7.216-1.561s-2.604-17.613-2.625-17.73c-.018-.116-.114-.192-.211-.192s-1.929-.136-1.929-.136-1.275-1.274-1.439-1.411c-.045-.037-.075-.057-.121-.074l-.914 21.104h.023zM11.71 11.305s-.81-.424-1.774-.424c-1.447 0-1.504.906-1.504 1.141 0 1.232 3.24 1.715 3.24 4.629 0 2.295-1.44 3.76-3.406 3.76-2.354 0-3.54-1.465-3.54-1.465l.646-2.086s1.245 1.066 2.28 1.066c.675 0 .975-.545.975-.932 0-1.619-2.654-1.694-2.654-4.359-.034-2.237 1.571-4.416 4.827-4.416 1.257 0 1.875.361 1.875.361l-.945 2.715-.02.01zM11.17.83c.136 0 .271.038.405.135-.984.465-2.064 1.639-2.508 3.992-.656.213-1.293.405-1.889.578C7.697 3.75 8.951.84 11.17.84V.83zm1.235 2.949v.135c-.754.232-1.583.484-2.394.736.466-1.777 1.333-2.645 2.085-2.971.193.501.309 1.176.309 2.1zm.539-2.234c.694.074 1.141.867 1.429 1.755-.349.114-.735.231-1.158.366v-.252c0-.752-.096-1.371-.271-1.871v.002zm2.992 1.289c-.02 0-.06.021-.078.021s-.289.075-.714.21c-.423-1.233-1.176-2.37-2.508-2.37h-.115C12.135.209 11.669 0 11.265 0 8.159 0 6.675 3.877 6.21 5.846c-1.194.365-2.063.636-2.16.674-.675.213-.694.232-.772.87-.075.462-1.83 14.063-1.83 14.063L15.009 24l.927-21.166z"/></svg>Shopify <span class="int-tag">Beta</span></span>
+        </span>
       </div>
     </div>
   </section>
@@ -833,15 +847,15 @@
         <div>
           <div class="eyebrow">Förderung</div>
           <p class="big">Bis zu <b>50&nbsp;%</b> Zuschuss — deine ERP-Einführung ist oft förderfähig.</p>
-          <p>Die Digitalisierung deines Betriebs wird in Deutschland gefördert. In Baden-Württemberg etwa über die <strong>Digitalisierungsfinanzierung der L-Bank</strong> (inkl. Digitalisierungsprämie und ERP-Förderzuschuss) oder den <strong>Innovationsgutschein BW</strong>. Wir kennen die Programme und unterstützen dich bei Auswahl und Antragstellung — damit aus dem Monatspreis ein geförderter Invest wird.</p>
+          <p>Die Digitalisierung deines Betriebs wird in ganz Deutschland gefördert — über <strong>Bundesprogramme</strong> und die <strong>Förderprogramme deines Bundeslandes</strong> (z.&thinsp;B. Digitalbonus Bayern, Digitalisierungsprämie Plus Baden-Württemberg, Mittelstand Innovativ &amp; Digital NRW oder Digitalisierungsbonus in Sachsen und Niedersachsen). Je nach Programm gibt es Zuschüsse oder zinsverbilligte Darlehen. Wir prüfen, was in deinem Bundesland passt, und unterstützen bei Auswahl und Antragstellung — damit aus dem Monatspreis ein geförderter Invest wird.</p>
           <a href="#kontakt" class="btn btn-bronze" style="margin-top:1.6rem;">Förder-Check anfragen <span class="arr">→</span></a>
-          <p class="note">Förderprogramme, Quoten und Voraussetzungen ändern sich. Keine Rechts- oder Förderberatung; maßgeblich sind die jeweils aktuellen Konditionen des Fördergebers (z.&thinsp;B. L-Bank, BMWK).</p>
+          <p class="note">Förderprogramme, Quoten und Voraussetzungen unterscheiden sich je Bundesland und ändern sich laufend. Keine Rechts- oder Förderberatung; maßgeblich sind die jeweils aktuellen Konditionen des Fördergebers (Bund/BMWK und die jeweiligen Landesförderbanken).</p>
         </div>
         <div class="foerder-card">
           <ul>
-            <li><span><b>Digitalisierungsfinanzierung BW</b> — zinsverbilligtes Darlehen der L-Bank mit Tilgungszuschuss für KMU, inkl. ERP-Förderzuschuss.</span></li>
-            <li><span><b>Innovationsgutschein BW</b> — bis zu <b>50&nbsp;%</b> Zuschuss (bis 7.500&nbsp;€) für Digitalisierungs- und Innovationsvorhaben.</span></li>
-            <li><span><b>Bundesweit</b> — je nach Vorhaben ZIM &amp; weitere Programme; wir prüfen, was für deinen Betrieb passt.</span></li>
+            <li><span><b>Länderprogramme</b> — viele Bundesländer bezuschussen ERP- und Digitalisierungsprojekte (Digitalbonus, Digitalisierungsprämie u.&thinsp;a.) mit Zuschüssen oder zinsverbilligten Darlehen.</span></li>
+            <li><span><b>Zuschüsse bis 50&nbsp;%</b> — je nach Programm und Bundesland Zuschussquoten bis zu <b>50&nbsp;%</b> (meist gedeckelt, z.&thinsp;B. bis 7.500–17.000&nbsp;€).</span></li>
+            <li><span><b>Bundesprogramme</b> — je nach Vorhaben ZIM &amp; weitere Programme des Bundes; wir prüfen, was für deinen Betrieb passt.</span></li>
             <li><span><b>Wir helfen</b> — Einordnung, passende Programme, Vorbereitung der Unterlagen für deinen Steuerberater oder Fördermittelberater.</span></li>
           </ul>
         </div>
@@ -858,7 +872,7 @@
         <p>Monatlicher Festpreis <strong style="color:var(--ink-1)">pro Betrieb</strong> (kein Preis pro Nutzer). Gehostet, gewartet und automatisch aktualisiert — ohne eigene IT-Infrastruktur.</p>
       </div>
       <div class="price-foerder">
-        <strong>💡 Bis zu 50&nbsp;% förderfähig.</strong> Die ERP-Einführung ist in Baden-Württemberg über die <a href="#foerderung">Digitalisierungsfinanzierung</a> förderfähig — und ersetzt meist mehr Excel- und Verwaltungsstunden, als der Monatspreis kostet.
+        <strong>💡 Bis zu 50&nbsp;% förderfähig.</strong> Die ERP-Einführung ist bundesweit über <a href="#foerderung">Bundes- und Länder-Förderprogramme</a> förderfähig — und ersetzt meist mehr Excel- und Verwaltungsstunden, als der Monatspreis kostet.
       </div>
 
       <div class="pricing">
@@ -946,11 +960,11 @@
       <div class="faq">
         <details open><summary>Wo werden meine Daten gehostet?</summary><p>Ausschließlich in Deutschland — im Hetzner-Rechenzentrum Falkenstein (ISO 27001). Jeder Kunde erhält eine eigene, isolierte Datenbank. Ein AVV nach Art. 28 DSGVO ist inklusive, tägliche Backups mit 30-Tage-Aufbewahrung ebenfalls.</p></details>
         <details><summary>Wie schnell bin ich startklar?</summary><p>In rund 5 Minuten: Workspace mit eigener Subdomain anlegen, Stammdaten per Excel importieren, loslegen. Ein optionales Onboarding mit Datenmigration und Schulung (990 – 1.490 €) ist buchbar, wenn du Unterstützung möchtest.</p></details>
-        <details><summary>Ist die Anschaffung förderfähig?</summary><p>Digitalisierungsvorhaben — inklusive ERP-Einführung — sind in Baden-Württemberg häufig über die Digitalisierungsfinanzierung der L-Bank oder den Innovationsgutschein BW förderfähig. Wir unterstützen bei Auswahl und Antragstellung. Aktuelle Konditionen bitte direkt beim Fördergeber prüfen.</p></details>
+        <details><summary>Ist die Anschaffung förderfähig?</summary><p>Digitalisierungsvorhaben — inklusive ERP-Einführung — sind in Deutschland häufig förderfähig: über Bundesprogramme (BMWK) und die Förderprogramme deines Bundeslandes (z.&thinsp;B. Digitalbonus, Digitalisierungsprämie). Wir prüfen, was in deinem Bundesland passt, und unterstützen bei Auswahl und Antragstellung. Aktuelle Konditionen bitte direkt beim Fördergeber prüfen.</p></details>
         <details><summary>Zahle ich pro Nutzer?</summary><p>Nein. NovaERP kostet einen Festpreis pro Betrieb — zusätzliche Nutzer (im Rahmen des Pakets) kosten 0 €. Das macht die Kosten planbar, auch wenn dein Team wächst.</p></details>
         <details><summary>Bin ich an einen Vertrag gebunden?</summary><p>NovaERP ist monatlich kündbar. Wahlweise gibt es eine 12-Monats-Laufzeit mit Rabatt (bei Jahreszahlung 2 Monate geschenkt). Deine Daten kannst du jederzeit exportieren — kein Lock-in.</p></details>
         <details><summary>Für welche Betriebe ist NovaERP gemacht?</summary><p>Für KMU in der DACH-Region — mit fertigen Editionen für Lebensmittel, Handel und Produktion (z.&thinsp;B. Manufakturen, Groß- &amp; Einzelhandel, Fertigungsbetriebe). Dank Chargen-Rückverfolgbarkeit und DATEV-Export passt es dort, wo Standard-Tools an Grenzen stoßen.</p></details>
-        <details><summary>Welche Schnittstellen gibt es?</summary><p>NovaERP exportiert Buchungsdaten per <strong>DATEV</strong> und übergibt Rechnungen als Entwurf an <strong>lexoffice</strong> (Lexware Office). Für den Handel importiert die <strong>Shopify</strong>-Anbindung neue Bestellungen als Vorschau ins ERP. Die lexoffice- und Shopify-Anbindung befinden sich aktiv im Ausbau (Beta) — weitere Schnittstellen auf Anfrage.</p></details>
+        <details><summary>Welche Schnittstellen gibt es?</summary><p>Für die Buchhaltung exportierst du <strong>wahlweise per DATEV oder</strong> übergibst Rechnungen als Entwurf an <strong>lexoffice</strong> (Lexware Office) — je nachdem, womit dein Steuerberater arbeitet; du brauchst nicht beides. Für den Handel importiert die <strong>Shopify</strong>-Anbindung neue Bestellungen ins ERP. lexoffice- und Shopify-Anbindung sind aktiv im Ausbau (Beta) — weitere Schnittstellen auf Anfrage.</p></details>
       </div>
     </div>
   </section>
