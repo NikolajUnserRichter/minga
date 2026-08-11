@@ -192,7 +192,7 @@ class TestProduction:
     def test_list_grow_batches_empty(self, client):
         response = client.get("/api/v1/production/grow-batches")
         assert response.status_code == 200
-        assert response.json()["items"] == []
+        assert response.json() == []
 
 
 class TestSales:

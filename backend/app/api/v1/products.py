@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import select
 
-from app.api.deps import DBSession, PaginationParams
+from app.api.deps import DBSession
 from app.models.product import (
     Product, ProductGroup, GrowPlan, ProductVariant, BundleComponent, PriceList, PriceListItem,
     ProductCategory
@@ -36,7 +36,10 @@ router = APIRouter(prefix="/products", tags=["Produkte"])
 @router.get("", response_model=list[ProductResponse])
 def list_products(
     db: DBSession,
-    pagination: PaginationParams = Depends(),
+    page: int = Query(1, ge=1),
+    # Höheres Limit als Standard-Pagination: Auswahllisten (z.B. Bestellformular)
+    # brauchen den vollständigen Katalog, sonst fehlen Bundles/Produkte jenseits Seite 1.
+    page_size: int = Query(20, ge=1, le=500),
     category: Optional[ProductCategory] = None,
     is_active: bool = True,
     search: Optional[str] = None,
@@ -54,7 +57,7 @@ def list_products(
             Product.sku.ilike(f"%{safe_search}%")
         )
 
-    query = query.offset(pagination.offset).limit(pagination.page_size)
+    query = query.order_by(Product.name).offset((page - 1) * page_size).limit(page_size)
     products = db.execute(query).scalars().all()
     return products
 

@@ -581,7 +581,9 @@ class InventoryService:
                 result["harvest"] = {
                     "id": str(harvest.id),
                     "date": harvest.ernte_datum.isoformat(),
-                    "quantity_g": float(harvest.menge_gramm),
+                    "quantity_g": float(harvest.menge_gramm or 0),
+                    "quantity_stk": harvest.menge_stueck,
+                    "unit": harvest.einheit,
                     "quality": harvest.qualitaet_note,
                 }
 

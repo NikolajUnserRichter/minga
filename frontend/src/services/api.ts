@@ -141,9 +141,14 @@ export const productionApi = {
   createHarvest: (data: {
     grow_batch_id: string
     ernte_datum: string
+    einheit?: 'G' | 'STK'
     menge_gramm: number
     verlust_gramm?: number
+    menge_stueck?: number
+    verlust_stueck?: number
+    stueck_pro_kiste?: number
     qualitaet_note?: number
+    notizen?: string
   }) =>
     api.post<Harvest>('/production/harvests', data).then(r => r.data),
 
@@ -370,8 +375,10 @@ export const forecastingApi = {
 
 // Products API
 export const productsApi = {
-  list: (params?: { category?: string; is_active?: boolean; search?: string }) =>
-    api.get<Product[]>('/products', { params }).then(r => r.data),
+  // page_size 500: Auswahllisten (Bestellung, Preise, Bundle-Picker) und die
+  // Produkte-Seite brauchen den vollständigen Katalog — Backend-Default wäre 20.
+  list: (params?: { category?: string; is_active?: boolean; search?: string; page_size?: number }) =>
+    api.get<Product[]>('/products', { params: { page_size: 500, ...params } }).then(r => r.data),
 
   get: (id: string) =>
     api.get<Product>(`/products/${id}`).then(r => r.data),

@@ -291,6 +291,11 @@ def _auto_migrate(engine: Engine) -> None:
         # lexoffice-Übertragungsstatus auf bestehenden Rechnungen
         _add_col_if_missing("invoices", "lexoffice_id", "VARCHAR(64)")
         _add_col_if_missing("invoices", "lexoffice_synced_at", "DATETIME")
+        # Ernte in Stück (ganze Schalen) statt Gramm
+        _add_col_if_missing("harvests", "einheit",          "VARCHAR(10)", "'G'")
+        _add_col_if_missing("harvests", "menge_stueck",     "INTEGER")
+        _add_col_if_missing("harvests", "verlust_stueck",   "INTEGER")
+        _add_col_if_missing("harvests", "stueck_pro_kiste", "INTEGER")
     except Exception as e:
         logger.error(f"[auto-migrate] failed: {e}")
 

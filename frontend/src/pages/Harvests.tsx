@@ -54,13 +54,8 @@ export default function Harvests() {
 
     // Create mutation
     const createMutation = useMutation({
-        mutationFn: (data: {
-            grow_batch_id: string;
-            ernte_datum: string;
-            menge_gramm: number;
-            verlust_gramm?: number;
-            qualitaet_note?: number;
-        }) => productionApi.createHarvest(data),
+        mutationFn: (data: Parameters<typeof productionApi.createHarvest>[0]) =>
+            productionApi.createHarvest(data),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['harvests'] });
             queryClient.invalidateQueries({ queryKey: ['growBatches'] });
@@ -77,7 +72,7 @@ export default function Harvests() {
     const harvests = harvestsData?.items || harvestsData || [];
     const harvestableMatches = batchesData || [];
 
-    // Statistics
+    // Statistics — Gramm- und Stück-Ernten getrennt aggregieren
     const totalHarvestKg = (Array.isArray(harvests) ? harvests : []).reduce(
         (sum: number, h: Harvest) => sum + (h.menge_gramm || 0),
         0
@@ -88,14 +83,27 @@ export default function Harvests() {
         0
     ) / 1000;
 
+    const totalHarvestStk = (Array.isArray(harvests) ? harvests : []).reduce(
+        (sum: number, h: Harvest) => sum + (h.einheit === 'STK' ? (h.menge_stueck || 0) : 0),
+        0
+    );
+
+    const totalLossStk = (Array.isArray(harvests) ? harvests : []).reduce(
+        (sum: number, h: Harvest) => sum + (h.einheit === 'STK' ? (h.verlust_stueck || 0) : 0),
+        0
+    );
+
     const avgQuality = (Array.isArray(harvests) ? harvests : []).reduce(
         (sum: number, h: Harvest) => sum + (h.qualitaet_note || 0),
         0
     ) / ((Array.isArray(harvests) && harvests.length > 0) ? harvests.filter((h: Harvest) => h.qualitaet_note).length : 1) || 0;
 
+    // Verlustquote aus der Einheit mit realen Daten (reine Stück-Betriebe: aus Stk)
     const avgLossPercent = totalHarvestKg > 0
         ? (totalLossKg / (totalHarvestKg + totalLossKg)) * 100
-        : 0;
+        : totalHarvestStk > 0
+            ? (totalLossStk / (totalHarvestStk + totalLossStk)) * 100
+            : 0;
 
     // Render quality stars
     const renderStars = (rating: number | null) => {
@@ -135,7 +143,14 @@ export default function Harvests() {
                         </div>
                         <div>
                             <p className="text-sm text-gray-500 dark:text-gray-400">Gesamtertrag</p>
-                            <p className="text-2xl font-bold text-green-600 dark:text-green-400">{totalHarvestKg.toFixed(1)} kg</p>
+                            <p className="text-2xl font-bold text-green-600 dark:text-green-400">
+                                {totalHarvestStk > 0 && totalHarvestKg === 0
+                                    ? `${totalHarvestStk} Stk`
+                                    : `${totalHarvestKg.toFixed(1)} kg`}
+                            </p>
+                            {totalHarvestStk > 0 && totalHarvestKg > 0 && (
+                                <p className="text-xs text-gray-400">+ {totalHarvestStk} Stk</p>
+                            )}
                         </div>
                     </div>
                 </div>
@@ -147,7 +162,14 @@ export default function Harvests() {
                         </div>
                         <div>
                             <p className="text-sm text-gray-500 dark:text-gray-400">Gesamtverlust</p>
-                            <p className="text-2xl font-bold text-red-600 dark:text-red-400">{totalLossKg.toFixed(2)} kg</p>
+                            <p className="text-2xl font-bold text-red-600 dark:text-red-400">
+                                {totalLossStk > 0 && totalLossKg === 0
+                                    ? `${totalLossStk} Stk`
+                                    : `${totalLossKg.toFixed(2)} kg`}
+                            </p>
+                            {totalLossStk > 0 && totalLossKg > 0 && (
+                                <p className="text-xs text-gray-400">+ {totalLossStk} Stk</p>
+                            )}
                             <p className="text-xs text-gray-400">{avgLossPercent.toFixed(1)}%</p>
                         </div>
                     </div>
@@ -266,12 +288,16 @@ export default function Harvests() {
                                         </a>
                                     </td>
                                     <td className="text-right font-semibold text-green-600 dark:text-green-400">
-                                        {(harvest.menge_gramm / 1000).toFixed(2)} kg
+                                        {harvest.einheit === 'STK'
+                                            ? `${harvest.menge_stueck || 0} Stk`
+                                            : `${((harvest.menge_gramm || 0) / 1000).toFixed(2)} kg`}
                                     </td>
                                     <td className="text-right text-red-600 dark:text-red-400">
-                                        {harvest.verlust_gramm > 0
-                                            ? `${(harvest.verlust_gramm / 1000).toFixed(3)} kg`
-                                            : '-'}
+                                        {harvest.einheit === 'STK'
+                                            ? ((harvest.verlust_stueck || 0) > 0 ? `${harvest.verlust_stueck} Stk` : '-')
+                                            : (harvest.verlust_gramm > 0
+                                                ? `${(harvest.verlust_gramm / 1000).toFixed(3)} kg`
+                                                : '-')}
                                     </td>
                                     <td className="text-right">
                                         {harvest.verlustquote > 0 ? (
@@ -381,9 +407,14 @@ export default function Harvests() {
                             createMutation.mutate({
                                 grow_batch_id: selectedBatch.id,
                                 ernte_datum: data.ernte_datum,
+                                einheit: data.einheit,
                                 menge_gramm: data.menge_gramm,
                                 verlust_gramm: data.verlust_gramm,
+                                menge_stueck: data.menge_stueck,
+                                verlust_stueck: data.verlust_stueck,
+                                stueck_pro_kiste: data.stueck_pro_kiste,
                                 qualitaet_note: data.qualitaet_note,
+                                notizen: data.notizen || undefined,
                             });
                         }}
                         onCancel={() => setSelectedBatch(null)}

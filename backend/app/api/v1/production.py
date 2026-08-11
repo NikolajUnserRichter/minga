@@ -245,7 +245,10 @@ def create_harvest(data: HarvestCreate, db: DBSession):
     """Erfasst eine Ernte und gibt das Regal frei (Capacity-Decrement)."""
     from app.models.capacity import Capacity, ResourceType
 
-    harvest = Harvest(**data.model_dump())
+    payload = data.model_dump()
+    # Formular-Feld "notizen" landet in Harvest.quality_notes
+    notizen = payload.pop("notizen", None)
+    harvest = Harvest(**payload, quality_notes=notizen)
     db.add(harvest)
 
     batch = db.get(GrowBatch, data.grow_batch_id)
@@ -275,17 +278,44 @@ def create_harvest(data: HarvestCreate, db: DBSession):
 @router.get("/dashboard/summary", response_model=DashboardSummary)
 def get_dashboard_summary(db: DBSession):
     """Gibt Produktions-Dashboard Metriken."""
-    # Placeholder implementation
     start_of_week = date.today() - timedelta(days=date.today().weekday())
+    end_of_week = start_of_week + timedelta(days=6)
+
+    week_filter = Harvest.ernte_datum >= start_of_week
     weekly_harvest_grams = db.scalar(
-        select(func.sum(Harvest.menge_gramm))
-        .where(Harvest.ernte_datum >= start_of_week)
+        select(func.sum(Harvest.menge_gramm)).where(week_filter)
     ) or 0
-    
+    weekly_loss_grams = db.scalar(
+        select(func.sum(Harvest.verlust_gramm)).where(week_filter)
+    ) or 0
+    weekly_harvest_stueck = db.scalar(
+        select(func.sum(Harvest.menge_stueck)).where(week_filter, Harvest.einheit == "STK")
+    ) or 0
+    weekly_loss_stueck = db.scalar(
+        select(func.sum(Harvest.verlust_stueck)).where(week_filter, Harvest.einheit == "STK")
+    ) or 0
+
+    status_counts = {
+        status.value: db.scalar(
+            select(func.count(GrowBatch.id)).where(GrowBatch.status == status)
+        ) or 0
+        for status in GrowBatchStatus
+    }
+    harvest_ready = status_counts[GrowBatchStatus.ERNTEREIF.value]
+
     return {
-        "active_batches": db.scalar(select(func.count(GrowBatch.id)).where(GrowBatch.status.in_([GrowBatchStatus.KEIMUNG, GrowBatchStatus.WACHSTUM]))),
-        "harvest_ready": db.scalar(select(func.count(GrowBatch.id)).where(GrowBatch.status == GrowBatchStatus.ERNTEREIF)),
-        "weekly_harvest_kg": float(weekly_harvest_grams) / 1000.0
+        "active_batches": status_counts[GrowBatchStatus.KEIMUNG.value] + status_counts[GrowBatchStatus.WACHSTUM.value],
+        "harvest_ready": harvest_ready,
+        "weekly_harvest_kg": float(weekly_harvest_grams) / 1000.0,
+        "weekly_harvest_stueck": int(weekly_harvest_stueck),
+        # Felder, die das Dashboard-Frontend rendert
+        "chargen_nach_status": status_counts,
+        "erntereife_chargen": harvest_ready,
+        "ernten_diese_woche_gramm": float(weekly_harvest_grams),
+        "verluste_diese_woche_gramm": float(weekly_loss_grams),
+        "ernten_diese_woche_stueck": int(weekly_harvest_stueck),
+        "verluste_diese_woche_stueck": int(weekly_loss_stueck),
+        "woche": {"start": start_of_week.isoformat(), "ende": end_of_week.isoformat()},
     }
 
 

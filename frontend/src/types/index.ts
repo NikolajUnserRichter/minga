@@ -54,8 +54,12 @@ export interface Harvest {
   id: string
   grow_batch_id: string
   ernte_datum: string
-  menge_gramm: number
+  einheit: 'G' | 'STK'
+  menge_gramm: number | null
   verlust_gramm: number
+  menge_stueck: number | null
+  verlust_stueck: number | null
+  stueck_pro_kiste: number | null
   qualitaet_note: number | null
   verlustquote: number
   created_at: string
@@ -299,6 +303,8 @@ export interface DashboardSummary {
   erntereife_chargen: number
   ernten_diese_woche_gramm: number
   verluste_diese_woche_gramm: number
+  ernten_diese_woche_stueck: number
+  verluste_diese_woche_stueck: number
   woche: {
     start: string
     ende: string

@@ -141,6 +141,20 @@ export default function Production() {
     },
   });
 
+  const harvestMutation = useMutation({
+    mutationFn: (data: Parameters<typeof productionApi.createHarvest>[0]) =>
+      productionApi.createHarvest(data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['growBatches'] });
+      queryClient.invalidateQueries({ queryKey: ['harvests'] });
+      setHarvestingBatch(null);
+      toast.success('Ernte erfasst');
+    },
+    onError: () => {
+      toast.error('Fehler beim Speichern der Ernte');
+    },
+  });
+
   const updateStatusMutation = useMutation({
     mutationFn: ({ id, status }: { id: string; status: GrowBatchStatus }) =>
       productionApi.updateGrowBatchStatus(id, status),
@@ -495,10 +509,20 @@ export default function Production() {
         {harvestingBatch && (
           <HarvestForm
             batch={harvestingBatch}
-            onSubmit={() => {
-              queryClient.invalidateQueries({ queryKey: ['growBatches'] });
-              setHarvestingBatch(null);
-              toast.success('Ernte erfasst');
+            loading={harvestMutation.isPending}
+            onSubmit={(data) => {
+              harvestMutation.mutate({
+                grow_batch_id: harvestingBatch.id,
+                ernte_datum: data.ernte_datum,
+                einheit: data.einheit,
+                menge_gramm: data.menge_gramm,
+                verlust_gramm: data.verlust_gramm,
+                menge_stueck: data.menge_stueck,
+                verlust_stueck: data.verlust_stueck,
+                stueck_pro_kiste: data.stueck_pro_kiste,
+                qualitaet_note: data.qualitaet_note,
+                notizen: data.notizen || undefined,
+              });
             }}
             onCancel={() => setHarvestingBatch(null)}
           />

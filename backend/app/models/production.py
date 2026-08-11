@@ -97,9 +97,19 @@ class Harvest(Base):
     )
 
     # Erntedaten
+    # einheit bestimmt, welche Mengenfelder gelten:
+    # "G"   → menge_gramm/verlust_gramm (geschnittene Ernte, gewogen)
+    # "STK" → menge_stueck/verlust_stueck (ganze Schalen, gezählt);
+    #         menge_gramm wird dann als 0 gespeichert (SQLite-Tenant-DBs haben
+    #         NOT NULL auf der Spalte; 0 verfälscht keine Gramm-Summen)
     ernte_datum: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    einheit: Mapped[str] = mapped_column(String(10), default="G", server_default="G", nullable=False)
     menge_gramm: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
     verlust_gramm: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("0"))
+    menge_stueck: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    verlust_stueck: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    # Kistenformat zum Erntezeitpunkt (z.B. 15 oder 21 Stk pro Anzuchtkiste)
+    stueck_pro_kiste: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
     # Qualität (1-5 Sterne)
     qualitaet_note: Mapped[Optional[int]] = mapped_column(Integer)
@@ -119,13 +129,21 @@ class Harvest(Base):
 
     @property
     def verlustquote(self) -> Decimal:
-        """Berechnet Verlustquote in Prozent"""
-        total = self.menge_gramm + self.verlust_gramm
+        """Berechnet Verlustquote in Prozent (einheitsbewusst)"""
+        if self.einheit == "STK":
+            menge = Decimal(self.menge_stueck or 0)
+            verlust = Decimal(self.verlust_stueck or 0)
+        else:
+            menge = self.menge_gramm or Decimal("0")
+            verlust = self.verlust_gramm or Decimal("0")
+        total = menge + verlust
         if total == 0:
             return Decimal("0")
-        return (self.verlust_gramm / total) * 100
+        return (verlust / total) * 100
 
     def __repr__(self) -> str:
+        if self.einheit == "STK":
+            return f"<Harvest(id={self.id}, menge={self.menge_stueck}Stk)>"
         return f"<Harvest(id={self.id}, menge={self.menge_gramm}g)>"
 
 

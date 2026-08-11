@@ -20,6 +20,14 @@ import {
 import { useState } from 'react';
 import type { GrowBatch, ProductionSuggestion } from '../types';
 
+// Wochenmenge einheitsbewusst formatieren: reine Stück-Betriebe sehen "N Stk",
+// gemischte Betriebe "X.X kg + N Stk", Gewichts-Betriebe wie bisher "X.X kg".
+function formatMengeKgStk(gramm: number, stueck: number): string {
+  if (stueck > 0 && gramm === 0) return `${stueck} Stk`;
+  const kg = `${(gramm / 1000).toFixed(1)} kg`;
+  return stueck > 0 ? `${kg} + ${stueck} Stk` : kg;
+}
+
 export default function Dashboard() {
   const toast = useToast();
   const queryClient = useQueryClient();
@@ -33,6 +41,8 @@ export default function Dashboard() {
     erntereife_chargen: 3,
     ernten_diese_woche_gramm: 14200,
     verluste_diese_woche_gramm: 800,
+    ernten_diese_woche_stueck: 0,
+    verluste_diese_woche_stueck: 0,
     woche: {
       start: new Date(Date.now() - 3 * 86400000).toISOString(),
       ende: new Date(Date.now() + 4 * 86400000).toISOString(),
@@ -82,6 +92,21 @@ export default function Dashboard() {
     },
     onError: () => {
       toast.error('Fehler beim Genehmigen');
+    },
+  });
+
+  const harvestMutation = useMutation({
+    mutationFn: (data: Parameters<typeof productionApi.createHarvest>[0]) =>
+      productionApi.createHarvest(data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['growBatches'] });
+      queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+      queryClient.invalidateQueries({ queryKey: ['harvests'] });
+      setHarvestingBatch(null);
+      toast.success('Ernte erfasst');
+    },
+    onError: () => {
+      toast.error('Fehler beim Speichern der Ernte');
     },
   });
 
@@ -266,14 +291,20 @@ export default function Dashboard() {
               <div className="text-center p-4 bg-minga-50 dark:bg-minga-900/20 rounded-lg">
                 <Scale className="w-8 h-8 text-minga-600 dark:text-minga-400 mx-auto mb-2" />
                 <p className="text-2xl font-bold text-gray-900 dark:text-white">
-                  {((dashboardData?.ernten_diese_woche_gramm || 0) / 1000).toFixed(1)} kg
+                  {formatMengeKgStk(
+                    dashboardData?.ernten_diese_woche_gramm || 0,
+                    dashboardData?.ernten_diese_woche_stueck || 0,
+                  )}
                 </p>
                 <p className="text-sm text-gray-500 dark:text-gray-400">Ernte diese Woche</p>
               </div>
               <div className="text-center p-4 bg-red-50 dark:bg-red-900/20 rounded-lg">
                 <AlertTriangle className="w-8 h-8 text-red-600 dark:text-red-400 mx-auto mb-2" />
                 <p className="text-2xl font-bold text-gray-900 dark:text-white">
-                  {((dashboardData?.verluste_diese_woche_gramm || 0) / 1000).toFixed(1)} kg
+                  {formatMengeKgStk(
+                    dashboardData?.verluste_diese_woche_gramm || 0,
+                    dashboardData?.verluste_diese_woche_stueck || 0,
+                  )}
                 </p>
                 <p className="text-sm text-gray-500 dark:text-gray-400">Verluste</p>
               </div>
@@ -337,11 +368,20 @@ export default function Dashboard() {
         {harvestingBatch && (
           <HarvestForm
             batch={harvestingBatch}
-            onSubmit={() => {
-              queryClient.invalidateQueries({ queryKey: ['growBatches'] });
-              queryClient.invalidateQueries({ queryKey: ['dashboard'] });
-              setHarvestingBatch(null);
-              toast.success('Ernte erfasst');
+            loading={harvestMutation.isPending}
+            onSubmit={(data) => {
+              harvestMutation.mutate({
+                grow_batch_id: harvestingBatch.id,
+                ernte_datum: data.ernte_datum,
+                einheit: data.einheit,
+                menge_gramm: data.menge_gramm,
+                verlust_gramm: data.verlust_gramm,
+                menge_stueck: data.menge_stueck,
+                verlust_stueck: data.verlust_stueck,
+                stueck_pro_kiste: data.stueck_pro_kiste,
+                qualitaet_note: data.qualitaet_note,
+                notizen: data.notizen || undefined,
+              });
             }}
             onCancel={() => setHarvestingBatch(null)}
           />

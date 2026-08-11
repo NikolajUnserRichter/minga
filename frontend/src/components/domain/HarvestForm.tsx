@@ -12,49 +12,85 @@ interface HarvestFormProps {
 
 export interface HarvestFormData {
   ernte_datum: string;
+  einheit: 'G' | 'STK';
   menge_gramm: number;
   verlust_gramm: number;
+  menge_stueck?: number;
+  verlust_stueck?: number;
+  stueck_pro_kiste?: number;
   qualitaet_note: number;
   notizen?: string;
 }
 
+const EINHEIT_STORAGE_KEY = 'harvest-einheit';
+const STK_PRO_KISTE_STORAGE_KEY = 'harvest-stk-pro-kiste';
+
+function loadDefaultEinheit(): 'G' | 'STK' {
+  const stored = localStorage.getItem(EINHEIT_STORAGE_KEY);
+  return stored === 'G' ? 'G' : 'STK';
+}
+
+function loadDefaultStkProKiste(): number {
+  const stored = Number(localStorage.getItem(STK_PRO_KISTE_STORAGE_KEY));
+  return stored > 0 ? stored : 15;
+}
+
 export function HarvestForm({ batch, onSubmit, onCancel, loading = false }: HarvestFormProps) {
   const today = new Date().toISOString().split('T')[0];
-  const expectedYield = batch.tray_anzahl * (batch.seed?.ertrag_gramm_pro_tray || 350);
-  const tolerance = expectedYield * 0.05; // 5% tolerance
 
-  const [formData, setFormData] = useState<HarvestFormData>({
+  const [einheit, setEinheit] = useState<'G' | 'STK'>(loadDefaultEinheit);
+  const [stkProKiste, setStkProKiste] = useState<number>(loadDefaultStkProKiste);
+
+  const [formData, setFormData] = useState({
     ernte_datum: today,
-    menge_gramm: 0,
-    verlust_gramm: 0,
+    menge: 0,
+    verlust: 0,
     qualitaet_note: 4,
     notizen: '',
   });
 
-  const [errors, setErrors] = useState<Partial<Record<keyof HarvestFormData, string>>>({});
+  const [errors, setErrors] = useState<Partial<Record<string, string>>>({});
+
+  // Erwartung: bei Stk aus Kistenformat, bei g aus dem hinterlegten Ertrag pro Tray
+  const expectedYield = einheit === 'STK'
+    ? batch.tray_anzahl * stkProKiste
+    : batch.tray_anzahl * (batch.seed?.ertrag_gramm_pro_tray || 350);
+  const tolerance = expectedYield * 0.05; // 5% tolerance
+  const unitLabel = einheit === 'STK' ? 'Stk' : 'g';
 
   const isWithinExpectation =
-    formData.menge_gramm >= expectedYield - tolerance &&
-    formData.menge_gramm <= expectedYield + tolerance;
+    formData.menge >= expectedYield - tolerance &&
+    formData.menge <= expectedYield + tolerance;
 
   const lossPercent =
-    formData.menge_gramm > 0
-      ? ((formData.verlust_gramm / (formData.menge_gramm + formData.verlust_gramm)) * 100).toFixed(1)
+    formData.menge > 0
+      ? ((formData.verlust / (formData.menge + formData.verlust)) * 100).toFixed(1)
       : '0';
+
+  const switchEinheit = (next: 'G' | 'STK') => {
+    if (next === einheit) return;
+    setEinheit(next);
+    localStorage.setItem(EINHEIT_STORAGE_KEY, next);
+    setFormData({ ...formData, menge: 0, verlust: 0 });
+    setErrors({});
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
 
-    const newErrors: Partial<Record<keyof HarvestFormData, string>> = {};
+    const newErrors: Partial<Record<string, string>> = {};
 
     if (!formData.ernte_datum) {
       newErrors.ernte_datum = 'Erntedatum ist erforderlich';
     }
-    if (formData.menge_gramm <= 0) {
-      newErrors.menge_gramm = 'Menge muss größer als 0 sein';
+    if (formData.menge <= 0) {
+      newErrors.menge = 'Menge muss größer als 0 sein';
     }
-    if (formData.verlust_gramm < 0) {
-      newErrors.verlust_gramm = 'Verlust kann nicht negativ sein';
+    if (formData.verlust < 0) {
+      newErrors.verlust = 'Verlust kann nicht negativ sein';
+    }
+    if (einheit === 'STK' && stkProKiste <= 0) {
+      newErrors.stk_pro_kiste = 'Stk pro Kiste muss größer als 0 sein';
     }
     if (formData.qualitaet_note < 1 || formData.qualitaet_note > 5) {
       newErrors.qualitaet_note = 'Qualität muss zwischen 1 und 5 liegen';
@@ -65,7 +101,22 @@ export function HarvestForm({ batch, onSubmit, onCancel, loading = false }: Harv
       return;
     }
 
-    onSubmit(formData);
+    if (einheit === 'STK') {
+      localStorage.setItem(STK_PRO_KISTE_STORAGE_KEY, String(stkProKiste));
+    }
+
+    onSubmit({
+      ernte_datum: formData.ernte_datum,
+      einheit,
+      // Bei Stück-Ernten gibt es kein Gewicht — Backend speichert menge_gramm=0
+      menge_gramm: einheit === 'G' ? formData.menge : 0,
+      verlust_gramm: einheit === 'G' ? formData.verlust : 0,
+      menge_stueck: einheit === 'STK' ? formData.menge : undefined,
+      verlust_stueck: einheit === 'STK' ? formData.verlust : undefined,
+      stueck_pro_kiste: einheit === 'STK' ? stkProKiste : undefined,
+      qualitaet_note: formData.qualitaet_note,
+      notizen: formData.notizen,
+    });
   };
 
   const qualityLabels = ['Mangelhaft', 'Ausreichend', 'Gut', 'Sehr gut', 'Ausgezeichnet'];
@@ -91,19 +142,71 @@ export function HarvestForm({ batch, onSubmit, onCancel, loading = false }: Harv
         max={today}
       />
 
+      {/* Unit toggle */}
+      <div className="form-group">
+        <label className="label">Erfassung in</label>
+        <div className="flex gap-2">
+          {([['STK', 'Stück (ganze Schalen)'], ['G', 'Gramm (geschnitten)']] as const).map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              onClick={() => switchEinheit(value)}
+              className={`flex-1 p-2 rounded-lg border-2 text-sm transition-colors ${einheit === value
+                ? 'border-minga-500 bg-minga-50 dark:bg-minga-900/30 font-medium'
+                : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'
+                }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Kistenformat (nur bei Stück) */}
+      {einheit === 'STK' && (
+        <div className="form-group">
+          <label className="label">Stk pro Anzuchtkiste</label>
+          <div className="flex gap-2 items-center">
+            {[15, 21].map((n) => (
+              <button
+                key={n}
+                type="button"
+                onClick={() => setStkProKiste(n)}
+                className={`px-4 py-2 rounded-lg border-2 text-sm transition-colors ${stkProKiste === n
+                  ? 'border-minga-500 bg-minga-50 dark:bg-minga-900/30 font-medium'
+                  : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'
+                  }`}
+              >
+                {n} Stk{n === 15 ? ' (Standard)' : ''}
+              </button>
+            ))}
+            <div className="w-24">
+              <Input
+                type="number"
+                value={stkProKiste || ''}
+                onChange={(e) => setStkProKiste(Number(e.target.value))}
+                error={errors.stk_pro_kiste}
+                min={1}
+                step={1}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Yield */}
       <div>
         <Input
           label="Ernte-Menge"
           type="number"
           required
-          value={formData.menge_gramm || ''}
-          onChange={(e) => setFormData({ ...formData, menge_gramm: Number(e.target.value) })}
-          error={errors.menge_gramm}
-          endIcon="g"
-          hint={`Erwartet: ${expectedYield}g (±5%)`}
+          value={formData.menge || ''}
+          onChange={(e) => setFormData({ ...formData, menge: Number(e.target.value) })}
+          error={errors.menge}
+          endIcon={unitLabel}
+          hint={`Erwartet: ${expectedYield}${unitLabel} (±5%)`}
         />
-        {formData.menge_gramm > 0 && (
+        {formData.menge > 0 && (
           <div className={`mt-2 text-sm ${isWithinExpectation ? 'text-green-600 dark:text-green-400' : 'text-amber-600 dark:text-amber-400'}`}>
             {isWithinExpectation ? (
               <span className="flex items-center gap-1">
@@ -113,7 +216,7 @@ export function HarvestForm({ batch, onSubmit, onCancel, loading = false }: Harv
             ) : (
               <span className="flex items-center gap-1">
                 <AlertTriangle className="w-4 h-4" />
-                Abweichung: {(((formData.menge_gramm - expectedYield) / expectedYield) * 100).toFixed(1)}%
+                Abweichung: {(((formData.menge - expectedYield) / expectedYield) * 100).toFixed(1)}%
               </span>
             )}
           </div>
@@ -125,12 +228,12 @@ export function HarvestForm({ batch, onSubmit, onCancel, loading = false }: Harv
         <Input
           label="Verlust-Menge (optional)"
           type="number"
-          value={formData.verlust_gramm || ''}
-          onChange={(e) => setFormData({ ...formData, verlust_gramm: Number(e.target.value) })}
-          error={errors.verlust_gramm}
-          endIcon="g"
+          value={formData.verlust || ''}
+          onChange={(e) => setFormData({ ...formData, verlust: Number(e.target.value) })}
+          error={errors.verlust}
+          endIcon={unitLabel}
         />
-        {formData.verlust_gramm > 0 && (
+        {formData.verlust > 0 && (
           <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">({lossPercent}% Verlust)</p>
         )}
       </div>
@@ -172,7 +275,7 @@ export function HarvestForm({ batch, onSubmit, onCancel, loading = false }: Harv
       />
 
       {/* Large deviation warning */}
-      {formData.menge_gramm > 0 && Math.abs(formData.menge_gramm - expectedYield) > tolerance * 2 && (
+      {formData.menge > 0 && Math.abs(formData.menge - expectedYield) > tolerance * 2 && (
         <Alert variant="warning" title="Große Abweichung">
           Die eingegebene Menge weicht stark von der erwarteten Menge ab. Bitte überprüfen Sie die Eingabe.
         </Alert>

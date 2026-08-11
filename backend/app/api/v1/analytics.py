@@ -66,12 +66,15 @@ def get_yield_stats(db: DBSession) -> List[Dict[str, Any]]:
         .join(GrowBatch, Harvest.grow_batch_id == GrowBatch.id)
         .join(SeedBatch, GrowBatch.seed_batch_id == SeedBatch.id)
         .join(Seed, SeedBatch.seed_id == Seed.id)
+        # Stück-Ernten haben kein Gewicht (menge_gramm=0) und würden die
+        # g-basierte Effizienz fälschlich gegen 0 ziehen
+        .where(Harvest.einheit == "G")
         .group_by(Seed.id, Seed.name)
     ).all()
-    
+
     data = []
     for row in results:
-        if row.total_trays > 0 and row.expected_per_tray > 0:
+        if row.total_harvest and row.total_trays > 0 and row.expected_per_tray > 0:
             actual_per_tray = row.total_harvest / row.total_trays
             efficiency = (actual_per_tray / row.expected_per_tray) * 100
             
