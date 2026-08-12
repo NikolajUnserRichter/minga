@@ -242,6 +242,7 @@ function CustomerForm({ customer, onSubmit, onCancel }: CustomerFormProps) {
     skonto_days: customer?.skonto_days ?? 0,
     packaging_fee_amount: customer?.packaging_fee_amount != null ? String(customer.packaging_fee_amount) : '0',
     packaging_fee_percent: customer?.packaging_fee_percent != null ? String(customer.packaging_fee_percent) : '0',
+    show_prices_on_delivery_note: customer?.show_prices_on_delivery_note ?? false,
     aktiv: customer?.aktiv ?? true,
   });
 
@@ -402,6 +403,15 @@ function CustomerForm({ customer, onSubmit, onCancel }: CustomerFormProps) {
             onChange={(e) => setFormData({ ...formData, packaging_fee_amount: e.target.value })}
           />
         </div>
+        <label className="flex items-center gap-2 mt-4">
+          <input
+            type="checkbox"
+            checked={formData.show_prices_on_delivery_note}
+            onChange={(e) => setFormData({ ...formData, show_prices_on_delivery_note: e.target.checked })}
+            className="w-4 h-4 rounded border-gray-300 dark:border-gray-600 text-minga-600 dark:text-minga-400 focus:ring-minga-500"
+          />
+          <span className="text-sm text-gray-700 dark:text-gray-300">Preise auf Lieferschein andrucken</span>
+        </label>
       </div>
 
       <label className="flex items-center gap-2">

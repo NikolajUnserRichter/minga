@@ -138,6 +138,7 @@ export interface Customer {
   skonto_days?: number
   packaging_fee_amount?: number | string
   packaging_fee_percent?: number | string
+  show_prices_on_delivery_note?: boolean
   aktiv: boolean
   created_at: string
   updated_at: string

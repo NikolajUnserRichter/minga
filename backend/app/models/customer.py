@@ -178,6 +178,9 @@ class Customer(Base):
     # Verpackungsrabatt (% auf Verpackungsanteil — optional)
     packaging_fee_percent: Mapped[Decimal] = mapped_column(Numeric(5, 2), default=Decimal("0"))
 
+    # Preise auf Lieferschein andrucken (Kundenwunsch, z.B. für Weiterberechnung)
+    show_prices_on_delivery_note: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+
     # DATEV-Kontonummer (Debitor)
     datev_account: Mapped[Optional[str]] = mapped_column(String(10))  # z.B. 10001
 

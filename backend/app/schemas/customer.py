@@ -111,6 +111,9 @@ class CustomerCreate(CustomerBase):
     packaging_fee_amount: Decimal = Field(default=Decimal("0"), ge=0, description="Verpackungsgebühr (Fixbetrag EUR)")
     packaging_fee_percent: Decimal = Field(default=Decimal("0"), ge=0, le=100, description="Verpackungsrabatt %")
 
+    # Preise auf Lieferschein andrucken
+    show_prices_on_delivery_note: bool = Field(default=False, description="Preise auf Lieferschein andrucken")
+
     # DATEV
     datev_account: Optional[str] = Field(None, max_length=10, description="DATEV-Kontonummer")
 
@@ -156,6 +159,9 @@ class CustomerUpdate(BaseModel):
     packaging_fee_amount: Optional[Decimal] = None
     packaging_fee_percent: Optional[Decimal] = None
 
+    # Preise auf Lieferschein andrucken
+    show_prices_on_delivery_note: Optional[bool] = None
+
     # DATEV
     datev_account: Optional[str] = None
 
@@ -185,6 +191,7 @@ class CustomerResponse(CustomerBase):
     skonto_days: int = 0
     packaging_fee_amount: Decimal = Decimal("0")
     packaging_fee_percent: Decimal = Decimal("0")
+    show_prices_on_delivery_note: bool = False
     datev_account: Optional[str]
     notizen: Optional[str]
     aktiv: bool

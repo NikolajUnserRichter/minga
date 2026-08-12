@@ -180,7 +180,18 @@ class PDFService:
 
         # Totals
         if _en(tmpl, "totals_block", default=True):
-            totals_data = [
+            totals_data = []
+            # § 14 Abs. 4 Nr. 7 UStG: vereinbarte Entgeltminderung ausweisen.
+            # invoice.subtotal ist bereits rabattiert → Zwischensumme rückrechnen.
+            discount_amount = invoice.discount_amount or 0
+            if discount_amount > 0:
+                zwischensumme = invoice.subtotal + discount_amount
+                discount_label = "Rabatt:"
+                if invoice.discount_percent and invoice.discount_percent > 0:
+                    discount_label = f"Rabatt ({float(invoice.discount_percent):.1f} %):"
+                totals_data.append(["Zwischensumme:", f"{zwischensumme:.2f} €"])
+                totals_data.append([discount_label, f"-{discount_amount:.2f} €"])
+            totals_data += [
                 ["Netto:", f"{invoice.subtotal:.2f} €"],
                 ["USt:", f"{invoice.tax_amount:.2f} €"],
                 ["Gesamtbetrag:", f"{invoice.total:.2f} €"]
@@ -557,9 +568,14 @@ class PDFService:
         from app.services.document_template_service import load_template, section_enabled as _en
         tmpl = load_template(db, DocumentType.LIEFERSCHEIN) if db is not None else None
 
-        # Spalten inkl. Charge + MHD (Rückverfolgbarkeit LMHV § 11)
+        # Spalten inkl. Charge + MHD (Rückverfolgbarkeit LMHV § 11).
+        # Preisspalten nur auf Kundenwunsch (Customer.show_prices_on_delivery_note).
+        with_prices = bool(getattr(getattr(order, "customer", None), "show_prices_on_delivery_note", False))
         if _en(tmpl, "lines_table", default=True):
-            data = [["Pos", "Beschreibung", "Menge", "Einheit", "Charge", "MHD"]]
+            header = ["Pos", "Beschreibung", "Menge", "Einheit", "Charge", "MHD"]
+            if with_prices:
+                header += ["Einzelpreis", "Gesamt (Netto)"]
+            data = [header]
             for line in order.lines:
                 charge = getattr(line, "batch_number", None) or "—"
                 mhd = "—"
@@ -568,24 +584,41 @@ class PDFService:
                     seed_batch = getattr(harvest, "seed_batch", None)
                     if seed_batch and getattr(seed_batch, "mhd", None):
                         mhd = seed_batch.mhd.strftime("%d.%m.%Y")
-                data.append([
+                row = [
                     str(line.position),
                     line.beschreibung or "-",
                     f"{line.quantity:.2f}",
                     line.unit,
                     charge,
                     mhd,
-                ])
-            table = Table(data, colWidths=[1.0*cm, 6.5*cm, 2.2*cm, 1.8*cm, 2.5*cm, 2.5*cm])
+                ]
+                if with_prices:
+                    row += [f"{line.unit_price:.2f} €", f"{line.line_net:.2f} €"]
+                data.append(row)
+            if with_prices:
+                col_widths = [1.0*cm, 4.6*cm, 1.7*cm, 1.6*cm, 2.0*cm, 2.0*cm, 2.2*cm, 2.4*cm]
+            else:
+                col_widths = [1.0*cm, 6.5*cm, 2.2*cm, 1.8*cm, 2.5*cm, 2.5*cm]
+            table = Table(data, colWidths=col_widths)
             table.setStyle(TableStyle([
                 ('BACKGROUND', (0,0), (-1,0), colors.lightgrey),
                 ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
                 ('ALIGN', (2,1), (3,-1), 'RIGHT'),
                 ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
                 ('FONTSIZE', (0,0), (-1,-1), 8),
-            ]))
+            ] + ([('ALIGN', (6,1), (7,-1), 'RIGHT')] if with_prices else [])))
             body.append(table)
-            body.append(Spacer(1, 16))
+            body.append(Spacer(1, 6 if with_prices else 16))
+            if with_prices:
+                netto_sum = sum((line.line_net or 0) for line in order.lines)
+                sum_table = Table([["Warenwert (Netto):", f"{netto_sum:.2f} €"]], colWidths=[13.5*cm, 3.5*cm])
+                sum_table.setStyle(TableStyle([
+                    ('ALIGN', (0,0), (-1,-1), 'RIGHT'),
+                    ('FONTNAME', (0,0), (-1,-1), 'Helvetica-Bold'),
+                    ('FONTSIZE', (0,0), (-1,-1), 8),
+                ]))
+                body.append(sum_table)
+                body.append(Spacer(1, 16))
 
         if _en(tmpl, "signature", default=True):
             sig_hint = (tmpl.texts.get("signature_hint") if (tmpl and tmpl.texts) else None) \

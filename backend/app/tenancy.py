@@ -296,6 +296,8 @@ def _auto_migrate(engine: Engine) -> None:
         _add_col_if_missing("harvests", "menge_stueck",     "INTEGER")
         _add_col_if_missing("harvests", "verlust_stueck",   "INTEGER")
         _add_col_if_missing("harvests", "stueck_pro_kiste", "INTEGER")
+        # Preise auf Lieferschein (pro Kunde)
+        _add_col_if_missing("customers", "show_prices_on_delivery_note", "BOOLEAN", "0")
     except Exception as e:
         logger.error(f"[auto-migrate] failed: {e}")
 
