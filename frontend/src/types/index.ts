@@ -372,7 +372,9 @@ export type SubscriptionInterval = 'TAEGLICH' | 'WOECHENTLICH' | 'ZWEIWOECHENTLI
 export interface Subscription {
   id: string
   kunde_id: string
-  seed_id: string
+  // Entweder Saatgut ODER Produkt-Abo — beide optional befüllt
+  seed_id: string | null
+  product_id?: string | null
   menge: number
   einheit: string
   intervall: SubscriptionInterval
@@ -382,7 +384,8 @@ export interface Subscription {
   aktiv: boolean
   ist_aktiv: boolean
   kunde_name?: string
-  seed_name?: string
+  seed_name?: string | null
+  product_name?: string | null
   created_at: string
   updated_at: string
 }
@@ -684,14 +687,14 @@ export interface FinishedGoodsInventory {
 
 export interface PackagingInventory {
   id: string
-  article_number: string
+  sku: string
   name: string
   location_id: string | null
   current_quantity: number
   unit: string
   min_quantity: number | null
   reorder_quantity: number | null
-  supplier: string | null
+  supplier_name: string | null
   is_active: boolean
   location_name?: string
 }

@@ -246,7 +246,7 @@ export default function Inventory() {
               qty: item.current_quantity,
               unit: item.unit,
               type: 'VERPACKUNG',
-              name: `${item.name} (${item.article_number})`
+              name: `${item.name} (${item.sku ?? ''})`
             });
             setShowCorrectionModal(true);
           }}
@@ -413,7 +413,7 @@ function OverviewTab({
             {lowStockAlerts.slice(0, 5).map((item: any, index: number) => (
               <div key={index} className="px-6 py-3 flex justify-between items-center">
                 <div>
-                  <p className="font-medium text-gray-900 dark:text-white">{item.name || item.article_number}</p>
+                  <p className="font-medium text-gray-900 dark:text-white">{item.name || item.sku}</p>
                   <p className="text-sm text-gray-500 dark:text-gray-400">{item.location_name}</p>
                 </div>
                 <div className="text-right">
@@ -631,7 +631,7 @@ function FinishedGoodsTab({
 function PackagingTab({ inventory, search, onCorrect }: { inventory: PackagingInventory[]; search: string; onCorrect: (item: PackagingInventory) => void }) {
   const filtered = inventory.filter(
     (item) =>
-      item.article_number.toLowerCase().includes(search.toLowerCase()) ||
+      (item.sku || '').toLowerCase().includes(search.toLowerCase()) ||
       item.name.toLowerCase().includes(search.toLowerCase())
   );
 
@@ -657,7 +657,7 @@ function PackagingTab({ inventory, search, onCorrect }: { inventory: PackagingIn
             const isLow = item.current_quantity <= (item.min_quantity || 0);
             return (
               <tr key={item.id} className="hover:bg-gray-50 dark:bg-gray-700/50">
-                <td className="px-6 py-4 text-sm font-mono">{item.article_number}</td>
+                <td className="px-6 py-4 text-sm font-mono">{item.sku}</td>
                 <td className="px-6 py-4 text-sm">{item.name}</td>
                 <td className="px-6 py-4 text-sm text-gray-500 dark:text-gray-400">{item.location_name}</td>
                 <td className="px-6 py-4">

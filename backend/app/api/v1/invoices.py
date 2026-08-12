@@ -2,7 +2,7 @@ from typing import Optional
 """
 Rechnungs-API - Endpoints für Rechnungen, Zahlungen und DATEV-Export
 """
-from datetime import date
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
@@ -407,7 +407,7 @@ def record_payment(
 @router.post("/datev-export")
 def export_datev(
     data: DatevExportRequest,
-    db: Session = Depends(DBSession),
+    db: DBSession,
 ):
     """Exportiert Rechnungen im DATEV-Format."""
     service = DatevService(db)
@@ -422,15 +422,15 @@ def export_datev(
         csv_content=csv_content,
         record_count=record_count,
         total_amount=total_amount,
-        from_date=data.from_date,
-        to_date=data.to_date,
+        filename=f"DATEV_Export_{data.from_date}_{data.to_date}.csv",
+        export_date=datetime.now(timezone.utc),
     )
 
 
 @router.post("/datev-export/download")
 def download_datev_export(
     data: DatevExportRequest,
-    db: Session = Depends(DBSession),
+    db: DBSession,
 ):
     """Exportiert Rechnungen als DATEV CSV-Datei zum Download."""
     service = DatevService(db)

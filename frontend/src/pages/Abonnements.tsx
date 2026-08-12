@@ -342,7 +342,7 @@ export default function Abonnements() {
                                     <td>
                                         <div className="flex items-center gap-2">
                                             <Leaf className="w-4 h-4 text-green-500" />
-                                            {sub.seed_name || sub.seed_id.slice(0, 8)}
+                                            {sub.product_name || sub.seed_name || (sub.product_id ?? sub.seed_id ?? '').slice(0, 8) || '—'}
                                         </div>
                                     </td>
                                     <td className="text-right font-semibold">
@@ -592,7 +592,7 @@ export default function Abonnements() {
                 <div className="space-y-4">
                     <p className="text-gray-600 dark:text-gray-400">
                         Möchten Sie das Abonnement für{' '}
-                        <strong>{deletingSub?.kunde_name}</strong> ({deletingSub?.seed_name}) wirklich
+                        <strong>{deletingSub?.kunde_name}</strong> ({deletingSub?.product_name || deletingSub?.seed_name || '—'}) wirklich
                         deaktivieren?
                     </p>
                     <div className="flex justify-end gap-3">

@@ -131,7 +131,13 @@ export default function Orders() {
   if (isError) {
     const errAny = error as any;
     const status = errAny?.response?.status;
-    const detail = errAny?.response?.data?.detail || errAny?.message || 'Unbekannter Fehler';
+    const rawDetail = errAny?.response?.data?.detail || errAny?.message || 'Unbekannter Fehler';
+    // FastAPI-Validierungsfehler kommen als Objekt-Array → lesbar machen statt "[object Object]"
+    const detail = typeof rawDetail === 'string'
+      ? rawDetail
+      : Array.isArray(rawDetail)
+        ? rawDetail.map((d: any) => d?.msg || JSON.stringify(d)).join('; ')
+        : JSON.stringify(rawDetail);
     return (
       <div className="p-8 text-center">
         <div className="text-3xl mb-3">⚠️</div>

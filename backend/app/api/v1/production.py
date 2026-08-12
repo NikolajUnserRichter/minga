@@ -27,8 +27,10 @@ def list_grow_batches(
     erntereif: Optional[bool] = None,
 ):
     """Listet Wachstumschargen."""
+    from app.models.seed import SeedBatch
+    # Seed mitladen: GrowBatch.seed_name läuft über seed_batch.seed
     query = select(GrowBatch).options(
-        joinedload(GrowBatch.seed_batch)
+        joinedload(GrowBatch.seed_batch).joinedload(SeedBatch.seed)
     ).order_by(desc(GrowBatch.aussaat_datum))
     
     if status:
@@ -65,15 +67,11 @@ def create_grow_batch(data: GrowBatchCreate, db: DBSession):
         raise HTTPException(status_code=400, detail="Saatgut-Charge hat keine Sorte zugeordnet")
 
     # Erntefenster ab Aussaatdatum
-    erwartete_ernte_min = data.aussaat_datum + timedelta(
-        days=seed.keimdauer_tage + seed.erntefenster_min_tage
-    )
-    erwartete_ernte_optimal = data.aussaat_datum + timedelta(
-        days=seed.keimdauer_tage + seed.erntefenster_optimal_tage
-    )
-    erwartete_ernte_max = data.aussaat_datum + timedelta(
-        days=seed.keimdauer_tage + seed.erntefenster_max_tage
-    )
+    # Erntefenster-Tage zählen AB AUSSAAT (Keimdauer ist darin bereits enthalten:
+    # z.B. Gartenkresse Keim 3 + Wachstum 3 → Fenster 6/7/8). Keimdauer NICHT addieren.
+    erwartete_ernte_min = data.aussaat_datum + timedelta(days=seed.erntefenster_min_tage)
+    erwartete_ernte_optimal = data.aussaat_datum + timedelta(days=seed.erntefenster_optimal_tage)
+    erwartete_ernte_max = data.aussaat_datum + timedelta(days=seed.erntefenster_max_tage)
 
     grow_batch = GrowBatch(
         seed_batch_id=data.seed_batch_id,
@@ -329,29 +327,38 @@ def get_packaging_plan(
     target_date: date = Query(..., description="Lieferdatum für das geplant werden soll"),
 ):
     """
-    Erstellt einen Verpackungsplan für ein bestimmtes Lieferdatum.
-    Aggregiert alle Positionen aus bestätigten und in Produktion befindlichen Bestellungen.
+    Erstellt einen Verpackungsplan für einen Pack-Tag.
+
+    Verpackt wird standardmäßig 1 Tag vor Auslieferung: der Plan für Tag X
+    umfasst Lieferungen von X+1 UND von X selbst (Same-Day-Bestellungen).
+    Entwürfe werden mitgezählt und per Status gekennzeichnet, damit noch
+    nicht bestätigte Bestellungen nicht unsichtbar bleiben.
     """
-    
-    # 1. Bestellungen finden
+    from datetime import timedelta
+
+    # 1. Bestellungen finden: Lieferung morgen (Standard-Packtag) oder heute (same-day)
     orders = db.execute(
         select(Order)
-        .options(joinedload(Order.lines).joinedload(OrderLine.product))
-        .where(
-            Order.requested_delivery_date == target_date,
-            Order.status.in_([OrderStatus.BESTAETIGT, OrderStatus.IN_PRODUKTION])
+        .options(
+            joinedload(Order.lines).joinedload(OrderLine.product),
+            joinedload(Order.customer),
         )
+        .where(
+            Order.requested_delivery_date.in_([target_date, target_date + timedelta(days=1)]),
+            Order.status.in_([OrderStatus.ENTWURF, OrderStatus.BESTAETIGT, OrderStatus.IN_PRODUKTION])
+        )
+        .order_by(Order.requested_delivery_date)
     ).scalars().unique().all()
-    
+
     # 2. Aggregieren
     plan = {}
-    
+
     for order in orders:
         for line in order.lines:
             # Key: Product ID oder Name (falls ID fehlt/Legacy)
             key = line.product_id if line.product_id else line.beschreibung
             product_name = line.product.name if line.product else line.beschreibung
-            
+
             if key not in plan:
                 plan[key] = {
                     "product_id": line.product_id,
@@ -360,18 +367,21 @@ def get_packaging_plan(
                     "unit": line.unit,
                     "orders": []
                 }
-            
+
             # Add Quantity (check unit consistency? Assuming same unit for same product for now)
             plan[key]["total_quantity"] += line.quantity
-            
-            # Add Order Reference
+
+            # Add Order Reference (customer_name/status: vom Frontend so gerendert)
             plan[key]["orders"].append({
                 "order_number": order.order_number,
-                "customer": order.customer.name,
+                "customer_name": order.customer.name if order.customer else "—",
                 "quantity": line.quantity,
-                "unit": line.unit
+                "unit": line.unit,
+                "delivery_date": order.requested_delivery_date.isoformat(),
+                "status": "Entwurf" if order.status == OrderStatus.ENTWURF else order.status.value,
+                "same_day": order.requested_delivery_date == target_date,
             })
-            
+
     return {
         "target_date": target_date,
         "items": list(plan.values())

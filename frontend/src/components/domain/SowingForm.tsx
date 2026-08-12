@@ -79,11 +79,12 @@ export function SowingForm({
     ? (formData.tray_anzahl * selectedSeed.ertrag_gramm_pro_tray * (1 - selectedSeed.verlustquote_prozent / 100)) / 1000
     : 0;
 
+  // Erntefenster-Tage zählen ab Aussaat (Keimdauer bereits enthalten) — wie Backend
   const harvestWindow = selectedSeed
     ? {
-      min: addDays(formData.aussaat_datum, selectedSeed.keimdauer_tage + selectedSeed.erntefenster_min_tage),
-      optimal: addDays(formData.aussaat_datum, selectedSeed.keimdauer_tage + selectedSeed.erntefenster_optimal_tage),
-      max: addDays(formData.aussaat_datum, selectedSeed.keimdauer_tage + selectedSeed.erntefenster_max_tage),
+      min: addDays(formData.aussaat_datum, selectedSeed.erntefenster_min_tage),
+      optimal: addDays(formData.aussaat_datum, selectedSeed.erntefenster_optimal_tage),
+      max: addDays(formData.aussaat_datum, selectedSeed.erntefenster_max_tage),
       keimungEnds: addDays(formData.aussaat_datum, selectedSeed.keimdauer_tage),
     }
     : null;

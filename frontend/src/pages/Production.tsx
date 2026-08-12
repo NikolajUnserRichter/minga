@@ -270,7 +270,12 @@ export default function Production() {
       {activeTab === 'PACKAGING' ? (
         <div className="bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden">
           <div className="p-4 border-b bg-gray-50 dark:bg-gray-700/50 flex justify-between items-center">
-            <h3 className="font-medium">Packliste für {new Date(packagingDate).toLocaleDateString('de-DE')}</h3>
+            <h3 className="font-medium">
+              Packliste für {new Date(packagingDate).toLocaleDateString('de-DE')}
+              <span className="ml-2 text-xs font-normal text-gray-500 dark:text-gray-400">
+                (Lieferungen von morgen + Same-Day-Bestellungen)
+              </span>
+            </h3>
           </div>
           {!packagingPlan?.items || packagingPlan.items.length === 0 ? (
             <EmptyState
@@ -298,9 +303,11 @@ export default function Production() {
                         {item.orders.map((o: any, oIdx: number) => (
                           <div key={oIdx} className="text-sm text-gray-600 dark:text-gray-400 flex justify-between border-b border-gray-100 dark:border-gray-700 last:border-0 pb-1 last:pb-0">
                             <span>{o.customer_name}</span>
-                            <div className="flex gap-2 text-xs">
+                            <div className="flex gap-2 text-xs items-center">
                               <span className="font-medium text-gray-900 dark:text-white">{o.quantity} {item.unit}</span>
-                              <span className="text-gray-400">({o.status})</span>
+                              <span className="text-gray-400">
+                                ({o.status}{o.same_day ? ' · Same-Day!' : ''} · Lieferung {o.delivery_date ? new Date(o.delivery_date).toLocaleDateString('de-DE') : '—'})
+                              </span>
                             </div>
                           </div>
                         ))}

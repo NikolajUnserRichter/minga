@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 import { Upload, FileDown } from 'lucide-react';
 import { Button, useToast } from '../ui';
+import api from '../../services/api';
 
 type Entity = 'customers' | 'suppliers' | 'seeds' | 'products' | 'locations' | 'order_history';
 
@@ -11,8 +12,6 @@ interface Props {
   secondaryLabel?: string;
   onImported?: () => void;
 }
-
-const API_URL = import.meta.env.VITE_API_URL ?? (import.meta.env.DEV ? 'http://localhost:8000' : '');
 
 /**
  * Excel-Import-Button: lädt eine .xlsx hoch und zeigt das Importergebnis (created/updated/errors).
@@ -25,12 +24,9 @@ export function ExcelImport({ entity, label = 'Excel-Import', secondaryLabel = '
 
   const handleDownload = async () => {
     try {
-      const res = await fetch(`${API_URL}/api/v1/imports/template/${entity}`, {
-        credentials: 'include',
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
+      // Über die geteilte axios-Instanz: hängt den Bearer-Token an (raw fetch → 401)
+      const res = await api.get<Blob>(`/imports/template/${entity}`, { responseType: 'blob' });
+      const url = URL.createObjectURL(res.data);
       const a = document.createElement('a');
       a.href = url;
       a.download = `template_${entity}.xlsx`;
@@ -48,14 +44,12 @@ export function ExcelImport({ entity, label = 'Excel-Import', secondaryLabel = '
     try {
       const form = new FormData();
       form.append('file', file);
-      const res = await fetch(`${API_URL}/api/v1/imports/${entity}`, {
-        method: 'POST',
-        body: form,
-        credentials: 'include',
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        toast.error(data?.detail || 'Import fehlgeschlagen');
+      let data: any;
+      try {
+        const res = await api.post(`/imports/${entity}`, form);
+        data = res.data;
+      } catch (err: any) {
+        toast.error(err?.response?.data?.detail || 'Import fehlgeschlagen');
         return;
       }
       const created = data.created || 0;

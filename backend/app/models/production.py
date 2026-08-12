@@ -68,6 +68,13 @@ class GrowBatch(Base):
     )
 
     @property
+    def seed_name(self) -> Optional[str]:
+        """Sortenname über die Saatgut-Charge (für Listen/Karten-Anzeige)"""
+        if self.seed_batch and self.seed_batch.seed:
+            return self.seed_batch.seed.name
+        return None
+
+    @property
     def tage_seit_aussaat(self) -> int:
         """Berechnet Tage seit Aussaat"""
         return (date.today() - self.aussaat_datum).days

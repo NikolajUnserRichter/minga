@@ -666,7 +666,7 @@ async def list_orders(
     db: DBSession,
     pagination: Pagination,
     kunde_id: Optional[UUID] = None,
-    status_filter: Optional[OrderStatus] = Query(None, alias="status"),
+    status_filter: Optional[str] = Query(None, alias="status"),
     von_datum: Optional[date] = None,
     bis_datum: Optional[date] = None
 ):
@@ -676,8 +676,24 @@ async def list_orders(
     Filter:
     - **kunde_id**: Bestellungen eines Kunden
     - **status**: ENTWURF, BESTAETIGT, IN_PRODUKTION, GELIEFERT, FAKTURIERT, STORNIERT
+      oder Sammelfilter OFFEN (= ENTWURF + BESTAETIGT + IN_PRODUKTION)
     - **von_datum** / **bis_datum**: Lieferdatum-Zeitraum
     """
+    # Status-Filter auflösen: "OFFEN" ist ein Sammelfilter, kein Enum-Wert
+    status_values: Optional[list[OrderStatus]] = None
+    if status_filter:
+        if status_filter.upper() == "OFFEN":
+            status_values = [OrderStatus.ENTWURF, OrderStatus.BESTAETIGT, OrderStatus.IN_PRODUKTION]
+        else:
+            try:
+                status_values = [OrderStatus(status_filter.upper())]
+            except ValueError:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Ungültiger Status '{status_filter}'. Gültig: "
+                           f"{', '.join(s.value for s in OrderStatus)} oder OFFEN",
+                )
+
     query = select(Order).options(
         joinedload(Order.customer),
         joinedload(Order.lines).joinedload(OrderLine.product)
@@ -685,8 +701,8 @@ async def list_orders(
 
     if kunde_id:
         query = query.where(Order.customer_id == kunde_id)
-    if status_filter:
-        query = query.where(Order.status == status_filter)
+    if status_values:
+        query = query.where(Order.status.in_(status_values))
     if von_datum:
         query = query.where(Order.requested_delivery_date >= von_datum)
     if bis_datum:
@@ -696,8 +712,8 @@ async def list_orders(
     count_query = select(func.count(Order.id))
     if kunde_id:
         count_query = count_query.where(Order.customer_id == kunde_id)
-    if status_filter:
-        count_query = count_query.where(Order.status == status_filter)
+    if status_values:
+        count_query = count_query.where(Order.status.in_(status_values))
     total = db.execute(count_query).scalar() or 0
 
     query = query.order_by(Order.requested_delivery_date.desc())
