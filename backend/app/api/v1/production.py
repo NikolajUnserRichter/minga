@@ -356,12 +356,27 @@ def get_day_plan(
     verpacken = [_order_ref(o) for o in orders]
     ausliefern = [_order_ref(o) for o in orders if o.requested_delivery_date == target_date]
 
+    # Dienst: wer ist an dem Tag eingeteilt (Dienstplan)
+    from app.models.staff import StaffShift
+    shifts = db.execute(
+        select(StaffShift)
+        .where(StaffShift.datum == target_date)
+        .order_by(StaffShift.start_time, StaffShift.employee_name)
+    ).scalars().all()
+    dienst = [{
+        "employee_name": s.employee_name,
+        "start_time": s.start_time,
+        "end_time": s.end_time,
+        "aufgabe": s.aufgabe,
+    } for s in shifts]
+
     return {
         "target_date": target_date,
         "aussaat": aussaat,
         "ernte": ernte,
         "verpacken": verpacken,
         "ausliefern": ausliefern,
+        "dienst": dienst,
     }
 
 

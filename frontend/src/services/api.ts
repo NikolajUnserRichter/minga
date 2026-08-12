@@ -166,7 +166,45 @@ export const productionApi = {
       ernte: Array<{ batch_id: string; seed_name: string; trays: number; regal_position: string | null; optimal: string; ist_optimal_heute: boolean }>
       verpacken: Array<{ order_number: string; customer_name: string; delivery_date: string; status: string; positionen: number }>
       ausliefern: Array<{ order_number: string; customer_name: string; delivery_date: string; status: string; positionen: number }>
+      dienst: Array<{ employee_name: string; start_time: string | null; end_time: string | null; aufgabe: string | null }>
     }>(`/production/day-plan`, { params: { target_date: targetDate } }).then(r => r.data),
+}
+
+// Dienstplan API
+export interface StaffShift {
+  id: string
+  employee_name: string
+  datum: string
+  start_time: string | null
+  end_time: string | null
+  aufgabe: string | null
+  notizen: string | null
+  created_at: string
+  updated_at: string
+}
+
+export const staffApi = {
+  listShifts: (params?: { von_datum?: string; bis_datum?: string }) =>
+    api.get<StaffShift[]>('/staff-shifts', { params }).then(r => r.data),
+
+  listEmployees: () =>
+    api.get<string[]>('/staff-shifts/employees').then(r => r.data),
+
+  createShift: (data: {
+    employee_name: string
+    datum: string
+    start_time?: string | null
+    end_time?: string | null
+    aufgabe?: string | null
+    notizen?: string | null
+  }) =>
+    api.post<StaffShift>('/staff-shifts', data).then(r => r.data),
+
+  updateShift: (id: string, data: Partial<Omit<StaffShift, 'id' | 'created_at' | 'updated_at'>>) =>
+    api.patch<StaffShift>(`/staff-shifts/${id}`, data).then(r => r.data),
+
+  deleteShift: (id: string) =>
+    api.delete(`/staff-shifts/${id}`),
 }
 
 // Sales API

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Sprout, Scissors, Package, Truck } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { Sprout, Scissors, Package, Truck, Users } from 'lucide-react';
 import { productionApi } from '../services/api';
 import { PageHeader } from '../components/common/Layout';
 import { Input, EmptyState, Badge, PageLoader } from '../components/ui';
@@ -108,6 +109,38 @@ export default function Tagesplan() {
           </div>
         }
       />
+
+      {/* Dienst: wer arbeitet an dem Tag */}
+      <div className="card">
+        <div className="card-header flex items-center justify-between">
+          <h3 className="card-title flex items-center gap-2">
+            <Users className="w-5 h-5 text-minga-600 dark:text-minga-400" />
+            Im Dienst
+          </h3>
+          <Link to="/staff-schedule" className="text-sm text-minga-600 dark:text-minga-400 hover:underline">
+            Dienstplan bearbeiten
+          </Link>
+        </div>
+        <div className="card-body">
+          {(plan?.dienst ?? []).length === 0 ? (
+            <p className="text-sm text-gray-500 dark:text-gray-400 italic">
+              Niemand eingeteilt — Schichten im Dienstplan anlegen.
+            </p>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              {(plan?.dienst ?? []).map((d, i) => (
+                <div key={i} className="px-3 py-2 rounded-lg bg-minga-50 dark:bg-minga-900/20 border border-minga-100 dark:border-minga-800">
+                  <p className="text-sm font-medium text-gray-900 dark:text-white">{d.employee_name}</p>
+                  <p className="text-xs text-gray-500 dark:text-gray-400">
+                    {d.start_time && d.end_time ? `${d.start_time}–${d.end_time}` : 'ganztags'}
+                    {d.aufgabe && ` · ${d.aufgabe}`}
+                  </p>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {sections.map((s) => (

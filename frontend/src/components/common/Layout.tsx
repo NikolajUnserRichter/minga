@@ -117,6 +117,12 @@ const navigationSections: NavSection[] = [
         roles: ['ADMIN', 'PRODUCTION_PLANNER', 'PRODUCTION_STAFF'],
       },
       {
+        name: 'Dienstplan',
+        href: '/staff-schedule',
+        icon: Users,
+        roles: ['ADMIN', 'PRODUCTION_PLANNER', 'PRODUCTION_STAFF'],
+      },
+      {
         name: 'Wachstumschargen',
         href: '/production',
         icon: Layers,
