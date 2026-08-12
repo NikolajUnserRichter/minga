@@ -17,6 +17,39 @@ COMPANY_KEYS = (
     "COMPANY_WEBSITE", "COMPANY_BANK_NAME", "COMPANY_IBAN", "COMPANY_BIC",
 )
 
+# Anzeige-Labels für Einheiten-Codes auf Belegen (statt technischer Codes wie KARTON_6)
+UNIT_LABELS = {
+    "KARTON_6": "Karton 6", "KISTE_12": "Kiste 12", "KISTE_6": "Kiste 6",
+    "TRAY": "Tray", "SCHALE": "Schale", "STK": "Stk", "KG": "kg", "G": "g",
+}
+
+
+def unit_label(unit: Optional[str]) -> str:
+    """Menschliches Einheiten-Label für Belege."""
+    return UNIT_LABELS.get(unit or "", unit or "")
+
+
+def line_desc_cell(main: Optional[str], product, styles) -> Paragraph:
+    """Beschreibungszelle: Artikelname + Bundle-Inhalt und EAN/GTIN als
+    graue Zusatzzeilen (wie auf den Minga-Altbelegen)."""
+    from xml.sax.saxutils import escape
+    text = escape(main or "-")
+    extras: list[str] = []
+    if product is not None:
+        if getattr(product, "is_bundle", False):
+            comps = sorted(product.components or [], key=lambda c: (c.sort_order or 0))
+            names = " | ".join(
+                (c.child_product.name_short or c.child_product.name)
+                for c in comps if c.child_product is not None
+            )
+            if names:
+                extras.append(names)
+        if getattr(product, "gtin", None):
+            extras.append(f"EAN/GTIN {product.gtin}")
+    for extra in extras:
+        text += f'<br/><font size="7" color="#6b7280">{escape(extra)}</font>'
+    return Paragraph(text, styles["Normal"])
+
 
 def load_company_settings(db) -> dict[str, str]:
     """Lädt alle COMPANY_*-Settings für PDF-Rendering. Robust gegen None."""
@@ -139,6 +172,13 @@ class PDFService:
                 ["Kunde:", invoice.customer.name],
                 ["Kundennummer:", invoice.customer.customer_number or "-"],
             ]
+            if getattr(invoice.customer, "ust_id", None):
+                meta_data.append(["Ihre USt-IdNr.:", invoice.customer.ust_id])
+            if invoice.delivery_date:
+                meta_data.append(["Lieferdatum:", invoice.delivery_date.strftime("%d.%m.%Y")])
+            # Kundenbestellnummer (z.B. EB4475142) aus der zugehörigen Bestellung
+            if invoice.order is not None and invoice.order.customer_reference:
+                meta_data.append(["Auftragsnummer:", invoice.order.customer_reference])
             if invoice.customer.billing_address:
                  addr = invoice.customer.billing_address
                  addr_str = f"{addr.strasse} {addr.hausnummer or ''}, {addr.plz} {addr.ort}"
@@ -154,17 +194,20 @@ class PDFService:
 
         # Line Items
         if _en(tmpl, "lines_table", default=True):
-            data = [["Pos", "Beschreibung", "Menge", "Einheit", "Einzelpreis", "Gesamt (Netto)"]]
+            data = [["Pos", "Art.-Nr.", "Beschreibung", "Menge", "Einheit", "Einzelpreis", "Gesamt (Netto)"]]
             for idx, line in enumerate(invoice.lines, 1):
+                product = getattr(line, "product", None)
+                sku = line.sku or (product.sku if product else "") or "—"
                 data.append([
                     str(idx),
-                    line.description,
+                    sku,
+                    line_desc_cell(line.description, product, styles),
                     f"{line.quantity:.2f}",
-                    line.unit,
+                    unit_label(line.unit),
                     f"{line.unit_price:.2f} €",
                     f"{line.line_total:.2f} €"
                 ])
-            table = Table(data, colWidths=[1.5*cm, 6*cm, 2*cm, 2*cm, 2.5*cm, 3*cm])
+            table = Table(data, colWidths=[1.0*cm, 2.0*cm, 5.3*cm, 1.6*cm, 1.6*cm, 2.5*cm, 3.0*cm])
             table.setStyle(TableStyle([
                 ('BACKGROUND', (0,0), (-1,0), colors.lightgrey),
                 ('TEXTCOLOR', (0,0), (-1,0), colors.black),
@@ -186,9 +229,11 @@ class PDFService:
             discount_amount = invoice.discount_amount or 0
             if discount_amount > 0:
                 zwischensumme = invoice.subtotal + discount_amount
-                discount_label = "Rabatt:"
+                # Label per Template anpassbar, z.B. "Jahresbonus und Verpackungspauschale"
+                label_base = ((tmpl.texts.get("discount_label") if (tmpl and tmpl.texts) else None) or "Rabatt").strip()
+                discount_label = f"{label_base}:"
                 if invoice.discount_percent and invoice.discount_percent > 0:
-                    discount_label = f"Rabatt ({float(invoice.discount_percent):.1f} %):"
+                    discount_label = f"{label_base} ({float(invoice.discount_percent):.1f} %):"
                 totals_data.append(["Zwischensumme:", f"{zwischensumme:.2f} €"])
                 totals_data.append([discount_label, f"-{discount_amount:.2f} €"])
             totals_data += [
@@ -318,6 +363,10 @@ class PDFService:
         ]
         if order.customer and order.customer.customer_number:
             meta_data.append(["Kundennummer:", order.customer.customer_number])
+        if order.customer and getattr(order.customer, "ust_id", None):
+            meta_data.append(["Ihre USt-IdNr.:", order.customer.ust_id])
+        if order.customer_reference:
+            meta_data.append(["Auftragsnummer:", order.customer_reference])
         if order.delivery_address:
             addr = order.delivery_address
             parts = [addr.get("strasse",""), addr.get("hausnummer","")]
@@ -515,17 +564,20 @@ class PDFService:
 
         # Positions-Tabelle
         if _en(tmpl, "lines_table", default=True):
-            data = [["Pos", "Beschreibung", "Menge", "Einheit", "Einzelpreis", "Gesamt (Netto)"]]
+            data = [["Pos", "Art.-Nr.", "Beschreibung", "Menge", "Einheit", "Einzelpreis", "Gesamt (Netto)"]]
             for line in order.lines:
+                product = getattr(line, "product", None)
+                sku = line.product_sku or (product.sku if product else "") or "—"
                 data.append([
                     str(line.position),
-                    line.beschreibung or "-",
+                    sku,
+                    line_desc_cell(line.beschreibung, product, styles),
                     f"{line.quantity:.2f}",
-                    line.unit,
+                    unit_label(line.unit),
                     f"{line.unit_price:.2f} €",
                     f"{line.line_net:.2f} €",
                 ])
-            table = Table(data, colWidths=[1.2*cm, 7*cm, 2*cm, 2*cm, 2.5*cm, 2.5*cm])
+            table = Table(data, colWidths=[1.0*cm, 2.0*cm, 5.6*cm, 1.6*cm, 1.6*cm, 2.6*cm, 2.6*cm])
             table.setStyle(TableStyle([
                 ('BACKGROUND', (0,0), (-1,0), colors.lightgrey),
                 ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
@@ -554,6 +606,12 @@ class PDFService:
             confirm_text = (tmpl.texts.get("confirm_text") if (tmpl and tmpl.texts) else None) \
                 or "Wir bestätigen hiermit Ihren Auftrag wie oben aufgeführt."
             body.append(Paragraph(confirm_text, styles['Normal']))
+        # Optionaler Steuerhinweis (z.B. "Es wird die zum Zeitpunkt der Lieferung
+        # gültige Umsatzsteuer in Ansatz gebracht.") — per Template pflegbar
+        tax_note = (tmpl.texts.get("tax_note") if (tmpl and tmpl.texts) else None)
+        if tax_note and tax_note.strip():
+            body.append(Spacer(1, 6))
+            body.append(Paragraph(tax_note, styles['Normal']))
         if conf.notes:
             body.append(Spacer(1, 8))
             body.append(Paragraph(f"<i>{conf.notes}</i>", styles['Normal']))
@@ -572,7 +630,7 @@ class PDFService:
         # Preisspalten nur auf Kundenwunsch (Customer.show_prices_on_delivery_note).
         with_prices = bool(getattr(getattr(order, "customer", None), "show_prices_on_delivery_note", False))
         if _en(tmpl, "lines_table", default=True):
-            header = ["Pos", "Beschreibung", "Menge", "Einheit", "Charge", "MHD"]
+            header = ["Pos", "Art.-Nr.", "Beschreibung", "Menge", "Einheit", "Charge", "MHD"]
             if with_prices:
                 header += ["Einzelpreis", "Gesamt (Netto)"]
             data = [header]
@@ -584,11 +642,14 @@ class PDFService:
                     seed_batch = getattr(harvest, "seed_batch", None)
                     if seed_batch and getattr(seed_batch, "mhd", None):
                         mhd = seed_batch.mhd.strftime("%d.%m.%Y")
+                product = getattr(line, "product", None)
+                sku = line.product_sku or (product.sku if product else "") or "—"
                 row = [
                     str(line.position),
-                    line.beschreibung or "-",
+                    sku,
+                    line_desc_cell(line.beschreibung, product, styles),
                     f"{line.quantity:.2f}",
-                    line.unit,
+                    unit_label(line.unit),
                     charge,
                     mhd,
                 ]
@@ -596,25 +657,33 @@ class PDFService:
                     row += [f"{line.unit_price:.2f} €", f"{line.line_net:.2f} €"]
                 data.append(row)
             if with_prices:
-                col_widths = [1.0*cm, 4.6*cm, 1.7*cm, 1.6*cm, 2.0*cm, 2.0*cm, 2.2*cm, 2.4*cm]
+                col_widths = [0.9*cm, 1.6*cm, 3.7*cm, 1.4*cm, 1.4*cm, 1.7*cm, 1.7*cm, 2.1*cm, 2.3*cm]
             else:
-                col_widths = [1.0*cm, 6.5*cm, 2.2*cm, 1.8*cm, 2.5*cm, 2.5*cm]
+                col_widths = [1.0*cm, 1.8*cm, 5.2*cm, 1.7*cm, 1.6*cm, 2.5*cm, 2.5*cm]
             table = Table(data, colWidths=col_widths)
             table.setStyle(TableStyle([
                 ('BACKGROUND', (0,0), (-1,0), colors.lightgrey),
                 ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-                ('ALIGN', (2,1), (3,-1), 'RIGHT'),
+                ('ALIGN', (3,1), (4,-1), 'RIGHT'),
                 ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
                 ('FONTSIZE', (0,0), (-1,-1), 8),
-            ] + ([('ALIGN', (6,1), (7,-1), 'RIGHT')] if with_prices else [])))
+            ] + ([('ALIGN', (7,1), (8,-1), 'RIGHT')] if with_prices else [])))
             body.append(table)
             body.append(Spacer(1, 6 if with_prices else 16))
             if with_prices:
+                # Summenblock wie auf dem Minga-Altbeleg: Zwischensumme / USt / Endbetrag
                 netto_sum = sum((line.line_net or 0) for line in order.lines)
-                sum_table = Table([["Warenwert (Netto):", f"{netto_sum:.2f} €"]], colWidths=[13.5*cm, 3.5*cm])
+                vat_sum = sum((line.line_vat or 0) for line in order.lines)
+                gross_sum = sum((line.line_gross or 0) for line in order.lines)
+                sum_table = Table([
+                    ["Zwischensumme:", f"{netto_sum:.2f} €"],
+                    ["USt:", f"{vat_sum:.2f} €"],
+                    ["Endbetrag:", f"{gross_sum:.2f} €"],
+                ], colWidths=[13.5*cm, 3.5*cm])
                 sum_table.setStyle(TableStyle([
                     ('ALIGN', (0,0), (-1,-1), 'RIGHT'),
-                    ('FONTNAME', (0,0), (-1,-1), 'Helvetica-Bold'),
+                    ('FONTNAME', (0,-1), (-1,-1), 'Helvetica-Bold'),
+                    ('LINEABOVE', (0,-1), (-1,-1), 0.5, colors.black),
                     ('FONTSIZE', (0,0), (-1,-1), 8),
                 ]))
                 body.append(sum_table)

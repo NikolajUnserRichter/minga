@@ -116,11 +116,13 @@ DEFAULT_TEXTS: dict[str, dict[str, str]] = {
         "header_text":  "",  # leer = Firmenname-Default aus Settings
         "thanks_text":  "Vielen Dank für Ihren Auftrag!",
         "ownership_text": "Ware bleibt bis zur vollständigen Bezahlung unser Eigentum (Eigentumsvorbehalt).",
+        "discount_label": "Rabatt",  # z.B. "Jahresbonus und Verpackungspauschale"
         "footer_text":  "",  # leer = automatischer Footer aus COMPANY_* Settings
     },
     "AUFTRAGSBESTAETIGUNG": {
         "header_text":  "",
         "confirm_text": "Wir bestätigen hiermit Ihren Auftrag wie oben aufgeführt.",
+        "tax_note":     "",  # z.B. "Es wird die zum Zeitpunkt der Lieferung gültige Umsatzsteuer in Ansatz gebracht."
         "footer_text":  "",
     },
     "LIEFERSCHEIN": {

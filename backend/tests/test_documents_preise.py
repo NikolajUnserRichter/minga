@@ -143,7 +143,8 @@ class TestLieferscheinPreise:
         assert pdf.status_code == 200, pdf.text
         text = _pdf_text(pdf.content)
         assert b"Einzelpreis" in text
-        assert b"Warenwert" in text
+        assert b"Zwischensumme" in text
+        assert b"Endbetrag" in text
         assert b"2.50" in text
 
     def test_keine_preise_ohne_flag(self, client):
