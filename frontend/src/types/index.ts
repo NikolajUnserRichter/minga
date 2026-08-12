@@ -16,6 +16,8 @@ export interface Seed {
   erntefenster_max_tage: number
   ertrag_gramm_pro_tray: number
   verlustquote_prozent: number
+  substrat: string | null
+  winter_extra_tage: number
   aktiv: boolean
   gesamte_wachstumsdauer: number
   created_at: string

@@ -127,6 +127,43 @@ def get_seed_inventory(inventory_id: UUID, db: DBSession):
     return inventory
 
 
+@router.patch("/seeds/{inventory_id}", response_model=SeedInventoryResponse)
+def update_seed_inventory(inventory_id: UUID, data: SeedInventoryUpdate, db: DBSession):
+    """Korrigiert Stammdaten eines Saatgut-Bestands (z.B. vergessenes BIO-Flag).
+
+    Bestandsmengen laufen weiterhin über die Bestandskorrektur.
+    BIO/MHD werden in die Spiegel-SeedBatch (Traceability-Doku) übernommen.
+    """
+    from app.models.seed import SeedBatch
+
+    inventory = db.get(SeedInventory, inventory_id)
+    if not inventory:
+        raise HTTPException(status_code=404, detail="Saatgut-Bestand nicht gefunden")
+
+    update_data = data.model_dump(exclude_unset=True)
+    for field, value in update_data.items():
+        setattr(inventory, field, value)
+
+    # Spiegel-SeedBatch (gleiche Chargennummer) konsistent halten
+    seed_batch = db.execute(
+        select(SeedBatch).where(
+            SeedBatch.seed_id == inventory.seed_id,
+            SeedBatch.charge_nummer == inventory.batch_number,
+        )
+    ).scalar_one_or_none()
+    if seed_batch is not None:
+        if "is_organic" in update_data:
+            seed_batch.bio_zertifiziert = update_data["is_organic"]
+        if "organic_certificate" in update_data:
+            seed_batch.kontrollstelle = update_data["organic_certificate"]
+        if "best_before_date" in update_data:
+            seed_batch.mhd = update_data["best_before_date"]
+
+    db.commit()
+    db.refresh(inventory)
+    return inventory
+
+
 @router.post("/seeds/receive", response_model=SeedInventoryResponse, status_code=201)
 def receive_seed_batch(
     db: DBSession,

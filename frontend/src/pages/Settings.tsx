@@ -91,6 +91,7 @@ export default function Settings() {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* SMTP Settings */}
+        <SeasonSettingsCard />
         <SmtpSettingsCard />
 
         {/* Integration: Lexware Office */}
@@ -527,6 +528,56 @@ export function ShopifyIntegrationCard() {
 }
 
 // ==================== SMTP-Settings (E-Mail-Versand konfigurieren) ====================
+
+export function SeasonSettingsCard() {
+  const toast = useToast();
+  const queryClient = useQueryClient();
+
+  const { data } = useQuery({
+    queryKey: ['admin-settings'],
+    queryFn: () => adminApi.listSettings(),
+  });
+  const current = (data?.find((s) => s.key === 'SEASON_MODE')?.value || 'SOMMER').toUpperCase();
+
+  const saveMutation = useMutation({
+    mutationFn: (mode: string) => adminApi.updateSettings({ SEASON_MODE: mode }),
+    onSuccess: (_r, mode) => {
+      toast.success(`Saisonzyklus: ${mode === 'WINTER' ? 'Winter' : 'Sommer'}`);
+      queryClient.invalidateQueries({ queryKey: ['admin-settings'] });
+    },
+    onError: () => toast.error('Speichern fehlgeschlagen'),
+  });
+
+  return (
+    <div className="card">
+      <div className="card-header">
+        <h3 className="card-title">Saisonzyklus (Produktion)</h3>
+      </div>
+      <div className="card-body space-y-3">
+        <p className="text-sm text-gray-500 dark:text-gray-400">
+          Im Winterzyklus verlängert sich das Erntefenster neuer Aussaaten um die
+          „Winter-Zusatztage" der jeweiligen Sorte (pflegbar im Saatgut).
+        </p>
+        <div className="flex gap-2">
+          {(['SOMMER', 'WINTER'] as const).map((mode) => (
+            <button
+              key={mode}
+              type="button"
+              onClick={() => saveMutation.mutate(mode)}
+              className={`flex-1 p-2 rounded-lg border-2 text-sm transition-colors ${current === mode
+                ? 'border-minga-500 bg-minga-50 dark:bg-minga-900/30 font-medium'
+                : 'border-gray-200 dark:border-gray-700 hover:border-gray-300'
+                }`}
+            >
+              {mode === 'SOMMER' ? '☀️ Sommer' : '❄️ Winter'}
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 
 export function SmtpSettingsCard() {
   const toast = useToast();

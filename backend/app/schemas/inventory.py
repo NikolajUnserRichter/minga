@@ -105,13 +105,21 @@ class SeedInventoryCreate(SeedInventoryBase):
 
 
 class SeedInventoryUpdate(BaseModel):
-    """Schema zum Aktualisieren eines Saatgut-Bestands"""
+    """Schema zum Aktualisieren eines Saatgut-Bestands.
+
+    Stammdaten-Korrekturen (z.B. vergessenes BIO-Flag) — Bestandsmengen
+    laufen weiterhin über die Bestandskorrektur, nicht hierüber.
+    """
     germination_rate: Optional[Decimal] = None
     quality_grade: Optional[str] = None
     location_id: Optional[UUID] = None
     is_blocked: Optional[bool] = None
     block_reason: Optional[str] = None
     is_active: Optional[bool] = None
+    is_organic: Optional[bool] = None
+    organic_certificate: Optional[str] = None
+    best_before_date: Optional[date] = None
+    supplier_name: Optional[str] = None
 
 
 class SeedInventoryResponse(SeedInventoryBase):

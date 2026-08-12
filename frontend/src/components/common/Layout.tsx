@@ -29,6 +29,7 @@ import {
   Search,
   ShoppingCart,
   ShoppingBag,
+  Calendar,
 } from 'lucide-react';
 import { useState, useEffect, createContext, useContext, ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -109,6 +110,12 @@ const navigationSections: NavSection[] = [
   {
     title: 'Produktion',
     items: [
+      {
+        name: 'Tagesplan',
+        href: '/day-plan',
+        icon: Calendar,
+        roles: ['ADMIN', 'PRODUCTION_PLANNER', 'PRODUCTION_STAFF'],
+      },
       {
         name: 'Wachstumschargen',
         href: '/production',

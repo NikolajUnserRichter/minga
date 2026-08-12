@@ -108,6 +108,18 @@ COLUMNS = {
         # SKUs werden gegen die Produkt-Tabelle aufgelöst.
         ("bundle_selections", "bundle_selections", False, "str"),
     ],
+    # Go-Live: historische/laufende Wachstumschargen (Sorte muss als Saatgut existieren)
+    "grow_batches": [
+        ("sorte", "sorte", True, "str"),
+        ("aussaat_datum", "aussaat_datum", True, "date"),
+        ("tray_anzahl", "tray_anzahl", True, "int"),
+        ("status", "status", False, "enum:KEIMUNG|WACHSTUM|ERNTEREIF|GEERNTET|VERLUST"),
+        ("charge_nummer", "charge_nummer", False, "str"),
+        ("regal_position", "regal_position", False, "str"),
+        ("ernte_datum", "ernte_datum", False, "date"),
+        ("ernte_menge_stueck", "ernte_menge_stueck", False, "int"),
+        ("ernte_menge_gramm", "ernte_menge_gramm", False, "decimal"),
+    ],
 }
 
 
@@ -482,6 +494,106 @@ def _import_order_history(db, rows: list[dict]) -> tuple[int, int]:
     return created, skipped
 
 
+def _import_grow_batches(db, rows: list[dict]) -> tuple[int, int]:
+    """Importiert Wachstumschargen (Go-Live: laufende + historische Aussaaten).
+
+    - `sorte` wird gegen die Saatgut-Stammdaten aufgelöst (Name, case-insensitiv)
+    - fehlende Saatgut-Charge wird als 'IMPORT-...'-Marker angelegt (Menge 0)
+    - Erntefenster wird aus den Sortenparametern berechnet (Tage ab Aussaat)
+    - Status-Default: GEERNTET wenn ernte_datum gesetzt, sonst nach Alter
+    - Idempotent über (Sorte, Aussaatdatum, Kistenzahl): vorhandene übersprungen
+    """
+    import unicodedata
+    from datetime import timedelta, date as _date
+    from app.models.seed import Seed, SeedBatch
+    from app.models.production import GrowBatch, GrowBatchStatus, Harvest
+
+    if not rows:
+        return 0, 0
+
+    def _norm(s: str) -> str:
+        return unicodedata.normalize("NFC", s.strip()).casefold()
+
+    seeds_index = {_norm(s.name): s for s in db.execute(select(Seed)).scalars().all()}
+    created = skipped = 0
+
+    for r in rows:
+        seed = seeds_index.get(_norm(r["sorte"]))
+        if seed is None:
+            raise ValueError(f"Sorte '{r['sorte']}' nicht gefunden — bitte zuerst als Saatgut anlegen")
+
+        aussaat = r["aussaat_datum"]
+        trays = r["tray_anzahl"]
+
+        # Idempotenz: gleiche Sorte + Aussaat + Kistenzahl gilt als bereits importiert
+        existing = db.execute(
+            select(GrowBatch)
+            .join(SeedBatch, GrowBatch.seed_batch_id == SeedBatch.id)
+            .where(
+                SeedBatch.seed_id == seed.id,
+                GrowBatch.aussaat_datum == aussaat,
+                GrowBatch.tray_anzahl == trays,
+            )
+        ).scalars().first()
+        if existing:
+            skipped += 1
+            continue
+
+        # Saatgut-Charge: vorhandene per Nummer, sonst Import-Marker
+        charge_nummer = r.get("charge_nummer") or f"IMPORT-{seed.name[:20]}"
+        seed_batch = db.execute(
+            select(SeedBatch).where(SeedBatch.seed_id == seed.id, SeedBatch.charge_nummer == charge_nummer)
+        ).scalar_one_or_none()
+        if seed_batch is None:
+            seed_batch = SeedBatch(
+                seed_id=seed.id, charge_nummer=charge_nummer,
+                menge_gramm=Decimal("0"), verbleibend_gramm=Decimal("0"),
+            )
+            db.add(seed_batch)
+            db.flush()
+
+        status = r.get("status")
+        if not status:
+            if r.get("ernte_datum"):
+                status = "GEERNTET"
+            elif aussaat + timedelta(days=seed.erntefenster_max_tage) < _date.today():
+                status = "GEERNTET"
+            elif aussaat + timedelta(days=seed.erntefenster_min_tage) <= _date.today():
+                status = "ERNTEREIF"
+            else:
+                status = "WACHSTUM"
+
+        batch = GrowBatch(
+            seed_batch_id=seed_batch.id,
+            tray_anzahl=trays,
+            aussaat_datum=aussaat,
+            erwartete_ernte_min=aussaat + timedelta(days=seed.erntefenster_min_tage),
+            erwartete_ernte_optimal=aussaat + timedelta(days=seed.erntefenster_optimal_tage),
+            erwartete_ernte_max=aussaat + timedelta(days=seed.erntefenster_max_tage),
+            status=GrowBatchStatus(status),
+            regal_position=r.get("regal_position"),
+            notizen="Go-Live-Import",
+        )
+        db.add(batch)
+        db.flush()
+
+        # Optionale Ernte-Daten
+        if r.get("ernte_datum") and (r.get("ernte_menge_stueck") or r.get("ernte_menge_gramm")):
+            stueck = r.get("ernte_menge_stueck")
+            db.add(Harvest(
+                grow_batch_id=batch.id,
+                ernte_datum=r["ernte_datum"],
+                einheit="STK" if stueck else "G",
+                menge_stueck=stueck,
+                menge_gramm=Decimal("0") if stueck else r.get("ernte_menge_gramm"),
+            ))
+
+        created += 1
+
+    db.commit()
+    return created, skipped
+
+
 IMPORTERS = {
     "customers": _import_customers,
     "suppliers": _import_suppliers,
@@ -489,6 +601,7 @@ IMPORTERS = {
     "products": _import_products,
     "locations": _import_locations,
     "order_history": _import_order_history,
+    "grow_batches": _import_grow_batches,
 }
 
 

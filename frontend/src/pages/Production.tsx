@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { productionApi, seedsApi } from '../services/api';
 import { PageHeader, FilterBar } from '../components/common/Layout';
+import { ExcelImport } from '../components/common/ExcelImport';
 import { GrowBatchCard } from '../components/domain/GrowBatchCard';
 import { GrowthTimelineModal } from '../components/domain/GrowthTimelineModal';
 import { SowingForm } from '../components/domain/SowingForm';
@@ -87,6 +88,7 @@ export default function Production() {
       tray_anzahl: number;
       aussaat_datum: string;
       regal_position?: string;
+      zusatz_tage?: number;
       needs_soaking?: boolean;
       soaking_started_at?: string;
       soaking_employee?: string;
@@ -105,6 +107,7 @@ export default function Production() {
         tray_anzahl: data.tray_anzahl,
         aussaat_datum: data.aussaat_datum,
         regal_position: data.regal_position || undefined,
+        zusatz_tage: data.zusatz_tage ?? undefined,
       });
       // Bei Soaking-Workflow: gleich SOAKING_STARTED-Event mit User-Eingabe schreiben
       if (data.needs_soaking) {
@@ -228,10 +231,18 @@ export default function Production() {
               </button>
             </div>
           ) : (
-            <button className="btn btn-primary" onClick={() => setIsCreating(true)}>
-              <Plus className="w-4 h-4" />
-              Neue Aussaat
-            </button>
+            <div className="flex items-center gap-2">
+              <ExcelImport
+                entity="grow_batches"
+                label="Chargen-Import"
+                secondaryLabel="übersprungen"
+                onImported={() => queryClient.invalidateQueries({ queryKey: ['growBatches'] })}
+              />
+              <button className="btn btn-primary" onClick={() => setIsCreating(true)}>
+                <Plus className="w-4 h-4" />
+                Neue Aussaat
+              </button>
+            </div>
           )
         }
       />

@@ -138,6 +138,8 @@ def generate_production_summary(von_datum: str = None, bis_datum: str = None):
                 Seed.name,
                 func.sum(Harvest.menge_gramm).label("gesamt_gramm"),
                 func.sum(Harvest.verlust_gramm).label("gesamt_verlust"),
+                func.sum(Harvest.menge_stueck).label("gesamt_stueck"),
+                func.sum(Harvest.verlust_stueck).label("gesamt_verlust_stueck"),
                 func.count(Harvest.id).label("anzahl_ernten")
             )
             .join(GrowBatch, Harvest.grow_batch_id == GrowBatch.id)
@@ -156,6 +158,8 @@ def generate_production_summary(von_datum: str = None, bis_datum: str = None):
                     "name": row.name,
                     "gesamt_gramm": float(row.gesamt_gramm or 0),
                     "gesamt_verlust": float(row.gesamt_verlust or 0),
+                    "gesamt_stueck": int(row.gesamt_stueck or 0),
+                    "gesamt_verlust_stueck": int(row.gesamt_verlust_stueck or 0),
                     "anzahl_ernten": row.anzahl_ernten,
                     "verlustquote": float(
                         (row.gesamt_verlust / (row.gesamt_gramm + row.gesamt_verlust)) * 100
@@ -165,7 +169,9 @@ def generate_production_summary(von_datum: str = None, bis_datum: str = None):
             ],
             "gesamt": {
                 "gramm": sum(float(r.gesamt_gramm or 0) for r in ernten),
-                "verlust": sum(float(r.gesamt_verlust or 0) for r in ernten)
+                "verlust": sum(float(r.gesamt_verlust or 0) for r in ernten),
+                "stueck": sum(int(r.gesamt_stueck or 0) for r in ernten),
+                "verlust_stueck": sum(int(r.gesamt_verlust_stueck or 0) for r in ernten)
             }
         }
 

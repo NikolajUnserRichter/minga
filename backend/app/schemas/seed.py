@@ -24,6 +24,8 @@ class SeedBase(BaseModel):
     erntefenster_max_tage: int = Field(..., ge=1, description="Spätester Erntezeitpunkt")
     ertrag_gramm_pro_tray: Decimal = Field(..., gt=0, description="Erwarteter Ertrag pro Tray in Gramm")
     verlustquote_prozent: Decimal = Field(default=Decimal("0"), ge=0, le=100, description="Erwartete Verlustquote")
+    substrat: Optional[str] = Field(None, max_length=100, description="Substrattyp für die Aussaat (z.B. Hanfmatte, Erde)")
+    winter_extra_tage: int = Field(default=0, ge=0, le=14, description="Zusätzliche Wachstumstage im Winterzyklus")
 
 
 class SeedCreate(SeedBase):
@@ -47,6 +49,8 @@ class SeedUpdate(BaseModel):
     erntefenster_max_tage: Optional[int] = Field(None, ge=1)
     ertrag_gramm_pro_tray: Optional[Decimal] = Field(None, gt=0)
     verlustquote_prozent: Optional[Decimal] = Field(None, ge=0, le=100)
+    substrat: Optional[str] = Field(None, max_length=100)
+    winter_extra_tage: Optional[int] = Field(None, ge=0, le=14)
     aktiv: Optional[bool] = None
 
 
@@ -83,6 +87,7 @@ class SeedBatchBase(BaseModel):
     lieferschein_nr: Optional[str] = Field(None, max_length=50, description="Lieferschein-Nummer")
     bio_zertifiziert: bool = Field(default=False, description="BIO-zertifiziert (Kontrollstelle)")
     kontrollstelle: Optional[str] = Field(None, max_length=100, description="Kontrollstelle (z.B. DE-ÖKO-006)")
+    zusatz_tage: int = Field(default=0, ge=-7, le=14, description="Erntefenster-Verschiebung dieser Charge in Tagen (z.B. +1 bei langsamer Keimung)")
 
 
 class SeedBatchCreate(SeedBatchBase):
@@ -100,6 +105,7 @@ class SeedBatchUpdate(BaseModel):
     lieferschein_nr: Optional[str] = Field(None, max_length=50)
     bio_zertifiziert: Optional[bool] = None
     kontrollstelle: Optional[str] = Field(None, max_length=100)
+    zusatz_tage: Optional[int] = Field(None, ge=-7, le=14)
 
 
 class SeedBatchResponse(SeedBatchBase):

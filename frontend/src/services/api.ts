@@ -110,6 +110,7 @@ export const productionApi = {
     aussaat_datum: string
     regal_position?: string
     notizen?: string
+    zusatz_tage?: number
   }) =>
     api.post<GrowBatch>('/production/grow-batches', data).then(r => r.data),
 
@@ -157,6 +158,15 @@ export const productionApi = {
 
   getPackagingPlan: (targetDate: string) =>
     api.get<{ target_date: string; items: any[] }>(`/production/packaging-plan`, { params: { target_date: targetDate } }).then(r => r.data),
+
+  getDayPlan: (targetDate: string) =>
+    api.get<{
+      target_date: string
+      aussaat: Array<{ seed_name: string; trays: number; substrat: string | null; saatgut_gramm: number; status: string }>
+      ernte: Array<{ batch_id: string; seed_name: string; trays: number; regal_position: string | null; optimal: string; ist_optimal_heute: boolean }>
+      verpacken: Array<{ order_number: string; customer_name: string; delivery_date: string; status: string; positionen: number }>
+      ausliefern: Array<{ order_number: string; customer_name: string; delivery_date: string; status: string; positionen: number }>
+    }>(`/production/day-plan`, { params: { target_date: targetDate } }).then(r => r.data),
 }
 
 // Sales API
@@ -631,6 +641,15 @@ export const inventoryApi = {
     organic_certification?: string
   }) =>
     api.post<SeedInventory>('/inventory/seeds/receive', null, { params: data }).then(r => r.data),
+
+  // Stammdaten-Korrektur (z.B. vergessenes BIO-Flag) — Bestand läuft über Korrektur
+  updateSeedInventory: (id: string, data: {
+    is_organic?: boolean
+    organic_certificate?: string | null
+    best_before_date?: string | null
+    supplier_name?: string | null
+  }) =>
+    api.patch<SeedInventory>(`/inventory/seeds/${id}`, data).then(r => r.data),
 
   // Wareneingang Verpackung / Substrat / Pfandkiste: erhöht Bestand wenn SKU bekannt, sonst neu anlegen
   receivePackaging: (data: {

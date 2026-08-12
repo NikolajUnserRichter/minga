@@ -19,6 +19,8 @@ export interface SowingFormData {
   tray_anzahl: number;
   aussaat_datum: string;
   regal_position: string;
+  // Chargen-Abweichung: verschiebt das Erntefenster (z.B. +1 bei langsamer Keimung)
+  zusatz_tage?: number;
   // Soaking-Workflow: optional, sonst direkte Aussaat heute
   needs_soaking?: boolean;
   soaking_started_at?: string; // ISO datetime-local
@@ -50,6 +52,7 @@ export function SowingForm({
     tray_anzahl: 1,
     aussaat_datum: today,
     regal_position: '',
+    zusatz_tage: 0,
     needs_soaking: false,
     soaking_started_at: nowLocal,
     soaking_employee: '',
@@ -79,12 +82,15 @@ export function SowingForm({
     ? (formData.tray_anzahl * selectedSeed.ertrag_gramm_pro_tray * (1 - selectedSeed.verlustquote_prozent / 100)) / 1000
     : 0;
 
-  // Erntefenster-Tage zählen ab Aussaat (Keimdauer bereits enthalten) — wie Backend
+  // Erntefenster-Tage zählen ab Aussaat (Keimdauer bereits enthalten) — wie Backend.
+  // Chargen-Abweichung (zusatz_tage) verschiebt das Fenster; ein Winterzuschlag
+  // (Einstellungen → Saisonzyklus) kommt serverseitig ggf. noch dazu.
+  const zusatzTage = formData.zusatz_tage ?? 0;
   const harvestWindow = selectedSeed
     ? {
-      min: addDays(formData.aussaat_datum, selectedSeed.erntefenster_min_tage),
-      optimal: addDays(formData.aussaat_datum, selectedSeed.erntefenster_optimal_tage),
-      max: addDays(formData.aussaat_datum, selectedSeed.erntefenster_max_tage),
+      min: addDays(formData.aussaat_datum, selectedSeed.erntefenster_min_tage + zusatzTage),
+      optimal: addDays(formData.aussaat_datum, selectedSeed.erntefenster_optimal_tage + zusatzTage),
+      max: addDays(formData.aussaat_datum, selectedSeed.erntefenster_max_tage + zusatzTage),
       keimungEnds: addDays(formData.aussaat_datum, selectedSeed.keimdauer_tage),
     }
     : null;
@@ -174,14 +180,35 @@ export function SowingForm({
 
       {/* Seed Batch Selection */}
       {formData.seed_id && batchOptions.length > 0 && (
-        <Select
-          label="Saatgut-Charge *"
-          options={batchOptions}
-          value={formData.seed_batch_id}
-          onChange={(e) => setFormData({ ...formData, seed_batch_id: e.target.value })}
-          error={errors.seed_batch_id}
-          placeholder="Charge auswählen..."
-        />
+        <>
+          <Select
+            label="Saatgut-Charge *"
+            options={batchOptions}
+            value={formData.seed_batch_id}
+            onChange={(e) => {
+              const batch = seedBatches.find((b) => b.id === e.target.value);
+              setFormData({
+                ...formData,
+                seed_batch_id: e.target.value,
+                zusatz_tage: (batch as any)?.zusatz_tage ?? 0,
+              });
+            }}
+            error={errors.seed_batch_id}
+            placeholder="Charge auswählen..."
+          />
+          {formData.seed_batch_id && (
+            <Input
+              label="Chargen-Abweichung (Tage)"
+              type="number"
+              min={-7}
+              max={14}
+              value={formData.zusatz_tage ?? 0}
+              onChange={(e) => setFormData({ ...formData, zusatz_tage: Number(e.target.value) })}
+              endIcon="Tage"
+              hint="Verschiebt das Erntefenster, z.B. +1 wenn diese Charge langsamer keimt. Wird an der Charge gespeichert."
+            />
+          )}
+        </>
       )}
       {formData.seed_id && batchOptions.length === 0 && (
         <div className="text-sm text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-900/20 p-3 rounded border border-amber-200 dark:border-amber-800">
@@ -274,6 +301,12 @@ export function SowingForm({
         <div className="p-4 bg-minga-50 dark:bg-minga-900/30 rounded-lg border border-minga-200">
           <h4 className="font-medium text-minga-800 mb-3">Vorschau</h4>
           <div className="space-y-2 text-sm">
+            {selectedSeed.substrat && (
+              <div className="flex justify-between">
+                <span className="text-gray-600 dark:text-gray-400">Substrat:</span>
+                <span className="font-semibold text-minga-700">{selectedSeed.substrat}</span>
+              </div>
+            )}
             <div className="flex justify-between">
               <span className="text-gray-600 dark:text-gray-400">Keimung endet:</span>
               <span className="font-medium">{formatDateDE(harvestWindow.keimungEnds)}</span>

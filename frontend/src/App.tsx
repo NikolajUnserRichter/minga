@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import Layout from './components/common/Layout';
 import Dashboard from './pages/Dashboard';
 import Production from './pages/Production';
+import Tagesplan from './pages/Tagesplan';
 import Sales from './pages/Sales';
 import Forecasting from './pages/Forecasting';
 import Settings from './pages/Settings';
@@ -42,6 +43,7 @@ function App() {
 
           {/* Produktion */}
           <Route path="production" element={<Production />} />
+          <Route path="day-plan" element={<Tagesplan />} />
           <Route path="harvests" element={<Harvests />} />
           <Route path="capacities" element={<Capacities />} />
 

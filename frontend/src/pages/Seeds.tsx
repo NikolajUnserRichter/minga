@@ -189,6 +189,8 @@ function SeedForm({ seed, onSubmit, onCancel }: SeedFormProps) {
     erntefenster_max_tage: seed?.erntefenster_max_tage || 14,
     ertrag_gramm_pro_tray: seed?.ertrag_gramm_pro_tray || 350,
     verlustquote_prozent: seed?.verlustquote_prozent || 5,
+    substrat: seed?.substrat || '',
+    winter_extra_tage: seed?.winter_extra_tage ?? 0,
     aktiv: seed?.aktiv ?? true,
   });
 
@@ -282,6 +284,26 @@ function SeedForm({ seed, onSubmit, onCancel }: SeedFormProps) {
         endIcon="g"
         hint="Wird beim Aussaat-Formular als Standardmenge vorgeschlagen"
       />
+
+      <div className="grid grid-cols-2 gap-4">
+        <Input
+          label="Substrat"
+          value={formData.substrat}
+          onChange={(e) => setFormData({ ...formData, substrat: e.target.value })}
+          placeholder="z.B. Hanfmatte, Erde"
+          hint="Wird in der Aussaat-Arbeitsanweisung angezeigt"
+        />
+        <Input
+          label="Winter-Zusatztage"
+          type="number"
+          min={0}
+          max={14}
+          value={formData.winter_extra_tage}
+          onChange={(e) => setFormData({ ...formData, winter_extra_tage: Number(e.target.value) })}
+          endIcon="Tage"
+          hint="Verlängert das Erntefenster im Winterzyklus (Einstellungen)"
+        />
+      </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <Input

@@ -298,6 +298,10 @@ def _auto_migrate(engine: Engine) -> None:
         _add_col_if_missing("harvests", "stueck_pro_kiste", "INTEGER")
         # Preise auf Lieferschein (pro Kunde)
         _add_col_if_missing("customers", "show_prices_on_delivery_note", "BOOLEAN", "0")
+        # Substrattyp + Winterzyklus (pro Sorte), Chargen-Abweichung (pro Saatgut-Charge)
+        _add_col_if_missing("seeds", "substrat",          "VARCHAR(100)")
+        _add_col_if_missing("seeds", "winter_extra_tage", "INTEGER", "0")
+        _add_col_if_missing("seed_batches", "zusatz_tage", "INTEGER", "0")
     except Exception as e:
         logger.error(f"[auto-migrate] failed: {e}")
 

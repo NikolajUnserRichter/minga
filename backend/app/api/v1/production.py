@@ -66,12 +66,23 @@ def create_grow_batch(data: GrowBatchCreate, db: DBSession):
     if not seed:
         raise HTTPException(status_code=400, detail="Saatgut-Charge hat keine Sorte zugeordnet")
 
+    # Chargen-Abweichung aus dem Aussaat-Formular an der Saatgut-Charge persistieren
+    if data.zusatz_tage is not None:
+        seed_batch.zusatz_tage = data.zusatz_tage
+
     # Erntefenster ab Aussaatdatum
     # Erntefenster-Tage zählen AB AUSSAAT (Keimdauer ist darin bereits enthalten:
     # z.B. Gartenkresse Keim 3 + Wachstum 3 → Fenster 6/7/8). Keimdauer NICHT addieren.
-    erwartete_ernte_min = data.aussaat_datum + timedelta(days=seed.erntefenster_min_tage)
-    erwartete_ernte_optimal = data.aussaat_datum + timedelta(days=seed.erntefenster_optimal_tage)
-    erwartete_ernte_max = data.aussaat_datum + timedelta(days=seed.erntefenster_max_tage)
+    # Zuschläge: Chargen-Abweichung (zusatz_tage, z.B. langsame Keimung) und
+    # Winterzyklus (Seed.winter_extra_tage wenn SEASON_MODE=WINTER).
+    extra_tage = seed_batch.zusatz_tage or 0
+    from app.services.settings_service import get_setting
+    if (get_setting(db, "SEASON_MODE") or "SOMMER").upper() == "WINTER":
+        extra_tage += seed.winter_extra_tage or 0
+
+    erwartete_ernte_min = data.aussaat_datum + timedelta(days=seed.erntefenster_min_tage + extra_tage)
+    erwartete_ernte_optimal = data.aussaat_datum + timedelta(days=seed.erntefenster_optimal_tage + extra_tage)
+    erwartete_ernte_max = data.aussaat_datum + timedelta(days=seed.erntefenster_max_tage + extra_tage)
 
     grow_batch = GrowBatch(
         seed_batch_id=data.seed_batch_id,
@@ -268,6 +279,91 @@ def create_harvest(data: HarvestCreate, db: DBSession):
     db.commit()
     db.refresh(harvest)
     return harvest
+
+@router.get("/day-plan")
+def get_day_plan(
+    db: DBSession,
+    target_date: date = Query(..., description="Tag, für den der Arbeitsplan erstellt wird"),
+):
+    """Tagesplan für Mitarbeiter: Aussaat, Ernte, Verpacken, Ausliefern an einem Tag.
+
+    - aussaat: genehmigte Produktionsvorschläge mit Aussaatdatum = Tag
+    - ernte: Chargen, deren Erntefenster den Tag umfasst (nicht geerntet)
+    - verpacken: Positionen für Lieferungen von Tag+1 und Same-Day (Tag)
+    - ausliefern: Bestellungen mit Lieferdatum = Tag
+    """
+    from datetime import timedelta
+    from app.models.forecast import ProductionSuggestion, SuggestionStatus
+    from app.models.seed import Seed, SeedBatch
+
+    # Aussaat: genehmigte Vorschläge für diesen Tag
+    suggestions = db.execute(
+        select(ProductionSuggestion, Seed)
+        .join(Seed, ProductionSuggestion.seed_id == Seed.id)
+        .where(
+            ProductionSuggestion.aussaat_datum == target_date,
+            ProductionSuggestion.status.in_([SuggestionStatus.GENEHMIGT, SuggestionStatus.VORGESCHLAGEN]),
+        )
+    ).all()
+    aussaat = [{
+        "seed_name": seed.name,
+        "trays": sug.empfohlene_trays,
+        "substrat": seed.substrat,
+        "saatgut_gramm": float(seed.saatgut_pro_einheit_gramm or 0) * sug.empfohlene_trays,
+        "status": sug.status.value,
+    } for sug, seed in suggestions]
+
+    # Ernte: Chargen im Erntefenster
+    batches = db.execute(
+        select(GrowBatch)
+        .options(joinedload(GrowBatch.seed_batch).joinedload(SeedBatch.seed))
+        .where(
+            GrowBatch.status.in_([GrowBatchStatus.KEIMUNG, GrowBatchStatus.WACHSTUM, GrowBatchStatus.ERNTEREIF]),
+            GrowBatch.erwartete_ernte_min <= target_date,
+            GrowBatch.erwartete_ernte_max >= target_date,
+        )
+        .order_by(GrowBatch.erwartete_ernte_optimal)
+    ).scalars().unique().all()
+    ernte = [{
+        "batch_id": str(b.id),
+        "seed_name": b.seed_name or "Unbekannt",
+        "trays": b.tray_anzahl,
+        "regal_position": b.regal_position,
+        "optimal": b.erwartete_ernte_optimal.isoformat(),
+        "ist_optimal_heute": b.erwartete_ernte_optimal == target_date,
+    } for b in batches]
+
+    # Verpacken (Lieferungen Tag+1 + Same-Day) und Ausliefern (Lieferdatum = Tag)
+    orders = db.execute(
+        select(Order)
+        .options(joinedload(Order.lines), joinedload(Order.customer))
+        .where(
+            Order.requested_delivery_date.in_([target_date, target_date + timedelta(days=1)]),
+            Order.status.in_([OrderStatus.ENTWURF, OrderStatus.BESTAETIGT, OrderStatus.IN_PRODUKTION]),
+        )
+        .order_by(Order.requested_delivery_date)
+    ).scalars().unique().all()
+
+    def _order_ref(o: Order) -> dict:
+        return {
+            "order_number": o.order_number,
+            "customer_name": o.customer.name if o.customer else "—",
+            "delivery_date": o.requested_delivery_date.isoformat(),
+            "status": "Entwurf" if o.status == OrderStatus.ENTWURF else o.status.value,
+            "positionen": len(o.lines),
+        }
+
+    verpacken = [_order_ref(o) for o in orders]
+    ausliefern = [_order_ref(o) for o in orders if o.requested_delivery_date == target_date]
+
+    return {
+        "target_date": target_date,
+        "aussaat": aussaat,
+        "ernte": ernte,
+        "verpacken": verpacken,
+        "ausliefern": ausliefern,
+    }
+
 
 # ========================================
 # DASHBOARD

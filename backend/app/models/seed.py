@@ -74,6 +74,12 @@ class Seed(Base):
     # Saatgut-Dichte pro Anzucht-Einheit (Kiste/Tray) — wird im SowingForm angezeigt
     saatgut_pro_einheit_gramm: Mapped[Optional[Decimal]] = mapped_column(Numeric(8, 2))
 
+    # Substrattyp für die Aussaat-Arbeitsanweisung (z.B. "Hanfmatte", "Erde")
+    substrat: Mapped[Optional[str]] = mapped_column(String(100))
+
+    # Winterzyklus: zusätzliche Wachstumstage wenn SEASON_MODE=WINTER (App-Setting)
+    winter_extra_tage: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+
     # Wachstumsparameter
     keimdauer_tage: Mapped[int] = mapped_column(Integer, nullable=False)
     wachstumsdauer_tage: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -153,6 +159,10 @@ class SeedBatch(Base):
     lieferschein_nr: Mapped[Optional[str]] = mapped_column(String(50))
     bio_zertifiziert: Mapped[bool] = mapped_column(Boolean, default=False)
     kontrollstelle: Mapped[Optional[str]] = mapped_column(String(100))  # z.B. DE-ÖKO-006
+
+    # Chargen-spezifische Abweichung: verschiebt das Erntefenster um N Tage
+    # (z.B. +1 wenn diese Charge langsamer keimt; negativ erlaubt)
+    zusatz_tage: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
 
     # Timestamp
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))

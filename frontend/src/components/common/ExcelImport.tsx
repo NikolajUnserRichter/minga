@@ -3,7 +3,7 @@ import { Upload, FileDown } from 'lucide-react';
 import { Button, useToast } from '../ui';
 import api from '../../services/api';
 
-type Entity = 'customers' | 'suppliers' | 'seeds' | 'products' | 'locations' | 'order_history';
+type Entity = 'customers' | 'suppliers' | 'seeds' | 'products' | 'locations' | 'order_history' | 'grow_batches';
 
 interface Props {
   entity: Entity;

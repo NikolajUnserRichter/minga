@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 import {
   Search, Package, Warehouse, Leaf, Box, AlertTriangle,
-  ArrowDownCircle, ArrowUpCircle, Thermometer, Printer, Link as LinkIcon, Edit, Paperclip
+  ArrowDownCircle, ArrowUpCircle, Thermometer, Printer, Link as LinkIcon, Edit, Paperclip, Settings
 } from 'lucide-react';
 import { inventoryApi, seedsApi } from '../services/api';
 import { AttachmentsModal } from '../components/common/AttachmentsModal';
@@ -59,6 +59,7 @@ export default function Inventory() {
   const [showCorrectionModal, setShowCorrectionModal] = useState(false);
   const [correctionItem, setCorrectionItem] = useState<{ id: string, qty: number, unit: string, type: InventoryType, name: string } | null>(null);
   const [attachmentsFor, setAttachmentsFor] = useState<{ id: string; name: string } | null>(null);
+  const [editingSeedMaster, setEditingSeedMaster] = useState<SeedInventory | null>(null);
   const [searchParams] = useSearchParams();
   const highlightId = searchParams.get('highlight');
 
@@ -210,6 +211,18 @@ export default function Inventory() {
             id: item.id,
             name: `${item.seed_name ?? '—'} (${item.batch_number})`,
           })}
+          onEditMaster={(item) => setEditingSeedMaster(item)}
+        />
+      )}
+
+      {editingSeedMaster && (
+        <SeedMasterEditModal
+          item={editingSeedMaster}
+          onClose={() => setEditingSeedMaster(null)}
+          onSaved={() => {
+            setEditingSeedMaster(null);
+            queryClient.invalidateQueries({ queryKey: ['seed-inventory'] });
+          }}
         />
       )}
 
@@ -450,8 +463,86 @@ function OverviewTab({
   );
 }
 
+// Stammdaten-Edit für Saatgut-Bestand (z.B. vergessenes BIO-Flag nachpflegen)
+function SeedMasterEditModal({ item, onClose, onSaved }: { item: SeedInventory; onClose: () => void; onSaved: () => void }) {
+  const toast = useToast();
+  const [saving, setSaving] = useState(false);
+  const [form, setForm] = useState({
+    is_organic: item.is_organic ?? false,
+    organic_certificate: item.organic_certificate || '',
+    best_before_date: item.best_before_date ? item.best_before_date.split('T')[0] : '',
+    supplier_name: item.supplier_name || '',
+  });
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      await inventoryApi.updateSeedInventory(item.id, {
+        is_organic: form.is_organic,
+        organic_certificate: form.organic_certificate || null,
+        best_before_date: form.best_before_date || null,
+        supplier_name: form.supplier_name || null,
+      });
+      toast.success('Stammdaten gespeichert');
+      onSaved();
+    } catch {
+      toast.error('Fehler beim Speichern der Stammdaten');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={`Stammdaten: ${item.seed_name ?? '—'} (${item.batch_number})`}
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose}>Abbrechen</Button>
+          <Button onClick={handleSave} loading={saving}>Speichern</Button>
+        </>
+      }
+    >
+      <div className="space-y-4">
+        <p className="text-sm text-gray-500 dark:text-gray-400">
+          Bestandsmengen änderst du weiterhin über die Bestandskorrektur (Stift-Symbol).
+        </p>
+        <label className="flex items-center gap-2">
+          <input
+            type="checkbox"
+            checked={form.is_organic}
+            onChange={(e) => setForm({ ...form, is_organic: e.target.checked })}
+            className="w-4 h-4 rounded border-gray-300 dark:border-gray-600 text-minga-600 focus:ring-minga-500"
+          />
+          <span className="text-sm text-gray-700 dark:text-gray-300">BIO-zertifiziert</span>
+        </label>
+        {form.is_organic && (
+          <Input
+            label="Kontrollstelle / Zertifikat"
+            value={form.organic_certificate}
+            onChange={(e) => setForm({ ...form, organic_certificate: e.target.value })}
+            placeholder="z.B. DE-ÖKO-006"
+          />
+        )}
+        <Input
+          label="MHD"
+          type="date"
+          value={form.best_before_date}
+          onChange={(e) => setForm({ ...form, best_before_date: e.target.value })}
+        />
+        <Input
+          label="Lieferant"
+          value={form.supplier_name}
+          onChange={(e) => setForm({ ...form, supplier_name: e.target.value })}
+        />
+      </div>
+    </Modal>
+  );
+}
+
 // Seed Inventory Tab
-function SeedInventoryTab({ inventory, search, onCorrect, onAttachments }: { inventory: SeedInventory[]; search: string; onCorrect: (item: SeedInventory) => void; onAttachments: (item: SeedInventory) => void }) {
+function SeedInventoryTab({ inventory, search, onCorrect, onAttachments, onEditMaster }: { inventory: SeedInventory[]; search: string; onCorrect: (item: SeedInventory) => void; onAttachments: (item: SeedInventory) => void; onEditMaster: (item: SeedInventory) => void }) {
   const filtered = inventory.filter(
     (item) =>
       item.batch_number.toLowerCase().includes(search.toLowerCase()) ||
@@ -504,6 +595,13 @@ function SeedInventoryTab({ inventory, search, onCorrect, onAttachments }: { inv
                   onClick={() => onCorrect(item)}
                 >
                   <Edit className="w-4 h-4" />
+                </button>
+                <button
+                  className="text-gray-400 hover:text-blue-600 dark:text-blue-400 ml-2"
+                  title="Stammdaten bearbeiten (BIO, MHD, Lieferant)"
+                  onClick={() => onEditMaster(item)}
+                >
+                  <Settings className="w-4 h-4" />
                 </button>
               </td>
             </tr>

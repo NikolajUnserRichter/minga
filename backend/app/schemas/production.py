@@ -21,6 +21,9 @@ class GrowBatchBase(BaseModel):
 class GrowBatchCreate(GrowBatchBase):
     """Schema zum Erstellen einer Wachstumscharge"""
     seed_batch_id: UUID = Field(..., description="ID der Saatgut-Charge")
+    # Chargen-Abweichung (Tage): wird an der Saatgut-Charge persistiert und
+    # verschiebt das Erntefenster (z.B. +1 bei langsamer Keimung)
+    zusatz_tage: Optional[int] = Field(None, ge=-7, le=14, description="Erntefenster-Verschiebung der Saatgut-Charge in Tagen")
 
 
 class GrowBatchUpdate(BaseModel):

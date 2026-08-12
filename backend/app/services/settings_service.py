@@ -47,6 +47,8 @@ KNOWN_SETTINGS: dict[str, dict] = {
     "SHOPIFY_ENABLED":       {"is_secret": False, "label": "Shopify aktiv"},
     "SHOPIFY_SHOP_DOMAIN":   {"is_secret": False, "label": "Shopify Shop-Domain"},
     "SHOPIFY_ACCESS_TOKEN":  {"is_secret": True,  "label": "Shopify Access-Token"},
+    # Produktion: Saisonzyklus — WINTER addiert Seed.winter_extra_tage aufs Erntefenster
+    "SEASON_MODE":           {"is_secret": False, "label": "Saisonzyklus (SOMMER | WINTER)"},
 }
 
 
