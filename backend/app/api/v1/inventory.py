@@ -51,7 +51,7 @@ def list_locations(
 
 
 @router.get("/locations/{location_id}", response_model=InventoryLocationResponse)
-def get_location(location_id: UUID, db: Session = Depends(DBSession)):
+def get_location(location_id: UUID, db: DBSession):
     """Gibt einen Lagerort zurück."""
     location = db.get(InventoryLocation, location_id)
     if not location:
@@ -119,7 +119,7 @@ def list_seed_inventory(
 
 
 @router.get("/seeds/{inventory_id}", response_model=SeedInventoryResponse)
-def get_seed_inventory(inventory_id: UUID, db: Session = Depends(DBSession)):
+def get_seed_inventory(inventory_id: UUID, db: DBSession):
     """Gibt einen Saatgut-Bestand zurück."""
     inventory = db.get(SeedInventory, inventory_id)
     if not inventory:
@@ -148,6 +148,12 @@ def receive_seed_batch(
 ):
     """Erfasst einen neuen Saatgut-Wareneingang inkl. SeedBatch (Traceability)."""
     from app.models.seed import SeedBatch
+
+    # Einheit respektieren: das UI erfasst in Gramm, der Bestand wird in kg
+    # geführt. Vorher wurde `unit` ignoriert und jede Eingabe als kg gewertet
+    # (500 g → 500 kg, Faktor 1000 zu viel).
+    if (unit or "").strip().lower() in ("g", "gramm"):
+        quantity = quantity / Decimal("1000")
 
     service = InventoryService(db)
     try:
@@ -265,7 +271,7 @@ def list_finished_goods(
 
 
 @router.get("/finished-goods/{inventory_id}", response_model=FinishedGoodsInventoryResponse)
-def get_finished_goods(inventory_id: UUID, db: Session = Depends(DBSession)):
+def get_finished_goods(inventory_id: UUID, db: DBSession):
     """Gibt einen Fertigwaren-Bestand zurück."""
     inventory = db.get(FinishedGoodsInventory, inventory_id)
     if not inventory:
@@ -276,7 +282,7 @@ def get_finished_goods(inventory_id: UUID, db: Session = Depends(DBSession)):
 @router.get("/finished-goods/{inventory_id}/label")
 def get_finished_goods_label(
     inventory_id: UUID,
-    db: Session = Depends(DBSession)
+    db: DBSession
 ):
     """Generiert ein PDF-Label für Fertigware."""
     from sqlalchemy.orm import joinedload
@@ -625,7 +631,7 @@ def list_inventory_counts(
 
 
 @router.get("/counts/{count_id}", response_model=InventoryCountResponse)
-def get_inventory_count(count_id: UUID, db: Session = Depends(DBSession)):
+def get_inventory_count(count_id: UUID, db: DBSession):
     """Gibt eine Inventur mit allen Positionen zurück."""
     count = db.get(InventoryCount, count_id)
     if not count:

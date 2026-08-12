@@ -499,7 +499,8 @@ class TestInventory:
         assert response.status_code == 201
         data = response.json()
         assert data["batch_number"] == "SB-2026-001"
-        assert float(data["current_quantity_kg"]) == 5000
+        # 5000 g = 5 kg — unit wird respektiert (vorher Bug: 5000 g → 5000 kg)
+        assert float(data["current_quantity_kg"]) == 5
 
     def test_list_packaging_empty(self, client):
         response = client.get("/api/v1/inventory/packaging")
@@ -664,4 +665,4 @@ class TestIntegration:
         # Bestand prüfen
         inventory_response = client.get("/api/v1/inventory/seeds")
         assert len(inventory_response.json()) == 1
-        assert float(inventory_response.json()[0]["current_quantity_kg"]) == 1000
+        assert float(inventory_response.json()[0]["current_quantity_kg"]) == 1  # 1000 g = 1 kg
