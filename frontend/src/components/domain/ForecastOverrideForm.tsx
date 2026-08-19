@@ -61,7 +61,7 @@ export function ForecastOverrideForm({
       <div className="p-4 bg-gray-50 dark:bg-gray-700/50 rounded-lg">
         <div className="flex justify-between mb-2">
           <span className="text-sm text-gray-500 dark:text-gray-400">Produkt:</span>
-          <span className="font-medium">{forecast.seed?.name || 'Unbekannt'}</span>
+          <span className="font-medium">{forecast.seed_name || forecast.seed?.name || 'Unbekannt'}</span>
         </div>
         <div className="flex justify-between">
           <span className="text-sm text-gray-500 dark:text-gray-400">Datum:</span>

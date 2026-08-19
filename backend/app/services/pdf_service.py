@@ -1,5 +1,6 @@
 from io import BytesIO
 from typing import Optional
+from xml.sax.saxutils import escape
 from reportlab.lib.pagesizes import A4
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -49,6 +50,36 @@ def line_desc_cell(main: Optional[str], product, styles) -> Paragraph:
     for extra in extras:
         text += f'<br/><font size="7" color="#6b7280">{escape(extra)}</font>'
     return Paragraph(text, styles["Normal"])
+
+
+def customer_address_lines(customer) -> list[str]:
+    """Anschrift des Rechnungsempfängers — § 14 Abs. 4 Nr. 1 UStG.
+
+    Zwei Adressmodelle koexistieren: die strukturierte `customer_addresses`
+    und das Legacy-Freitextfeld `Customer.adresse` (das der Excel-Import und
+    die Alt-Bestände befüllen). Historisch las das PDF nur die strukturierte
+    Relation — bei Kunden ohne solchen Datensatz blieb die Rechnung ohne
+    Anschrift. Daher: strukturiert bevorzugen, sonst Freitext.
+    """
+    if customer is None:
+        return []
+
+    addr = getattr(customer, "billing_address", None) or getattr(customer, "shipping_address", None)
+    if addr is not None:
+        lines = [f"{addr.strasse} {addr.hausnummer or ''}".strip()]
+        if getattr(addr, "adresszusatz", None):
+            lines.append(addr.adresszusatz)
+        lines.append(f"{addr.plz} {addr.ort}".strip())
+        if getattr(addr, "land", "DE") not in ("DE", "", None):
+            lines.append(addr.land)
+        return [ln for ln in lines if ln]
+
+    legacy = (getattr(customer, "adresse", None) or "").strip()
+    if legacy:
+        # Freitext kann ein- oder mehrzeilig sein ("Str. 12, 81371 München").
+        parts = [p.strip() for p in legacy.replace(",", "\n").splitlines()]
+        return [p for p in parts if p]
+    return []
 
 
 def load_company_settings(db) -> dict[str, str]:
@@ -179,10 +210,12 @@ class PDFService:
             # Kundenbestellnummer (z.B. EB4475142) aus der zugehörigen Bestellung
             if invoice.order is not None and invoice.order.customer_reference:
                 meta_data.append(["Auftragsnummer:", invoice.order.customer_reference])
-            if invoice.customer.billing_address:
-                 addr = invoice.customer.billing_address
-                 addr_str = f"{addr.strasse} {addr.hausnummer or ''}, {addr.plz} {addr.ort}"
-                 meta_data.append(["Anschrift:", addr_str])
+            addr_lines = customer_address_lines(invoice.customer)
+            if addr_lines:
+                meta_data.append([
+                    "Anschrift:",
+                    Paragraph("<br/>".join(escape(ln) for ln in addr_lines), styles["Normal"]),
+                ])
             meta_table = Table(meta_data, colWidths=[4*cm, 10*cm])
             meta_table.setStyle(TableStyle([
                 ('ALIGN', (0,0), (-1,-1), 'LEFT'),

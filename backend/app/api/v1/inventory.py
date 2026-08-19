@@ -6,7 +6,7 @@ from datetime import date
 from decimal import Decimal
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import select
 
 from app.api.deps import DBSession, Pagination
@@ -102,7 +102,11 @@ def list_seed_inventory(
     low_stock_only: bool = False,
 ):
     """Listet Saatgut-Bestände."""
-    query = select(SeedInventory).where(SeedInventory.is_active == True)
+    # Sorte + Lagerort mitladen: die Response-Properties lesen über diese
+    # Relationen (sonst blieben die Spalten in der Lagerverwaltung leer).
+    query = select(SeedInventory).options(
+        joinedload(SeedInventory.seed), joinedload(SeedInventory.location)
+    ).where(SeedInventory.is_active == True)
 
     if seed_id:
         query = query.where(SeedInventory.seed_id == seed_id)
@@ -182,6 +186,13 @@ def receive_seed_batch(
     is_organic: bool = False,
     organic_certification: Optional[str] = None,
     notes: Optional[str] = None,
+    # Chargenbedingte Wachstumsparameter — gehören in die Stammdaten der
+    # Charge, damit sie nicht bei jedem Aussaatzyklus neu erfasst werden.
+    keimdauer_tage: Optional[int] = None,
+    wachstumsdauer_tage: Optional[int] = None,
+    erntefenster_min_tage: Optional[int] = None,
+    erntefenster_optimal_tage: Optional[int] = None,
+    erntefenster_max_tage: Optional[int] = None,
 ):
     """Erfasst einen neuen Saatgut-Wareneingang inkl. SeedBatch (Traceability)."""
     from app.models.seed import SeedBatch
@@ -220,6 +231,11 @@ def receive_seed_batch(
             lieferschein_nr=lieferschein_nr,
             bio_zertifiziert=is_organic,
             kontrollstelle=kontrollstelle,
+            keimdauer_tage=keimdauer_tage,
+            wachstumsdauer_tage=wachstumsdauer_tage,
+            erntefenster_min_tage=erntefenster_min_tage,
+            erntefenster_optimal_tage=erntefenster_optimal_tage,
+            erntefenster_max_tage=erntefenster_max_tage,
         )
         db.add(seed_batch)
         # Note: service.receive_seed_batch signature in 1015 has explicit args.

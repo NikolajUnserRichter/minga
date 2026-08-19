@@ -900,7 +900,8 @@ function ReceiveForm({
     seed_id: '',
     batch_number: '',
     quantity: 0,
-    unit: 'G',
+    // Saatgut kommt in Kilo-Gebinden; der Bestand wird ebenfalls in kg geführt.
+    unit: 'KG',
     location_id: '',
     supplier: '',
     mhd: '',
@@ -1040,15 +1041,25 @@ function ReceiveForm({
             />
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-3 gap-4">
             <Input
               label="Menge"
               type="number"
               required
               min={0}
+              step="any"
               value={formData.quantity}
               onChange={(e) => setFormData({ ...formData, quantity: Number(e.target.value) })}
-              endIcon="g"
+              endIcon={formData.unit === 'G' ? 'g' : 'kg'}
+            />
+            <Select
+              label="Einheit"
+              options={[
+                { value: 'KG', label: 'Kilogramm (kg)' },
+                { value: 'G', label: 'Gramm (g)' },
+              ]}
+              value={formData.unit}
+              onChange={(e) => setFormData({ ...formData, unit: e.target.value })}
             />
             <Input
               label="MHD"
@@ -1093,7 +1104,8 @@ function ReceiveForm({
               min={0}
               value={formData.purchase_price}
               onChange={(e) => setFormData({ ...formData, purchase_price: Number(e.target.value) })}
-              endIcon="€/g"
+              endIcon="€/kg"
+              hint="Bestand wird in kg geführt — Preis je Kilogramm"
             />
           </div>
 

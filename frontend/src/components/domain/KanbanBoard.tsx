@@ -182,7 +182,8 @@ function KanbanCard({ batch, onHarvest }: KanbanCardProps) {
             <div className="flex items-start justify-between gap-2">
                 <div className="flex-1 min-w-0">
                     <span className="text-xs font-mono text-gray-400">#{batch.id.slice(0, 8)}</span>
-                    <h4 className="font-medium text-gray-900 dark:text-white truncate">{batch.seed?.name || 'Unbekannt'}</h4>
+                    {/* seed_name kommt flach aus der API — batch.seed ist nie befüllt */}
+                    <h4 className="font-medium text-gray-900 dark:text-white truncate">{batch.seed_name || batch.seed?.name || 'Unbekannt'}</h4>
                 </div>
                 {canDrag && (
                     <GripVertical className="w-4 h-4 text-gray-300 flex-shrink-0" />

@@ -92,8 +92,25 @@ export const seedsApi = {
       lieferschein_nr: string | null
       bio_zertifiziert: boolean
       kontrollstelle: string | null
+      // Chargenbedingte Wachstumsparameter (Stammdaten der Charge)
+      zusatz_tage: number
+      keimdauer_tage: number | null
+      wachstumsdauer_tage: number | null
+      erntefenster_min_tage: number | null
+      erntefenster_optimal_tage: number | null
+      erntefenster_max_tage: number | null
       created_at: string
     }>>(`/seeds/${seedId}/batches`).then(r => r.data),
+
+  updateBatch: (batchId: string, data: {
+    zusatz_tage?: number
+    keimdauer_tage?: number | null
+    wachstumsdauer_tage?: number | null
+    erntefenster_min_tage?: number | null
+    erntefenster_optimal_tage?: number | null
+    erntefenster_max_tage?: number | null
+  }) =>
+    api.patch(`/seeds/batches/${batchId}`, data).then(r => r.data),
 }
 
 // Production API
@@ -110,7 +127,6 @@ export const productionApi = {
     aussaat_datum: string
     regal_position?: string
     notizen?: string
-    zusatz_tage?: number
   }) =>
     api.post<GrowBatch>('/production/grow-batches', data).then(r => r.data),
 
@@ -157,16 +173,22 @@ export const productionApi = {
     api.get<DashboardSummary>('/production/dashboard/summary').then(r => r.data),
 
   getPackagingPlan: (targetDate: string) =>
-    api.get<{ target_date: string; items: any[] }>(`/production/packaging-plan`, { params: { target_date: targetDate } }).then(r => r.data),
+    api.get<{
+      target_date: string
+      items: any[]
+      // Bundles in Sorten aufgelöst — Bauliste für den Produktionsmitarbeiter
+      komponenten: Array<{ product_id: string | null; product_name: string; total_quantity: number; aus_bundles: string[] }>
+    }>(`/production/packaging-plan`, { params: { target_date: targetDate } }).then(r => r.data),
 
   getDayPlan: (targetDate: string) =>
     api.get<{
       target_date: string
       aussaat: Array<{ seed_name: string; trays: number; substrat: string | null; saatgut_gramm: number; status: string }>
       ernte: Array<{ batch_id: string; seed_name: string; trays: number; regal_position: string | null; optimal: string; ist_optimal_heute: boolean }>
-      verpacken: Array<{ order_number: string; customer_name: string; delivery_date: string; status: string; positionen: number }>
-      ausliefern: Array<{ order_number: string; customer_name: string; delivery_date: string; status: string; positionen: number }>
+      verpacken: Array<{ order_number: string; customer_name: string; delivery_date: string; packing_date: string | null; packing_date_explizit: boolean; status: string; positionen: number }>
+      ausliefern: Array<{ order_number: string; customer_name: string; delivery_date: string; packing_date: string | null; packing_date_explizit: boolean; status: string; positionen: number }>
       dienst: Array<{ employee_name: string; start_time: string | null; end_time: string | null; aufgabe: string | null }>
+      aufgaben: Array<{ id: string; titel: string; beschreibung: string | null; employee_name: string | null; erledigt: boolean }>
     }>(`/production/day-plan`, { params: { target_date: targetDate } }).then(r => r.data),
 }
 
@@ -179,6 +201,20 @@ export interface StaffShift {
   end_time: string | null
   aufgabe: string | null
   notizen: string | null
+  created_at: string
+  updated_at: string
+}
+
+/** Aufgabe ohne Produktionsbezug — Kisten spülen, Hanfmatten auffüllen, Müll rausstellen. */
+export interface StaffTask {
+  id: string
+  titel: string
+  beschreibung: string | null
+  datum: string
+  employee_name: string | null
+  erledigt: boolean
+  erledigt_am: string | null
+  serie_id: string | null
   created_at: string
   updated_at: string
 }
@@ -205,6 +241,37 @@ export const staffApi = {
 
   deleteShift: (id: string) =>
     api.delete(`/staff-shifts/${id}`),
+
+  /** Wochenplan als PDF-Aushang (Blob zum Drucken/Herunterladen). */
+  printShifts: (params: { von_datum: string; bis_datum: string }) =>
+    api.get(`/staff-shifts/print`, { params, responseType: 'blob' }).then(r => r.data as Blob),
+
+  listTasks: (params?: { von_datum?: string; bis_datum?: string; employee_name?: string; nur_offen?: boolean }) =>
+    api.get<StaffTask[]>('/staff-tasks', { params }).then(r => r.data),
+
+  /** Legt einen Termin an — bei Wiederholung mehrere auf einmal. */
+  createTask: (data: {
+    titel: string
+    datum: string
+    beschreibung?: string | null
+    employee_name?: string | null
+    wiederholung?: 'TAEGLICH' | 'WOECHENTLICH' | null
+    wiederholung_bis?: string | null
+  }) =>
+    api.post<StaffTask[]>('/staff-tasks', data).then(r => r.data),
+
+  updateTask: (id: string, data: {
+    titel?: string
+    datum?: string
+    beschreibung?: string | null
+    employee_name?: string | null
+    erledigt?: boolean
+  }) =>
+    api.patch<StaffTask>(`/staff-tasks/${id}`, data).then(r => r.data),
+
+  /** `serie: true` löscht diesen und alle folgenden Termine der Serie. */
+  deleteTask: (id: string, serie = false) =>
+    api.delete(`/staff-tasks/${id}`, { params: { serie } }),
 }
 
 // Sales API
@@ -233,6 +300,7 @@ export const salesApi = {
   createOrder: (data: {
     customer_id: string
     requested_delivery_date: string
+    packing_date?: string
     lines: Array<{
       product_id?: string
       product_variant_id?: string

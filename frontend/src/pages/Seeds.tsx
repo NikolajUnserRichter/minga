@@ -191,6 +191,12 @@ function SeedForm({ seed, onSubmit, onCancel }: SeedFormProps) {
     verlustquote_prozent: seed?.verlustquote_prozent || 5,
     substrat: seed?.substrat || '',
     winter_extra_tage: seed?.winter_extra_tage ?? 0,
+    // Winter-Parametersatz: null = Sommerwert gilt weiter
+    winter_keimdauer_tage: seed?.winter_keimdauer_tage ?? null as number | null,
+    winter_wachstumsdauer_tage: seed?.winter_wachstumsdauer_tage ?? null as number | null,
+    winter_erntefenster_min_tage: seed?.winter_erntefenster_min_tage ?? null as number | null,
+    winter_erntefenster_optimal_tage: seed?.winter_erntefenster_optimal_tage ?? null as number | null,
+    winter_erntefenster_max_tage: seed?.winter_erntefenster_max_tage ?? null as number | null,
     aktiv: seed?.aktiv ?? true,
   });
 
@@ -285,25 +291,13 @@ function SeedForm({ seed, onSubmit, onCancel }: SeedFormProps) {
         hint="Wird beim Aussaat-Formular als Standardmenge vorgeschlagen"
       />
 
-      <div className="grid grid-cols-2 gap-4">
-        <Input
-          label="Substrat"
-          value={formData.substrat}
-          onChange={(e) => setFormData({ ...formData, substrat: e.target.value })}
-          placeholder="z.B. Hanfmatte, Erde"
-          hint="Wird in der Aussaat-Arbeitsanweisung angezeigt"
-        />
-        <Input
-          label="Winter-Zusatztage"
-          type="number"
-          min={0}
-          max={14}
-          value={formData.winter_extra_tage}
-          onChange={(e) => setFormData({ ...formData, winter_extra_tage: Number(e.target.value) })}
-          endIcon="Tage"
-          hint="Verlängert das Erntefenster im Winterzyklus (Einstellungen)"
-        />
-      </div>
+      <Input
+        label="Substrat"
+        value={formData.substrat}
+        onChange={(e) => setFormData({ ...formData, substrat: e.target.value })}
+        placeholder="z.B. Hanfmatte, Erde"
+        hint="Wird in der Aussaat-Arbeitsanweisung angezeigt"
+      />
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <Input
@@ -371,6 +365,60 @@ function SeedForm({ seed, onSubmit, onCancel }: SeedFormProps) {
           min={1}
           value={formData.erntefenster_max_tage}
           onChange={(e) => setFormData({ ...formData, erntefenster_max_tage: Number(e.target.value) })}
+          endIcon="Tage"
+        />
+      </div>
+
+      <div className="divider" />
+
+      <div>
+        <h4 className="font-medium text-gray-900 dark:text-white">Winterzyklus</h4>
+        <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+          Eigener Parametersatz für den Winterbetrieb (Einstellungen → Saisonzyklus = WINTER).
+          Die Verzögerung kann in der Keimung oder im Growroom entstehen — deshalb beides
+          getrennt pflegen. Leere Felder übernehmen den Sommerwert.
+        </p>
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+        <Input
+          label="Keimdauer Winter"
+          type="number"
+          min={1}
+          value={formData.winter_keimdauer_tage ?? ''}
+          onChange={(e) => setFormData({ ...formData, winter_keimdauer_tage: e.target.value ? Number(e.target.value) : null })}
+          endIcon="Tage"
+        />
+        <Input
+          label="Wachstum Winter"
+          type="number"
+          min={1}
+          value={formData.winter_wachstumsdauer_tage ?? ''}
+          onChange={(e) => setFormData({ ...formData, winter_wachstumsdauer_tage: e.target.value ? Number(e.target.value) : null })}
+          endIcon="Tage"
+        />
+        <Input
+          label="Erntefenster Min"
+          type="number"
+          min={1}
+          value={formData.winter_erntefenster_min_tage ?? ''}
+          onChange={(e) => setFormData({ ...formData, winter_erntefenster_min_tage: e.target.value ? Number(e.target.value) : null })}
+          endIcon="Tage"
+        />
+        <Input
+          label="Erntefenster Optimal"
+          type="number"
+          min={1}
+          value={formData.winter_erntefenster_optimal_tage ?? ''}
+          onChange={(e) => setFormData({ ...formData, winter_erntefenster_optimal_tage: e.target.value ? Number(e.target.value) : null })}
+          endIcon="Tage"
+        />
+        <Input
+          label="Erntefenster Max"
+          type="number"
+          min={1}
+          value={formData.winter_erntefenster_max_tage ?? ''}
+          onChange={(e) => setFormData({ ...formData, winter_erntefenster_max_tage: e.target.value ? Number(e.target.value) : null })}
           endIcon="Tage"
         />
       </div>

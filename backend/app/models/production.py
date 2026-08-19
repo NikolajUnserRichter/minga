@@ -46,6 +46,12 @@ class GrowBatch(Base):
     erwartete_ernte_optimal: Mapped[date] = mapped_column(Date, nullable=False)
     erwartete_ernte_max: Mapped[date] = mapped_column(Date, nullable=False)
 
+    # Ende der Keimphase (Umzug in den Growroom) — im Winter oder bei
+    # langsamen Chargen verschiebt sich dieser Tag unabhängig vom Erntefenster.
+    keimende_datum: Mapped[Optional[date]] = mapped_column(Date)
+    # Welcher Parametersatz galt: SORTE | WINTER | CHARGE
+    parameter_quelle: Mapped[Optional[str]] = mapped_column(String(10))
+
     # Status & Position
     status: Mapped[GrowBatchStatus] = mapped_column(
         SQLEnum(GrowBatchStatus), default=GrowBatchStatus.KEIMUNG

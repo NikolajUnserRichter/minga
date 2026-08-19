@@ -132,6 +132,7 @@ class OrderBase(BaseModel):
     internal_notes: Optional[str] = Field(None, description="Interne Notizen")
     discount_percent: Decimal = Field(default=Decimal("0"), ge=0, le=100, description="Gesamtrabatt %")
     confirmed_delivery_date: Optional[date] = Field(None, description="Bestätigtes Lieferdatum")
+    packing_date: Optional[date] = Field(None, description="Packtag (leer = Liefertag - 1)")
 
 
 class OrderCreate(OrderBase):
@@ -157,6 +158,7 @@ class OrderUpdate(BaseModel):
     internal_notes: Optional[str] = None
     discount_percent: Optional[Decimal] = Field(None, ge=0, le=100)
     confirmed_delivery_date: Optional[date] = None
+    packing_date: Optional[date] = None
     billing_address: Optional[AddressSchema] = None
     delivery_address: Optional[AddressSchema] = None
 
@@ -186,6 +188,9 @@ class OrderResponse(BaseModel):
     requested_delivery_date: date
     confirmed_delivery_date: Optional[date] = None
     actual_delivery_date: Optional[date]
+    packing_date: Optional[date] = None
+    # Tag, an dem tatsächlich verpackt wird (gesetzt oder Liefertag - 1)
+    effective_packing_date: Optional[date] = None
 
     # Status
     status: OrderStatus

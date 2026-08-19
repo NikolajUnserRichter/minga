@@ -126,7 +126,7 @@ export function HarvestForm({ batch, onSubmit, onCancel, loading = false }: Harv
       {/* Batch Info */}
       <div className="p-4 bg-gray-50 dark:bg-gray-700/50 rounded-lg">
         <p className="text-sm text-gray-500 dark:text-gray-400">Charge</p>
-        <p className="font-semibold">{batch.seed?.name || 'Unbekannt'}</p>
+        <p className="font-semibold">{batch.seed_name || batch.seed?.name || 'Unbekannt'}</p>
         <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
           #{batch.id.slice(0, 8)} | {batch.tray_anzahl} Kisten | Regal {batch.regal_position || '-'}
         </p>

@@ -25,7 +25,13 @@ class SeedBase(BaseModel):
     ertrag_gramm_pro_tray: Decimal = Field(..., gt=0, description="Erwarteter Ertrag pro Tray in Gramm")
     verlustquote_prozent: Decimal = Field(default=Decimal("0"), ge=0, le=100, description="Erwartete Verlustquote")
     substrat: Optional[str] = Field(None, max_length=100, description="Substrattyp für die Aussaat (z.B. Hanfmatte, Erde)")
-    winter_extra_tage: int = Field(default=0, ge=0, le=14, description="Zusätzliche Wachstumstage im Winterzyklus")
+    winter_extra_tage: int = Field(default=0, ge=0, le=14, description="Legacy-Pauschale Winter (nur ohne Winter-Satz)")
+    # Eigenständiger Winter-Satz: leer = Winter wie Sommer
+    winter_keimdauer_tage: Optional[int] = Field(None, ge=1, le=30, description="Keimdauer im Winter")
+    winter_wachstumsdauer_tage: Optional[int] = Field(None, ge=1, le=60, description="Wachstumsdauer im Winter")
+    winter_erntefenster_min_tage: Optional[int] = Field(None, ge=1, description="Frühester Erntezeitpunkt im Winter")
+    winter_erntefenster_optimal_tage: Optional[int] = Field(None, ge=1, description="Optimaler Erntezeitpunkt im Winter")
+    winter_erntefenster_max_tage: Optional[int] = Field(None, ge=1, description="Spätester Erntezeitpunkt im Winter")
 
 
 class SeedCreate(SeedBase):
@@ -51,6 +57,11 @@ class SeedUpdate(BaseModel):
     verlustquote_prozent: Optional[Decimal] = Field(None, ge=0, le=100)
     substrat: Optional[str] = Field(None, max_length=100)
     winter_extra_tage: Optional[int] = Field(None, ge=0, le=14)
+    winter_keimdauer_tage: Optional[int] = Field(None, ge=1, le=30)
+    winter_wachstumsdauer_tage: Optional[int] = Field(None, ge=1, le=60)
+    winter_erntefenster_min_tage: Optional[int] = Field(None, ge=1)
+    winter_erntefenster_optimal_tage: Optional[int] = Field(None, ge=1)
+    winter_erntefenster_max_tage: Optional[int] = Field(None, ge=1)
     aktiv: Optional[bool] = None
 
 
@@ -87,7 +98,13 @@ class SeedBatchBase(BaseModel):
     lieferschein_nr: Optional[str] = Field(None, max_length=50, description="Lieferschein-Nummer")
     bio_zertifiziert: bool = Field(default=False, description="BIO-zertifiziert (Kontrollstelle)")
     kontrollstelle: Optional[str] = Field(None, max_length=100, description="Kontrollstelle (z.B. DE-ÖKO-006)")
-    zusatz_tage: int = Field(default=0, ge=-7, le=14, description="Erntefenster-Verschiebung dieser Charge in Tagen (z.B. +1 bei langsamer Keimung)")
+    zusatz_tage: int = Field(default=0, ge=-7, le=14, description="Erntefenster-Verschiebung dieser Charge in Tagen (Legacy-Pauschale)")
+    # Chargenbedingte Wachstumsparameter — Stammdaten der Charge, nicht des Aussaatzyklus
+    keimdauer_tage: Optional[int] = Field(None, ge=1, le=30, description="Keimdauer dieser Charge")
+    wachstumsdauer_tage: Optional[int] = Field(None, ge=1, le=60, description="Wachstumsdauer dieser Charge")
+    erntefenster_min_tage: Optional[int] = Field(None, ge=1, description="Frühester Erntezeitpunkt dieser Charge")
+    erntefenster_optimal_tage: Optional[int] = Field(None, ge=1, description="Optimaler Erntezeitpunkt dieser Charge")
+    erntefenster_max_tage: Optional[int] = Field(None, ge=1, description="Spätester Erntezeitpunkt dieser Charge")
 
 
 class SeedBatchCreate(SeedBatchBase):
@@ -106,6 +123,11 @@ class SeedBatchUpdate(BaseModel):
     bio_zertifiziert: Optional[bool] = None
     kontrollstelle: Optional[str] = Field(None, max_length=100)
     zusatz_tage: Optional[int] = Field(None, ge=-7, le=14)
+    keimdauer_tage: Optional[int] = Field(None, ge=1, le=30)
+    wachstumsdauer_tage: Optional[int] = Field(None, ge=1, le=60)
+    erntefenster_min_tage: Optional[int] = Field(None, ge=1)
+    erntefenster_optimal_tage: Optional[int] = Field(None, ge=1)
+    erntefenster_max_tage: Optional[int] = Field(None, ge=1)
 
 
 class SeedBatchResponse(SeedBatchBase):

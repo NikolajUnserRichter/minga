@@ -504,6 +504,9 @@ async def list_subscriptions(
         response = SubscriptionResponse.model_validate(sub)
         response.kunde_name = sub.kunde.name if sub.kunde else None
         response.seed_name = sub.seed.name if sub.seed else None
+        # Produkt-Abos (Bundles/Kartons) haben kein seed — ohne diese Zeile
+        # fällt die UI auf die UUID zurück ("7f4322c5" statt "Genussmix Karton").
+        response.product_name = sub.product.name if sub.product else None
         items.append(response)
 
     return SubscriptionListResponse(items=items, total=total)
@@ -771,6 +774,8 @@ def _build_order_response(order: Order) -> OrderResponse:
         requested_delivery_date=order.requested_delivery_date,
         confirmed_delivery_date=order.confirmed_delivery_date,
         actual_delivery_date=order.actual_delivery_date,
+        packing_date=order.packing_date,
+        effective_packing_date=order.effective_packing_date,
         status=order.status,
         total_net=order.total_net,
         total_vat=order.total_vat,
@@ -888,6 +893,12 @@ async def create_order(order_data: OrderCreate, db: DBSession, user: CurrentUser
             "land": customer.shipping_address.land
         }
 
+    # Packtag: Standard bleibt der Vortag der Lieferung (Order.effective_packing_date),
+    # Same-Day-Bestellungen werden auf den Liefertag festgeschrieben.
+    packing_date = Order.resolve_packing_date(
+        order_data.requested_delivery_date, order_data.packing_date
+    )
+
     # Order erstellen
     order = Order(
         order_number=order_number,
@@ -896,6 +907,7 @@ async def create_order(order_data: OrderCreate, db: DBSession, user: CurrentUser
         billing_address=billing_addr,
         delivery_address=delivery_addr,
         requested_delivery_date=order_data.requested_delivery_date,
+        packing_date=packing_date,
         notes=order_data.notes,
         status=OrderStatus.ENTWURF,
         currency=order_data.currency or "EUR",

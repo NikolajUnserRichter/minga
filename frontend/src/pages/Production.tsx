@@ -88,7 +88,6 @@ export default function Production() {
       tray_anzahl: number;
       aussaat_datum: string;
       regal_position?: string;
-      zusatz_tage?: number;
       needs_soaking?: boolean;
       soaking_started_at?: string;
       soaking_employee?: string;
@@ -107,7 +106,6 @@ export default function Production() {
         tray_anzahl: data.tray_anzahl,
         aussaat_datum: data.aussaat_datum,
         regal_position: data.regal_position || undefined,
-        zusatz_tage: data.zusatz_tage ?? undefined,
       });
       // Bei Soaking-Workflow: gleich SOAKING_STARTED-Event mit User-Eingabe schreiben
       if (data.needs_soaking) {
@@ -552,7 +550,7 @@ export default function Production() {
         open={!!timelineBatch}
         onClose={() => setTimelineBatch(null)}
         growBatchId={timelineBatch?.id || null}
-        batchLabel={timelineBatch ? `${(timelineBatch as any).seed?.name || 'Charge'} #${timelineBatch.id.slice(0, 8)}` : undefined}
+        batchLabel={timelineBatch ? `${timelineBatch.seed_name || (timelineBatch as any).seed?.name || 'Charge'} #${timelineBatch.id.slice(0, 8)}` : undefined}
       />
     </div>
   );

@@ -316,7 +316,9 @@ export default function Abonnements() {
                     }
                 />
             ) : (
-                <div className="card overflow-hidden">
+                // overflow-x-auto statt -hidden: sonst werden Status/Aktionen
+                // auf schmalen Bildschirmen abgeschnitten statt scrollbar
+                <div className="card overflow-x-auto">
                     <table className="table">
                         <thead>
                             <tr>

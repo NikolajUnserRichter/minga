@@ -18,6 +18,12 @@ export interface Seed {
   verlustquote_prozent: number
   substrat: string | null
   winter_extra_tage: number
+  // Eigenständiger Winter-Parametersatz (null = Sommerwert gilt)
+  winter_keimdauer_tage: number | null
+  winter_wachstumsdauer_tage: number | null
+  winter_erntefenster_min_tage: number | null
+  winter_erntefenster_optimal_tage: number | null
+  winter_erntefenster_max_tage: number | null
   aktiv: boolean
   gesamte_wachstumsdauer: number
   created_at: string
@@ -45,6 +51,8 @@ export interface GrowBatch {
   notizen: string | null
   tage_seit_aussaat: number
   ist_erntereif: boolean
+  keimende_datum: string | null
+  parameter_quelle: 'SORTE' | 'WINTER' | 'CHARGE' | null
   seed_name: string | null
   created_at: string
   updated_at: string

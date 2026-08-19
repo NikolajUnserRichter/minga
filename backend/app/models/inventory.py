@@ -166,6 +166,16 @@ class SeedInventory(Base):
     )
 
     @property
+    def seed_name(self) -> Optional[str]:
+        """Sortenname für die Bestandsliste (Spalte 'Sorte')."""
+        return self.seed.name if self.seed else None
+
+    @property
+    def location_name(self) -> Optional[str]:
+        """Lagerort-Name für die Bestandsliste (Spalte 'Lagerort')."""
+        return self.location.name if self.location else None
+
+    @property
     def is_expired(self) -> bool:
         """Ist das Saatgut abgelaufen?"""
         if not self.best_before_date:

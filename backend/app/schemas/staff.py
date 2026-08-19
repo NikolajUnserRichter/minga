@@ -1,6 +1,6 @@
-"""Pydantic-Schemas für den Dienstplan (StaffShift)."""
+"""Pydantic-Schemas für den Dienstplan (StaffShift) und Zusatzaufgaben (StaffTask)."""
 from datetime import date, datetime
-from typing import Optional
+from typing import Literal, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, Field, ConfigDict, field_validator
@@ -50,5 +50,42 @@ class StaffShiftResponse(StaffShiftBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID
+    created_at: datetime
+    updated_at: datetime
+
+
+# ============== Zusatzaufgaben (StaffTask) ==============
+
+class StaffTaskBase(BaseModel):
+    titel: str = Field(..., min_length=1, max_length=200, description="z.B. Kisten spülen, Hanfmatten auffüllen")
+    beschreibung: Optional[str] = None
+    datum: date = Field(..., description="Tag, an dem die Aufgabe zu erledigen ist")
+    employee_name: Optional[str] = Field(None, max_length=200, description="Zugeordneter Mitarbeiter (optional)")
+
+
+class StaffTaskCreate(StaffTaskBase):
+    wiederholung: Optional[Literal["TAEGLICH", "WOECHENTLICH"]] = Field(
+        None, description="Serie ab `datum` — die Termine werden sofort angelegt"
+    )
+    wiederholung_bis: Optional[date] = Field(
+        None, description="Ende der Serie (Standard: 8 Wochen ab `datum`)"
+    )
+
+
+class StaffTaskUpdate(BaseModel):
+    titel: Optional[str] = Field(None, min_length=1, max_length=200)
+    beschreibung: Optional[str] = None
+    datum: Optional[date] = None
+    employee_name: Optional[str] = Field(None, max_length=200)
+    erledigt: Optional[bool] = None
+
+
+class StaffTaskResponse(StaffTaskBase):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    erledigt: bool
+    erledigt_am: Optional[datetime] = None
+    serie_id: Optional[UUID] = None
     created_at: datetime
     updated_at: datetime

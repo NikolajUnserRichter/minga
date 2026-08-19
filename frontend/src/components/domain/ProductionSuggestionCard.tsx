@@ -33,7 +33,7 @@ export function ProductionSuggestionCard({
               <Sprout className="w-5 h-5 text-minga-600 dark:text-minga-400" />
             </div>
             <div>
-              <h3 className="font-semibold text-gray-900 dark:text-white">{suggestion.seed?.name || 'Unbekannt'}</h3>
+              <h3 className="font-semibold text-gray-900 dark:text-white">{suggestion.seed_name || suggestion.seed?.name || 'Unbekannt'}</h3>
               <SuggestionStatusBadge status={suggestion.status} />
             </div>
           </div>
@@ -157,7 +157,7 @@ export function ProductionSuggestionRow({
       <div className="flex items-center gap-4">
         {hasWarnings && <AlertTriangle className="w-5 h-5 text-amber-500" />}
         <div>
-          <p className="font-medium">{suggestion.seed?.name}</p>
+          <p className="font-medium">{suggestion.seed_name || suggestion.seed?.name || 'Unbekannt'}</p>
           <p className="text-sm text-gray-500 dark:text-gray-400">
             {suggestion.empfohlene_trays} Kisten | Aussaat: {formatDate(suggestion.aussaat_datum)}
           </p>

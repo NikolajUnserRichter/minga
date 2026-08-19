@@ -11,7 +11,7 @@ from app.api.deps import DBSession, Pagination
 from app.models.seed import Seed, SeedBatch, SeedSupplier, Supplier
 from app.schemas.seed import (
     SeedCreate, SeedUpdate, SeedResponse, SeedListResponse,
-    SeedBatchCreate, SeedBatchResponse,
+    SeedBatchCreate, SeedBatchUpdate, SeedBatchResponse,
     SeedSupplierLink, SeedSupplierResponse,
 )
 
@@ -313,4 +313,26 @@ async def get_seed_batch(batch_id: UUID, db: DBSession):
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Saatgut-Charge nicht gefunden"
         )
+    return SeedBatchResponse.model_validate(batch)
+
+
+@router.patch("/batches/{batch_id}", response_model=SeedBatchResponse)
+async def update_seed_batch(batch_id: UUID, batch_data: SeedBatchUpdate, db: DBSession):
+    """Stammdaten einer Saatgut-Charge ändern.
+
+    Hier liegen die chargenbedingten Wachstumsparameter — sie werden einmal
+    an der Charge gepflegt und gelten dann für jede Aussaat aus dieser Charge.
+    """
+    batch = db.get(SeedBatch, batch_id)
+    if not batch:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Saatgut-Charge nicht gefunden"
+        )
+
+    for field, value in batch_data.model_dump(exclude_unset=True).items():
+        setattr(batch, field, value)
+
+    db.commit()
+    db.refresh(batch)
     return SeedBatchResponse.model_validate(batch)

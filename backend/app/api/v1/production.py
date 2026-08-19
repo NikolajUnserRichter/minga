@@ -2,7 +2,7 @@ from datetime import date, timedelta
 from typing import List, Optional
 from uuid import UUID
 from fastapi import APIRouter, Depends, Query, HTTPException, Response
-from sqlalchemy import select, func, desc
+from sqlalchemy import select, func, desc, or_
 from sqlalchemy.orm import joinedload
 
 from app.api.deps import DBSession, Pagination
@@ -70,19 +70,16 @@ def create_grow_batch(data: GrowBatchCreate, db: DBSession):
     if data.zusatz_tage is not None:
         seed_batch.zusatz_tage = data.zusatz_tage
 
-    # Erntefenster ab Aussaatdatum
-    # Erntefenster-Tage zählen AB AUSSAAT (Keimdauer ist darin bereits enthalten:
-    # z.B. Gartenkresse Keim 3 + Wachstum 3 → Fenster 6/7/8). Keimdauer NICHT addieren.
-    # Zuschläge: Chargen-Abweichung (zusatz_tage, z.B. langsame Keimung) und
-    # Winterzyklus (Seed.winter_extra_tage wenn SEASON_MODE=WINTER).
-    extra_tage = seed_batch.zusatz_tage or 0
-    from app.services.settings_service import get_setting
-    if (get_setting(db, "SEASON_MODE") or "SOMMER").upper() == "WINTER":
-        extra_tage += seed.winter_extra_tage or 0
+    # Erntefenster ab Aussaatdatum. Erntefenster-Tage zählen AB AUSSAAT
+    # (Keimdauer ist darin enthalten: Keim 3 + Wachstum 3 → Fenster 6/7/8).
+    # Welcher Parametersatz gilt — Sorte, Winter oder Charge — entscheidet
+    # resolve_growth_params.
+    from app.services.growth_params import resolve_growth_params
 
-    erwartete_ernte_min = data.aussaat_datum + timedelta(days=seed.erntefenster_min_tage + extra_tage)
-    erwartete_ernte_optimal = data.aussaat_datum + timedelta(days=seed.erntefenster_optimal_tage + extra_tage)
-    erwartete_ernte_max = data.aussaat_datum + timedelta(days=seed.erntefenster_max_tage + extra_tage)
+    params = resolve_growth_params(db, seed, seed_batch)
+    erwartete_ernte_min = data.aussaat_datum + timedelta(days=params.erntefenster_min_tage)
+    erwartete_ernte_optimal = data.aussaat_datum + timedelta(days=params.erntefenster_optimal_tage)
+    erwartete_ernte_max = data.aussaat_datum + timedelta(days=params.erntefenster_max_tage)
 
     grow_batch = GrowBatch(
         seed_batch_id=data.seed_batch_id,
@@ -91,6 +88,10 @@ def create_grow_batch(data: GrowBatchCreate, db: DBSession):
         erwartete_ernte_min=erwartete_ernte_min,
         erwartete_ernte_optimal=erwartete_ernte_optimal,
         erwartete_ernte_max=erwartete_ernte_max,
+        # Der Mitarbeiter muss sehen, wann die Keimung endet und die Kiste in
+        # den Growroom kommt — sonst nützt ihm der Winter-Satz nichts.
+        keimende_datum=data.aussaat_datum + timedelta(days=params.keimdauer_tage),
+        parameter_quelle=params.quelle,
         regal_position=data.regal_position,
         notizen=data.notizen,
         status=GrowBatchStatus.KEIMUNG,
@@ -289,7 +290,7 @@ def get_day_plan(
 
     - aussaat: genehmigte Produktionsvorschläge mit Aussaatdatum = Tag
     - ernte: Chargen, deren Erntefenster den Tag umfasst (nicht geerntet)
-    - verpacken: Positionen für Lieferungen von Tag+1 und Same-Day (Tag)
+    - verpacken: Bestellungen, deren Packtag der Tag ist (Standard: Liefertag - 1)
     - ausliefern: Bestellungen mit Lieferdatum = Tag
     """
     from datetime import timedelta
@@ -313,6 +314,27 @@ def get_day_plan(
         "status": sug.status.value,
     } for sug, seed in suggestions]
 
+    # Bereits angelegte Chargen mit Aussaatdatum = Tag. Ohne diesen Block
+    # blieb der Tagesplan leer, sobald jemand die Charge direkt in der
+    # Produktion anlegt statt über einen Produktionsvorschlag.
+    gesaet = db.execute(
+        select(GrowBatch)
+        .options(joinedload(GrowBatch.seed_batch).joinedload(SeedBatch.seed))
+        .where(GrowBatch.aussaat_datum == target_date)
+        .order_by(GrowBatch.created_at)
+    ).scalars().unique().all()
+    for b in gesaet:
+        seed_obj = b.seed_batch.seed if b.seed_batch else None
+        aussaat.append({
+            "seed_name": b.seed_name or "Unbekannt",
+            "trays": b.tray_anzahl,
+            "substrat": seed_obj.substrat if seed_obj else None,
+            "saatgut_gramm": float(getattr(seed_obj, "saatgut_pro_einheit_gramm", 0) or 0) * b.tray_anzahl,
+            "status": "ANGELEGT",
+            "batch_id": str(b.id),
+            "regal_position": b.regal_position,
+        })
+
     # Ernte: Chargen im Erntefenster
     batches = db.execute(
         select(GrowBatch)
@@ -333,12 +355,17 @@ def get_day_plan(
         "ist_optimal_heute": b.erwartete_ernte_optimal == target_date,
     } for b in batches]
 
-    # Verpacken (Lieferungen Tag+1 + Same-Day) und Ausliefern (Lieferdatum = Tag)
+    # Verpacken und Ausliefern. Verpackt wird am Vortag der Lieferung, damit der
+    # Fahrer die Ware in der Früh abholen kann — abweichende Packtage stehen
+    # explizit an der Bestellung (Order.packing_date).
     orders = db.execute(
         select(Order)
         .options(joinedload(Order.lines), joinedload(Order.customer))
         .where(
-            Order.requested_delivery_date.in_([target_date, target_date + timedelta(days=1)]),
+            or_(
+                Order.requested_delivery_date.in_([target_date, target_date + timedelta(days=1)]),
+                Order.packing_date == target_date,
+            ),
             Order.status.in_([OrderStatus.ENTWURF, OrderStatus.BESTAETIGT, OrderStatus.IN_PRODUKTION]),
         )
         .order_by(Order.requested_delivery_date)
@@ -349,15 +376,17 @@ def get_day_plan(
             "order_number": o.order_number,
             "customer_name": o.customer.name if o.customer else "—",
             "delivery_date": o.requested_delivery_date.isoformat(),
+            "packing_date": o.effective_packing_date.isoformat() if o.effective_packing_date else None,
+            "packing_date_explizit": o.packing_date is not None,
             "status": "Entwurf" if o.status == OrderStatus.ENTWURF else o.status.value,
             "positionen": len(o.lines),
         }
 
-    verpacken = [_order_ref(o) for o in orders]
+    verpacken = [_order_ref(o) for o in orders if o.effective_packing_date == target_date]
     ausliefern = [_order_ref(o) for o in orders if o.requested_delivery_date == target_date]
 
     # Dienst: wer ist an dem Tag eingeteilt (Dienstplan)
-    from app.models.staff import StaffShift
+    from app.models.staff import StaffShift, StaffTask
     shifts = db.execute(
         select(StaffShift)
         .where(StaffShift.datum == target_date)
@@ -370,6 +399,20 @@ def get_day_plan(
         "aufgabe": s.aufgabe,
     } for s in shifts]
 
+    # Zusatzaufgaben ohne Produktionsbezug (Kisten spülen, Hanfmatten, Müll)
+    tasks = db.execute(
+        select(StaffTask)
+        .where(StaffTask.datum == target_date)
+        .order_by(StaffTask.titel)
+    ).scalars().all()
+    aufgaben = [{
+        "id": str(t.id),
+        "titel": t.titel,
+        "beschreibung": t.beschreibung,
+        "employee_name": t.employee_name,
+        "erledigt": t.erledigt,
+    } for t in tasks]
+
     return {
         "target_date": target_date,
         "aussaat": aussaat,
@@ -377,6 +420,7 @@ def get_day_plan(
         "verpacken": verpacken,
         "ausliefern": ausliefern,
         "dienst": dienst,
+        "aufgaben": aufgaben,
     }
 
 
@@ -440,14 +484,18 @@ def get_packaging_plan(
     """
     Erstellt einen Verpackungsplan für einen Pack-Tag.
 
-    Verpackt wird standardmäßig 1 Tag vor Auslieferung: der Plan für Tag X
-    umfasst Lieferungen von X+1 UND von X selbst (Same-Day-Bestellungen).
+    Verpackt wird standardmäßig 1 Tag vor Auslieferung (Order.packing_date
+    überschreibt das). `items` listet die zu packenden Verkaufsartikel,
+    `komponenten` löst Bundles in Sorten auf — der Produktionsmitarbeiter
+    braucht die Sortenmengen, um die Kartons zusammenzubauen.
     Entwürfe werden mitgezählt und per Status gekennzeichnet, damit noch
     nicht bestätigte Bestellungen nicht unsichtbar bleiben.
     """
     from datetime import timedelta
+    from decimal import Decimal
+    from app.models.product import BundleComponent, Product
 
-    # 1. Bestellungen finden: Lieferung morgen (Standard-Packtag) oder heute (same-day)
+    # 1. Bestellungen finden, deren Packtag auf den Zieltag fällt
     orders = db.execute(
         select(Order)
         .options(
@@ -455,14 +503,48 @@ def get_packaging_plan(
             joinedload(Order.customer),
         )
         .where(
-            Order.requested_delivery_date.in_([target_date, target_date + timedelta(days=1)]),
+            or_(
+                Order.requested_delivery_date.in_([target_date, target_date + timedelta(days=1)]),
+                Order.packing_date == target_date,
+            ),
             Order.status.in_([OrderStatus.ENTWURF, OrderStatus.BESTAETIGT, OrderStatus.IN_PRODUKTION])
         )
         .order_by(Order.requested_delivery_date)
     ).scalars().unique().all()
+    orders = [o for o in orders if o.effective_packing_date == target_date]
 
     # 2. Aggregieren
     plan = {}
+    komponenten: dict = {}
+
+    # Bundle-Zusammensetzungen einmal vorladen statt pro Position zu queryen
+    bundle_ids = {
+        line.product_id
+        for o in orders for line in o.lines
+        if line.product_id and line.product and line.product.is_bundle
+    }
+    components_by_parent: dict = {}
+    if bundle_ids:
+        for comp in db.execute(
+            select(BundleComponent)
+            .options(joinedload(BundleComponent.child_product))
+            .where(BundleComponent.parent_product_id.in_(bundle_ids))
+            .order_by(BundleComponent.sort_order)
+        ).scalars().unique().all():
+            components_by_parent.setdefault(comp.parent_product_id, []).append(comp)
+
+    def _add_komponente(product_id, name, menge, quelle: Optional[str]):
+        """Sortenbedarf aufsummieren — Bundles zählen wie Einzelverkäufe."""
+        key = product_id or name
+        entry = komponenten.setdefault(key, {
+            "product_id": product_id,
+            "product_name": name,
+            "total_quantity": Decimal("0"),
+            "aus_bundles": [],
+        })
+        entry["total_quantity"] += Decimal(str(menge))
+        if quelle and quelle not in entry["aus_bundles"]:
+            entry["aus_bundles"].append(quelle)
 
     for order in orders:
         for line in order.lines:
@@ -493,7 +575,34 @@ def get_packaging_plan(
                 "same_day": order.requested_delivery_date == target_date,
             })
 
+            # Sortenbedarf: Bundles in ihre Komponenten auflösen, damit der
+            # Produktionsmitarbeiter weiß, wieviel er von welcher Sorte braucht.
+            product = line.product
+            if product and product.is_variable_bundle:
+                for sel in (line.variable_bundle_selections or []):
+                    child = db.get(Product, UUID(str(sel["product_id"]))) if sel.get("product_id") else None
+                    if not child:
+                        continue
+                    _add_komponente(
+                        child.id, child.name,
+                        line.quantity * Decimal(str(sel.get("quantity", 1) or 1)),
+                        product.name,
+                    )
+            elif product and product.is_bundle and components_by_parent.get(product.id):
+                for comp in components_by_parent[product.id]:
+                    child = comp.child_product
+                    _add_komponente(
+                        comp.child_product_id,
+                        child.name if child else str(comp.child_product_id),
+                        line.quantity * Decimal(str(comp.quantity or 1)),
+                        product.name,
+                    )
+            else:
+                # Einzelartikel zählen mit — sonst stimmt die Sortensumme nicht
+                _add_komponente(line.product_id, product_name, line.quantity, None)
+
     return {
         "target_date": target_date,
-        "items": list(plan.values())
+        "items": list(plan.values()),
+        "komponenten": sorted(komponenten.values(), key=lambda k: k["product_name"]),
     }

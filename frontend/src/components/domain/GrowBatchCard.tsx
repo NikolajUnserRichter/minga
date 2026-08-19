@@ -37,7 +37,9 @@ export function GrowBatchCard({
               <span className="text-sm font-mono text-gray-500 dark:text-gray-400">#{batch.id.slice(0, 8)}</span>
               {isHarvestReady && <AlertCircle className="w-4 h-4 text-green-600 dark:text-green-400" />}
             </div>
-            <h3 className="font-semibold text-gray-900 dark:text-white mt-1">{batch.seed?.name || 'Unbekannt'}</h3>
+            {/* Die API liefert die Sorte flach als seed_name; batch.seed wird
+                nie expandiert und ergab deshalb immer "Unbekannt". */}
+            <h3 className="font-semibold text-gray-900 dark:text-white mt-1">{batch.seed_name || batch.seed?.name || 'Unbekannt'}</h3>
           </div>
           <GrowBatchStatusBadge status={batch.status} />
         </div>
@@ -221,7 +223,7 @@ export function GrowBatchRow({ batch, onHarvest, onClick }: GrowBatchRowProps) {
         <div>
           <div className="flex items-center gap-2">
             <span className="font-mono text-sm text-gray-500 dark:text-gray-400">#{batch.id.slice(0, 8)}</span>
-            <span className="font-medium">{batch.seed?.name}</span>
+            <span className="font-medium">{batch.seed_name || batch.seed?.name || 'Unbekannt'}</span>
           </div>
           <p className="text-sm text-gray-500 dark:text-gray-400">
             {batch.tray_anzahl} Kisten | Tag {currentDay} | Regal {batch.regal_position || '-'}

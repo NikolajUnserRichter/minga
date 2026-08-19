@@ -1,4 +1,5 @@
 from datetime import date
+from decimal import Decimal
 from celery import shared_task
 from sqlalchemy import select
 from app.database import SessionLocal
@@ -106,6 +107,10 @@ def _create_order_from_subscription(db, sub: Subscription):
         billing_address=billing_addr,
         delivery_address=delivery_addr,
         requested_delivery_date=date.today(),
+        # Abos liefern am Lauftag — ohne festgeschriebenen Packtag läge der
+        # Standard-Packtag (Vortag) in der Vergangenheit und die Ware stünde
+        # in keinem Tagesplan mehr.
+        packing_date=Order.resolve_packing_date(date.today(), None),
         status=OrderStatus.ENTWURF,
         currency="EUR",
         notes=f"Automatisch erstellt aus Abo {sub.id}",
@@ -115,10 +120,11 @@ def _create_order_from_subscription(db, sub: Subscription):
     db.flush()
     
     # Order Line (Single Item Subscription Model assumed)
-    # Holen des Preises - vereinfacht 0 oder aus Product/PriceList
-    unit_price = 0
+    # Holen des Preises - vereinfacht 0 oder aus Product/PriceList.
+    # Durchgehend Decimal: sub.menge ist Numeric, und Decimal * float wirft.
+    unit_price = Decimal("0")
     product = db.execute(select(Product).where(Product.seed_id == sub.seed_id)).scalars().first()
-    
+
     if product:
         # 1. Price from Customer Price List
         if customer.price_list_id:
@@ -130,15 +136,14 @@ def _create_order_from_subscription(db, sub: Subscription):
                 )
             ).scalars().first()
             if price_item:
-                unit_price = float(price_item.price)
-        
+                unit_price = Decimal(str(price_item.price))
+
         # 2. Price from Base Price (if no list price found)
         if unit_price == 0 and product.base_price:
-             unit_price = float(product.base_price)
-             
+             unit_price = Decimal(str(product.base_price))
+
     # Erstelle Line
     line = OrderLine(
-        order_id=order.id,
         position=1,
         seed_id=sub.seed_id, 
         beschreibung=f"Abo-Lieferung: {sub.seed.name if sub.seed else 'Unknown'}",
@@ -149,6 +154,10 @@ def _create_order_from_subscription(db, sub: Subscription):
         requested_delivery_date=date.today()
     )
     _calculate_line_amounts(line)
-    db.add(line)
-    
+    # Über die Beziehung anhängen: order.lines ist bei einer frisch erzeugten
+    # Order eine leere Liste, die kein Lazy-Load mehr nachlädt — mit db.add()
+    # allein summierte _calculate_order_totals über nichts und die Abo-
+    # Bestellung blieb bei 0,00 €.
+    order.lines.append(line)
+
     _calculate_order_totals(order)

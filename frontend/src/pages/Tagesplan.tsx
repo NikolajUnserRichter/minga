@@ -1,10 +1,10 @@
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { Sprout, Scissors, Package, Truck, Users } from 'lucide-react';
-import { productionApi } from '../services/api';
+import { Sprout, Scissors, Package, Truck, Users, Boxes, ListTodo, Plus } from 'lucide-react';
+import { productionApi, staffApi } from '../services/api';
 import { PageHeader } from '../components/common/Layout';
-import { Input, EmptyState, Badge, PageLoader } from '../components/ui';
+import { Input, EmptyState, Badge, PageLoader, Button, useToast } from '../components/ui';
 
 /**
  * Tagesplan für Mitarbeiter: was ist heute zu tun?
@@ -13,10 +13,40 @@ import { Input, EmptyState, Badge, PageLoader } from '../components/ui';
 export default function Tagesplan() {
   const today = new Date().toISOString().split('T')[0];
   const [date, setDate] = useState(today);
+  const [neueAufgabe, setNeueAufgabe] = useState('');
+  const toast = useToast();
+  const queryClient = useQueryClient();
 
   const { data: plan, isLoading } = useQuery({
     queryKey: ['day-plan', date],
     queryFn: () => productionApi.getDayPlan(date),
+  });
+
+  const invalidateAufgaben = () => {
+    queryClient.invalidateQueries({ queryKey: ['day-plan'] });
+    queryClient.invalidateQueries({ queryKey: ['staff-tasks'] });
+  };
+
+  const addTaskMutation = useMutation({
+    mutationFn: (titel: string) => staffApi.createTask({ titel, datum: date }),
+    onSuccess: () => {
+      setNeueAufgabe('');
+      invalidateAufgaben();
+    },
+    onError: () => toast.error('Aufgabe konnte nicht angelegt werden'),
+  });
+
+  const toggleTaskMutation = useMutation({
+    mutationFn: ({ id, erledigt }: { id: string; erledigt: boolean }) =>
+      staffApi.updateTask(id, { erledigt }),
+    onSuccess: () => invalidateAufgaben(),
+    onError: () => toast.error('Konnte Aufgabe nicht aktualisieren'),
+  });
+
+  // Sortenbedarf des Packtags: Bundles sind bereits in Komponenten aufgelöst
+  const { data: packaging } = useQuery({
+    queryKey: ['packaging-plan', date],
+    queryFn: () => productionApi.getPackagingPlan(date),
   });
 
   if (isLoading) return <PageLoader />;
@@ -67,7 +97,7 @@ export default function Tagesplan() {
       title: 'Verpacken',
       icon: <Package className="w-5 h-5 text-blue-600 dark:text-blue-400" />,
       count: plan?.verpacken.length ?? 0,
-      empty: 'Nichts zu verpacken (Lieferungen von morgen + Same-Day erscheinen hier).',
+      empty: 'Nichts zu verpacken (Bestellungen werden am Tag vor der Lieferung gepackt).',
       rows: (plan?.verpacken ?? []).map((o, i) => (
         <div key={i} className="flex items-center justify-between p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
           <div>
@@ -76,7 +106,10 @@ export default function Tagesplan() {
               {o.order_number} · {o.positionen} Positionen · Lieferung {new Date(o.delivery_date).toLocaleDateString('de-DE')}
             </p>
           </div>
-          <Badge variant={o.status === 'Entwurf' ? 'warning' : 'info'}>{o.status}</Badge>
+          <div className="flex items-center gap-2">
+            {o.packing_date_explizit && <Badge variant="warning">Packtag fix</Badge>}
+            <Badge variant={o.status === 'Entwurf' ? 'warning' : 'info'}>{o.status}</Badge>
+          </div>
         </div>
       )),
     },
@@ -141,6 +174,107 @@ export default function Tagesplan() {
           )}
         </div>
       </div>
+
+      {/* Zusatzaufgaben ohne Produktionsbezug: Kisten spülen, Reinigen,
+          Hanfmatten auffüllen, Müllabholung — hier abhakbar. */}
+      <div className="card">
+        <div className="card-header flex items-center justify-between">
+          <h3 className="card-title flex items-center gap-2">
+            <ListTodo className="w-5 h-5 text-minga-600 dark:text-minga-400" />
+            Zusätzliche Aufgaben
+          </h3>
+          <Link to="/staff-schedule" className="text-sm text-minga-600 dark:text-minga-400 hover:underline">
+            Serien & Zuordnung im Dienstplan
+          </Link>
+        </div>
+        <div className="card-body space-y-3">
+          {(plan?.aufgaben ?? []).length === 0 ? (
+            <p className="text-sm text-gray-500 dark:text-gray-400 italic">
+              Keine Zusatzaufgaben für diesen Tag.
+            </p>
+          ) : (
+            <div className="space-y-2">
+              {(plan?.aufgaben ?? []).map((a) => (
+                <label
+                  key={a.id}
+                  className="flex items-start gap-3 p-3 rounded-lg bg-gray-50 dark:bg-gray-700/40 cursor-pointer"
+                >
+                  <input
+                    type="checkbox"
+                    className="mt-0.5 rounded border-gray-300 text-minga-600 focus:ring-minga-500"
+                    checked={a.erledigt}
+                    onChange={() => toggleTaskMutation.mutate({ id: a.id, erledigt: !a.erledigt })}
+                  />
+                  <div className="flex-1 min-w-0">
+                    <p className={`font-medium ${a.erledigt ? 'line-through text-gray-400' : 'text-gray-900 dark:text-white'}`}>
+                      {a.titel}
+                    </p>
+                    {a.beschreibung && (
+                      <p className="text-sm text-gray-500 dark:text-gray-400">{a.beschreibung}</p>
+                    )}
+                  </div>
+                  {a.employee_name && <Badge variant="gray">{a.employee_name}</Badge>}
+                </label>
+              ))}
+            </div>
+          )}
+
+          <form
+            className="flex items-end gap-2"
+            onSubmit={(e) => {
+              e.preventDefault();
+              const titel = neueAufgabe.trim();
+              if (titel) addTaskMutation.mutate(titel);
+            }}
+          >
+            <div className="flex-1">
+              <Input
+                value={neueAufgabe}
+                onChange={(e) => setNeueAufgabe(e.target.value)}
+                placeholder="Aufgabe für diesen Tag, z.B. Kisten spülen"
+              />
+            </div>
+            <Button
+              type="submit"
+              variant="secondary"
+              loading={addTaskMutation.isPending}
+              disabled={!neueAufgabe.trim()}
+              icon={<Plus className="w-4 h-4" />}
+            >
+              Hinzufügen
+            </Button>
+          </form>
+        </div>
+      </div>
+
+      {/* Sortenbedarf: was muss für die heute zu packenden Bestellungen
+          bereitstehen — Bundles (Genussmix & Co.) sind aufgelöst. */}
+      {(packaging?.komponenten ?? []).length > 0 && (
+        <div className="card">
+          <div className="card-header flex items-center justify-between">
+            <h3 className="card-title flex items-center gap-2">
+              <Boxes className="w-5 h-5 text-blue-600 dark:text-blue-400" />
+              Sortenbedarf zum Packen
+            </h3>
+            <Badge variant="info">{packaging?.komponenten.length}</Badge>
+          </div>
+          <div className="card-body">
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
+              {(packaging?.komponenten ?? []).map((k, i) => (
+                <div key={i} className="p-3 rounded-lg bg-blue-50 dark:bg-blue-900/20">
+                  <p className="font-medium text-gray-900 dark:text-white">{k.product_name}</p>
+                  <p className="text-lg font-semibold text-blue-700 dark:text-blue-300">
+                    {Number(k.total_quantity).toLocaleString('de-DE')}
+                  </p>
+                  {k.aus_bundles.length > 0 && (
+                    <p className="text-xs text-gray-500 dark:text-gray-400">inkl. {k.aus_bundles.join(', ')}</p>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {sections.map((s) => (

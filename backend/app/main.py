@@ -575,6 +575,13 @@ app.include_router(
 )
 
 app.include_router(
+    staff.tasks_router,
+    prefix="/api/v1",
+    tags=["Dienstplan"],
+    dependencies=_auth_deps,
+)
+
+app.include_router(
     sales.router,
     prefix="/api/v1/sales",
     tags=["Vertrieb"],

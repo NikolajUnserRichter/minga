@@ -38,6 +38,9 @@ export function CreateOrderModal({ open, onClose, preselectedCustomer }: CreateO
 
     const [customerId, setCustomerId] = useState('');
     const [deliveryDate, setDeliveryDate] = useState('');
+    // Leer = Standard-Packtag (Tag vor der Lieferung), damit der Fahrer die
+    // Ware in der Früh abholen kann. Abweichende Touren setzen ein Datum.
+    const [packingDate, setPackingDate] = useState('');
     const [lines, setLines] = useState<OrderLineRow[]>([emptyLine()]);
     const [variantsByProduct, setVariantsByProduct] = useState<Record<string, Array<{ id: string; name_suffix: string | null; packaging_unit_code: string | null; price_override: number | null; items_per_pack: number }>>>({});
     const [notes, setNotes] = useState('');
@@ -126,6 +129,11 @@ export function CreateOrderModal({ open, onClose, preselectedCustomer }: CreateO
         },
     });
 
+    // Vortag der Lieferung — nur als Hinweistext, gespeichert wird nichts
+    const defaultPackingDate = deliveryDate
+        ? new Date(new Date(deliveryDate).getTime() - 86400000).toISOString().split('T')[0]
+        : '';
+
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
         if (!customerId) return toast.error('Bitte einen Kunden wählen');
@@ -171,6 +179,7 @@ export function CreateOrderModal({ open, onClose, preselectedCustomer }: CreateO
         createOrderMutation.mutate({
             customer_id: customerId,
             requested_delivery_date: deliveryDate,
+            packing_date: packingDate || undefined,
             lines: orderLines,
             notes: notes || undefined,
             customer_reference: customerReference || undefined,
@@ -287,12 +296,23 @@ export function CreateOrderModal({ open, onClose, preselectedCustomer }: CreateO
                     />
                 </div>
 
-                <Input
-                    label="Kundenbestellnummer (optional)"
-                    value={customerReference}
-                    onChange={(e) => setCustomerReference(e.target.value)}
-                    placeholder="z.B. PO-12345"
-                />
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <Input
+                        label="Packtag (optional)"
+                        type="date"
+                        value={packingDate}
+                        onChange={(e) => setPackingDate(e.target.value)}
+                        hint={defaultPackingDate
+                            ? `leer = ${new Date(defaultPackingDate).toLocaleDateString('de-DE')} (Tag vor der Lieferung)`
+                            : 'leer = Tag vor der Lieferung'}
+                    />
+                    <Input
+                        label="Kundenbestellnummer (optional)"
+                        value={customerReference}
+                        onChange={(e) => setCustomerReference(e.target.value)}
+                        placeholder="z.B. PO-12345"
+                    />
+                </div>
 
                 <div className="space-y-2">
                     <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Positionen</label>

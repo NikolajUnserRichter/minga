@@ -286,6 +286,8 @@ def _auto_migrate(engine: Engine) -> None:
         _add_col_if_missing("customers", "packaging_fee_amount",  "NUMERIC(10,2)", "0")
         _add_col_if_missing("customers", "packaging_fee_percent", "NUMERIC(5,2)", "0")
         _add_col_if_missing("orders", "inventory_deducted_at", "DATETIME")
+        # Steuerbarer Packtag (leer = Liefertag - 1)
+        _add_col_if_missing("orders", "packing_date", "DATE")
         # Handelsware-Bestandsbewegung (Tradesk-Einkauf) auf bestehenden Tenant-DBs
         _add_col_if_missing("inventory_movements", "trade_goods_id", "CHAR(32)")
         # lexoffice-Übertragungsstatus auf bestehenden Rechnungen
@@ -302,6 +304,21 @@ def _auto_migrate(engine: Engine) -> None:
         _add_col_if_missing("seeds", "substrat",          "VARCHAR(100)")
         _add_col_if_missing("seeds", "winter_extra_tage", "INTEGER", "0")
         _add_col_if_missing("seed_batches", "zusatz_tage", "INTEGER", "0")
+        # Eigenständiger Winter-Parametersatz statt pauschaler Zusatztage
+        _add_col_if_missing("seeds", "winter_keimdauer_tage",            "INTEGER")
+        _add_col_if_missing("seeds", "winter_wachstumsdauer_tage",       "INTEGER")
+        _add_col_if_missing("seeds", "winter_erntefenster_min_tage",     "INTEGER")
+        _add_col_if_missing("seeds", "winter_erntefenster_optimal_tage", "INTEGER")
+        _add_col_if_missing("seeds", "winter_erntefenster_max_tage",     "INTEGER")
+        # Chargenbedingte Wachstumsparameter in den Stammdaten der Charge
+        _add_col_if_missing("seed_batches", "keimdauer_tage",            "INTEGER")
+        _add_col_if_missing("seed_batches", "wachstumsdauer_tage",       "INTEGER")
+        _add_col_if_missing("seed_batches", "erntefenster_min_tage",     "INTEGER")
+        _add_col_if_missing("seed_batches", "erntefenster_optimal_tage", "INTEGER")
+        _add_col_if_missing("seed_batches", "erntefenster_max_tage",     "INTEGER")
+        # Keimende + Herkunft des Parametersatzes an der Wachstumscharge
+        _add_col_if_missing("grow_batches", "keimende_datum",   "DATE")
+        _add_col_if_missing("grow_batches", "parameter_quelle", "VARCHAR(10)")
     except Exception as e:
         logger.error(f"[auto-migrate] failed: {e}")
 

@@ -109,7 +109,7 @@ from app.models.document_template import (
 )
 
 # Production-Timeline-Events
-from app.models.staff import StaffShift
+from app.models.staff import StaffShift, StaffTask
 from app.models.growth_event import (
     GrowthBatchEvent,
     GrowthEventType,
@@ -200,4 +200,5 @@ __all__ = [
     "GROWTH_EVENT_LABELS",
     # Dienstplan
     "StaffShift",
+    "StaffTask",
 ]

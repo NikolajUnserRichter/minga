@@ -42,6 +42,9 @@ class GrowBatchResponse(GrowBatchBase):
     erwartete_ernte_min: date
     erwartete_ernte_optimal: date
     erwartete_ernte_max: date
+    # Ende der Keimphase + welcher Parametersatz galt (SORTE | WINTER | CHARGE)
+    keimende_datum: Optional[date] = None
+    parameter_quelle: Optional[str] = None
     status: GrowBatchStatus
     created_at: datetime
     updated_at: datetime

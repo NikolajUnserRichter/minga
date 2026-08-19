@@ -62,6 +62,9 @@ class Order(Base):
     )
     confirmed_delivery_date: Mapped[Optional[date]] = mapped_column(Date)
     actual_delivery_date: Mapped[Optional[date]] = mapped_column(Date)
+    # Packtag: leer = Standard (Liefertag - 1), damit der Fahrer die Ware
+    # früh abholen kann. Abweichende Kunden/Touren bekommen ein Datum gesetzt.
+    packing_date: Mapped[Optional[date]] = mapped_column(Date, index=True)
     # Idempotenz-Marker für order_fulfillment_service.deduct_inventory_for_order
     inventory_deducted_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
 
@@ -137,6 +140,29 @@ class Order(Base):
     def kunde(self) -> "Customer":
         """Legacy-Alias für customer"""
         return self.customer
+
+    @property
+    def effective_packing_date(self) -> date:
+        """Tag, an dem verpackt werden muss (explizit gesetzt oder Liefertag - 1)."""
+        if self.packing_date:
+            return self.packing_date
+        from datetime import timedelta
+        return self.requested_delivery_date - timedelta(days=1)
+
+    @staticmethod
+    def resolve_packing_date(requested_delivery_date: date, explicit: Optional[date]) -> Optional[date]:
+        """Packtag beim Anlegen bestimmen.
+
+        Standard bleibt leer (= Liefertag - 1, siehe `effective_packing_date`).
+        Läge dieser Vortag schon in der Vergangenheit — Same-Day-Bestellung,
+        Abo-Lauf —, wird der Packtag auf den Liefertag festgeschrieben, sonst
+        fiele die Packarbeit aus jedem Tagesplan heraus.
+        """
+        if explicit:
+            return explicit
+        if requested_delivery_date <= date.today():
+            return requested_delivery_date
+        return None
 
     def calculate_totals(self) -> None:
         """

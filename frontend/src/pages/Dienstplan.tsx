@@ -1,9 +1,9 @@
 import { useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { ChevronLeft, ChevronRight, Plus, Trash } from 'lucide-react';
-import { staffApi, StaffShift } from '../services/api';
+import { ChevronLeft, ChevronRight, ListTodo, Plus, Printer, Trash } from 'lucide-react';
+import { staffApi, StaffShift, StaffTask } from '../services/api';
 import { PageHeader } from '../components/common/Layout';
-import { Button, Input, Modal, useToast, PageLoader } from '../components/ui';
+import { Button, Input, Modal, Select, useToast, PageLoader } from '../components/ui';
 
 /** Montag der Woche, die `d` enthält. */
 function mondayOf(d: Date): Date {
@@ -29,7 +29,10 @@ export default function Dienstplan() {
   const queryClient = useQueryClient();
   const [weekStart, setWeekStart] = useState(() => mondayOf(new Date()));
   const [addingFor, setAddingFor] = useState<string | null>(null); // ISO-Datum
+  const [addingTaskFor, setAddingTaskFor] = useState<string | null>(null); // ISO-Datum
   const [deletingShift, setDeletingShift] = useState<StaffShift | null>(null);
+  const [deletingTask, setDeletingTask] = useState<StaffTask | null>(null);
+  const [printing, setPrinting] = useState(false);
 
   const days = useMemo(
     () => Array.from({ length: 7 }, (_, i) => {
@@ -52,8 +55,14 @@ export default function Dienstplan() {
     queryFn: () => staffApi.listEmployees(),
   });
 
+  const { data: tasks = [] } = useQuery({
+    queryKey: ['staff-tasks', von, bis],
+    queryFn: () => staffApi.listTasks({ von_datum: von, bis_datum: bis }),
+  });
+
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ['staff-shifts'] });
+    queryClient.invalidateQueries({ queryKey: ['staff-tasks'] });
     queryClient.invalidateQueries({ queryKey: ['staff-employees'] });
     queryClient.invalidateQueries({ queryKey: ['day-plan'] });
   };
@@ -67,6 +76,38 @@ export default function Dienstplan() {
     },
     onError: () => toast.error('Löschen fehlgeschlagen'),
   });
+
+  const toggleTaskMutation = useMutation({
+    mutationFn: (task: StaffTask) => staffApi.updateTask(task.id, { erledigt: !task.erledigt }),
+    onSuccess: () => invalidate(),
+    onError: () => toast.error('Konnte Aufgabe nicht aktualisieren'),
+  });
+
+  const deleteTaskMutation = useMutation({
+    mutationFn: ({ id, serie }: { id: string; serie: boolean }) => staffApi.deleteTask(id, serie),
+    onSuccess: () => {
+      invalidate();
+      setDeletingTask(null);
+      toast.success('Aufgabe gelöscht');
+    },
+    onError: () => toast.error('Löschen fehlgeschlagen'),
+  });
+
+  /** Aushang als PDF öffnen — der Druckdialog kommt aus dem PDF-Viewer. */
+  const handlePrint = async () => {
+    setPrinting(true);
+    try {
+      const blob = await staffApi.printShifts({ von_datum: von, bis_datum: bis });
+      const url = URL.createObjectURL(blob);
+      window.open(url, '_blank');
+      // Blob-URL erst freigeben, wenn der Viewer sie geladen hat
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch {
+      toast.error('Dienstplan konnte nicht erzeugt werden');
+    } finally {
+      setPrinting(false);
+    }
+  };
 
   const shiftWeek = (offset: number) => {
     const d = new Date(weekStart);
@@ -96,6 +137,14 @@ export default function Dienstplan() {
             <Button variant="secondary" size="sm" onClick={() => shiftWeek(-1)} icon={<ChevronLeft className="w-4 h-4" />} />
             <Button variant="secondary" size="sm" onClick={() => setWeekStart(mondayOf(new Date()))}>Heute</Button>
             <Button variant="secondary" size="sm" onClick={() => shiftWeek(1)} icon={<ChevronRight className="w-4 h-4" />} />
+            <Button
+              size="sm"
+              loading={printing}
+              onClick={handlePrint}
+              icon={<Printer className="w-4 h-4" />}
+            >
+              Aushang drucken
+            </Button>
           </div>
         }
       />
@@ -104,6 +153,7 @@ export default function Dienstplan() {
         {days.map((day, i) => {
           const iso = isoDate(day);
           const dayShifts = shifts.filter((s) => s.datum === iso);
+          const dayTasks = tasks.filter((t) => t.datum === iso);
           const isToday = iso === today;
           return (
             <div key={iso} className={`card ${isToday ? 'ring-2 ring-minga-500' : ''}`}>
@@ -112,17 +162,26 @@ export default function Dienstplan() {
                   <span className={`text-sm font-semibold ${isToday ? 'text-minga-600 dark:text-minga-400' : 'text-gray-700 dark:text-gray-300'}`}>
                     {WEEKDAYS[i]} {day.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' })}
                   </span>
-                  <button
-                    className="text-gray-400 hover:text-minga-600"
-                    title="Schicht hinzufügen"
-                    onClick={() => setAddingFor(iso)}
-                  >
-                    <Plus className="w-4 h-4" />
-                  </button>
+                  <div className="flex items-center gap-1">
+                    <button
+                      className="text-gray-400 hover:text-minga-600"
+                      title="Aufgabe hinzufügen"
+                      onClick={() => setAddingTaskFor(iso)}
+                    >
+                      <ListTodo className="w-4 h-4" />
+                    </button>
+                    <button
+                      className="text-gray-400 hover:text-minga-600"
+                      title="Schicht hinzufügen"
+                      onClick={() => setAddingFor(iso)}
+                    >
+                      <Plus className="w-4 h-4" />
+                    </button>
+                  </div>
                 </div>
               </div>
               <div className="card-body px-3 py-2 space-y-2 min-h-[80px]">
-                {dayShifts.length === 0 && (
+                {dayShifts.length === 0 && dayTasks.length === 0 && (
                   <p className="text-xs text-gray-400 italic">frei</p>
                 )}
                 {dayShifts.map((s) => (
@@ -143,6 +202,37 @@ export default function Dienstplan() {
                     </p>
                   </div>
                 ))}
+
+                {dayTasks.length > 0 && (
+                  <div className="pt-2 mt-1 border-t border-gray-100 dark:border-gray-700 space-y-1">
+                    {dayTasks.map((t) => (
+                      <div key={t.id} className="flex items-start gap-1.5 group">
+                        <input
+                          type="checkbox"
+                          className="mt-0.5 rounded border-gray-300 text-minga-600 focus:ring-minga-500"
+                          checked={t.erledigt}
+                          onChange={() => toggleTaskMutation.mutate(t)}
+                          title="Als erledigt markieren"
+                        />
+                        <div className="flex-1 min-w-0">
+                          <p className={`text-xs ${t.erledigt ? 'line-through text-gray-400' : 'text-gray-700 dark:text-gray-300'}`}>
+                            {t.titel}
+                          </p>
+                          {t.employee_name && (
+                            <p className="text-[11px] text-gray-400">{t.employee_name}</p>
+                          )}
+                        </div>
+                        <button
+                          className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-600 transition-opacity"
+                          title="Aufgabe löschen"
+                          onClick={() => setDeletingTask(t)}
+                        >
+                          <Trash className="w-3 h-3" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           );
@@ -160,6 +250,51 @@ export default function Dienstplan() {
           }}
         />
       )}
+
+      {addingTaskFor && (
+        <AddTaskModal
+          datum={addingTaskFor}
+          employees={employees}
+          onClose={() => setAddingTaskFor(null)}
+          onSaved={() => {
+            setAddingTaskFor(null);
+            invalidate();
+          }}
+        />
+      )}
+
+      <Modal
+        open={!!deletingTask}
+        onClose={() => setDeletingTask(null)}
+        title="Aufgabe löschen"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setDeletingTask(null)}>Abbrechen</Button>
+            {deletingTask?.serie_id && (
+              <Button
+                variant="danger"
+                loading={deleteTaskMutation.isPending}
+                onClick={() => deletingTask && deleteTaskMutation.mutate({ id: deletingTask.id, serie: true })}
+              >
+                Serie ab hier löschen
+              </Button>
+            )}
+            <Button
+              variant="danger"
+              loading={deleteTaskMutation.isPending}
+              onClick={() => deletingTask && deleteTaskMutation.mutate({ id: deletingTask.id, serie: false })}
+            >
+              Nur diesen Termin
+            </Button>
+          </>
+        }
+      >
+        <p className="text-gray-600 dark:text-gray-400">
+          <strong>{deletingTask?.titel}</strong> am{' '}
+          {deletingTask ? new Date(deletingTask.datum).toLocaleDateString('de-DE') : ''} löschen?
+          {deletingTask?.serie_id && ' Diese Aufgabe gehört zu einer Serie — frühere Termine bleiben in jedem Fall erhalten.'}
+        </p>
+      </Modal>
 
       <Modal
         open={!!deletingShift}
@@ -271,6 +406,102 @@ function AddShiftModal({ datum, employees, onClose, onSaved }: {
           onChange={(e) => setForm({ ...form, aufgabe: e.target.value })}
           placeholder="z.B. Aussaat, Ernte + Verpacken, Auslieferung"
         />
+      </form>
+    </Modal>
+  );
+}
+
+/** Zusatzaufgabe anlegen — optional als wiederkehrende Serie (z.B. Müllabholung). */
+function AddTaskModal({ datum, employees, onClose, onSaved }: {
+  datum: string;
+  employees: string[];
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const toast = useToast();
+  const [form, setForm] = useState({
+    titel: '',
+    employee_name: '',
+    wiederholung: '' as '' | 'TAEGLICH' | 'WOECHENTLICH',
+    wiederholung_bis: '',
+  });
+
+  const createMutation = useMutation({
+    mutationFn: () => staffApi.createTask({
+      titel: form.titel.trim(),
+      datum,
+      employee_name: form.employee_name.trim() || null,
+      wiederholung: form.wiederholung || null,
+      wiederholung_bis: form.wiederholung ? (form.wiederholung_bis || null) : null,
+    }),
+    onSuccess: (created) => {
+      toast.success(created.length > 1 ? `${created.length} Termine angelegt` : 'Aufgabe angelegt');
+      onSaved();
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.detail?.[0]?.msg || e?.response?.data?.detail || 'Anlegen fehlgeschlagen'),
+  });
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!form.titel.trim()) {
+      toast.error('Bitte eine Aufgabe angeben');
+      return;
+    }
+    createMutation.mutate();
+  };
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={`Aufgabe am ${new Date(datum).toLocaleDateString('de-DE', { weekday: 'long', day: '2-digit', month: '2-digit' })}`}
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose}>Abbrechen</Button>
+          <Button onClick={handleSubmit} loading={createMutation.isPending}>Anlegen</Button>
+        </>
+      }
+    >
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <Input
+          label="Aufgabe"
+          required
+          value={form.titel}
+          onChange={(e) => setForm({ ...form, titel: e.target.value })}
+          placeholder="z.B. Kisten spülen, Hanfmatten auffüllen, Müll rausstellen"
+        />
+        <div>
+          <Input
+            label="Mitarbeiter (optional)"
+            value={form.employee_name}
+            onChange={(e) => setForm({ ...form, employee_name: e.target.value })}
+            placeholder="leer = gilt für den ganzen Tag"
+            list="dienstplan-employees"
+          />
+          <datalist id="dienstplan-employees">
+            {employees.map((name) => <option key={name} value={name} />)}
+          </datalist>
+        </div>
+        <Select
+          label="Wiederholung"
+          value={form.wiederholung}
+          onChange={(e) => setForm({ ...form, wiederholung: e.target.value as typeof form.wiederholung })}
+          options={[
+            { value: '', label: 'Einmalig' },
+            { value: 'TAEGLICH', label: 'Täglich' },
+            { value: 'WOECHENTLICH', label: 'Wöchentlich' },
+          ]}
+          hint="Wiederkehrende Aufgaben werden als einzelne Termine angelegt und können einzeln abgehakt werden."
+        />
+        {form.wiederholung && (
+          <Input
+            label="Wiederholen bis"
+            type="date"
+            value={form.wiederholung_bis}
+            onChange={(e) => setForm({ ...form, wiederholung_bis: e.target.value })}
+            hint="Leer = 8 Wochen"
+          />
+        )}
       </form>
     </Modal>
   );

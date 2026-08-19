@@ -19,8 +19,6 @@ export interface SowingFormData {
   tray_anzahl: number;
   aussaat_datum: string;
   regal_position: string;
-  // Chargen-Abweichung: verschiebt das Erntefenster (z.B. +1 bei langsamer Keimung)
-  zusatz_tage?: number;
   // Soaking-Workflow: optional, sonst direkte Aussaat heute
   needs_soaking?: boolean;
   soaking_started_at?: string; // ISO datetime-local
@@ -52,7 +50,6 @@ export function SowingForm({
     tray_anzahl: 1,
     aussaat_datum: today,
     regal_position: '',
-    zusatz_tage: 0,
     needs_soaking: false,
     soaking_started_at: nowLocal,
     soaking_employee: '',
@@ -83,17 +80,25 @@ export function SowingForm({
     : 0;
 
   // Erntefenster-Tage zählen ab Aussaat (Keimdauer bereits enthalten) — wie Backend.
-  // Chargen-Abweichung (zusatz_tage) verschiebt das Fenster; ein Winterzuschlag
-  // (Einstellungen → Saisonzyklus) kommt serverseitig ggf. noch dazu.
-  const zusatzTage = formData.zusatz_tage ?? 0;
+  // Die gültigen Werte kommen aus den Stammdaten: Charge schlägt Sorte. Ein
+  // Winter-Satz (Einstellungen → Saisonzyklus) wird serverseitig aufgelöst.
+  const zusatzTage = selectedBatch?.zusatz_tage ?? 0;
+  const param = (feld: 'keimdauer_tage' | 'erntefenster_min_tage' | 'erntefenster_optimal_tage' | 'erntefenster_max_tage') =>
+    (selectedBatch?.[feld] ?? selectedSeed?.[feld] ?? 0);
   const harvestWindow = selectedSeed
     ? {
-      min: addDays(formData.aussaat_datum, selectedSeed.erntefenster_min_tage + zusatzTage),
-      optimal: addDays(formData.aussaat_datum, selectedSeed.erntefenster_optimal_tage + zusatzTage),
-      max: addDays(formData.aussaat_datum, selectedSeed.erntefenster_max_tage + zusatzTage),
-      keimungEnds: addDays(formData.aussaat_datum, selectedSeed.keimdauer_tage),
+      min: addDays(formData.aussaat_datum, param('erntefenster_min_tage') + zusatzTage),
+      optimal: addDays(formData.aussaat_datum, param('erntefenster_optimal_tage') + zusatzTage),
+      max: addDays(formData.aussaat_datum, param('erntefenster_max_tage') + zusatzTage),
+      keimungEnds: addDays(formData.aussaat_datum, param('keimdauer_tage')),
     }
     : null;
+  const chargeAbweichend = !!selectedBatch && (
+    selectedBatch.keimdauer_tage != null ||
+    selectedBatch.wachstumsdauer_tage != null ||
+    selectedBatch.erntefenster_optimal_tage != null ||
+    (selectedBatch.zusatz_tage ?? 0) !== 0
+  );
 
   const hasEnoughSeed = selectedBatch ? selectedBatch.verbleibend_gramm >= seedRequired : true;
 
@@ -185,28 +190,29 @@ export function SowingForm({
             label="Saatgut-Charge *"
             options={batchOptions}
             value={formData.seed_batch_id}
-            onChange={(e) => {
-              const batch = seedBatches.find((b) => b.id === e.target.value);
-              setFormData({
-                ...formData,
-                seed_batch_id: e.target.value,
-                zusatz_tage: (batch as any)?.zusatz_tage ?? 0,
-              });
-            }}
+            onChange={(e) => setFormData({ ...formData, seed_batch_id: e.target.value })}
             error={errors.seed_batch_id}
             placeholder="Charge auswählen..."
           />
-          {formData.seed_batch_id && (
-            <Input
-              label="Chargen-Abweichung (Tage)"
-              type="number"
-              min={-7}
-              max={14}
-              value={formData.zusatz_tage ?? 0}
-              onChange={(e) => setFormData({ ...formData, zusatz_tage: Number(e.target.value) })}
-              endIcon="Tage"
-              hint="Verschiebt das Erntefenster, z.B. +1 wenn diese Charge langsamer keimt. Wird an der Charge gespeichert."
-            />
+          {/* Wachstumsparameter liegen in den Stammdaten der Charge — hier nur
+              anzeigen, damit sie nicht bei jedem Aussaatzyklus neu getippt werden. */}
+          {selectedBatch && (
+            <div className="p-3 rounded-lg bg-gray-50 dark:bg-gray-700/40 text-sm">
+              <p className="font-medium text-gray-900 dark:text-white">
+                Wachstumsparameter der Charge #{selectedBatch.charge_nummer}
+                {chargeAbweichend
+                  ? <span className="ml-2 text-amber-700 dark:text-amber-300">abweichend</span>
+                  : <span className="ml-2 text-gray-500 dark:text-gray-400">= Sortenwert</span>}
+              </p>
+              <p className="text-gray-600 dark:text-gray-300 mt-1">
+                Keimung {param('keimdauer_tage')} Tage · Erntefenster {param('erntefenster_min_tage') + zusatzTage}/
+                {param('erntefenster_optimal_tage') + zusatzTage}/{param('erntefenster_max_tage') + zusatzTage} Tage
+              </p>
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                Änderungen bitte an der Charge pflegen (Lager → Saatgut-Charge).
+                Im Winterbetrieb gilt zusätzlich der Winter-Satz der Sorte.
+              </p>
+            </div>
           )}
         </>
       )}

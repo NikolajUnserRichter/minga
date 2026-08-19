@@ -351,6 +351,9 @@ class Subscription(Base):
     # Beziehungen
     kunde: Mapped["Customer"] = relationship("Customer", back_populates="subscriptions")
     seed: Mapped["Seed"] = relationship("Seed")
+    # product_id war bisher nur eine FK-Spalte ohne Relation — dadurch konnte
+    # die Abo-Liste den Produktnamen nicht auflösen.
+    product: Mapped[Optional["Product"]] = relationship("Product", foreign_keys=[product_id])
 
     @property
     def ist_aktiv(self) -> bool:
@@ -371,5 +374,5 @@ class Subscription(Base):
 # Imports für Type Hints (am Ende um zirkuläre Imports zu vermeiden)
 from app.models.order import Order
 from app.models.seed import Seed
-from app.models.product import PriceList
+from app.models.product import PriceList, Product
 from app.models.invoice import Invoice

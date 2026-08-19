@@ -77,7 +77,8 @@ class Seed(Base):
     # Substrattyp für die Aussaat-Arbeitsanweisung (z.B. "Hanfmatte", "Erde")
     substrat: Mapped[Optional[str]] = mapped_column(String(100))
 
-    # Winterzyklus: zusätzliche Wachstumstage wenn SEASON_MODE=WINTER (App-Setting)
+    # Winterzyklus: zusätzliche Wachstumstage wenn SEASON_MODE=WINTER (App-Setting).
+    # Legacy-Pauschale — wird nur noch genutzt, wenn kein Winter-Satz gepflegt ist.
     winter_extra_tage: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
 
     # Wachstumsparameter
@@ -88,6 +89,16 @@ class Seed(Base):
     erntefenster_min_tage: Mapped[int] = mapped_column(Integer, nullable=False)
     erntefenster_optimal_tage: Mapped[int] = mapped_column(Integer, nullable=False)
     erntefenster_max_tage: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    # Eigenständiger Winter-Parametersatz. Eine Verzögerung kann in der
+    # Keimung ODER im Growroom entstehen — pauschale Zusatztage verwischen
+    # das, und der Mitarbeiter weiß nicht mehr, wann er was zu tun hat.
+    # Leer = Winter verhält sich wie Sommer (ggf. + winter_extra_tage).
+    winter_keimdauer_tage: Mapped[Optional[int]] = mapped_column(Integer)
+    winter_wachstumsdauer_tage: Mapped[Optional[int]] = mapped_column(Integer)
+    winter_erntefenster_min_tage: Mapped[Optional[int]] = mapped_column(Integer)
+    winter_erntefenster_optimal_tage: Mapped[Optional[int]] = mapped_column(Integer)
+    winter_erntefenster_max_tage: Mapped[Optional[int]] = mapped_column(Integer)
 
     # Ertrag & Verlust
     ertrag_gramm_pro_tray: Mapped[Decimal] = mapped_column(
@@ -163,6 +174,14 @@ class SeedBatch(Base):
     # Chargen-spezifische Abweichung: verschiebt das Erntefenster um N Tage
     # (z.B. +1 wenn diese Charge langsamer keimt; negativ erlaubt)
     zusatz_tage: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+
+    # Chargenbedingte Wachstumsparameter: einmal an der Charge gepflegt statt
+    # bei jedem Aussaatzyklus neu erfasst. Leer = Sortenwert der Saison.
+    keimdauer_tage: Mapped[Optional[int]] = mapped_column(Integer)
+    wachstumsdauer_tage: Mapped[Optional[int]] = mapped_column(Integer)
+    erntefenster_min_tage: Mapped[Optional[int]] = mapped_column(Integer)
+    erntefenster_optimal_tage: Mapped[Optional[int]] = mapped_column(Integer)
+    erntefenster_max_tage: Mapped[Optional[int]] = mapped_column(Integer)
 
     # Timestamp
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
