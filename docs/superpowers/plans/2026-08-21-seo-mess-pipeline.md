@@ -35,7 +35,7 @@
 - Produces: `db_path() -> Path`, `record_gsc_rows(day: str, rows: list[dict]) -> int`, `gsc_summary(days=28, heute=None) -> dict`, `gsc_top_queries(days=28, limit=20, heute=None) -> list[dict]`, `log_change(quelle: str, nachricht: str) -> None`, `changelog_entries(limit=50) -> list[dict]`
 - `_conn()` legt ALLE Tabellen an (auch die aus Task 2), damit spätere Tasks das Schema nicht anfassen.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `backend/tests/test_seo_store.py` anlegen:
 
@@ -108,12 +108,12 @@ def test_changelog_neueste_zuerst():
     assert eintraege[0]["quelle"] == "test"
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd backend && python -m pytest tests/test_seo_store.py -q`
 Expected: FAIL — `ModuleNotFoundError: No module named 'app.core.seo_store'`
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 `backend/app/core/seo_store.py` anlegen:
 
@@ -277,12 +277,12 @@ def changelog_entries(limit: int = 50) -> list[dict]:
     return [{"ts": t, "quelle": q, "nachricht": n} for t, q, n in rows]
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd backend && python -m pytest tests/test_seo_store.py -q`
 Expected: PASS (4 Tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add backend/app/core/seo_store.py backend/tests/test_seo_store.py
@@ -300,7 +300,7 @@ git commit -m "feat(seo): Messdatenspeicher für Search-Console-Tage und Protoko
 **Interfaces:**
 - Produces: `record_geo_run(day, prompt_id, art, zitiert: bool, domains: list[str]) -> None`, `geo_summary(days=28, heute=None) -> dict` (Form: `{"discovery": {"laeufe", "zitiert", "quote"}, "marke": {...}}`), `grounding_increment(day: str, n=1) -> None`, `grounding_spent(day: str) -> tuple[int, int]` (Tag, laufender Monat), `record_ai_referrals(day, count, domains) -> None`, `ai_referrals_summary(days=28, heute=None) -> dict`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 An `backend/tests/test_seo_store.py` anhängen:
 
@@ -343,12 +343,12 @@ def test_ai_referrals_pro_tag_ueberschreibbar():
     assert z["per_day"] == [{"day": "2026-08-21", "count": 4}]
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd backend && python -m pytest tests/test_seo_store.py -q -k "geo or grounding or referrals or art"`
 Expected: FAIL — `AttributeError: module 'app.core.seo_store' has no attribute 'record_geo_run'`
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 An `backend/app/core/seo_store.py` anhängen:
 
@@ -451,12 +451,12 @@ def ai_referrals_summary(days: int = 28, heute: Optional[date] = None) -> dict:
     }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd backend && python -m pytest tests/test_seo_store.py -q`
 Expected: PASS (8 Tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add backend/app/core/seo_store.py backend/tests/test_seo_store.py
@@ -474,7 +474,7 @@ git commit -m "feat(seo): GEO-Läufe, Grounding-Zähler und KI-Verweise im Speic
 **Interfaces:**
 - Produces: `PROMPTS: list[dict]` — 28 Einträge `{"id": str, "art": "discovery"|"marke", "text": str}`; 20× discovery, 8× marke.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `backend/tests/test_seo_geo.py` anlegen:
 
@@ -513,12 +513,12 @@ def test_promptbibliothek_ist_vollstaendig_und_eindeutig():
         assert p["text"].strip().endswith("?")
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd backend && python -m pytest tests/test_seo_geo.py -q`
 Expected: FAIL — `ModuleNotFoundError: No module named 'app.services.geo_prompts'` (bzw. `seo_geo`; für den Import-Test genügt vorerst ein leeres `seo_geo`-Modul NICHT — Task 4 legt es an. Für diesen Task die Import-Zeile `from app.services import seo_geo` im Test zunächst weglassen? Nein: Task 3 legt `geo_prompts.py` an und eine minimale `seo_geo.py`-Hülle mit nur dem Modul-Docstring, damit der Test importierbar ist.)
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 `backend/app/services/geo_prompts.py` anlegen:
 
@@ -610,12 +610,12 @@ anderen nicht mitreißen.
 from __future__ import annotations
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd backend && python -m pytest tests/test_seo_geo.py -q`
 Expected: PASS (1 Test)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add backend/app/services/geo_prompts.py backend/app/services/seo_geo.py backend/tests/test_seo_geo.py
@@ -634,7 +634,7 @@ git commit -m "feat(seo): GEO-Promptbibliothek, Discovery und Marke getrennt"
 - Consumes: `seo_store.grounding_spent/grounding_increment/record_geo_run/log_change`, `geo_prompts.PROMPTS`, `app.core.site.root_domain`
 - Produces: `measure_geo(tag: date, post=_post_json) -> dict`, `budget_status(heute=None) -> dict`, `_post_json(url, *, json_body=None, data=None, headers=None, timeout=30.0) -> dict`, `_grounding_domains(antwort: dict) -> list[str]`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 An `backend/tests/test_seo_geo.py` anhängen:
 
@@ -701,12 +701,12 @@ def test_budget_status_meldet_verbrauch_und_grenzen():
     assert status == {"heute": 7, "monat": 7, "budget_tag": 50, "budget_monat": 4500}
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd backend && python -m pytest tests/test_seo_geo.py -q`
 Expected: FAIL — `AttributeError: module 'app.services.seo_geo' has no attribute 'measure_geo'`
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 An `backend/app/services/seo_geo.py` anhängen (unter dem Docstring/`from __future__`):
 
@@ -817,12 +817,12 @@ def measure_geo(tag: date, post: Callable = _post_json) -> dict:
     return {"status": "ok", "gemessen": gemessen, "uebersprungen": uebersprungen}
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd backend && python -m pytest tests/test_seo_geo.py -q`
 Expected: PASS (6 Tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add backend/app/services/seo_geo.py backend/tests/test_seo_geo.py
@@ -841,7 +841,7 @@ git commit -m "feat(seo): GEO-Messung über Gemini-Grounding mit hartem Kostenri
 - Produces: `collect_gsc(tag: date, post=_post_json) -> dict`, `_gsc_zugang() -> Optional[dict]`, `_signierte_assertion(zugang: dict) -> str`
 - Env: `GSC_SERVICE_ACCOUNT_JSON` (Inline-JSON oder Dateipfad), `GSC_SITE_URL` (z. B. `sc-domain:novaerp.de`)
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 An `backend/tests/test_seo_geo.py` anhängen:
 
@@ -888,12 +888,12 @@ def test_gsc_holt_token_und_speichert_zeilen(monkeypatch):
     assert z["totals"] == {"clicks": 3, "impressions": 50}
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd backend && python -m pytest tests/test_seo_geo.py -q -k gsc`
 Expected: FAIL — `AttributeError: module 'app.services.seo_geo' has no attribute 'collect_gsc'`
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 An `backend/app/services/seo_geo.py` anhängen:
 
@@ -960,12 +960,12 @@ def collect_gsc(tag: date, post: Callable = _post_json) -> dict:
     return {"status": "ok", "zeilen": len(zeilen)}
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd backend && python -m pytest tests/test_seo_geo.py -q`
 Expected: PASS (9 Tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add backend/app/services/seo_geo.py backend/tests/test_seo_geo.py
@@ -984,7 +984,7 @@ git commit -m "feat(seo): Search-Console-Sammler über Service-Account ohne Goog
 - Consumes: `app.core.webstats.stats` (per Injektion ersetzbar), `seo_store.record_ai_referrals/log_change`
 - Produces: `collect_firstparty(tag: date, stats_fn=None) -> dict`, `sammler_status() -> dict`, `nightly(heute: Optional[date] = None) -> dict`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 An `backend/tests/test_seo_geo.py` anhängen:
 
@@ -1025,12 +1025,12 @@ def test_nightly_isoliert_fehler_einzelner_sammler(monkeypatch):
     assert any(e["quelle"] == "nightly" for e in seo_store.changelog_entries())
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd backend && python -m pytest tests/test_seo_geo.py -q -k "firstparty or nightly or status"`
 Expected: FAIL — `AttributeError: module 'app.services.seo_geo' has no attribute 'collect_firstparty'`
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 An `backend/app/services/seo_geo.py` anhängen:
 
@@ -1089,12 +1089,12 @@ def nightly(heute: Optional[date] = None) -> dict:
 
 Hinweis: `nightly` referenziert `collect_gsc`/`measure_geo`/`collect_firstparty` als Modul-Globals — genau deshalb greifen die `monkeypatch.setattr`-Ersetzungen im Test.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd backend && python -m pytest tests/test_seo_geo.py -q`
 Expected: PASS (12 Tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add backend/app/services/seo_geo.py backend/tests/test_seo_geo.py
@@ -1118,7 +1118,7 @@ Drei Regeln, bewusst deterministisch und ohne LLM:
 2. **snippet** — Anfrage mit ≥ 50 Impressionen, Position ≤ 10, CTR < 1 % → Snippet/Meta-Description prüfen.
 3. **geo** — ≥ 20 Discovery-Läufe und null Zitate → Discovery-Hinweis.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 An `backend/tests/test_seo_geo.py` anhängen:
 
@@ -1168,12 +1168,12 @@ def test_geo_null_quote_erzeugt_hinweis():
     assert any(h["art"] == "geo" for h in hinweise)
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd backend && python -m pytest tests/test_seo_geo.py -q -k "vorschlag or null_quote or thema"`
 Expected: FAIL — `AttributeError: module 'app.services.seo_geo' has no attribute 'suggestions'`
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 An `backend/app/services/seo_geo.py` anhängen:
 
@@ -1224,12 +1224,12 @@ def suggestions(heute: Optional[date] = None) -> list[dict]:
     return hinweise
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd backend && python -m pytest tests/test_seo_geo.py -q`
 Expected: PASS (16 Tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add backend/app/services/seo_geo.py backend/tests/test_seo_geo.py
@@ -1249,7 +1249,7 @@ git commit -m "feat(seo): deterministische Vorschläge aus GSC- und GEO-Daten"
 - Consumes: `app.api.v1.platform._require_admin`, `seo_store.*`, `seo_geo.sammler_status/budget_status/suggestions/nightly`
 - Produces: `router` mit Präfix `/platform/seo`: `GET /overview`, `POST /run`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `backend/tests/test_seo_admin.py` anlegen:
 
@@ -1308,12 +1308,12 @@ def test_run_startet_den_nachtlauf(web, monkeypatch):
     assert d["firstparty"]["status"] == "ok"
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd backend && python -m pytest tests/test_seo_admin.py -q`
 Expected: FAIL — 404 auf beiden Routen, das Modul existiert nicht
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 `backend/app/api/v1/seo_dashboard.py` anlegen:
 
@@ -1371,12 +1371,12 @@ app.include_router(
 )
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd backend && python -m pytest tests/test_seo_admin.py -q`
 Expected: PASS (3 Tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add backend/app/api/v1/seo_dashboard.py backend/app/main.py backend/tests/test_seo_admin.py
@@ -1394,7 +1394,7 @@ git commit -m "feat(seo): Dashboard-API hinter dem Platform-Admin-Key"
 - Consumes: `seo_geo.nightly`
 - Env: `SEO_GEO_ENABLED` (Default `true`; die Sammler sind ohne Zugangsdaten ohnehin No-Ops)
 
-- [ ] **Step 1: Job registrieren**
+- [x] **Step 1: Job registrieren**
 
 In `backend/app/services/scheduler_service.py` direkt nach dem `demo-reset`-Block einfügen:
 
@@ -1417,14 +1417,14 @@ In `backend/app/services/scheduler_service.py` direkt nach dem `demo-reset`-Bloc
 
 (04:15 liegt nach `expired-cleanup` 03:00 und `demo-reset` 03:30, vor `daily-subscriptions` 05:00.)
 
-- [ ] **Step 2: Verifizieren**
+- [x] **Step 2: Verifizieren**
 
 Run: `cd backend && python -c "import ast; ast.parse(open('app/services/scheduler_service.py').read()); print('syntaktisch ok')" && grep -c "seo-geo-nightly" app/services/scheduler_service.py`
 Expected: `syntaktisch ok` und `2`
 
 Hinweis: `start_scheduler()` ist lokal nicht lauffähig (importiert Forecast-Tasks → `pandas` fehlt in der lokalen Umgebung). Die Job-Registrierung wird in Produktion über den bestehenden Scheduler-Debug-Endpoint (`app/api/v1/admin.py`) sichtbar.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add backend/app/services/scheduler_service.py
@@ -1439,7 +1439,7 @@ git commit -m "feat(seo): nächtlicher Scheduler-Job seo-geo-nightly"
 - Modify: `backend/static_admin/index.html`
 - Test: Gesamtlauf aller Backend-Tests, manuelle Sichtprüfung des Panels
 
-- [ ] **Step 1: Abschnitt in die Seite einsetzen**
+- [x] **Step 1: Abschnitt in die Seite einsetzen**
 
 Nach dem `<!-- Ratgeber -->`-Block (vor `</div>` des `.wrap`-Inhalts) einfügen:
 
@@ -1456,7 +1456,7 @@ Nach dem `<!-- Ratgeber -->`-Block (vor `</div>` des `.wrap`-Inhalts) einfügen:
       </div>
 ```
 
-- [ ] **Step 2: JavaScript ergänzen**
+- [x] **Step 2: JavaScript ergänzen**
 
 Vor `// Auto-login if key present` einfügen:
 
@@ -1505,7 +1505,7 @@ und in `loadAll()` nach `await ladeBeitraege();` ergänzen:
         await ladeSeo();
 ```
 
-- [ ] **Step 3: Gesamtlauf**
+- [x] **Step 3: Gesamtlauf**
 
 Run: `cd backend && python -m pytest tests/test_seo_store.py tests/test_seo_geo.py tests/test_seo_admin.py tests/test_ratgeber_store.py tests/test_ratgeber_render.py tests/test_ratgeber_public.py tests/test_ratgeber_admin.py tests/test_seo_public.py -q`
 Expected: PASS (121 Tests, 1 übersprungen)
@@ -1513,7 +1513,7 @@ Expected: PASS (121 Tests, 1 übersprungen)
 Run: `cd backend && python -m pytest tests/ -q --ignore=tests/test_forecast_engine.py`
 Expected: keine neuen Fehler gegenüber der Baseline (15 vorbestehende Fehler, 1 Fehlerfall)
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add backend/static_admin/index.html
