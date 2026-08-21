@@ -10,10 +10,15 @@ eingebunden werden — FastAPI matcht in Deklarationsreihenfolge.
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import PlainTextResponse
+from dataclasses import dataclass
+from datetime import date
+from typing import Optional
+from xml.sax.saxutils import escape
 
-from app.core.site import canonical_origin, hostname, is_apex_host
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import PlainTextResponse, Response
+
+from app.core.site import canonical_origin, hostname, is_apex_host, marketing_dir
 
 router = APIRouter(include_in_schema=False)
 
@@ -60,3 +65,78 @@ async def robots_txt(request: Request) -> PlainTextResponse:
     body = "\n\n".join(groups)
     body += f"\n\nSitemap: {canonical_origin()}/sitemap.xml\n"
     return PlainTextResponse(body)
+
+
+# Statische Seiten der Marketing-Site: Pfad, changefreq, priority.
+# Bewusst ohne /stats.html — die interne Auswertung gehört nicht in den Index.
+STATIC_PAGES: tuple[tuple[str, str, str], ...] = (
+    ("/", "weekly", "1.0"),
+    ("/impressum", "yearly", "0.3"),
+    ("/datenschutz", "yearly", "0.3"),
+    ("/agb", "yearly", "0.3"),
+)
+
+
+@dataclass(frozen=True)
+class SitemapArticle:
+    """Ein Ratgeber-Beitrag, so wie Sitemap und llms.txt ihn brauchen."""
+
+    slug: str
+    title: str
+    summary: str
+    lastmod: Optional[date]
+
+
+def content_articles() -> list[SitemapArticle]:
+    """Veröffentlichte Ratgeber-Beiträge.
+
+    Das Fundament kennt noch keine Beiträge. Die Content-Engine ersetzt
+    diesen Rumpf, ohne dass Sitemap oder llms.txt angefasst werden müssen.
+    """
+    return []
+
+
+def _page_lastmod(path: str) -> Optional[date]:
+    """Änderungsdatum aus der Datei im Docroot, sofern lesbar."""
+    name = "index.html" if path == "/" else f"{path.lstrip('/')}.html"
+    try:
+        return date.fromtimestamp((marketing_dir() / name).stat().st_mtime)
+    except OSError:
+        return None
+
+
+def _url_entry(
+    loc: str, lastmod: Optional[date], changefreq: str, priority: str
+) -> list[str]:
+    parts = ["  <url>", f"    <loc>{escape(loc)}</loc>"]
+    if lastmod is not None:
+        parts.append(f"    <lastmod>{lastmod.isoformat()}</lastmod>")
+    parts.append(f"    <changefreq>{changefreq}</changefreq>")
+    parts.append(f"    <priority>{priority}</priority>")
+    parts.append("  </url>")
+    return parts
+
+
+@router.get("/sitemap.xml")
+async def sitemap_xml(request: Request) -> Response:
+    if not is_apex_host(hostname(request)):
+        raise HTTPException(status_code=404, detail="Not Found")
+
+    origin = canonical_origin()
+    lines = [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',
+    ]
+    for path, changefreq, priority in STATIC_PAGES:
+        lines.extend(
+            _url_entry(f"{origin}{path}", _page_lastmod(path), changefreq, priority)
+        )
+    for article in content_articles():
+        lines.extend(
+            _url_entry(
+                f"{origin}/ratgeber/{article.slug}", article.lastmod, "monthly", "0.6"
+            )
+        )
+    lines.append("</urlset>")
+
+    return Response("\n".join(lines) + "\n", media_type="application/xml")

@@ -1,4 +1,6 @@
 """Tests für das SEO-Fundament der Marketing-Seite (Apex novaerp.de)."""
+import re
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -65,3 +67,32 @@ def test_robots_sperrt_tenant_subdomains_komplett(web):
     assert r.status_code == 200
     assert r.text.strip() == "User-agent: *\nDisallow: /"
     assert "Sitemap:" not in r.text
+
+
+# --- sitemap.xml -----------------------------------------------------------
+
+
+def test_sitemap_listet_alle_statischen_seiten(web):
+    r = web.get("/sitemap.xml", headers=APEX)
+    assert r.status_code == 200
+    assert "xml" in r.headers["content-type"]
+    assert r.text.startswith('<?xml version="1.0" encoding="UTF-8"?>')
+
+    locs = re.findall(r"<loc>(.*?)</loc>", r.text)
+    assert locs == [
+        "https://novaerp.de/",
+        "https://novaerp.de/impressum",
+        "https://novaerp.de/datenschutz",
+        "https://novaerp.de/agb",
+    ]
+
+
+def test_sitemap_nennt_weder_statistik_noch_subdomains(web):
+    r = web.get("/sitemap.xml", headers=APEX)
+    assert "stats" not in r.text
+    assert "dev.novaerp.de" not in r.text
+
+
+def test_sitemap_gibt_es_nur_auf_dem_apex(web):
+    r = web.get("/sitemap.xml", headers=TENANT)
+    assert r.status_code == 404
