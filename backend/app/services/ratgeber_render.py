@@ -262,3 +262,53 @@ def render_article_page(article: Article,
         graph=article_graph(article),
         inhalt="\n".join(zeilen),
     )
+
+
+def render_index_page(articles: list[Article]) -> str:
+    """Übersicht aller veröffentlichten Beiträge, nach Cluster gruppiert."""
+    url = f"{canonical_origin()}/ratgeber"
+    beschreibung = ("Praxisbeiträge zu ERP-Einführung, Lager, Produktion und "
+                    "Buchhaltung für kleine und mittlere Unternehmen.")
+
+    gruppen: dict[str, list[Article]] = {}
+    for a in articles:
+        gruppen.setdefault(a.cluster or "Allgemein", []).append(a)
+
+    zeilen = ["<h1>Ratgeber</h1>", f"<p>{_e(beschreibung)}</p>"]
+    if not articles:
+        zeilen.append('<p class="meta">Die ersten Beiträge erscheinen in Kürze.</p>')
+    for cluster in sorted(gruppen):
+        zeilen.append(f"<h2>{_e(cluster)}</h2>")
+        for a in gruppen[cluster]:
+            zeilen.append(
+                f'<a class="karte" href="/ratgeber/{_e(a.slug)}">'
+                f'<div class="t">{_e(a.title)}</div>'
+                + (f'<div class="s">{_e(a.summary)}</div>' if a.summary else "")
+                + "</a>"
+            )
+    zeilen.append('<a href="/" class="back">← Zurück zur Startseite</a>')
+
+    graph = [
+        {
+            "@type": "CollectionPage",
+            "@id": url,
+            "url": url,
+            "name": "Ratgeber — NovaERP",
+            "description": beschreibung,
+            "inLanguage": "de-DE",
+            "isPartOf": {"@id": f"{canonical_origin()}/#website"},
+            "publisher": {"@id": f"{canonical_origin()}/#org"},
+        },
+        {
+            "@type": "BreadcrumbList",
+            "@id": f"{url}#breadcrumb",
+            "itemListElement": [
+                {"@type": "ListItem", "position": 1, "name": "Start",
+                 "item": f"{canonical_origin()}/"},
+                {"@type": "ListItem", "position": 2, "name": "Ratgeber", "item": url},
+            ],
+        },
+    ]
+
+    return _seitenrahmen("Ratgeber — NovaERP", beschreibung, url, graph,
+                         "\n".join(zeilen))

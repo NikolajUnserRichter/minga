@@ -8,6 +8,7 @@ from app.core.ratgeber import Article
 from app.services.ratgeber_render import (
     article_graph,
     render_article_page,
+    render_index_page,
     render_markdown,
 )
 
@@ -124,3 +125,37 @@ def test_teaser_verlinkt_den_folgebeitrag(beitrag):
     html = render_article_page(beitrag, nachfolger=nachfolger)
     assert 'href="/ratgeber/lager-optimieren"' in html
     assert "Lager optimieren" in html
+
+
+# --- Übersichtsseite -------------------------------------------------------
+
+
+def _kurz(slug, titel, cluster):
+    return Article(slug=slug, title=titel, cluster=cluster,
+                   summary=f"Kurzfassung {slug}", status="live",
+                   published_at="2026-08-21")
+
+
+def test_uebersicht_gruppiert_nach_cluster():
+    seiten = [
+        _kurz("a", "Beitrag A", "Einführung"),
+        _kurz("b", "Beitrag B", "Lager"),
+        _kurz("c", "Beitrag C", "Einführung"),
+    ]
+    html = render_index_page(seiten)
+    assert "<h2>Einführung</h2>" in html
+    assert "<h2>Lager</h2>" in html
+    assert html.count('href="/ratgeber/') == 3
+
+
+def test_uebersicht_traegt_canonical_und_collectionpage():
+    html = render_index_page([_kurz("a", "Beitrag A", "Einführung")])
+    assert '<link rel="canonical" href="https://novaerp.de/ratgeber"' in html
+    graph = json.loads(LD_BLOCK.findall(html)[0])["@graph"]
+    assert any(k["@type"] == "CollectionPage" for k in graph)
+
+
+def test_leere_uebersicht_bleibt_eine_gueltige_seite():
+    html = render_index_page([])
+    assert "<h1>Ratgeber</h1>" in html
+    assert json.loads(LD_BLOCK.findall(html)[0])
