@@ -88,12 +88,35 @@ class SitemapArticle:
 
 
 def content_articles() -> list[SitemapArticle]:
-    """Veröffentlichte Ratgeber-Beiträge.
+    """Veröffentlichte Ratgeber-Beiträge für Sitemap und llms.txt.
 
-    Das Fundament kennt noch keine Beiträge. Die Content-Engine ersetzt
-    diesen Rumpf, ohne dass Sitemap oder llms.txt angefasst werden müssen.
+    Fehler der Beitragsdatenbank werden hier geschluckt: robots.txt und
+    Sitemap sind die Grundlage der Indexierung. Sie dürfen nicht ausfallen,
+    weil der Ratgeber-Speicher klemmt.
     """
-    return []
+    try:
+        from app.core import ratgeber
+        beitraege = ratgeber.published()
+    except Exception:  # noqa: BLE001 — bewusst breit, siehe Docstring
+        return []
+
+    ergebnis = []
+    for a in beitraege:
+        lastmod = None
+        for quelle in (a.updated_at, a.published_at):
+            if quelle:
+                try:
+                    lastmod = date.fromisoformat(quelle[:10])
+                    break
+                except ValueError:
+                    continue
+        ergebnis.append(SitemapArticle(
+            slug=a.slug,
+            title=a.title,
+            summary=a.summary or a.description,
+            lastmod=lastmod,
+        ))
+    return ergebnis
 
 
 def _page_lastmod(path: str) -> Optional[date]:

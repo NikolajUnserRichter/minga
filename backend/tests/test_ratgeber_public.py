@@ -85,3 +85,37 @@ def test_teaser_auf_einen_entwurf_wird_nicht_verlinkt(web):
     ratgeber.publish("erp-einfuehrung")
     r = web.get("/ratgeber/erp-einfuehrung", headers=APEX)
     assert "/ratgeber/spaeter" not in r.text
+
+
+# --- Sitemap und llms.txt --------------------------------------------------
+
+
+def test_sitemap_listet_veroeffentlichte_beitraege(web):
+    _live()
+    r = web.get("/sitemap.xml", headers=APEX)
+    assert "https://novaerp.de/ratgeber/erp-einfuehrung" in r.text
+    assert "<lastmod>" in r.text
+
+
+def test_sitemap_zeigt_keine_entwuerfe(web):
+    ratgeber.save(ratgeber.Article(slug="geheim", title="Noch nicht fertig"))
+    r = web.get("/sitemap.xml", headers=APEX)
+    assert "geheim" not in r.text
+
+
+def test_llms_txt_nennt_die_beitraege(web):
+    _live()
+    r = web.get("/llms.txt", headers=APEX)
+    assert "## Ratgeber" in r.text
+    assert "https://novaerp.de/ratgeber/erp-einfuehrung" in r.text
+
+
+def test_sitemap_ueberlebt_eine_defekte_beitragsdatenbank(web, monkeypatch, tmp_path):
+    # Ein kaputter Speicher darf robots/sitemap nicht mitreißen — sonst
+    # verliert die ganze Domain ihre Indexierbarkeit.
+    kaputt = tmp_path / "kaputt.db"
+    kaputt.write_text("kein sqlite")
+    monkeypatch.setenv("RATGEBER_DB_PATH", str(kaputt))
+    r = web.get("/sitemap.xml", headers=APEX)
+    assert r.status_code == 200
+    assert "https://novaerp.de/impressum" in r.text
