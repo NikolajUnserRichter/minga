@@ -28,6 +28,7 @@ from app.tenancy import (
     resolve_slug_from_host, set_request_tenant, DEFAULT_TENANT_SLUG,
 )
 from app.api.v1 import seeds, production, sales, forecasting, products, invoices, inventory, analytics, capacity, suppliers, units, imports, documents, attachments, admin, document_templates, platform, procurement, integrations, staff
+from app.api.v1 import ratgeber as ratgeber_admin
 from app.api import ratgeber_public, seo_public
 from app.api.deps import get_current_user
 from app.core.security import verify_token
@@ -745,6 +746,12 @@ app.include_router(
 # Platform-Admin: KEINE _auth_deps — eigener X-Platform-Admin-Key
 app.include_router(
     platform.router,
+    prefix="/api/v1",
+)
+
+# Redaktions-API für den Ratgeber, ebenfalls über den Platform-Admin-Key
+app.include_router(
+    ratgeber_admin.router,
     prefix="/api/v1",
 )
 
