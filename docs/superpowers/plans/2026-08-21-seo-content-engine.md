@@ -50,7 +50,7 @@
 - Consumes: `app.config.get_settings`
 - Produces: `Article` (dataclass), `db_path()`, `save(article) -> Article`, `get(slug) -> Optional[Article]`, `list_all(status=None) -> list[Article]`, `delete(slug) -> bool`, `SlugFehler`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `backend/tests/test_ratgeber_store.py` anlegen:
 
@@ -140,12 +140,12 @@ def test_liste_filtert_nach_status():
     assert [x.slug for x in ratgeber.list_all(status="live")] == ["b"]
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd backend && python -m pytest tests/test_ratgeber_store.py -q`
 Expected: FAIL — `ModuleNotFoundError: No module named 'app.core.ratgeber'`
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 `backend/app/core/ratgeber.py` anlegen:
 
@@ -401,12 +401,12 @@ def delete(slug: str) -> bool:
         c.close()
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd backend && python -m pytest tests/test_ratgeber_store.py -q`
 Expected: PASS (12 Tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add backend/app/core/ratgeber.py backend/tests/test_ratgeber_store.py
@@ -427,7 +427,7 @@ Das Veröffentlichungsdatum wird beim ersten Live-Gang einmal gestempelt und dan
 - Consumes: `Article`, `get`, `save` aus Task 1
 - Produces: `publish(slug, heute=None) -> Article`, `unpublish(slug) -> Article`, `set_queue(slugs) -> None`, `published() -> list[Article]`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 An `backend/tests/test_ratgeber_store.py` anhängen:
 
@@ -480,12 +480,12 @@ def test_warteschlange_wird_in_der_uebergebenen_reihenfolge_nummeriert():
     assert [x.slug for x in warteschlange] == ["c", "a", "b"]
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd backend && python -m pytest tests/test_ratgeber_store.py -q -k "veroeffentlich or zurueckziehen or warteschlange or datum"`
 Expected: FAIL — `AttributeError: module 'app.core.ratgeber' has no attribute 'publish'`
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 An `backend/app/core/ratgeber.py` anhängen:
 
@@ -566,12 +566,12 @@ def published() -> list[Article]:
     return [_aus_zeile(r) for r in rows]
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd backend && python -m pytest tests/test_ratgeber_store.py -q`
 Expected: PASS (18 Tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add backend/app/core/ratgeber.py backend/tests/test_ratgeber_store.py
@@ -592,7 +592,7 @@ Kein Markdown-Paket — die Abhängigkeitsliste bleibt unverändert. Gerendert w
 - Consumes: nichts
 - Produces: `render_markdown(text: str) -> str`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `backend/tests/test_ratgeber_render.py` anlegen:
 
@@ -642,12 +642,12 @@ def test_leerer_text_gibt_leeren_string():
     assert render_markdown("") == ""
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd backend && python -m pytest tests/test_ratgeber_render.py -q`
 Expected: FAIL — `ModuleNotFoundError: No module named 'app.services.ratgeber_render'`
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 `backend/app/services/ratgeber_render.py` anlegen:
 
@@ -720,12 +720,12 @@ def render_markdown(text: str) -> str:
     return "\n".join(teile)
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd backend && python -m pytest tests/test_ratgeber_render.py -q`
 Expected: PASS (7 Tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add backend/app/services/ratgeber_render.py backend/tests/test_ratgeber_render.py
@@ -744,7 +744,7 @@ git commit -m "feat(ratgeber): Markdown-Teilmenge ohne Zusatzabhängigkeit"
 - Consumes: `render_markdown`, `app.core.ratgeber.Article`, `app.core.site.canonical_origin`
 - Produces: `article_graph(article) -> list[dict]`, `render_article_page(article, nachfolger=None) -> str`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 An `backend/tests/test_ratgeber_render.py` anhängen:
 
@@ -828,12 +828,12 @@ def test_teaser_verlinkt_den_folgebeitrag(beitrag):
     assert "Lager optimieren" in html
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd backend && python -m pytest tests/test_ratgeber_render.py -q -k "graph or seite or teaser or titel"`
 Expected: FAIL — `ImportError: cannot import name 'article_graph'`
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 An `backend/app/services/ratgeber_render.py` anhängen (Importe oben ergänzen):
 
@@ -1035,12 +1035,12 @@ def render_article_page(article: Article,
     )
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd backend && python -m pytest tests/test_ratgeber_render.py -q`
 Expected: PASS (14 Tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add backend/app/services/ratgeber_render.py backend/tests/test_ratgeber_render.py
@@ -1059,7 +1059,7 @@ git commit -m "feat(ratgeber): Beitragsseite mit Article-, FAQ- und Breadcrumb-S
 - Consumes: `_seitenrahmen`, `Article`
 - Produces: `render_index_page(articles: list[Article]) -> str`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 An `backend/tests/test_ratgeber_render.py` anhängen:
 
@@ -1098,12 +1098,12 @@ def test_leere_uebersicht_bleibt_eine_gueltige_seite():
     assert json.loads(LD_BLOCK.findall(html)[0])
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd backend && python -m pytest tests/test_ratgeber_render.py -q -k uebersicht`
 Expected: FAIL — `ImportError: cannot import name 'render_index_page'`
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 An `backend/app/services/ratgeber_render.py` anhängen:
 
@@ -1158,12 +1158,12 @@ def render_index_page(articles: list[Article]) -> str:
                          "\n".join(zeilen))
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd backend && python -m pytest tests/test_ratgeber_render.py -q`
 Expected: PASS (17 Tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add backend/app/services/ratgeber_render.py backend/tests/test_ratgeber_render.py
@@ -1183,7 +1183,7 @@ git commit -m "feat(ratgeber): Übersichtsseite nach Clustern"
 - Consumes: `app.core.ratgeber.get/published`, `render_article_page`, `render_index_page`, `app.core.site.is_apex_host/hostname/marketing_dir`
 - Produces: `router` (APIRouter ohne Präfix)
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `backend/tests/test_ratgeber_public.py` anlegen:
 
@@ -1277,12 +1277,12 @@ def test_teaser_auf_einen_entwurf_wird_nicht_verlinkt(web):
     assert "/ratgeber/spaeter" not in r.text
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd backend && python -m pytest tests/test_ratgeber_public.py -q`
 Expected: FAIL — die Routen fehlen, der Catch-All liefert die Marketing-Startseite mit 200 statt 404
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 `backend/app/api/ratgeber_public.py` anlegen:
 
@@ -1353,12 +1353,12 @@ und direkt nach `app.include_router(seo_public.router)` einfügen:
 app.include_router(ratgeber_public.router)
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd backend && python -m pytest tests/test_ratgeber_public.py tests/test_seo_public.py -q`
 Expected: PASS (46 Tests, 1 übersprungen)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add backend/app/api/ratgeber_public.py backend/app/main.py backend/tests/test_ratgeber_public.py
@@ -1379,7 +1379,7 @@ Teil 1 hat `content_articles()` als Rumpf angelegt. Jetzt liest er aus der Daten
 - Consumes: `app.core.ratgeber.published`
 - Produces: `content_articles() -> list[SitemapArticle]` mit echtem Inhalt
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 An `backend/tests/test_ratgeber_public.py` anhängen:
 
@@ -1415,12 +1415,12 @@ def test_sitemap_ueberlebt_eine_defekte_beitragsdatenbank(web, monkeypatch, tmp_
     assert "https://novaerp.de/impressum" in r.text
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd backend && python -m pytest tests/test_ratgeber_public.py -q -k "sitemap or llms"`
 Expected: FAIL — die Beiträge tauchen nicht auf, `content_articles()` liefert `[]`
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 In `backend/app/api/seo_public.py` die Funktion ersetzen:
 
@@ -1457,12 +1457,12 @@ def content_articles() -> list[SitemapArticle]:
     return ergebnis
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd backend && python -m pytest tests/test_ratgeber_public.py tests/test_seo_public.py -q`
 Expected: PASS (50 Tests, 1 übersprungen)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add backend/app/api/seo_public.py backend/tests/test_ratgeber_public.py
@@ -1482,7 +1482,7 @@ git commit -m "feat(ratgeber): Sitemap und llms.txt ziehen die veröffentlichten
 - Consumes: `app.api.v1.platform._require_admin`, `app.core.ratgeber.*`, `render_article_page`
 - Produces: `router` mit Präfix `/platform/ratgeber`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `backend/tests/test_ratgeber_admin.py` anlegen:
 
@@ -1588,12 +1588,12 @@ def test_warteschlange_sortieren(web):
     assert [x.slug for x in ratgeber.list_all(status="warteschlange")] == ["c", "a", "b"]
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd backend && python -m pytest tests/test_ratgeber_admin.py -q`
 Expected: FAIL — 404 auf allen Routen, das Modul existiert nicht
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 `backend/app/api/v1/ratgeber.py` anlegen:
 
@@ -1721,12 +1721,12 @@ app.include_router(
 )
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd backend && python -m pytest tests/test_ratgeber_admin.py -q`
 Expected: PASS (9 Tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add backend/app/api/v1/ratgeber.py backend/app/main.py backend/tests/test_ratgeber_admin.py
@@ -1745,7 +1745,7 @@ git commit -m "feat(ratgeber): Redaktions-API hinter dem Platform-Admin-Key"
 - Consumes: `/api/v1/platform/ratgeber*`
 - Produces: nichts für andere Tasks
 
-- [ ] **Step 1: Abschnitt in die Seite einsetzen**
+- [x] **Step 1: Abschnitt in die Seite einsetzen**
 
 Nach dem `<!-- Tenants -->`-Block in `backend/static_admin/index.html` einfügen:
 
@@ -1797,7 +1797,7 @@ Nach dem `<!-- Tenants -->`-Block in `backend/static_admin/index.html` einfügen
       </div>
 ```
 
-- [ ] **Step 2: JavaScript ergänzen**
+- [x] **Step 2: JavaScript ergänzen**
 
 Vor `// Auto-login if key present` einfügen:
 
@@ -1923,7 +1923,7 @@ und in `loadAll()` nach `renderTenants(...)` ergänzen:
         await ladeBeitraege();
 ```
 
-- [ ] **Step 3: Gesamtlauf**
+- [x] **Step 3: Gesamtlauf**
 
 Run: `cd backend && python -m pytest tests/test_ratgeber_store.py tests/test_ratgeber_render.py tests/test_ratgeber_public.py tests/test_ratgeber_admin.py tests/test_seo_public.py -q`
 Expected: PASS
@@ -1931,7 +1931,7 @@ Expected: PASS
 Run: `cd backend && python -m pytest tests/ -q --ignore=tests/test_forecast_engine.py`
 Expected: keine neuen Fehler gegenüber dem Stand vor Task 1 (Baseline: 15 vorbestehende Fehler, 1 Fehlerfall)
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add backend/static_admin/index.html
