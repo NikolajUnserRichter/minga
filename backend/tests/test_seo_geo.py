@@ -170,3 +170,48 @@ def test_nightly_isoliert_fehler_einzelner_sammler(monkeypatch):
     assert ergebnis["geo"]["status"] == "inaktiv"  # kein Key in der Testumgebung
     assert ergebnis["firstparty"]["status"] == "ok"
     assert any(e["quelle"] == "nightly" for e in seo_store.changelog_entries())
+
+
+# --- Vorschläge ---------------------------------------------------------------
+
+
+def test_vorschlag_fuer_unbedientes_thema():
+    seo_store.record_gsc_rows("2026-08-20", [
+        {"page": "https://novaerp.de/", "query": "lager software kmu",
+         "clicks": 0, "impressions": 120, "position": 18.0},
+    ])
+    hinweise = seo_geo.suggestions(heute=date(2026, 8, 21))
+    assert any(h["art"] == "inhalt" and "lager software kmu" in h["text"]
+               for h in hinweise)
+
+
+def test_kein_vorschlag_wenn_ratgeber_das_thema_traegt():
+    from app.core import ratgeber
+    ratgeber.save(ratgeber.Article(
+        slug="lager-software", title="Lagerverwaltung: die richtige Software für KMU",
+        summary="Software-Auswahl fürs Lager.", body="Lager, Software, KMU."))
+    ratgeber.publish("lager-software")
+    seo_store.record_gsc_rows("2026-08-20", [
+        {"page": "https://novaerp.de/", "query": "lager software kmu",
+         "clicks": 0, "impressions": 120, "position": 18.0},
+    ])
+    hinweise = seo_geo.suggestions(heute=date(2026, 8, 21))
+    assert not any(h["art"] == "inhalt" for h in hinweise)
+
+
+def test_vorschlag_bei_schwacher_ctr():
+    seo_store.record_gsc_rows("2026-08-20", [
+        {"page": "https://novaerp.de/", "query": "erp preise",
+         "clicks": 1, "impressions": 200, "position": 4.0},
+    ])
+    hinweise = seo_geo.suggestions(heute=date(2026, 8, 21))
+    assert any(h["art"] == "snippet" and "erp preise" in h["text"]
+               for h in hinweise)
+
+
+def test_geo_null_quote_erzeugt_hinweis():
+    for i in range(20):
+        seo_store.record_geo_run("2026-08-21", "erp-kmu-allgemein", "discovery",
+                                 zitiert=False, domains=["sap.com"])
+    hinweise = seo_geo.suggestions(heute=date(2026, 8, 21))
+    assert any(h["art"] == "geo" for h in hinweise)

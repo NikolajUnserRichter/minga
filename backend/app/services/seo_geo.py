@@ -226,3 +226,49 @@ def nightly(heute: Optional[date] = None) -> dict:
             ergebnis[name] = {"status": "fehler", "grund": str(fehler)}
     seo_store.log_change("nightly", json.dumps(ergebnis, ensure_ascii=False))
     return ergebnis
+
+
+def suggestions(heute: Optional[date] = None) -> list[dict]:
+    """Heuristische Vorschläge aus den Messdaten.
+
+    Nur Hinweise, kein automatischer Eingriff: die Marketing-Seiten liegen
+    im Image, und über Ratgeber-Inhalte entscheidet die Redaktion. Bewusst
+    ohne LLM — dieselben Daten ergeben immer dieselben Vorschläge.
+    """
+    hinweise: list[dict] = []
+    try:
+        from app.core import ratgeber
+        live = ratgeber.published()
+    except Exception:  # noqa: BLE001 — kaputter Redaktionsspeicher blockiert nicht
+        live = []
+    texte = " ".join(f"{a.title} {a.summary} {a.body}".lower() for a in live)
+
+    for q in seo_store.gsc_top_queries(days=28, limit=50, heute=heute):
+        anfrage = q["query"].strip().lower()
+        if not anfrage or q["impressions"] < 50:
+            continue
+        ctr = q["clicks"] / q["impressions"]
+        deckt_ab = all(wort in texte for wort in anfrage.split())
+        if q["position"] > 10 and not deckt_ab:
+            hinweise.append({
+                "art": "inhalt",
+                "text": (f"Ratgeber-Beitrag zu „{anfrage}“ anlegen — "
+                         f"{q['impressions']} Impressionen auf Position "
+                         f"{q['position']}, kein passender Beitrag."),
+            })
+        elif q["position"] <= 10 and ctr < 0.01:
+            hinweise.append({
+                "art": "snippet",
+                "text": (f"Snippet für „{anfrage}“ prüfen — Position "
+                         f"{q['position']}, aber CTR unter 1 %."),
+            })
+
+    geo = seo_store.geo_summary(days=28, heute=heute)
+    if geo["discovery"]["laeufe"] >= 20 and geo["discovery"]["zitiert"] == 0:
+        hinweise.append({
+            "art": "geo",
+            "text": ("Kein einziges KI-Zitat im Discovery-Set — "
+                     "Ratgeber-Cluster ausbauen und zitierfähige Zahlen/Quellen "
+                     "in die Beiträge bringen."),
+        })
+    return hinweise
