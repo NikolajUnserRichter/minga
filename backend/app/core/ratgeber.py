@@ -254,3 +254,80 @@ def delete(slug: str) -> bool:
         return cur.rowcount > 0
     finally:
         c.close()
+
+
+def _status_setzen(slug: str, status: str, published_at: Optional[str]) -> Article:
+    c = _conn()
+    try:
+        cur = c.execute(
+            "UPDATE articles SET status = ?, published_at = ?, updated_at = ?"
+            " WHERE slug = ?",
+            (status, published_at,
+             datetime.utcnow().isoformat(timespec="seconds"), slug),
+        )
+        c.commit()
+        if cur.rowcount == 0:
+            raise KeyError(slug)
+    finally:
+        c.close()
+    geladen = get(slug)
+    assert geladen is not None
+    return geladen
+
+
+def publish(slug: str, heute: Optional[date] = None) -> Article:
+    """Beitrag live stellen.
+
+    Das Datum wird nur beim ersten Mal gesetzt. Eine spätere Korrektur am
+    Text darf das Veröffentlichungsdatum nicht nach vorn schieben — sonst
+    sieht jede Kleinigkeit aus wie ein neuer Beitrag.
+    """
+    slug = pruefe_slug(slug)
+    vorhanden = get(slug)
+    if vorhanden is None:
+        raise KeyError(slug)
+    datum = vorhanden.published_at or (heute or date.today()).isoformat()
+    return _status_setzen(slug, STATUS_LIVE, datum)
+
+
+def unpublish(slug: str) -> Article:
+    """Beitrag aus der Öffentlichkeit nehmen, Datum behalten.
+
+    Wer denselben Beitrag später erneut live stellt, soll nicht plötzlich
+    als Erstveröffentlichung dastehen.
+    """
+    slug = pruefe_slug(slug)
+    vorhanden = get(slug)
+    if vorhanden is None:
+        raise KeyError(slug)
+    return _status_setzen(slug, STATUS_ENTWURF, vorhanden.published_at)
+
+
+def set_queue(slugs: list[str]) -> None:
+    """Reihenfolge der Warteschlange festschreiben."""
+    geprueft = [pruefe_slug(s) for s in slugs]
+    jetzt = datetime.utcnow().isoformat(timespec="seconds")
+    c = _conn()
+    try:
+        for position, slug in enumerate(geprueft):
+            c.execute(
+                "UPDATE articles SET queue_position = ?, updated_at = ? WHERE slug = ?",
+                (position, jetzt, slug),
+            )
+        c.commit()
+    finally:
+        c.close()
+
+
+def published() -> list[Article]:
+    """Live-Beiträge, neueste Veröffentlichung zuerst."""
+    c = _conn()
+    try:
+        rows = c.execute(
+            "SELECT * FROM articles WHERE status = ?"
+            " ORDER BY published_at DESC, updated_at DESC",
+            (STATUS_LIVE,),
+        ).fetchall()
+    finally:
+        c.close()
+    return [_aus_zeile(r) for r in rows]

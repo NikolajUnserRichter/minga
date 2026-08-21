@@ -1,4 +1,6 @@
 """Tests für die Ratgeber-Datenschicht."""
+from datetime import date
+
 import pytest
 
 from app.core import ratgeber
@@ -81,3 +83,51 @@ def test_liste_filtert_nach_status():
     ratgeber.save(_beitrag("a"))
     ratgeber.save(_beitrag("b", status="live"))
     assert [x.slug for x in ratgeber.list_all(status="live")] == ["b"]
+
+
+# --- Veröffentlichen -------------------------------------------------------
+
+
+def test_veroeffentlichen_setzt_status_und_datum():
+    ratgeber.save(_beitrag())
+    veroeffentlicht = ratgeber.publish("erp-einfuehrung", heute=date(2026, 8, 21))
+    assert veroeffentlicht.status == "live"
+    assert veroeffentlicht.published_at == "2026-08-21"
+
+
+def test_datum_wandert_bei_spaeterer_bearbeitung_nicht():
+    ratgeber.save(_beitrag())
+    ratgeber.publish("erp-einfuehrung", heute=date(2026, 8, 21))
+    ratgeber.save(_beitrag(title="Korrigierter Titel", status="live"))
+    ratgeber.publish("erp-einfuehrung", heute=date(2026, 12, 24))
+    assert ratgeber.get("erp-einfuehrung").published_at == "2026-08-21"
+
+
+def test_zurueckziehen_nimmt_den_beitrag_aus_der_liste_behaelt_aber_das_datum():
+    ratgeber.save(_beitrag())
+    ratgeber.publish("erp-einfuehrung", heute=date(2026, 8, 21))
+    zurueck = ratgeber.unpublish("erp-einfuehrung")
+    assert zurueck.status == "entwurf"
+    assert zurueck.published_at == "2026-08-21"
+    assert ratgeber.published() == []
+
+
+def test_veroeffentlichte_liste_zeigt_neueste_zuerst():
+    ratgeber.save(_beitrag("alt"))
+    ratgeber.save(_beitrag("neu"))
+    ratgeber.publish("alt", heute=date(2026, 1, 5))
+    ratgeber.publish("neu", heute=date(2026, 8, 1))
+    assert [a.slug for a in ratgeber.published()] == ["neu", "alt"]
+
+
+def test_unbekannter_slug_laesst_sich_nicht_veroeffentlichen():
+    with pytest.raises(KeyError):
+        ratgeber.publish("gibt-es-nicht")
+
+
+def test_warteschlange_wird_in_der_uebergebenen_reihenfolge_nummeriert():
+    for slug in ("a", "b", "c"):
+        ratgeber.save(_beitrag(slug, status="warteschlange"))
+    ratgeber.set_queue(["c", "a", "b"])
+    warteschlange = ratgeber.list_all(status="warteschlange")
+    assert [x.slug for x in warteschlange] == ["c", "a", "b"]
