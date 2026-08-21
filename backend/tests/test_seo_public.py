@@ -1,4 +1,5 @@
 """Tests für das SEO-Fundament der Marketing-Seite (Apex novaerp.de)."""
+import json
 import re
 
 import pytest
@@ -197,3 +198,36 @@ def test_subdomain_behaelt_den_spa_fallback(web):
         pytest.skip("React-Build liegt nur im Container vor")
     r = web.get("/produktion/uebersicht", headers=TENANT)
     assert r.status_code == 200
+
+
+# --- Markup der statischen Seiten ------------------------------------------
+
+LD_BLOCK = re.compile(r'<script type="application/ld\+json">(.*?)</script>', re.DOTALL)
+
+RECHTSSEITEN = {
+    "impressum.html": "https://novaerp.de/impressum",
+    "datenschutz.html": "https://novaerp.de/datenschutz",
+    "agb.html": "https://novaerp.de/agb",
+}
+
+
+@pytest.mark.parametrize("datei,canonical", RECHTSSEITEN.items())
+def test_rechtsseiten_haben_canonical_und_open_graph(datei, canonical):
+    html = (site.marketing_dir() / datei).read_text(encoding="utf-8")
+    assert f'<link rel="canonical" href="{canonical}" />' in html
+    assert f'<meta property="og:url" content="{canonical}" />' in html
+    assert 'property="og:title"' in html
+    assert 'property="og:site_name" content="NovaERP"' in html
+
+
+@pytest.mark.parametrize("datei", list(RECHTSSEITEN))
+def test_rechtsseiten_tragen_webpage_schema(datei):
+    html = (site.marketing_dir() / datei).read_text(encoding="utf-8")
+    blocks = [json.loads(b) for b in LD_BLOCK.findall(html)]
+    assert any(b.get("@type") == "WebPage" for b in blocks)
+
+
+@pytest.mark.parametrize("datei", ["stats.html", "404.html"])
+def test_interne_seiten_sind_auf_noindex(datei):
+    html = (site.marketing_dir() / datei).read_text(encoding="utf-8")
+    assert '<meta name="robots" content="noindex, nofollow" />' in html
