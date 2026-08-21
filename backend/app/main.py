@@ -29,6 +29,7 @@ from app.tenancy import (
 )
 from app.api.v1 import seeds, production, sales, forecasting, products, invoices, inventory, analytics, capacity, suppliers, units, imports, documents, attachments, admin, document_templates, platform, procurement, integrations, staff
 from app.api.v1 import ratgeber as ratgeber_admin
+from app.api.v1 import seo_dashboard
 from app.api import ratgeber_public, seo_public
 from app.api.deps import get_current_user
 from app.core.security import verify_token
@@ -752,6 +753,12 @@ app.include_router(
 # Redaktions-API für den Ratgeber, ebenfalls über den Platform-Admin-Key
 app.include_router(
     ratgeber_admin.router,
+    prefix="/api/v1",
+)
+
+# SEO/GEO-Dashboard, ebenfalls über den Platform-Admin-Key
+app.include_router(
+    seo_dashboard.router,
     prefix="/api/v1",
 )
 
