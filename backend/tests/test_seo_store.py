@@ -64,3 +64,41 @@ def test_changelog_neueste_zuerst():
     eintraege = seo_store.changelog_entries()
     assert [e["nachricht"] for e in eintraege][:2] == ["zweiter", "erster"]
     assert eintraege[0]["quelle"] == "test"
+
+
+# --- GEO-Läufe, Grounding, KI-Verweise --------------------------------------
+
+
+def test_geo_laeufe_werden_nach_art_getrennt():
+    seo_store.record_geo_run("2026-08-21", "erp-kmu", "discovery",
+                             zitiert=True, domains=["novaerp.de"])
+    seo_store.record_geo_run("2026-08-21", "erp-lager", "discovery",
+                             zitiert=False, domains=["sap.com"])
+    seo_store.record_geo_run("2026-08-21", "marke-was-ist", "marke",
+                             zitiert=True, domains=["novaerp.de"])
+    z = seo_store.geo_summary(days=7, heute=date(2026, 8, 21))
+    assert z["discovery"] == {"laeufe": 2, "zitiert": 1, "quote": 0.5}
+    assert z["marke"]["quote"] == 1.0
+
+
+def test_unbekannte_art_wird_abgewiesen():
+    with pytest.raises(ValueError):
+        seo_store.record_geo_run("2026-08-21", "x", "gemischt",
+                                 zitiert=False, domains=[])
+
+
+def test_grounding_zaehler_tag_und_monat():
+    seo_store.grounding_increment("2026-08-20", 3)
+    seo_store.grounding_increment("2026-08-21", 2)
+    seo_store.grounding_increment("2026-08-21")
+    assert seo_store.grounding_spent("2026-08-21") == (3, 6)
+    # Monatswechsel beginnt bei null.
+    assert seo_store.grounding_spent("2026-09-01") == (0, 0)
+
+
+def test_ai_referrals_pro_tag_ueberschreibbar():
+    seo_store.record_ai_referrals("2026-08-21", 2, ["chatgpt.com"])
+    seo_store.record_ai_referrals("2026-08-21", 4, ["chatgpt.com", "perplexity.ai"])
+    z = seo_store.ai_referrals_summary(days=7, heute=date(2026, 8, 21))
+    assert z["gesamt"] == 4
+    assert z["per_day"] == [{"day": "2026-08-21", "count": 4}]

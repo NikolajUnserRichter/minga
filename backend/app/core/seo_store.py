@@ -155,3 +155,101 @@ def changelog_entries(limit: int = 50) -> list[dict]:
     finally:
         c.close()
     return [{"ts": t, "quelle": q, "nachricht": n} for t, q, n in rows]
+
+
+def record_geo_run(day: str, prompt_id: str, art: str,
+                   zitiert: bool, domains: list[str]) -> None:
+    """Eine GEO-Messung festhalten (ein Prompt, eine Engine-Antwort)."""
+    if art not in (ART_DISCOVERY, ART_MARKE):
+        raise ValueError(f"Unbekannte Prompt-Art: '{art}'")
+    c = _conn()
+    try:
+        c.execute(
+            "INSERT INTO geo_runs (day, prompt_id, art, zitiert, domains)"
+            " VALUES (?,?,?,?,?)",
+            (day, prompt_id, art, 1 if zitiert else 0,
+             json.dumps(domains, ensure_ascii=False)),
+        )
+        c.commit()
+    finally:
+        c.close()
+
+
+def geo_summary(days: int = 28, heute: Optional[date] = None) -> dict:
+    """Zitatquoten, strikt getrennt nach Discovery und Marke."""
+    c = _conn()
+    try:
+        rows = c.execute(
+            "SELECT art, COUNT(*), COALESCE(SUM(zitiert),0) FROM geo_runs"
+            " WHERE day >= ? GROUP BY art", (_seit(days, heute),)
+        ).fetchall()
+    finally:
+        c.close()
+    leer = {"laeufe": 0, "zitiert": 0, "quote": 0.0}
+    out = {ART_DISCOVERY: dict(leer), ART_MARKE: dict(leer)}
+    for art, n, z in rows:
+        if art in out:
+            out[art] = {"laeufe": n, "zitiert": z, "quote": round(z / n, 3)}
+    return out
+
+
+def grounding_increment(day: str, n: int = 1) -> None:
+    """Verbrauch des Grounding-Kontingents hochzählen."""
+    c = _conn()
+    try:
+        c.execute(
+            "INSERT INTO grounding_usage (day, count) VALUES (?, ?)"
+            " ON CONFLICT(day) DO UPDATE SET count = count + excluded.count",
+            (day, n),
+        )
+        c.commit()
+    finally:
+        c.close()
+
+
+def grounding_spent(day: str) -> tuple[int, int]:
+    """Verbrauch (Tag, laufender Monat) — Grundlage des Kostenriegels."""
+    monat = day[:7]
+    c = _conn()
+    try:
+        tag = c.execute(
+            "SELECT COALESCE(count,0) FROM grounding_usage WHERE day = ?", (day,)
+        ).fetchone()
+        mon = c.execute(
+            "SELECT COALESCE(SUM(count),0) FROM grounding_usage WHERE day LIKE ?",
+            (f"{monat}-%",),
+        ).fetchone()
+    finally:
+        c.close()
+    return (tag[0] if tag else 0, mon[0])
+
+
+def record_ai_referrals(day: str, count: int, domains: list[str]) -> None:
+    """Besuche über KI-Verweise für einen Tag festhalten (überschreibend)."""
+    c = _conn()
+    try:
+        c.execute(
+            "INSERT INTO ai_referrals (day, count, domains) VALUES (?,?,?)"
+            " ON CONFLICT(day) DO UPDATE SET"
+            " count=excluded.count, domains=excluded.domains",
+            (day, int(count), json.dumps(domains, ensure_ascii=False)),
+        )
+        c.commit()
+    finally:
+        c.close()
+
+
+def ai_referrals_summary(days: int = 28, heute: Optional[date] = None) -> dict:
+    """KI-Verweis-Besuche der letzten ``days`` Tage."""
+    c = _conn()
+    try:
+        rows = c.execute(
+            "SELECT day, count FROM ai_referrals WHERE day >= ? ORDER BY day",
+            (_seit(days, heute),),
+        ).fetchall()
+    finally:
+        c.close()
+    return {
+        "gesamt": sum(n for _, n in rows),
+        "per_day": [{"day": d, "count": n} for d, n in rows],
+    }
