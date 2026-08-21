@@ -129,6 +129,21 @@ def start_scheduler() -> Optional[BackgroundScheduler]:
             replace_existing=True,
         )
 
+    # SEO/GEO-Nachtlauf: Search Console, GEO-Messung, First-Party-Signal.
+    # NICHT per-Tenant gewrappt — Marketing-Domain, kein Mandantenbezug.
+    # Ohne Zugangsdaten laufen die Sammler als No-Op durch.
+    if os.getenv("SEO_GEO_ENABLED", "true").lower() in ("1", "true", "yes"):
+        from app.services.seo_geo import nightly as seo_geo_nightly
+        sched.add_job(
+            seo_geo_nightly,
+            trigger=CronTrigger(hour=4, minute=15),
+            id="seo-geo-nightly",
+            name="seo-geo-nightly",
+            coalesce=True,
+            max_instances=1,
+            replace_existing=True,
+        )
+
     sched.start()
     _scheduler = sched
     job_names = [j.id for j in sched.get_jobs()]
