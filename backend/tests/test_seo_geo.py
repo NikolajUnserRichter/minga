@@ -215,3 +215,18 @@ def test_geo_null_quote_erzeugt_hinweis():
                                  zitiert=False, domains=["sap.com"])
     hinweise = seo_geo.suggestions(heute=date(2026, 8, 21))
     assert any(h["art"] == "geo" for h in hinweise)
+
+
+def test_grounding_domains_ignorieren_googles_redirect_proxy():
+    # So sehen echte Antworten aus: die uri zeigt auf Googles Redirect-Proxy,
+    # die Quell-Domain steht im title.
+    antwort = {"candidates": [{"groundingMetadata": {"groundingChunks": [
+        {"web": {"uri": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AbF...",
+                 "title": "sap.com"}},
+        {"web": {"uri": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/XyZ...",
+                 "title": "novaerp.de"}},
+        # Ein Seitentitel mit Leerzeichen ist keine Domain und liefert nichts.
+        {"web": {"uri": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/Q",
+                 "title": "NovaERP — Das ERP für KMU"}},
+    ]}}]}
+    assert seo_geo._grounding_domains(antwort) == ["sap.com", "novaerp.de"]

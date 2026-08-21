@@ -57,17 +57,26 @@ def budget_status(heute: Optional[date] = None) -> dict:
 
 
 def _grounding_domains(antwort: dict) -> list[str]:
-    """Domains der Belege aus den groundingChunks ziehen."""
+    """Domains der Belege aus den groundingChunks ziehen.
+
+    In echten Antworten ist ``web.uri`` nur Googles Redirect-Proxy
+    (vertexaisearch.cloud.google.com) — die Quell-Domain steht im
+    ``title``. Der Proxy-Host wird verworfen, sonst wäre jede
+    Zitat-Erkennung ein False Negative.
+    """
     domains: list[str] = []
     for kandidat in antwort.get("candidates") or []:
         meta = kandidat.get("groundingMetadata") or {}
         for chunk in meta.get("groundingChunks") or []:
             web = chunk.get("web") or {}
-            wert = (web.get("domain")
-                    or urlparse(web.get("uri", "")).netloc
-                    or web.get("title") or "").lower()
-            if wert:
-                domains.append(wert)
+            kandidaten = (web.get("domain"), web.get("title"),
+                          urlparse(web.get("uri", "")).netloc)
+            for wert in kandidaten:
+                wert = (wert or "").strip().lower()
+                if (wert and "." in wert and " " not in wert
+                        and "vertexaisearch" not in wert):
+                    domains.append(wert)
+                    break
     return domains
 
 
