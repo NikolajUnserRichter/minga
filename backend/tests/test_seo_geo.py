@@ -134,3 +134,39 @@ def test_gsc_holt_token_und_speichert_zeilen(monkeypatch):
     assert len(aufrufe) == 2
     z = seo_store.gsc_summary(days=28, heute=date(2026, 8, 21))
     assert z["totals"] == {"clicks": 3, "impressions": 50}
+
+
+# --- First-Party-Signal und Nachtlauf ----------------------------------------
+
+
+def test_firstparty_zaehlt_nur_ki_verweise():
+    def fake_stats(days=1):
+        return {"top_referrers": [
+            {"ref": "https://chatgpt.com/", "views": 3},
+            {"ref": "https://www.google.com/", "views": 50},
+            {"ref": "https://perplexity.ai/search", "views": 2},
+        ]}
+
+    ergebnis = seo_geo.collect_firstparty(date(2026, 8, 21), stats_fn=fake_stats)
+    assert ergebnis == {"status": "ok", "ki_besuche": 5}
+    z = seo_store.ai_referrals_summary(days=7, heute=date(2026, 8, 21))
+    assert z["gesamt"] == 5
+
+
+def test_sammler_status_ohne_zugangsdaten():
+    assert seo_geo.sammler_status() == {
+        "gsc": False, "geo": False, "firstparty": True}
+
+
+def test_nightly_isoliert_fehler_einzelner_sammler(monkeypatch):
+    def kaputt(tag, post=None):
+        raise RuntimeError("GSC explodiert")
+
+    monkeypatch.setattr(seo_geo, "collect_gsc", kaputt)
+    monkeypatch.setattr(seo_geo, "collect_firstparty",
+                        lambda tag, stats_fn=None: {"status": "ok", "ki_besuche": 0})
+    ergebnis = seo_geo.nightly(heute=date(2026, 8, 21))
+    assert ergebnis["gsc"]["status"] == "fehler"
+    assert ergebnis["geo"]["status"] == "inaktiv"  # kein Key in der Testumgebung
+    assert ergebnis["firstparty"]["status"] == "ok"
+    assert any(e["quelle"] == "nightly" for e in seo_store.changelog_entries())

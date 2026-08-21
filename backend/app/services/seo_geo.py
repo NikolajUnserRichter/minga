@@ -174,3 +174,55 @@ def collect_gsc(tag: date, post: Callable = _post_json) -> dict:
               for r in antwort.get("rows", [])]
     seo_store.record_gsc_rows(tag.isoformat(), zeilen)
     return {"status": "ok", "zeilen": len(zeilen)}
+
+
+# Verweise, hinter denen eine generative Engine steht. Zitiert werden ist
+# Mittel, nicht Zweck — dieses Signal zeigt, ob aus KI-Antworten Besucher werden.
+_AI_REFERRER = ("chatgpt.com", "chat.openai.com", "perplexity.ai",
+                "gemini.google.com", "copilot.microsoft.com", "claude.ai",
+                "you.com", "phind.com")
+
+
+def collect_firstparty(tag: date, stats_fn: Optional[Callable] = None) -> dict:
+    """KI-Verweise aus der eigenen cookielosen Zählung festhalten."""
+    if stats_fn is None:
+        from app.core.webstats import stats as stats_fn  # type: ignore[no-redef]
+    daten = stats_fn(days=1)
+    besuche = 0
+    gefunden: list[str] = []
+    for eintrag in daten.get("top_referrers", []):
+        ref = (eintrag.get("ref") or "").lower()
+        if any(dom in ref for dom in _AI_REFERRER):
+            besuche += int(eintrag.get("views", 0))
+            gefunden.append(ref)
+    seo_store.record_ai_referrals(tag.isoformat(), besuche, gefunden)
+    return {"status": "ok", "ki_besuche": besuche}
+
+
+def sammler_status() -> dict:
+    """Welche Sammler haben Zugangsdaten? Fürs Dashboard."""
+    return {
+        "gsc": bool(_gsc_zugang()
+                    and os.environ.get("GSC_SITE_URL", "").strip()),
+        "geo": bool(os.environ.get("GEMINI_API_KEY", "").strip()),
+        "firstparty": True,  # braucht keine Zugangsdaten
+    }
+
+
+def nightly(heute: Optional[date] = None) -> dict:
+    """Der nächtliche Lauf. Jeder Sammler fällt einzeln, nie der ganze Job."""
+    heute = heute or date.today()
+    gsc_tag = heute - timedelta(days=3)  # GSC-Daten sind erst dann vollständig
+    ergebnis: dict[str, Any] = {}
+    for name, aufruf in (
+        ("gsc", lambda: collect_gsc(gsc_tag)),
+        ("geo", lambda: measure_geo(heute)),
+        ("firstparty", lambda: collect_firstparty(heute)),
+    ):
+        try:
+            ergebnis[name] = aufruf()
+        except Exception as fehler:  # noqa: BLE001 — Sammler isolieren
+            logger.exception(f"[seo-geo] Sammler '{name}' fehlgeschlagen")
+            ergebnis[name] = {"status": "fehler", "grund": str(fehler)}
+    seo_store.log_change("nightly", json.dumps(ergebnis, ensure_ascii=False))
+    return ergebnis
