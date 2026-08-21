@@ -231,3 +231,43 @@ def test_rechtsseiten_tragen_webpage_schema(datei):
 def test_interne_seiten_sind_auf_noindex(datei):
     html = (site.marketing_dir() / datei).read_text(encoding="utf-8")
     assert '<meta name="robots" content="noindex, nofollow" />' in html
+
+
+# --- Entity-Markup der Startseite ------------------------------------------
+
+
+def _startseiten_graph():
+    html = (site.marketing_dir() / "index.html").read_text(encoding="utf-8")
+    blocks = [json.loads(b) for b in LD_BLOCK.findall(html)]
+    knoten = []
+    for b in blocks:
+        knoten.extend(b["@graph"] if "@graph" in b else [b])
+    return knoten
+
+
+def test_startseite_hat_website_knoten_mit_publisher():
+    website = [k for k in _startseiten_graph() if k.get("@type") == "WebSite"]
+    assert len(website) == 1
+    assert website[0]["@id"] == "https://novaerp.de/#website"
+    assert website[0]["publisher"] == {"@id": "https://novaerp.de/#org"}
+    assert website[0]["inLanguage"] == "de-DE"
+
+
+def test_organisation_traegt_logo_und_kontakt():
+    org = [k for k in _startseiten_graph() if k.get("@type") == "Organization"][0]
+    assert org["@id"] == "https://novaerp.de/#org"
+    assert org["logo"].startswith("https://novaerp.de/")
+    assert org["contactPoint"]["email"] == "info@novaerp.de"
+
+
+def test_kein_erfundenes_sameas():
+    # Erfundene Profilverweise schaden der Entity-Erkennung mehr als sie nutzen.
+    org = [k for k in _startseiten_graph() if k.get("@type") == "Organization"][0]
+    assert "sameAs" not in org or org["sameAs"]
+
+
+def test_alle_json_ld_bloecke_der_marketing_seiten_sind_valide():
+    for datei in ("index.html", "impressum.html", "datenschutz.html", "agb.html"):
+        html = (site.marketing_dir() / datei).read_text(encoding="utf-8")
+        for block in LD_BLOCK.findall(html):
+            json.loads(block)  # wirft bei kaputtem JSON

@@ -46,13 +46,29 @@
     "@context": "https://schema.org",
     "@graph": [
       {
+        "@type": "WebSite",
+        "@id": "https://novaerp.de/#website",
+        "url": "https://novaerp.de/",
+        "name": "NovaERP",
+        "inLanguage": "de-DE",
+        "publisher": { "@id": "https://novaerp.de/#org" }
+      },
+      {
         "@type": "Organization",
         "@id": "https://novaerp.de/#org",
         "name": "NovaERP",
         "url": "https://novaerp.de/",
         "email": "info@novaerp.de",
+        "logo": "https://novaerp.de/logo-dark.png",
         "slogan": "Das ERP, das mit deinem Start-up mitwächst.",
-        "address": { "@type": "PostalAddress", "addressLocality": "Karlsruhe", "addressCountry": "DE" }
+        "address": { "@type": "PostalAddress", "addressLocality": "Karlsruhe", "addressCountry": "DE" },
+        "contactPoint": {
+          "@type": "ContactPoint",
+          "contactType": "customer support",
+          "email": "info@novaerp.de",
+          "areaServed": "DE",
+          "availableLanguage": ["German"]
+        }
       },
       {
         "@type": "SoftwareApplication",
