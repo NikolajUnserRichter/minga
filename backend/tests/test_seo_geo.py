@@ -92,3 +92,45 @@ def test_budget_status_meldet_verbrauch_und_grenzen():
     seo_store.grounding_increment("2026-08-21", 7)
     status = seo_geo.budget_status(heute=date(2026, 8, 21))
     assert status == {"heute": 7, "monat": 7, "budget_tag": 50, "budget_monat": 4500}
+
+
+# --- Search Console ----------------------------------------------------------
+
+
+def test_gsc_ohne_zugang_ist_inaktiv():
+    assert seo_geo.collect_gsc(date(2026, 8, 18))["status"] == "inaktiv"
+
+
+def test_gsc_zugang_aus_datei(tmp_path, monkeypatch):
+    datei = tmp_path / "sa.json"
+    datei.write_text('{"client_email": "a@b", "private_key": "k"}', encoding="utf-8")
+    monkeypatch.setenv("GSC_SERVICE_ACCOUNT_JSON", str(datei))
+    assert seo_geo._gsc_zugang()["client_email"] == "a@b"
+
+
+def test_gsc_holt_token_und_speichert_zeilen(monkeypatch):
+    monkeypatch.setenv("GSC_SITE_URL", "sc-domain:novaerp.de")
+    monkeypatch.setenv(
+        "GSC_SERVICE_ACCOUNT_JSON",
+        '{"client_email": "seo@p.iam.gserviceaccount.com", "private_key": "test"}',
+    )
+    # Ein echter RS256-Key hat im Test nichts verloren — die Signatur wird ersetzt.
+    monkeypatch.setattr(seo_geo, "_signierte_assertion", lambda zugang: "test-jwt")
+    aufrufe = []
+
+    def fake_post(url, json_body=None, data=None, headers=None, **kw):
+        aufrufe.append(url)
+        if "oauth2" in url:
+            assert data["assertion"] == "test-jwt"
+            return {"access_token": "zugriff"}
+        assert headers["Authorization"] == "Bearer zugriff"
+        assert "sc-domain%3Anovaerp.de" in url
+        assert json_body["dimensions"] == ["page", "query"]
+        return {"rows": [{"keys": ["https://novaerp.de/", "erp kmu"],
+                          "clicks": 3, "impressions": 50, "position": 7.2}]}
+
+    ergebnis = seo_geo.collect_gsc(date(2026, 8, 18), post=fake_post)
+    assert ergebnis == {"status": "ok", "zeilen": 1}
+    assert len(aufrufe) == 2
+    z = seo_store.gsc_summary(days=28, heute=date(2026, 8, 21))
+    assert z["totals"] == {"clicks": 3, "impressions": 50}

@@ -112,3 +112,65 @@ def measure_geo(tag: date, post: Callable = _post_json) -> dict:
         seo_store.log_change(
             "geo", f"Kostenriegel: {uebersprungen} Prompts übersprungen")
     return {"status": "ok", "gemessen": gemessen, "uebersprungen": uebersprungen}
+
+
+_TOKEN_URL = "https://oauth2.googleapis.com/token"
+_GSC_SCOPE = "https://www.googleapis.com/auth/webmasters.readonly"
+
+
+def _gsc_zugang() -> Optional[dict]:
+    """Service-Account-JSON aus der Umgebung — Inhalt oder Dateipfad."""
+    raw = os.environ.get("GSC_SERVICE_ACCOUNT_JSON", "").strip()
+    if not raw:
+        return None
+    try:
+        if raw.startswith("{"):
+            return json.loads(raw)
+        return json.loads(Path(raw).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        logger.warning("[seo-geo] GSC_SERVICE_ACCOUNT_JSON ist nicht lesbar")
+        return None
+
+
+def _signierte_assertion(zugang: dict) -> str:
+    """RS256-JWT für den OAuth-Token-Tausch — python-jose statt Google-SDK."""
+    from jose import jwt  # bereits installiert (python-jose)
+    jetzt = int(datetime.utcnow().timestamp())
+    return jwt.encode(
+        {"iss": zugang["client_email"], "scope": _GSC_SCOPE,
+         "aud": _TOKEN_URL, "iat": jetzt, "exp": jetzt + 3600},
+        zugang["private_key"], algorithm="RS256",
+    )
+
+
+def collect_gsc(tag: date, post: Callable = _post_json) -> dict:
+    """Search-Console-Zeilen genau eines Tages holen.
+
+    Die GSC liefert mit zwei bis drei Tagen Verzug — der Aufrufer reicht
+    bereits einen fertigen Tag herein (nightly: heute minus drei).
+    """
+    zugang = _gsc_zugang()
+    site = os.environ.get("GSC_SITE_URL", "").strip()
+    if zugang is None or not site:
+        return {"status": "inaktiv",
+                "grund": "kein Service-Account oder keine GSC_SITE_URL"}
+
+    token = post(_TOKEN_URL, data={
+        "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
+        "assertion": _signierte_assertion(zugang),
+    })["access_token"]
+
+    antwort = post(
+        "https://searchconsole.googleapis.com/webmasters/v3/sites/"
+        f"{quote(site, safe='')}/searchAnalytics/query",
+        json_body={"startDate": tag.isoformat(), "endDate": tag.isoformat(),
+                   "dimensions": ["page", "query"], "rowLimit": 5000},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    zeilen = [{"page": r["keys"][0], "query": r["keys"][1],
+               "clicks": r.get("clicks", 0),
+               "impressions": r.get("impressions", 0),
+               "position": r.get("position", 0.0)}
+              for r in antwort.get("rows", [])]
+    seo_store.record_gsc_rows(tag.isoformat(), zeilen)
+    return {"status": "ok", "zeilen": len(zeilen)}
