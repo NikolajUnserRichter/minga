@@ -158,3 +158,42 @@ def test_kanonische_url_wird_nicht_umgeleitet(web):
 def test_subdomains_werden_nicht_umgeleitet(web):
     r = web.get("/irgendwas/", headers=TENANT, follow_redirects=False)
     assert r.status_code != 301
+
+
+# --- 404 und Docroot-Freigabe ----------------------------------------------
+
+
+def test_unbekannter_apex_pfad_liefert_echtes_404(web):
+    r = web.get("/gibt-es-nicht-xyz123", headers=APEX)
+    assert r.status_code == 404
+
+
+def test_404_seite_ist_auf_noindex_gestellt(web):
+    r = web.get("/gibt-es-nicht-xyz123", headers=APEX)
+    assert "noindex" in r.text
+
+
+def test_datenbank_im_docroot_wird_nicht_ausgeliefert(web):
+    # Liegt tatsächlich dort und wäre sonst als 1,5-MB-Download offen.
+    r = web.get("/ruvector.db", headers=APEX)
+    assert r.status_code == 404
+
+
+def test_backup_html_wird_nicht_ausgeliefert(web):
+    r = web.get("/index.backup-20260629-220459", headers=APEX)
+    assert r.status_code == 404
+
+
+def test_echte_seiten_werden_weiter_ausgeliefert(web):
+    for pfad in ("/", "/impressum", "/og.png", "/shot-dashboard.jpg"):
+        assert web.get(pfad, headers=APEX).status_code == 200, pfad
+
+
+def test_subdomain_behaelt_den_spa_fallback(web):
+    # Client-Routing der React-App braucht 200 auf unbekannten Pfaden.
+    from app.main import frontend_dist
+
+    if not (frontend_dist / "index.html").exists():
+        pytest.skip("React-Build liegt nur im Container vor")
+    r = web.get("/produktion/uebersicht", headers=TENANT)
+    assert r.status_code == 200

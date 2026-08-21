@@ -772,6 +772,25 @@ def _safe_static_file(base: Path, rel_path: str) -> Optional[Path]:
     return candidate
 
 
+# Nur diese Endungen liefert der Apex aus. Im Docroot liegen auch
+# Arbeitsdateien (eine SQLite-DB, HTML-Backups); ohne Freigabeliste sind
+# die per URL herunterladbar.
+_MARKETING_EXTENSIONS = frozenset({
+    ".html", ".css", ".js", ".map",
+    ".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".ico", ".avif",
+    ".woff", ".woff2", ".ttf",
+    ".txt", ".xml", ".webmanifest", ".pdf",
+})
+
+
+def _marketing_file(rel_path: str) -> Optional[Path]:
+    """Wie _safe_static_file, aber nur für webtaugliche Dateitypen."""
+    safe = _safe_static_file(marketing_dist, rel_path)
+    if safe and safe.suffix.lower() in _MARKETING_EXTENSIONS:
+        return safe
+    return None
+
+
 # === Kontakt-Formular (Marketing-Seite, apex, ohne Auth) =================
 import re as _re
 import html as _htmllib
@@ -908,16 +927,22 @@ async def spa_fallback(full_path: str, request: Request):
     # Apex (novaerp.de) → Marketing-Seite
     if _is_apex_request(request) and marketing_dist.exists():
         # Direkte Dateianforderung (z.B. /assets/foo.png) prüfen
-        safe = _safe_static_file(marketing_dist, full_path)
+        safe = _marketing_file(full_path)
         if safe:
             return FileResponse(safe)
         # Saubere URLs ohne .html mappen: /impressum → impressum.html
-        safe_html = _safe_static_file(marketing_dist, f"{full_path}.html")
-        if safe_html:
-            return FileResponse(safe_html)
-        # Sonst: Marketing-Index ausliefern
-        if (marketing_dist / "index.html").exists():
-            return FileResponse(marketing_dist / "index.html")
+        # Backup-Kopien (index.backup-*.html) bleiben dabei außen vor.
+        if not full_path.startswith("index.backup-"):
+            safe_html = _marketing_file(f"{full_path}.html")
+            if safe_html:
+                return FileResponse(safe_html)
+        # Unbekannter Pfad auf dem Apex ist ein echter Fehler. Früher kam
+        # hier die Startseite mit Status 200 — damit war jede erfundene URL
+        # indexierbar und erzeugte eine Dublette.
+        not_found = marketing_dist / "404.html"
+        if not_found.exists():
+            return FileResponse(not_found, status_code=404)
+        return JSONResponse(status_code=404, content={"detail": "Not Found"})
 
     # Subdomains → React-SPA
     if (frontend_dist / "index.html").exists():
