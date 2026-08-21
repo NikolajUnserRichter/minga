@@ -189,6 +189,17 @@
           </div>
         </div>
       </div>
+
+      <!-- SEO / GEO -->
+      <div class="section">
+        <h2>SEO &amp; GEO</h2>
+        <div class="grid" id="seoStats" style="margin-bottom:1rem"></div>
+        <div id="seoVorschlaege"></div>
+        <div id="seoProtokoll" class="muted" style="margin-top:1rem;font-family:ui-monospace,monospace;font-size:.78rem;line-height:1.9"></div>
+        <div style="margin-top:1rem">
+          <button class="btn btn-ghost" onclick="seoLaufStarten()">Nightly jetzt ausführen</button>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -242,6 +253,7 @@
         renderStats(info);
         renderTenants(data.tenants || []);
         await ladeBeitraege();
+        await ladeSeo();
         return true;
       } catch(e){
         toast('Verbindungsfehler: ' + e.message, 'err');
@@ -455,6 +467,43 @@
         aktuellerSlug = '';
         ladeBeitraege();
       } else { toast('Löschen fehlgeschlagen', 'err'); }
+    }
+
+    async function ladeSeo(){
+      try {
+        const res = await fetch(API + '/seo/overview', { headers: headers() });
+        if(!res.ok) return;
+        const d = await res.json();
+        const s = d.sammler || {};
+        const badge = on => on
+          ? '<span style="color:var(--ok)">aktiv</span>'
+          : '<span style="color:var(--ink-3)">inaktiv</span>';
+        const disc = (d.geo && d.geo.discovery) || {laeufe:0, quote:0};
+        const marke = (d.geo && d.geo.marke) || {laeufe:0, quote:0};
+        const g = d.grounding || {};
+        const gsc = (d.gsc && d.gsc.totals) || {clicks:0, impressions:0};
+        document.getElementById('seoStats').innerHTML = `
+          <div class="stat"><div class="num">${gsc.clicks}</div><div class="lbl">GSC-Klicks 28 T · ${badge(s.gsc)}</div></div>
+          <div class="stat"><div class="num">${Math.round((disc.quote||0)*100)}%</div><div class="lbl">GEO Discovery (${disc.laeufe||0} Läufe) · ${badge(s.geo)}</div></div>
+          <div class="stat"><div class="num">${Math.round((marke.quote||0)*100)}%</div><div class="lbl">GEO Marke (${marke.laeufe||0} Läufe)</div></div>
+          <div class="stat"><div class="num">${g.monat ?? 0}/${g.budget_monat ?? 0}</div><div class="lbl">Grounding-Budget Monat</div></div>
+          <div class="stat"><div class="num">${(d.ai_referrals && d.ai_referrals.gesamt) || 0}</div><div class="lbl">Besuche über KI-Verweise 28 T</div></div>`;
+        const v = d.vorschlaege || [];
+        document.getElementById('seoVorschlaege').innerHTML = v.length
+          ? '<ul style="margin:.5rem 0;padding-left:1.2rem">' +
+            v.map(x => `<li style="margin:.35rem 0">${esc(x.text)}</li>`).join('') + '</ul>'
+          : '<div class="empty">Keine Vorschläge — Datenlage zu dünn oder alles im grünen Bereich.</div>';
+        const p = d.protokoll || [];
+        document.getElementById('seoProtokoll').innerHTML =
+          p.slice(0, 8).map(e => `${esc(e.ts)} · ${esc(e.quelle)} · ${esc(e.nachricht)}`).join('<br>');
+      } catch(e){ /* Panel ist Zusatz — Fehler nicht in den Login-Flow tragen */ }
+    }
+
+    async function seoLaufStarten(){
+      toast('Nightly gestartet…');
+      const res = await fetch(API + '/seo/run', { method:'POST', headers: headers() });
+      if(res.ok){ toast('Nightly abgeschlossen', 'ok'); ladeSeo(); }
+      else { toast('Nightly fehlgeschlagen', 'err'); }
     }
 
     // Auto-login if key present
