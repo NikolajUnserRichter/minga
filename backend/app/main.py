@@ -28,7 +28,7 @@ from app.tenancy import (
     resolve_slug_from_host, set_request_tenant, DEFAULT_TENANT_SLUG,
 )
 from app.api.v1 import seeds, production, sales, forecasting, products, invoices, inventory, analytics, capacity, suppliers, units, imports, documents, attachments, admin, document_templates, platform, procurement, integrations, staff
-from app.api import seo_public
+from app.api import ratgeber_public, seo_public
 from app.api.deps import get_current_user
 from app.core.security import verify_token
 from app.core.site import (
@@ -585,6 +585,8 @@ async def root(request: Request):
 # MUSS vor dem Catch-All /{full_path:path} stehen, sonst schluckt der
 # die Pfade und liefert die Marketing-HTML mit Status 200.
 app.include_router(seo_public.router)
+# Öffentlicher Ratgeber. Ebenfalls vor dem Catch-All.
+app.include_router(ratgeber_public.router)
 
 # API Router einbinden
 app.include_router(
