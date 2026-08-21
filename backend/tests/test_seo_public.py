@@ -96,3 +96,28 @@ def test_sitemap_nennt_weder_statistik_noch_subdomains(web):
 def test_sitemap_gibt_es_nur_auf_dem_apex(web):
     r = web.get("/sitemap.xml", headers=TENANT)
     assert r.status_code == 404
+
+
+# --- llms.txt --------------------------------------------------------------
+
+
+def test_llms_txt_liefert_markdown_mit_kernangaben(web):
+    r = web.get("/llms.txt", headers=APEX)
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("text/plain")
+    assert r.text.startswith("# NovaERP")
+    # Verweise müssen absolut auf die Zieldomain zeigen, sonst laufen sie
+    # in KI-Antworten ins Leere.
+    assert "https://novaerp.de/impressum" in r.text
+    assert "https://novaerp.de/datenschutz" in r.text
+
+
+def test_llms_txt_nennt_die_belegbaren_eckdaten(web):
+    r = web.get("/llms.txt", headers=APEX)
+    for fakt in ("Falkenstein", "99 €", "299 €", "499 €", "monatlich kündbar"):
+        assert fakt in r.text
+
+
+def test_llms_txt_gibt_es_nur_auf_dem_apex(web):
+    r = web.get("/llms.txt", headers=TENANT)
+    assert r.status_code == 404

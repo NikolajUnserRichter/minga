@@ -140,3 +140,67 @@ async def sitemap_xml(request: Request) -> Response:
     lines.append("</urlset>")
 
     return Response("\n".join(lines) + "\n", media_type="application/xml")
+
+
+# Kurzprofil der Site. Jede Angabe ist auf der Startseite belegt
+# (Meta-Description, Preis-Offers und FAQ im JSON-LD). Wer hier etwas
+# ändert, gleicht es dort wieder ab — eine llms.txt mit falschen Preisen
+# streut Fehlinformation direkt in KI-Antworten.
+_LLMS_INTRO = """\
+> NovaERP ist eine ERP-Plattform für kleine und mittlere Unternehmen mit \
+branchenfertigen Editionen für Lebensmittel, Handel und Produktion.
+
+NovaERP bündelt Produktion, Lager, Vertrieb und Buchhaltung in einem System. \
+Statt eines Baukastens gibt es drei fertige Branchen-Editionen: Sprouddesk \
+für Farmen und Lebensmittelbetriebe, Tradesk für den Handel, Craftdesk für \
+Fertigung und Manufaktur. Zum Funktionsumfang gehören Produktions- und \
+Auftragsplanung, chargengenaue Rückverfolgbarkeit, KI-Forecasting, \
+Lagerverwaltung, Kundenverwaltung und BI-Dashboards.
+
+Betrieb ausschließlich in Deutschland, im Hetzner-Rechenzentrum Falkenstein \
+(ISO 27001). Jeder Kunde erhält eine eigene, isolierte Datenbank; ein \
+AV-Vertrag nach Art. 28 DSGVO ist enthalten. Ein Workspace mit eigener \
+Subdomain steht in rund fünf Minuten, Stammdaten lassen sich per Excel \
+importieren.
+
+Preise pro Monat: Starter 99 € (ein Standort, bis 3 Nutzer), Professional \
+299 € (bis 10 Nutzer, KI-Forecasting, BI-Dashboards), Business 499 € \
+(Multi-Standort, unbegrenzte Nutzer, API-Zugang). Daneben gibt es eine \
+On-Premise-Variante als Einmalkauf. Verträge sind monatlich kündbar, \
+alternativ mit Rabatt auf zwölf Monate; Daten sind jederzeit exportierbar."""
+
+
+@router.get("/llms.txt", response_class=PlainTextResponse)
+async def llms_txt(request: Request) -> PlainTextResponse:
+    """Kuratierte Kurzfassung der Site nach llmstxt.org.
+
+    Zweck ist nicht Vollständigkeit, sondern dass ein Sprachmodell in
+    wenigen Zeilen erfassen kann, was NovaERP ist und wohin es für Details
+    greifen muss.
+    """
+    if not is_apex_host(hostname(request)):
+        raise HTTPException(status_code=404, detail="Not Found")
+
+    origin = canonical_origin()
+    lines = [
+        "# NovaERP",
+        "",
+        _LLMS_INTRO,
+        "",
+        "## Seiten",
+        "",
+        f"- [Startseite]({origin}/): Funktionsumfang, Branchen-Editionen, "
+        "Preise und häufige Fragen",
+        f"- [Impressum]({origin}/impressum): Anbieterkennzeichnung",
+        f"- [Datenschutz]({origin}/datenschutz): Datenschutzerklärung",
+        f"- [AGB]({origin}/agb): Allgemeine Geschäftsbedingungen",
+    ]
+
+    articles = content_articles()
+    if articles:
+        lines += ["", "## Ratgeber", ""]
+        lines += [
+            f"- [{a.title}]({origin}/ratgeber/{a.slug}): {a.summary}" for a in articles
+        ]
+
+    return PlainTextResponse("\n".join(lines) + "\n")
