@@ -23,6 +23,7 @@ import {
   formatDate,
   getRelativeDate,
 } from '../components/ui';
+import { getErrorMessage } from '../services/errors';
 
 const statusOptions: SelectOption[] = [
   { value: 'all', label: 'Alle Status' },
@@ -131,13 +132,8 @@ export default function Orders() {
   if (isError) {
     const errAny = error as any;
     const status = errAny?.response?.status;
-    const rawDetail = errAny?.response?.data?.detail || errAny?.message || 'Unbekannter Fehler';
-    // FastAPI-Validierungsfehler kommen als Objekt-Array → lesbar machen statt "[object Object]"
-    const detail = typeof rawDetail === 'string'
-      ? rawDetail
-      : Array.isArray(rawDetail)
-        ? rawDetail.map((d: any) => d?.msg || JSON.stringify(d)).join('; ')
-        : JSON.stringify(rawDetail);
+    // getErrorMessage macht aus FastAPI-Validierungslisten lesbaren Text
+    const detail = getErrorMessage(errAny, 'Unbekannter Fehler');
     return (
       <div className="p-8 text-center">
         <div className="text-3xl mb-3">⚠️</div>

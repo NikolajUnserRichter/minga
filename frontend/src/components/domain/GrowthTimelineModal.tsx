@@ -4,6 +4,7 @@ import { Modal } from '../ui/Modal';
 import { Button, Input, useToast } from '../ui';
 import { productionApi, GrowthEvent, GrowthEventTypeKey } from '../../services/api';
 import { Calendar, User, Plus, Droplet, Sprout, Move, Snowflake, Package, ListChecks } from 'lucide-react';
+import { getErrorMessage } from '../../services/errors';
 
 interface Props {
   open: boolean;
@@ -61,7 +62,7 @@ export function GrowthTimelineModal({ open, onClose, growBatchId, batchLabel }: 
       setNotes('');
       toast.success('Event erfasst');
     },
-    onError: (e: any) => toast.error(e?.response?.data?.detail || 'Fehler beim Erfassen'),
+    onError: (e: any) => toast.error(getErrorMessage(e, 'Fehler beim Erfassen')),
   });
 
   return (

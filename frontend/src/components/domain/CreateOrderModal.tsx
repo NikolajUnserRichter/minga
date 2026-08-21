@@ -5,6 +5,7 @@ import { Input, Select, Button, Combobox, useToast } from '../ui';
 import { salesApi, productsApi, seedsApi } from '../../services/api';
 import { Customer } from '../../types';
 import { Plus, Trash } from 'lucide-react';
+import { getErrorMessage } from '../../services/errors';
 
 interface CreateOrderModalProps {
     open: boolean;
@@ -124,7 +125,7 @@ export function CreateOrderModal({ open, onClose, preselectedCustomer }: CreateO
             onClose();
         },
         onError: (error: any) => {
-            const message = error?.response?.data?.detail || 'Fehler beim Erstellen der Bestellung';
+            const message = getErrorMessage(error, 'Fehler beim Erstellen der Bestellung');
             toast.error(message);
         },
     });

@@ -19,6 +19,7 @@ import {
   SelectOption,
   Tabs,
 } from '../components/ui';
+import { getErrorMessage } from '../services/errors';
 
 const CATEGORY_LABELS: Record<ProductCategory, string> = {
   MICROGREEN: 'Microgreens',
@@ -607,7 +608,7 @@ function BundleComponentList({ productId }: { productId: string }) {
       setPickedQty(1);
       toast.success('Komponente hinzugefügt');
     },
-    onError: (e: any) => toast.error(e?.response?.data?.detail || 'Fehler beim Hinzufügen'),
+    onError: (e: any) => toast.error(getErrorMessage(e, 'Fehler beim Hinzufügen')),
   });
 
   const removeMutation = useMutation({
@@ -956,7 +957,7 @@ function GrowPlanForm({ plan, onSubmit, onCancel }: { plan?: GrowPlan; onSubmit:
       }
       onSubmit();
     } catch (err: any) {
-      toast.error(err?.response?.data?.detail || 'Fehler beim Speichern');
+      toast.error(getErrorMessage(err, 'Fehler beim Speichern'));
     } finally {
       setLoading(false);
     }
@@ -1009,7 +1010,7 @@ function ProductGroupForm({ onSubmit, onCancel }: { onSubmit: () => void; onCanc
       await productGroupsApi.create(d);
       onSubmit();
     } catch (err: any) {
-      toast.error(err?.response?.data?.detail || 'Fehler beim Speichern');
+      toast.error(getErrorMessage(err, 'Fehler beim Speichern'));
     } finally {
       setLoading(false);
     }

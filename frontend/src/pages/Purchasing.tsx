@@ -16,6 +16,7 @@ import {
   Badge,
   useToast,
 } from '../components/ui';
+import { getErrorMessage } from '../services/errors';
 
 const STATUS_VARIANT: Record<PurchaseOrderStatus, 'gray' | 'info' | 'warning' | 'success' | 'danger'> = {
   ENTWURF: 'gray',
@@ -56,7 +57,7 @@ export default function Purchasing() {
       toast.success('Bestellung storniert');
       setCancelling(null);
     },
-    onError: (e: any) => toast.error(e?.response?.data?.detail || 'Stornieren fehlgeschlagen'),
+    onError: (e: any) => toast.error(getErrorMessage(e, 'Stornieren fehlgeschlagen')),
   });
 
   const statusOptions: SelectOption[] = [
@@ -315,7 +316,7 @@ function CreatePurchaseOrderForm({ onDone, onCancel }: { onDone: () => void; onC
       await purchasingApi.create(payload);
       onDone();
     } catch (err: any) {
-      toast.error(err?.response?.data?.detail || 'Fehler beim Anlegen');
+      toast.error(getErrorMessage(err, 'Fehler beim Anlegen'));
     } finally {
       setLoading(false);
     }
@@ -392,7 +393,7 @@ function PurchaseOrderDetail({ poId, onReceived }: { poId: string; onReceived: (
       setReceiptQty({});
       toast.success('Wareneingang verbucht');
     },
-    onError: (e: any) => toast.error(e?.response?.data?.detail || 'Wareneingang fehlgeschlagen'),
+    onError: (e: any) => toast.error(getErrorMessage(e, 'Wareneingang fehlgeschlagen')),
   });
 
   if (isLoading || !po) return <PageLoader />;

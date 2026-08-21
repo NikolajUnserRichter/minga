@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Upload, Trash, Download, Paperclip, AlertCircle } from 'lucide-react';
 import { Button, Input, useToast } from '../ui';
 import { attachmentsApi, AttachmentEntityType, Attachment } from '../../services/api';
+import { getErrorMessage } from '../../services/errors';
 
 interface Props {
   entityType: AttachmentEntityType;
@@ -72,13 +73,13 @@ export function AttachmentsPanel({ entityType, entityId, defaultCertificateType,
       if (fileInput.current) fileInput.current.value = '';
       invalidate();
     },
-    onError: (e: any) => toast.error(e?.response?.data?.detail || 'Upload fehlgeschlagen'),
+    onError: (e: any) => toast.error(getErrorMessage(e, 'Upload fehlgeschlagen')),
   });
 
   const deleteMutation = useMutation({
     mutationFn: (id: string) => attachmentsApi.delete(id),
     onSuccess: () => { toast.success('Datei entfernt'); invalidate(); },
-    onError: (e: any) => toast.error(e?.response?.data?.detail || 'Löschen fehlgeschlagen'),
+    onError: (e: any) => toast.error(getErrorMessage(e, 'Löschen fehlgeschlagen')),
   });
 
   const attachments = query.data || [];

@@ -5,6 +5,7 @@ import { Modal } from '../ui/Modal';
 import { Button, Input, useToast } from '../ui';
 import { documentsApi, invoicesApi, OrderConfirmation, DeliveryNote } from '../../services/api';
 import { Order, Invoice } from '../../types';
+import { getErrorMessage } from '../../services/errors';
 
 interface Props {
   open: boolean;
@@ -56,13 +57,13 @@ export function OrderDocumentsModal({ open, onClose, order }: Props) {
   const createInvoice = useMutation({
     mutationFn: () => invoicesApi.createFromOrder(orderId!),
     onSuccess: (inv: Invoice) => { toast.success(`Rechnung ${inv.invoice_number} angelegt`); invalidate(); },
-    onError: (e: any) => toast.error(e?.response?.data?.detail || 'Fehler beim Erstellen der Rechnung'),
+    onError: (e: any) => toast.error(getErrorMessage(e, 'Fehler beim Erstellen der Rechnung')),
   });
 
   const finalizeInvoice = useMutation({
     mutationFn: (inv: Invoice) => invoicesApi.finalize(inv.id),
     onSuccess: () => { toast.success('Rechnung finalisiert'); invalidate(); },
-    onError: (e: any) => toast.error(e?.response?.data?.detail || 'Fehler beim Finalisieren'),
+    onError: (e: any) => toast.error(getErrorMessage(e, 'Fehler beim Finalisieren')),
   });
 
   const downloadInvoicePdf = async (inv: Invoice) => {
@@ -80,14 +81,14 @@ export function OrderDocumentsModal({ open, onClose, order }: Props) {
       a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 5000);
     } catch (e: any) {
-      toast.error(e?.response?.data?.detail || 'PDF-Download fehlgeschlagen');
+      toast.error(getErrorMessage(e, 'PDF-Download fehlgeschlagen'));
     }
   };
 
   const createConfirmation = useMutation({
     mutationFn: () => documentsApi.createConfirmation(orderId!, {}),
     onSuccess: (c) => { toast.success(`AB ${c.confirmation_number} erstellt`); invalidate(); },
-    onError: (e: any) => toast.error(e?.response?.data?.detail || 'Fehler beim Erstellen der AB'),
+    onError: (e: any) => toast.error(getErrorMessage(e, 'Fehler beim Erstellen der AB')),
   });
 
   const sendConfirmation = useMutation({
@@ -97,14 +98,14 @@ export function OrderDocumentsModal({ open, onClose, order }: Props) {
       toast.success(vars.email ? `AB an ${vars.email} versendet` : 'AB als versendet markiert');
       invalidate();
     },
-    onError: (e: any) => toast.error(e?.response?.data?.detail || 'Fehler beim Versenden'),
+    onError: (e: any) => toast.error(getErrorMessage(e, 'Fehler beim Versenden')),
   });
 
   const sendInvoiceMail = useMutation({
     mutationFn: ({ inv, email }: { inv: Invoice; email: string }) =>
       invoicesApi.sendInvoiceEmail(inv.id, email),
     onSuccess: (_d, vars) => { toast.success(`Rechnung an ${vars.email} versendet`); invalidate(); },
-    onError: (e: any) => toast.error(e?.response?.data?.detail || 'Fehler beim Versand'),
+    onError: (e: any) => toast.error(getErrorMessage(e, 'Fehler beim Versand')),
   });
 
   const promptEmailFor = (defaultEmail = '') =>
@@ -116,14 +117,14 @@ export function OrderDocumentsModal({ open, onClose, order }: Props) {
   const createDeliveryNote = useMutation({
     mutationFn: () => documentsApi.createDeliveryNote(orderId!, {}),
     onSuccess: (n) => { toast.success(`Lieferschein ${n.delivery_note_number} erstellt`); invalidate(); },
-    onError: (e: any) => toast.error(e?.response?.data?.detail || 'Fehler beim Erstellen des Lieferscheins'),
+    onError: (e: any) => toast.error(getErrorMessage(e, 'Fehler beim Erstellen des Lieferscheins')),
   });
 
   const markDeliveredMutation = useMutation({
     mutationFn: ({ noteId, signed_by }: { noteId: string; signed_by: string }) =>
       documentsApi.markDelivered(noteId, { signed_by }),
     onSuccess: () => { toast.success('Lieferschein quittiert'); invalidate(); },
-    onError: (e: any) => toast.error(e?.response?.data?.detail || 'Fehler beim Quittieren'),
+    onError: (e: any) => toast.error(getErrorMessage(e, 'Fehler beim Quittieren')),
   });
 
   const [signedByInput, setSignedByInput] = useState<Record<string, string>>({});

@@ -17,6 +17,7 @@ import {
   useToast,
   SelectOption,
 } from '../components/ui';
+import { getErrorMessage } from '../services/errors';
 
 export default function Seeds() {
   const toast = useToast();
@@ -479,7 +480,7 @@ function SeedSupplierList({ seedId }: { seedId: string }) {
       setPickedNotes('');
       toast.success('Lieferant verknüpft');
     },
-    onError: (e: any) => toast.error(e?.response?.data?.detail || 'Fehler'),
+    onError: (e: any) => toast.error(getErrorMessage(e, 'Fehler')),
   });
 
   const removeMutation = useMutation({

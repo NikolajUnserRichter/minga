@@ -18,6 +18,7 @@ import {
   Badge,
   useToast,
 } from '../components/ui';
+import { getErrorMessage } from '../services/errors';
 
 export default function Suppliers() {
   const toast = useToast();
@@ -210,7 +211,7 @@ function SupplierForm({
       }
       onSubmit();
     } catch (err: any) {
-      toast.error(err?.response?.data?.detail || 'Fehler beim Speichern');
+      toast.error(getErrorMessage(err, 'Fehler beim Speichern'));
     } finally {
       setLoading(false);
     }

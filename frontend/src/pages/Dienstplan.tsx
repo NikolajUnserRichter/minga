@@ -4,6 +4,7 @@ import { ChevronLeft, ChevronRight, ListTodo, Plus, Printer, Trash } from 'lucid
 import { staffApi, StaffShift, StaffTask } from '../services/api';
 import { PageHeader } from '../components/common/Layout';
 import { Button, Input, Modal, Select, useToast, PageLoader } from '../components/ui';
+import { getErrorMessage } from '../services/errors';
 
 /** Montag der Woche, die `d` enthält. */
 function mondayOf(d: Date): Date {
@@ -348,7 +349,7 @@ function AddShiftModal({ datum, employees, onClose, onSaved }: {
       toast.success('Schicht angelegt');
       onSaved();
     },
-    onError: (e: any) => toast.error(e?.response?.data?.detail?.[0]?.msg || e?.response?.data?.detail || 'Anlegen fehlgeschlagen'),
+    onError: (e: any) => toast.error(getErrorMessage(e, 'Anlegen fehlgeschlagen')),
   });
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -438,7 +439,7 @@ function AddTaskModal({ datum, employees, onClose, onSaved }: {
       toast.success(created.length > 1 ? `${created.length} Termine angelegt` : 'Aufgabe angelegt');
       onSaved();
     },
-    onError: (e: any) => toast.error(e?.response?.data?.detail?.[0]?.msg || e?.response?.data?.detail || 'Anlegen fehlgeschlagen'),
+    onError: (e: any) => toast.error(getErrorMessage(e, 'Anlegen fehlgeschlagen')),
   });
 
   const handleSubmit = (e: React.FormEvent) => {

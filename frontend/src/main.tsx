@@ -6,6 +6,7 @@ import { AuthProvider } from './context/AuthContext';
 import { ThemeProvider } from './context/ThemeContext';
 import { BrandingProvider } from './context/BrandingContext';
 import { ToastProvider } from './components/ui/Toast';
+import { ErrorBoundary } from './components/common/ErrorBoundary';
 import './index.css';
 
 // FastAPI / Pydantic serialize Decimal as a JSON string ("4.50"). The whole
@@ -36,7 +37,9 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         <BrandingProvider>
           <AuthProvider>
             <ToastProvider>
-              <App />
+              <ErrorBoundary>
+                <App />
+              </ErrorBoundary>
             </ToastProvider>
           </AuthProvider>
         </BrandingProvider>

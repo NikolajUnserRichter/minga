@@ -17,6 +17,7 @@ import {
   Pagination,
 } from '../components/ui';
 import { ListPageSkeleton } from '../components/ui/Skeleton';
+import { getErrorMessage } from '../services/errors';
 
 const STATUS_LABELS: Record<InvoiceStatus, string> = {
   ENTWURF: 'Entwurf',
@@ -104,7 +105,7 @@ export default function Invoices() {
       queryClient.invalidateQueries({ queryKey: ['invoices'] });
       toast.success(res.status === 'already_synced' ? 'Bereits in lexoffice' : 'An lexoffice übertragen');
     },
-    onError: (e: any) => toast.error(e?.response?.data?.detail || 'Übertragung fehlgeschlagen'),
+    onError: (e: any) => toast.error(getErrorMessage(e, 'Übertragung fehlgeschlagen')),
   });
 
   const lexPullMutation = useMutation({
@@ -113,7 +114,7 @@ export default function Invoices() {
       queryClient.invalidateQueries({ queryKey: ['invoices'] });
       toast.success(res.updated ? 'Als bezahlt übernommen' : `lexoffice-Status: ${res.lexoffice_status}`);
     },
-    onError: (e: any) => toast.error(e?.response?.data?.detail || 'Statusabruf fehlgeschlagen'),
+    onError: (e: any) => toast.error(getErrorMessage(e, 'Statusabruf fehlgeschlagen')),
   });
 
   const filteredInvoices = invoices.filter(
@@ -386,7 +387,7 @@ export default function Invoices() {
                             queryClient.invalidateQueries({ queryKey: ['invoices'] });
                             toast.success(`${stageLabel} erzeugt`);
                           } catch (err: any) {
-                            toast.error(err?.response?.data?.detail || 'Fehler beim Erzeugen');
+                            toast.error(getErrorMessage(err, 'Fehler beim Erzeugen'));
                           }
                         }}
                       >
@@ -849,7 +850,7 @@ function InvoiceDetail({ invoice: initial }: { invoice: Invoice }) {
       queryClient.invalidateQueries({ queryKey: ['invoices'] });
       toast.success('Kopfdaten gespeichert');
     },
-    onError: (e: any) => toast.error(e?.response?.data?.detail || 'Speichern fehlgeschlagen'),
+    onError: (e: any) => toast.error(getErrorMessage(e, 'Speichern fehlgeschlagen')),
   });
 
   const [newLine, setNewLine] = useState({
@@ -881,7 +882,7 @@ function InvoiceDetail({ invoice: initial }: { invoice: Invoice }) {
       setNewLine({ product_id: '', description: '', quantity: 1, unit: 'STK', unit_price: 0, tax_rate: 'REDUZIERT' });
       toast.success('Position hinzugefügt');
     },
-    onError: (e: any) => toast.error(e?.response?.data?.detail || 'Fehler beim Hinzufügen'),
+    onError: (e: any) => toast.error(getErrorMessage(e, 'Fehler beim Hinzufügen')),
   });
 
   const deleteLineMutation = useMutation({

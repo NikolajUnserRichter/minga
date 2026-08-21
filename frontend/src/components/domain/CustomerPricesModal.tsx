@@ -4,6 +4,7 @@ import { Modal } from '../ui/Modal';
 import { Button, Input, Combobox, useToast } from '../ui';
 import { customerPricesApi, productsApi, CustomerPrice } from '../../services/api';
 import { Trash, Plus, Tag } from 'lucide-react';
+import { getErrorMessage } from '../../services/errors';
 
 interface Props {
   open: boolean;
@@ -51,13 +52,13 @@ export function CustomerPricesModal({ open, onClose, customerId, customerName }:
       setDraft({ product_id: '', unit_price: '', valid_from: '', valid_until: '', notes: '' });
       invalidate();
     },
-    onError: (e: any) => toast.error(e?.response?.data?.detail || 'Anlegen fehlgeschlagen'),
+    onError: (e: any) => toast.error(getErrorMessage(e, 'Anlegen fehlgeschlagen')),
   });
 
   const deleteMut = useMutation({
     mutationFn: (id: string) => customerPricesApi.delete(id),
     onSuccess: () => { toast.success('Sonderpreis entfernt'); invalidate(); },
-    onError: (e: any) => toast.error(e?.response?.data?.detail || 'Löschen fehlgeschlagen'),
+    onError: (e: any) => toast.error(getErrorMessage(e, 'Löschen fehlgeschlagen')),
   });
 
   return (

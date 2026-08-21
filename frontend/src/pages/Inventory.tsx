@@ -28,6 +28,7 @@ import {
 import { TraceabilityView } from '../components/domain/TraceabilityView';
 import { StockCorrectionModal } from '../components/domain/StockCorrectionModal';
 import { TraceabilityChain, InventoryType } from '../types';
+import { getErrorMessage } from '../services/errors';
 
 const LOCATION_TYPE_LABELS: Record<LocationType, string> = {
   LAGER: 'Lager',
@@ -964,7 +965,7 @@ function ReceiveForm({
       }
       onSubmit();
     } catch (error: any) {
-      const detail = error?.response?.data?.detail || 'Fehler beim Erfassen';
+      const detail = getErrorMessage(error, 'Fehler beim Erfassen');
       toast.error(detail);
     } finally {
       setLoading(false);

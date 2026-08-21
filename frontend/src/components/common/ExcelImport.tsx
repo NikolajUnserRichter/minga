@@ -2,6 +2,7 @@ import { useRef, useState } from 'react';
 import { Upload, FileDown } from 'lucide-react';
 import { Button, useToast } from '../ui';
 import api from '../../services/api';
+import { getErrorMessage } from '../../services/errors';
 
 type Entity = 'customers' | 'suppliers' | 'seeds' | 'products' | 'locations' | 'order_history' | 'grow_batches';
 
@@ -49,7 +50,7 @@ export function ExcelImport({ entity, label = 'Excel-Import', secondaryLabel = '
         const res = await api.post(`/imports/${entity}`, form);
         data = res.data;
       } catch (err: any) {
-        toast.error(err?.response?.data?.detail || 'Import fehlgeschlagen');
+        toast.error(getErrorMessage(err, 'Import fehlgeschlagen'));
         return;
       }
       const created = data.created || 0;

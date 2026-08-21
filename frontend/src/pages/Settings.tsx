@@ -7,6 +7,7 @@ import { SkeletonStatCard } from '../components/ui/Skeleton';
 import { CapacityModal } from '../components/domain/CapacityModal';
 import { Database, Server, Key, Bell, Pencil, Building2, Save, Globe, Hash, Mail, Send, Plug, CheckCircle2, XCircle, ShoppingBag } from 'lucide-react';
 import { Capacity } from '../types';
+import { getErrorMessage } from '../services/errors';
 
 const forecastModelOptions: SelectOption[] = [
   { value: 'PROPHET', label: 'Prophet (empfohlen)' },
@@ -606,13 +607,13 @@ export function SmtpSettingsCard() {
       toast.success('SMTP-Einstellungen gespeichert');
       queryClient.invalidateQueries({ queryKey: ['admin-settings'] });
     },
-    onError: (e: any) => toast.error(e?.response?.data?.detail || 'Speichern fehlgeschlagen'),
+    onError: (e: any) => toast.error(getErrorMessage(e, 'Speichern fehlgeschlagen')),
   });
 
   const testMailMutation = useMutation({
     mutationFn: (to: string) => adminApi.sendTestEmail(to),
     onSuccess: (r) => toast.success(`Test-Mail an ${r.sent_to} verschickt`),
-    onError: (e: any) => toast.error(e?.response?.data?.detail || 'Test-Mail fehlgeschlagen'),
+    onError: (e: any) => toast.error(getErrorMessage(e, 'Test-Mail fehlgeschlagen')),
   });
 
   if (isLoading || !data) {

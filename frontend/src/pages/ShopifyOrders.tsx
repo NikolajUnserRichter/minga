@@ -14,6 +14,7 @@ import {
   useToast,
   type Column,
 } from '../components/ui';
+import { getErrorMessage } from '../services/errors';
 
 type ShopifyOrder = {
   order_number: string;
@@ -68,13 +69,13 @@ export default function ShopifyOrders() {
       toast.success(`${r.imported} importiert, ${r.skipped} übersprungen`);
       queryClient.invalidateQueries({ queryKey: ['orders'] });
     },
-    onError: (e: any) => toast.error(e?.response?.data?.detail || 'Import fehlgeschlagen'),
+    onError: (e: any) => toast.error(getErrorMessage(e, 'Import fehlgeschlagen')),
   });
 
   const pushMutation = useMutation({
     mutationFn: () => integrationsApi.shopifyPushProducts(),
     onSuccess: (r) => toast.success(`${r.pushed} Produkte in den Shop gepusht`),
-    onError: (e: any) => toast.error(e?.response?.data?.detail || 'Push fehlgeschlagen'),
+    onError: (e: any) => toast.error(getErrorMessage(e, 'Push fehlgeschlagen')),
   });
 
   const ordersQuery = useQuery({

@@ -16,6 +16,7 @@ import {
   useToast,
   SelectOption,
 } from '../components/ui';
+import { getErrorMessage } from '../services/errors';
 
 const TYPE_LABELS: Record<LocationType, string> = {
   LAGER: 'Lager',
@@ -189,7 +190,7 @@ function LocationForm({
       }
       onSubmit();
     } catch (err: any) {
-      toast.error(err?.response?.data?.detail || 'Fehler beim Speichern');
+      toast.error(getErrorMessage(err, 'Fehler beim Speichern'));
     } finally {
       setLoading(false);
     }

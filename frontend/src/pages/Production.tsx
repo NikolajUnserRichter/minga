@@ -20,6 +20,7 @@ import {
 } from '../components/ui';
 import { Plus, Sprout, Search, LayoutGrid, List, Columns3 } from 'lucide-react';
 import type { GrowBatch, GrowBatchStatus, Seed } from '../types';
+import { getErrorMessage } from '../services/errors';
 
 const statusOptions: SelectOption[] = [
   { value: '', label: 'Alle Status' },
@@ -137,7 +138,7 @@ export default function Production() {
       );
     },
     onError: (err: any) => {
-      const detail = err?.response?.data?.detail || 'Fehler beim Anlegen der Aussaat';
+      const detail = getErrorMessage(err, 'Fehler beim Anlegen der Aussaat');
       toast.error(detail);
     },
   });
