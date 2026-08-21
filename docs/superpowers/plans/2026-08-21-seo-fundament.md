@@ -36,7 +36,7 @@ Heute steht die Host-Logik als private Funktionen mitten in der 900 Zeilen lange
 - Consumes: nichts
 - Produces: `app.core.site.root_domain() -> str`, `hostname(request: Request) -> str`, `is_apex_host(host: str) -> bool`, `is_www_host(host: str) -> bool`, `is_admin_host(host: str) -> bool`, `canonical_origin() -> str`, `marketing_dir() -> Path`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Neue Datei `backend/tests/test_seo_public.py`:
 
@@ -68,12 +68,12 @@ def test_marketing_dir_enthaelt_die_startseite():
     assert (site.marketing_dir() / "index.html").is_file()
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd backend && python -m pytest tests/test_seo_public.py -v`
 Expected: FAIL mit `ModuleNotFoundError: No module named 'app.core.site'`
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 Neue Datei `backend/app/core/site.py`:
 
@@ -140,12 +140,12 @@ def marketing_dir() -> Path:
     return Path(__file__).resolve().parents[2] / "static_marketing"
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd backend && python -m pytest tests/test_seo_public.py -v`
 Expected: PASS (4 Tests)
 
-- [ ] **Step 5: main.py auf das Modul umstellen**
+- [x] **Step 5: main.py auf das Modul umstellen**
 
 In `backend/app/main.py` den Import ergänzen (bei den übrigen `app.core`-Importen):
 
@@ -191,12 +191,12 @@ def _is_admin_request(request: Request) -> bool:
     return is_admin_host(hostname(request))
 ```
 
-- [ ] **Step 6: Regression prüfen**
+- [x] **Step 6: Regression prüfen**
 
 Run: `cd backend && python -m pytest tests/test_seo_public.py tests/test_api.py -v`
 Expected: PASS, keine neuen Fehler gegenüber dem Stand vor der Änderung
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add backend/app/core/site.py backend/app/main.py backend/tests/test_seo_public.py
@@ -216,7 +216,7 @@ git commit -m "refactor(seo): Host-Rollen und Docroot in app.core.site ziehen, w
 - Consumes: `app.core.site.hostname`, `is_apex_host`, `canonical_origin`
 - Produces: `app.api.seo_public.router` (APIRouter ohne Prefix), `AI_CRAWLERS: tuple[str, ...]`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 An `backend/tests/test_seo_public.py` anhängen:
 
@@ -263,12 +263,12 @@ def test_robots_sperrt_tenant_subdomains_komplett(web):
     assert "Sitemap:" not in r.text
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd backend && python -m pytest tests/test_seo_public.py -v -k robots`
 Expected: FAIL — die Route liefert HTML aus dem Catch-All, `content-type` ist `text/html`
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 Neue Datei `backend/app/api/seo_public.py`:
 
@@ -337,7 +337,7 @@ async def robots_txt(request: Request) -> PlainTextResponse:
     return PlainTextResponse(body)
 ```
 
-- [ ] **Step 4: Router einbinden**
+- [x] **Step 4: Router einbinden**
 
 In `backend/app/main.py` den Import erweitern:
 
@@ -355,12 +355,12 @@ deklariert wird:
 app.include_router(seo_public.router)
 ```
 
-- [ ] **Step 5: Run test to verify it passes**
+- [x] **Step 5: Run test to verify it passes**
 
 Run: `cd backend && python -m pytest tests/test_seo_public.py -v`
 Expected: PASS (8 Tests)
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add backend/app/api/seo_public.py backend/app/main.py backend/tests/test_seo_public.py
@@ -379,7 +379,7 @@ git commit -m "feat(seo): robots.txt je Host ausliefern, KI-Crawler freigeben"
 - Consumes: `app.core.site.marketing_dir`, `canonical_origin`, `hostname`, `is_apex_host`
 - Produces: `SitemapArticle` (frozen dataclass mit `slug: str`, `title: str`, `summary: str`, `lastmod: date | None`), `content_articles() -> list[SitemapArticle]`, `STATIC_PAGES: tuple[tuple[str, str, str], ...]`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 An `backend/tests/test_seo_public.py` anhängen:
 
@@ -413,12 +413,12 @@ def test_sitemap_gibt_es_nur_auf_dem_apex(web):
     assert r.status_code == 404
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd backend && python -m pytest tests/test_seo_public.py -v -k sitemap`
 Expected: FAIL — `ElementTree.ParseError`, weil der Catch-All HTML liefert
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 In `backend/app/api/seo_public.py` ergänzen — Importe oben erweitern:
 
@@ -505,12 +505,12 @@ async def sitemap_xml(request: Request) -> Response:
     return Response("\n".join(lines) + "\n", media_type="application/xml")
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd backend && python -m pytest tests/test_seo_public.py -v`
 Expected: PASS (11 Tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add backend/app/api/seo_public.py backend/tests/test_seo_public.py
@@ -533,7 +533,7 @@ Die Datei ist die kuratierte Kurzfassung der Site für KI-Systeme. Sie ist nur d
 
 Alle Angaben unten stammen aus `static_marketing/index.html` (Meta-Description, Preis-Offers im JSON-LD, FAQ-Block). Nichts davon ist hinzugedichtet — wer den Text ändert, gleicht ihn wieder mit der Startseite ab.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 An `backend/tests/test_seo_public.py` anhängen:
 
@@ -560,12 +560,12 @@ def test_llms_txt_gibt_es_nur_auf_dem_apex(web):
     assert r.status_code == 404
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd backend && python -m pytest tests/test_seo_public.py -v -k llms`
 Expected: FAIL — `content-type` ist `text/html`, der Text beginnt mit `<!DOCTYPE html>`
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 In `backend/app/api/seo_public.py` anhängen:
 
@@ -634,12 +634,12 @@ async def llms_txt(request: Request) -> PlainTextResponse:
     return PlainTextResponse("\n".join(lines) + "\n")
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd backend && python -m pytest tests/test_seo_public.py -v`
 Expected: PASS (14 Tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add backend/app/api/seo_public.py backend/tests/test_seo_public.py
@@ -660,7 +660,7 @@ git commit -m "feat(seo): llms.txt fuer KI-Systeme ausliefern"
 - Consumes: `app.core.site.canonical_origin`, `hostname`, `is_apex_host`, `is_www_host`
 - Produces: Middleware `apex_canonical_middleware`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 An `backend/tests/test_seo_public.py` anhängen:
 
@@ -702,12 +702,12 @@ def test_subdomains_werden_nicht_umgeleitet(web):
     assert r.status_code == 200
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd backend && python -m pytest tests/test_seo_public.py -v -k "www or normalisiert or wurzel"`
 Expected: FAIL — alle liefern 200 statt 301
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 In `backend/app/main.py` den Import erweitern:
 
@@ -749,12 +749,12 @@ async def apex_canonical_middleware(request: Request, call_next):
     return await call_next(request)
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd backend && python -m pytest tests/test_seo_public.py -v`
 Expected: PASS (20 Tests)
 
-- [ ] **Step 5: Prüfen, dass das Kontaktformular weiter funktioniert**
+- [x] **Step 5: Prüfen, dass das Kontaktformular weiter funktioniert**
 
 Die Marketing-Seite postet auf `/api/track` und das Kontaktformular. Beide
 Pfade enden weder auf `/` noch auf `.html` und dürfen daher nicht umgeleitet
@@ -763,7 +763,7 @@ werden — ein 301 auf ein POST würde den Body verlieren.
 Run: `cd backend && python -m pytest tests/ -v -k "track or kontakt or contact"`
 Expected: PASS oder "no tests ran"; in keinem Fall neue Fehler
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add backend/app/main.py backend/tests/test_seo_public.py
@@ -788,7 +788,7 @@ dem 404 eine Endungs-Freigabeliste.
 - Consumes: `app.core.site.marketing_dir`
 - Produces: nichts für spätere Tasks
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 An `backend/tests/test_seo_public.py` anhängen:
 
@@ -825,12 +825,12 @@ def test_subdomain_behaelt_den_spa_fallback(web):
     assert r.status_code == 200
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd backend && python -m pytest tests/test_seo_public.py -v -k 404`
 Expected: FAIL — Status ist 200, die Startseite wird ausgeliefert
 
-- [ ] **Step 3: 404-Seite anlegen**
+- [x] **Step 3: 404-Seite anlegen**
 
 Neue Datei `backend/static_marketing/404.html`. Farben und Schrift aus
 `index.html` übernehmen (`--abyss: #0a0a0a`, `--bronze: #C0814F`):
@@ -872,7 +872,7 @@ Neue Datei `backend/static_marketing/404.html`. Farben und Schrift aus
 </html>
 ```
 
-- [ ] **Step 4: Catch-All reparieren**
+- [x] **Step 4: Catch-All reparieren**
 
 In `backend/app/main.py` oberhalb von `spa_fallback` die Freigabeliste
 ergänzen:
@@ -939,12 +939,12 @@ Nachher:
         return JSONResponse(status_code=404, content={"detail": "Not Found"})
 ```
 
-- [ ] **Step 5: Run test to verify it passes**
+- [x] **Step 5: Run test to verify it passes**
 
 Run: `cd backend && python -m pytest tests/test_seo_public.py -v`
 Expected: PASS (26 Tests)
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add backend/static_marketing/404.html backend/app/main.py backend/tests/test_seo_public.py
@@ -963,7 +963,7 @@ git commit -m "fix(seo): unbekannte Apex-Pfade liefern 404 statt stiller Startse
 - Consumes: `app.core.site.marketing_dir`
 - Produces: nichts für spätere Tasks
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 An `backend/tests/test_seo_public.py` anhängen:
 
@@ -1003,12 +1003,12 @@ def test_interne_seiten_sind_auf_noindex(datei):
     assert '<meta name="robots" content="noindex, nofollow" />' in html
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd backend && python -m pytest tests/test_seo_public.py -v -k "rechtsseiten or noindex"`
 Expected: FAIL — den Rechtsseiten fehlt canonical, `stats.html` fehlt noindex
 
-- [ ] **Step 3: Rechtsseiten ergänzen**
+- [x] **Step 3: Rechtsseiten ergänzen**
 
 In jede der drei Dateien direkt nach dem `<meta name="viewport" ...>`-Tag
 einsetzen, mit der jeweils passenden URL und Beschreibung. Beispiel für
@@ -1043,7 +1043,7 @@ Für `datenschutz.html` und `agb.html` dasselbe Muster mit
 Beschreibung. Die `@id`-Verweise auf `#website` und `#org` werden in Task 8
 angelegt.
 
-- [ ] **Step 4: Statistik auf noindex stellen**
+- [x] **Step 4: Statistik auf noindex stellen**
 
 In `backend/static_marketing/stats.html` nach dem Viewport-Tag einsetzen:
 
@@ -1051,12 +1051,12 @@ In `backend/static_marketing/stats.html` nach dem Viewport-Tag einsetzen:
   <meta name="robots" content="noindex, nofollow" />
 ```
 
-- [ ] **Step 5: Run test to verify it passes**
+- [x] **Step 5: Run test to verify it passes**
 
 Run: `cd backend && python -m pytest tests/test_seo_public.py -v`
 Expected: PASS (34 Tests)
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add backend/static_marketing/impressum.html backend/static_marketing/datenschutz.html backend/static_marketing/agb.html backend/static_marketing/stats.html backend/tests/test_seo_public.py
@@ -1077,7 +1077,7 @@ Die Startseite hat Organization, SoftwareApplication, Offer und FAQPage. Es fehl
 - Consumes: `app.core.site.marketing_dir`
 - Produces: Schema-IDs `https://novaerp.de/#org` und `https://novaerp.de/#website`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 An `backend/tests/test_seo_public.py` anhängen:
 
@@ -1119,12 +1119,12 @@ def test_alle_json_ld_bloecke_der_marketing_seiten_sind_valide():
             json.loads(block)  # wirft bei kaputtem JSON
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd backend && python -m pytest tests/test_seo_public.py -v -k "website_knoten or logo_und_kontakt"`
 Expected: FAIL — `IndexError`, weil es keinen `WebSite`-Knoten gibt
 
-- [ ] **Step 3: Graph erweitern**
+- [x] **Step 3: Graph erweitern**
 
 In `backend/static_marketing/index.html` den `Organization`-Knoten
 ergänzen und einen `WebSite`-Knoten davor setzen:
@@ -1162,17 +1162,17 @@ ergänzen und einen `WebSite`-Knoten davor setzen:
 im Repo. Sobald es feststeht, kommt es als eine Zeile dazu; geraten wird es
 nicht.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd backend && python -m pytest tests/test_seo_public.py -v`
 Expected: PASS (38 Tests)
 
-- [ ] **Step 5: Gesamte Test-Suite gegen Regressionen**
+- [x] **Step 5: Gesamte Test-Suite gegen Regressionen**
 
 Run: `cd backend && python -m pytest tests/ -q`
 Expected: keine neuen Fehler gegenüber dem Stand vor Task 1
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add backend/static_marketing/index.html backend/tests/test_seo_public.py
