@@ -143,6 +143,52 @@
         <h2>Mandanten</h2>
         <div id="tenantList"><div class="empty">Lädt…</div></div>
       </div>
+
+      <!-- Ratgeber -->
+      <div class="section">
+        <h2>Ratgeber</h2>
+        <div class="create-row" style="margin-bottom:1rem">
+          <div class="field">
+            <label for="artSlug">Slug</label>
+            <input id="artSlug" type="text" placeholder="erp-einfuehrung" />
+          </div>
+          <button class="btn btn-ghost" onclick="neuerBeitrag()">Neu</button>
+        </div>
+        <div id="artList"><div class="empty">Lädt…</div></div>
+
+        <div id="artForm" class="hidden" style="margin-top:1.5rem;border-top:1px solid var(--line);padding-top:1.5rem">
+          <div class="create-row">
+            <div class="field"><label for="artTitle">Titel</label><input id="artTitle" type="text" /></div>
+            <div class="field"><label for="artCluster">Cluster</label><input id="artCluster" type="text" placeholder="Einführung" /></div>
+            <div class="field"><label for="artMinutes">Lesezeit (Min.)</label><input id="artMinutes" type="text" placeholder="7" /></div>
+          </div>
+          <div class="create-row" style="margin-top:.75rem">
+            <div class="field"><label for="artAuthor">Autor</label><input id="artAuthor" type="text" /></div>
+            <div class="field"><label for="artTeaser">Teaser auf Slug</label><input id="artTeaser" type="text" placeholder="lager-optimieren" /></div>
+          </div>
+          <div style="margin-top:.75rem"><label for="artDesc">Meta-Beschreibung</label><input id="artDesc" type="text" /></div>
+          <div style="margin-top:.75rem"><label for="artSummary">Kurzfassung</label><input id="artSummary" type="text" /></div>
+          <div style="margin-top:.75rem">
+            <label for="artBody">Text (Markdown-Teilmenge: ## ### - **fett** [Text](URL))</label>
+            <textarea id="artBody" rows="14" style="width:100%;background:var(--panel-2);border:1px solid var(--line);border-radius:.6rem;color:var(--ink-0);padding:.8rem 1rem;font-family:ui-monospace,monospace;font-size:.88rem"></textarea>
+          </div>
+          <div style="margin-top:.75rem">
+            <label for="artFaq">FAQ als JSON — [{"frage":"…","antwort":"…"}]</label>
+            <textarea id="artFaq" rows="4" style="width:100%;background:var(--panel-2);border:1px solid var(--line);border-radius:.6rem;color:var(--ink-0);padding:.8rem 1rem;font-family:ui-monospace,monospace;font-size:.85rem">[]</textarea>
+          </div>
+          <div style="margin-top:.75rem">
+            <label for="artSources">Quellen als JSON — [{"title":"…","url":"https://…"}]</label>
+            <textarea id="artSources" rows="4" style="width:100%;background:var(--panel-2);border:1px solid var(--line);border-radius:.6rem;color:var(--ink-0);padding:.8rem 1rem;font-family:ui-monospace,monospace;font-size:.85rem">[]</textarea>
+          </div>
+          <div style="margin-top:1rem;display:flex;gap:.6rem;flex-wrap:wrap">
+            <button class="btn btn-bronze" onclick="beitragSpeichern()">Speichern</button>
+            <button class="btn btn-ghost" onclick="beitragVorschau()">Vorschau</button>
+            <button class="btn btn-ghost" onclick="beitragPublish(true)">Veröffentlichen</button>
+            <button class="btn btn-ghost" onclick="beitragPublish(false)">Zurückziehen</button>
+            <button class="btn btn-danger" onclick="beitragLoeschen()">Löschen</button>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -195,6 +241,7 @@
         ROOT_DOMAIN = data.root_domain || info.root_domain || 'novaerp.de';
         renderStats(info);
         renderTenants(data.tenants || []);
+        await ladeBeitraege();
         return true;
       } catch(e){
         toast('Verbindungsfehler: ' + e.message, 'err');
@@ -294,6 +341,120 @@
           toast(body.detail || 'Löschen fehlgeschlagen', 'err');
         }
       } catch(e){ toast('Fehler: ' + e.message, 'err'); }
+    }
+
+    const ART_API = '/api/v1/platform/ratgeber';
+    let aktuellerSlug = '';
+
+    async function ladeBeitraege(){
+      try {
+        const res = await fetch(ART_API, { headers: headers() });
+        if(!res.ok) return;
+        const data = await res.json();
+        const el = document.getElementById('artList');
+        const arts = data.articles || [];
+        if(!arts.length){ el.innerHTML = '<div class="empty">Noch keine Beiträge.</div>'; return; }
+        el.innerHTML = `
+          <table>
+            <thead><tr><th>Slug</th><th>Titel</th><th>Cluster</th><th>Status</th><th>Veröffentlicht</th></tr></thead>
+            <tbody>
+              ${arts.map(a => `
+                <tr style="cursor:pointer" onclick="beitragOeffnen('${esc(a.slug)}')">
+                  <td class="slug">${esc(a.slug)}</td>
+                  <td>${esc(a.title)}</td>
+                  <td class="muted">${esc(a.cluster)}</td>
+                  <td>${esc(a.status)}</td>
+                  <td class="muted">${esc(a.published_at || '–')}</td>
+                </tr>`).join('')}
+            </tbody>
+          </table>`;
+      } catch(e){ toast('Ratgeber laden fehlgeschlagen: ' + e.message, 'err'); }
+    }
+
+    function formFuellen(a){
+      document.getElementById('artForm').classList.remove('hidden');
+      document.getElementById('artSlug').value = a.slug || '';
+      document.getElementById('artTitle').value = a.title || '';
+      document.getElementById('artCluster').value = a.cluster || '';
+      document.getElementById('artMinutes').value = a.reading_minutes || '';
+      document.getElementById('artAuthor').value = a.author || '';
+      document.getElementById('artTeaser').value = a.teaser_slug || '';
+      document.getElementById('artDesc').value = a.description || '';
+      document.getElementById('artSummary').value = a.summary || '';
+      document.getElementById('artBody').value = a.body || '';
+      document.getElementById('artFaq').value = JSON.stringify(a.faq || [], null, 2);
+      document.getElementById('artSources').value = JSON.stringify(a.sources || [], null, 2);
+      aktuellerSlug = a.slug || '';
+    }
+
+    function neuerBeitrag(){ formFuellen({}); }
+
+    async function beitragOeffnen(slug){
+      const res = await fetch(`${ART_API}/${encodeURIComponent(slug)}`, { headers: headers() });
+      if(!res.ok){ toast('Beitrag nicht gefunden', 'err'); return; }
+      formFuellen(await res.json());
+    }
+
+    function jsonFeld(id){
+      try { return JSON.parse(document.getElementById(id).value || '[]'); }
+      catch(e){ toast(`Feld ${id}: kein gültiges JSON`, 'err'); throw e; }
+    }
+
+    async function beitragSpeichern(){
+      const slug = document.getElementById('artSlug').value.trim().toLowerCase();
+      if(!slug){ toast('Slug fehlt', 'err'); return; }
+      let faq, sources;
+      try { faq = jsonFeld('artFaq'); sources = jsonFeld('artSources'); } catch(e){ return; }
+      const body = {
+        title: document.getElementById('artTitle').value.trim(),
+        cluster: document.getElementById('artCluster').value.trim(),
+        description: document.getElementById('artDesc').value.trim(),
+        author: document.getElementById('artAuthor').value.trim(),
+        reading_minutes: parseInt(document.getElementById('artMinutes').value || '0', 10) || 0,
+        summary: document.getElementById('artSummary').value.trim(),
+        body: document.getElementById('artBody').value,
+        teaser_slug: document.getElementById('artTeaser').value.trim().toLowerCase(),
+        faq, sources,
+      };
+      const res = await fetch(`${ART_API}/${encodeURIComponent(slug)}`,
+        { method:'PUT', headers: headers(), body: JSON.stringify(body) });
+      const antwort = await res.json().catch(()=>({}));
+      if(res.ok){ aktuellerSlug = slug; toast('Gespeichert', 'ok'); ladeBeitraege(); }
+      else { toast(antwort.detail || 'Speichern fehlgeschlagen', 'err'); }
+    }
+
+    function beitragVorschau(){
+      if(!aktuellerSlug){ toast('Erst speichern', 'err'); return; }
+      // Die Vorschau braucht den Key im Header — daher holen und als Blob öffnen.
+      fetch(`${ART_API}/${encodeURIComponent(aktuellerSlug)}/preview`, { headers: headers() })
+        .then(r => r.text())
+        .then(html => {
+          const w = window.open('', '_blank');
+          w.document.write(html); w.document.close();
+        })
+        .catch(e => toast('Vorschau fehlgeschlagen: ' + e.message, 'err'));
+    }
+
+    async function beitragPublish(live){
+      if(!aktuellerSlug){ toast('Erst speichern', 'err'); return; }
+      const pfad = live ? 'publish' : 'unpublish';
+      const res = await fetch(`${ART_API}/${encodeURIComponent(aktuellerSlug)}/${pfad}`,
+        { method:'POST', headers: headers() });
+      if(res.ok){ toast(live ? 'Veröffentlicht' : 'Zurückgezogen', 'ok'); ladeBeitraege(); }
+      else { toast('Statuswechsel fehlgeschlagen', 'err'); }
+    }
+
+    async function beitragLoeschen(){
+      if(!aktuellerSlug) return;
+      if(!confirm(`Beitrag „${aktuellerSlug}" löschen?`)) return;
+      const res = await fetch(`${ART_API}/${encodeURIComponent(aktuellerSlug)}`,
+        { method:'DELETE', headers: headers() });
+      if(res.status === 204){
+        toast('Gelöscht', 'ok');
+        document.getElementById('artForm').classList.add('hidden');
+        aktuellerSlug = '';
+        ladeBeitraege();
+      } else { toast('Löschen fehlgeschlagen', 'err'); }
     }
 
     // Auto-login if key present
