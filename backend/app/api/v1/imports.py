@@ -32,6 +32,10 @@ from app.models.order import Order, OrderLine, OrderStatus
 
 router = APIRouter(prefix="/imports", tags=["Excel-Import"])
 
+# Blattnamen im Template: Daten wird importiert, Beispiel nie.
+DATA_SHEET = "Daten"
+EXAMPLE_SHEET = "Beispiel"
+
 
 # ---- Spalten-Definitionen je Entity ---------------------------------------
 
@@ -157,20 +161,115 @@ def _coerce(value: Any, type_hint: str) -> Any:
     return value
 
 
+# ---- Beispieldaten je Entity ----------------------------------------------
+#
+# Landen auf einem eigenen Blatt "Beispiel", nicht im Datenblatt: eine
+# ausgefüllte Zeile im Datenblatt würde beim ersten Upload als echter
+# Datensatz importiert. Die Werte je Liste entsprechen der Spaltenreihenfolge
+# in COLUMNS; Datumsangaben werden relativ zu heute erzeugt, damit das
+# Beispiel nicht veraltet.
+
+
+def _examples(entity: str) -> list[list[Any]]:
+    from datetime import timedelta
+
+    heute = date.today()
+    d = lambda tage: (heute - timedelta(days=tage)).strftime("%d.%m.%Y")  # noqa: E731
+
+    if entity == "customers":
+        return [
+            ["Gasthaus Sonne", "GASTRO", "bestellung@gasthaus-sonne.de", "089 1234567",
+             "Hauptstraße 1, 80331 München", "DE123456789", "Liefertage Di + Fr"],
+            ["BioMarkt Isartal", "HANDEL", "einkauf@biomarkt-isartal.de", "089 7654321",
+             "Marktplatz 8, 82031 Grünwald", "", ""],
+        ]
+    if entity == "suppliers":
+        return [
+            ["Saatgut Müller GmbH", "kontakt@saatgut-mueller.de", "0711 998877",
+             "Industriestraße 5, 70565 Stuttgart", "DE987654321", "SAATGUT", "ja",
+             "DE-ÖKO-006", "Bio-Saatgut, Lieferzeit 5 Tage"],
+        ]
+    if entity == "seeds":
+        return [
+            # name, sorte, lieferant, keim, wachstum, ernte min/opt/max,
+            # ertrag, verlust, saatgut/Einheit, cooling, cooling shelf, prozess
+            ["Rucola", "Coltivata", "Saatgut Müller GmbH", 2, 5, 7, 8, 10, 250, 5, 30, 0, 0, "STANDARD"],
+            ["Erbse", "Grünschnitt", "Saatgut Müller GmbH", 2, 7, 9, 10, 12, 700, 8, 250, 0, 0, "PLATTE"],
+        ]
+    if entity == "products":
+        return [
+            ["MG-RUC-100", "Rucola 100 g Schale", "MICROGREEN", "4260123456789", "A-1001",
+             "BIO", "Frische Rucola-Microgreens in der 100-g-Schale", "3.90", "REDUZIERT", 7],
+            ["MG-ERB-200", "Erbsengrün 200 g Schale", "MICROGREEN", "", "A-1002",
+             "BIO", "", "4.50", "REDUZIERT", 7],
+        ]
+    if entity == "locations":
+        return [
+            ["KR-01", "Kühlraum 1", "KUEHLRAUM", "Fertigware nach der Ernte", 2, 6],
+            ["LG-01", "Trockenlager", "LAGER", "Saatgut und Substrat", 15, 22],
+        ]
+    if entity == "order_history":
+        return [
+            # Zwei Zeilen mit gleicher externer Nummer = EINE Bestellung mit 2 Positionen
+            ["EXT-1001", "Gasthaus Sonne", d(21), d(20), "MG-RUC-100", 12, "STK", "3.90", "GELIEFERT", ""],
+            ["EXT-1001", "Gasthaus Sonne", d(21), d(20), "MG-ERB-200", 5, "STK", "4.50", "GELIEFERT", ""],
+            ["EXT-1002", "BioMarkt Isartal", d(14), d(13), "MG-RUC-100", 30, "STK", "3.50", "GELIEFERT", ""],
+        ]
+    if entity == "grow_batches":
+        return [
+            ["Rucola", d(20), 12, "GEERNTET", "RU-2026-07", "R1-A", d(11), 40, ""],
+            ["Erbse", d(3), 8, "", "", "R2-B", "", "", ""],
+        ]
+    return []
+
+
+HINWEISE = {
+    "order_history": (
+        "Mehrere Zeilen mit derselben 'bestell_nr_extern' ergeben EINE Bestellung "
+        "mit mehreren Positionen. Kunde und produkt_sku müssen bereits angelegt sein."
+    ),
+    "grow_batches": "Die Sorte muss vorher als Saatgut angelegt sein.",
+    "products": "Preise mit Punkt oder Komma — beides wird erkannt.",
+}
+
+
 def _build_template(entity: str) -> bytes:
     cols = COLUMNS[entity]
-    wb = Workbook()
-    ws = wb.active
-    ws.title = entity
     header_font = Font(bold=True, color="FFFFFF")
     header_fill = PatternFill("solid", fgColor="166534")
-    for idx, (header, _attr, required, type_hint) in enumerate(cols, start=1):
-        cell = ws.cell(row=1, column=idx, value=f"{header}{' *' if required else ''}")
-        cell.font = header_font
-        cell.fill = header_fill
-        comment = type_hint
-        ws.cell(row=2, column=idx, value=f"[{comment}]")
-        ws.column_dimensions[cell.column_letter].width = max(15, len(header) + 4)
+
+    def _write_header(sheet) -> None:
+        for idx, (header, _attr, required, _type_hint) in enumerate(cols, start=1):
+            cell = sheet.cell(row=1, column=idx, value=f"{header}{' *' if required else ''}")
+            cell.font = header_font
+            cell.fill = header_fill
+            sheet.column_dimensions[cell.column_letter].width = max(15, len(header) + 4)
+
+    wb = Workbook()
+    # Blattname bewusst fix: der Import liest gezielt "Daten" und kann so nie
+    # versehentlich das Beispielblatt einlesen.
+    ws = wb.active
+    ws.title = DATA_SHEET
+    _write_header(ws)
+    for idx, (_header, _attr, _required, type_hint) in enumerate(cols, start=1):
+        ws.cell(row=2, column=idx, value=f"[{type_hint}]")
+
+    beispiel = wb.create_sheet(EXAMPLE_SHEET)
+    _write_header(beispiel)
+    rows = _examples(entity)
+    for r_idx, row in enumerate(rows, start=2):
+        for c_idx, value in enumerate(row, start=1):
+            beispiel.cell(row=r_idx, column=c_idx, value=value)
+    note_row = len(rows) + 3
+    beispiel.cell(
+        row=note_row,
+        column=1,
+        value=f"Nur Beispiel — bitte im Blatt '{DATA_SHEET}' erfassen. Spalten mit * sind Pflicht.",
+    ).font = Font(italic=True)
+    if entity in HINWEISE:
+        beispiel.cell(row=note_row + 1, column=1, value=HINWEISE[entity]).font = Font(italic=True)
+
+    wb.active = 0  # beim Öffnen steht der Cursor im Datenblatt
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
@@ -195,7 +294,12 @@ def _parse_rows(file: UploadFile, entity: str) -> tuple[list[dict], list[str]]:
         wb = load_workbook(io.BytesIO(file.file.read()), read_only=True, data_only=True)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Datei konnte nicht gelesen werden: {e}")
-    ws = wb.active
+
+    # Gezielt das Datenblatt lesen: Excel merkt sich das zuletzt angesehene
+    # Blatt als aktives — sonst würde ein Blick ins Beispielblatt vor dem
+    # Speichern die Beispieldaten importieren. Ältere Templates (ein Blatt)
+    # fallen auf das aktive Blatt zurück.
+    ws = wb[DATA_SHEET] if DATA_SHEET in wb.sheetnames else wb.active
 
     header_to_idx: dict[str, int] = {}
     for idx, cell in enumerate(next(ws.iter_rows(min_row=1, max_row=1, values_only=True))):

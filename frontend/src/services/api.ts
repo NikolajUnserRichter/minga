@@ -28,6 +28,13 @@ const api = axios.create({
 
 // Add Auth Interceptor
 api.interceptors.request.use(async (config) => {
+  // Uploads dürfen den JSON-Default oben nicht erben: axios serialisiert
+  // FormData bei JSON-Content-Type zu {"file":{}} — die Datei kommt dann nie
+  // am Server an (422) und der Upload scheitert stumm. Ohne Header setzt der
+  // Browser selbst multipart/form-data samt Boundary.
+  if (config.data instanceof FormData) {
+    config.headers.delete('Content-Type');
+  }
   if (AUTH_DISABLED) return config;
   if (keycloak.token) {
     try {
