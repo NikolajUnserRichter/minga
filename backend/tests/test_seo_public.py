@@ -121,3 +121,40 @@ def test_llms_txt_nennt_die_belegbaren_eckdaten(web):
 def test_llms_txt_gibt_es_nur_auf_dem_apex(web):
     r = web.get("/llms.txt", headers=TENANT)
     assert r.status_code == 404
+
+
+# --- Eine Seite, eine URL --------------------------------------------------
+
+
+def test_www_wird_dauerhaft_auf_den_apex_geleitet(web):
+    r = web.get("/", headers=WWW, follow_redirects=False)
+    assert r.status_code == 301
+    assert r.headers["location"] == "https://novaerp.de/"
+
+
+def test_schraegstrich_variante_wird_normalisiert(web):
+    r = web.get("/impressum/", headers=APEX, follow_redirects=False)
+    assert r.status_code == 301
+    assert r.headers["location"] == "https://novaerp.de/impressum"
+
+
+def test_html_endung_wird_normalisiert(web):
+    r = web.get("/impressum.html", headers=APEX, follow_redirects=False)
+    assert r.status_code == 301
+    assert r.headers["location"] == "https://novaerp.de/impressum"
+
+
+def test_index_html_zeigt_auf_die_wurzel(web):
+    r = web.get("/index.html", headers=APEX, follow_redirects=False)
+    assert r.status_code == 301
+    assert r.headers["location"] == "https://novaerp.de/"
+
+
+def test_kanonische_url_wird_nicht_umgeleitet(web):
+    r = web.get("/impressum", headers=APEX, follow_redirects=False)
+    assert r.status_code == 200
+
+
+def test_subdomains_werden_nicht_umgeleitet(web):
+    r = web.get("/irgendwas/", headers=TENANT, follow_redirects=False)
+    assert r.status_code != 301

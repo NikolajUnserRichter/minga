@@ -15,7 +15,7 @@ from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
@@ -275,6 +275,37 @@ async def tenant_middleware(request: Request, call_next):
                 content={"detail": f"Tenant '{slug}' ist nicht bereitgestellt"},
             )
         set_request_tenant(request, slug)
+
+    return await call_next(request)
+
+
+@app.middleware("http")
+async def apex_canonical_middleware(request: Request, call_next):
+    """Eine Seite, genau eine URL.
+
+    www, Schrägstrich-Varianten und .html-Endungen werden dauerhaft auf die
+    kanonische Form umgeleitet. Ohne das indexiert Google dieselbe Seite
+    mehrfach und verteilt ihre Signale auf Dubletten. Betrifft nur den Apex —
+    Subdomains liefern die SPA und brauchen ihre Pfade unverändert.
+    """
+    host = hostname(request)
+    if not is_apex_host(host):
+        return await call_next(request)
+
+    path = request.url.path
+    canonical_path = path
+    if canonical_path.endswith(".html"):
+        canonical_path = canonical_path[: -len(".html")]
+        if canonical_path in ("", "/index"):
+            canonical_path = "/"
+    if len(canonical_path) > 1 and canonical_path.endswith("/"):
+        canonical_path = canonical_path.rstrip("/")
+
+    if is_www_host(host) or canonical_path != path:
+        target = f"{canonical_origin()}{canonical_path}"
+        if request.url.query:
+            target = f"{target}?{request.url.query}"
+        return RedirectResponse(target, status_code=301)
 
     return await call_next(request)
 
