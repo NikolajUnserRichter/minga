@@ -30,6 +30,10 @@ from app.tenancy import (
 from app.api.v1 import seeds, production, sales, forecasting, products, invoices, inventory, analytics, capacity, suppliers, units, imports, documents, attachments, admin, document_templates, platform, procurement, integrations, staff
 from app.api.deps import get_current_user
 from app.core.security import verify_token
+from app.core.site import (
+    canonical_origin, hostname, is_admin_host, is_apex_host, is_www_host,
+    marketing_dir, root_domain,
+)
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -191,9 +195,7 @@ if frontend_dist.exists():
         app.mount("/assets", StaticFiles(directory=str(assets_path)), name="assets")
 
 # Marketing-Seite (apex novaerp.de) — separate Static-Dir, kein Auth nötig.
-marketing_dist = Path("/app/static_marketing")
-if not marketing_dist.exists():
-    marketing_dist = Path(__file__).parent.parent / "static_marketing"
+marketing_dist = marketing_dir()
 
 # Platform-Admin-UI (admin.novaerp.de) — eigener Static-Dir.
 admin_dist = Path("/app/static_admin")
@@ -202,20 +204,18 @@ if not admin_dist.exists():
 
 
 def _root_domain() -> str:
-    return os.environ.get("SPROUDDESK_ROOT_DOMAIN", "novaerp.de").lower()
+    return root_domain()
 
 
 def _is_apex_request(request: Request) -> bool:
-    """Apex = novaerp.de ohne Subdomain (oder ROOT_DOMAIN-env-Vorgabe)."""
-    host = (request.headers.get("host") or "").split(":")[0].lower()
-    return host == _root_domain()
+    """Apex = novaerp.de oder www.novaerp.de."""
+    return is_apex_host(hostname(request))
 
 
 def _is_admin_request(request: Request) -> bool:
     """admin.novaerp.de → Platform-Admin-UI. Die UI selbst ist statisch;
     alle Aktionen sind durch den X-Platform-Admin-Key geschützt."""
-    host = (request.headers.get("host") or "").split(":")[0].lower()
-    return host == f"admin.{_root_domain()}"
+    return is_admin_host(hostname(request))
 
 # Rate limiting
 app.state.limiter = limiter
@@ -243,13 +243,10 @@ async def tenant_middleware(request: Request, call_next):
     # Plattform-Pfade die kein Tenant brauchen: /health, /api/v1/platform/*, /docs
     # + apex-Routes (Marketing-Seite serviert SPA-Files ohne Tenant)
     path = request.url.path
-    _root = os.getenv("SPROUDDESK_ROOT_DOMAIN", "novaerp.de").lower()
-    _host_only = host.split(":")[0].lower() if host else ""
-    is_apex = _host_only == _root
-    is_admin_host = _host_only == f"admin.{_root}"
+    _host_only = hostname(request)
     is_platform_path = (
-        is_apex
-        or is_admin_host
+        is_apex_host(_host_only)
+        or is_admin_host(_host_only)
         or path.startswith("/health")
         or path.startswith("/api/v1/platform")
         or path.startswith("/docs")
