@@ -154,6 +154,17 @@
           </div>
           <button class="btn btn-ghost" onclick="neuerBeitrag()">Neu</button>
         </div>
+        <div class="create-row" style="margin-bottom:1rem;padding:1rem;background:var(--bronze-dim);border:1px solid rgba(192,129,79,.3);border-radius:.7rem">
+          <div class="field">
+            <label for="kiThema">KI-Redaktion: Thema</label>
+            <input id="kiThema" type="text" placeholder="z.B. DSGVO-konformes ERP-Hosting in Deutschland" />
+          </div>
+          <div class="field" style="max-width:220px">
+            <label for="kiCluster">Cluster (optional)</label>
+            <input id="kiCluster" type="text" placeholder="Kosten &amp; Auswahl" />
+          </div>
+          <button class="btn btn-bronze" id="kiBtn" onclick="kiEntwurf()">KI-Entwurf schreiben</button>
+        </div>
         <div id="artList"><div class="empty">Lädt…</div></div>
 
         <div id="artForm" class="hidden" style="margin-top:1.5rem;border-top:1px solid var(--line);padding-top:1.5rem">
@@ -467,6 +478,29 @@
         aktuellerSlug = '';
         ladeBeitraege();
       } else { toast('Löschen fehlgeschlagen', 'err'); }
+    }
+
+    async function kiEntwurf(){
+      const thema = document.getElementById('kiThema').value.trim();
+      if(!thema){ toast('Thema fehlt', 'err'); return; }
+      const btn = document.getElementById('kiBtn');
+      btn.disabled = true; btn.textContent = 'Schreibt…';
+      toast('KI schreibt den Entwurf — dauert ~20 Sekunden…');
+      try {
+        const res = await fetch(`${ART_API}/generate`, {
+          method: 'POST', headers: headers(),
+          body: JSON.stringify({ thema, cluster: document.getElementById('kiCluster').value.trim() }),
+        });
+        const antwort = await res.json().catch(()=>({}));
+        if(res.ok){
+          formFuellen(antwort);           // Entwurf direkt im Editor zum Prüfen
+          ladeBeitraege();
+          toast('Entwurf erstellt — bitte prüfen, dann veröffentlichen', 'ok');
+        } else {
+          toast(antwort.detail || 'Generierung fehlgeschlagen', 'err');
+        }
+      } catch(e){ toast('Generierung fehlgeschlagen: ' + e.message, 'err'); }
+      btn.disabled = false; btn.textContent = 'KI-Entwurf schreiben';
     }
 
     async function ladeSeo(){

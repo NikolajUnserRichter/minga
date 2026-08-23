@@ -37,6 +37,11 @@ class QueueBody(BaseModel):
     slugs: list[str]
 
 
+class GenerierenBody(BaseModel):
+    thema: str
+    cluster: str = ""
+
+
 def _holen(slug: str) -> ratgeber.Article:
     beitrag = ratgeber.get(slug)
     if beitrag is None:
@@ -58,6 +63,27 @@ def warteschlange(body: QueueBody, _: None = Depends(require_platform_admin)):
     except ratgeber.SlugFehler as fehler:
         raise HTTPException(status_code=400, detail=str(fehler))
     return {"ok": True, "count": len(body.slugs)}
+
+
+@router.post("/generate")
+def ki_entwurf(body: GenerierenBody, _: None = Depends(require_platform_admin)):
+    """KI-Entwurf zum Thema erzeugen — immer Status entwurf, nie live.
+
+    Steht wie /queue VOR /{slug}, sonst matcht der Platzhalter zuerst.
+    """
+    from app.services import ratgeber_ki
+    thema = body.thema.strip()
+    if not thema:
+        raise HTTPException(status_code=400, detail="Thema fehlt")
+    try:
+        return ratgeber_ki.generate_article(thema, cluster=body.cluster).as_dict()
+    except ratgeber_ki.KeinSchluessel:
+        raise HTTPException(status_code=503,
+                            detail="GEMINI_API_KEY ist nicht konfiguriert")
+    except ratgeber_ki.GenerierungFehlgeschlagen as fehler:
+        raise HTTPException(status_code=502, detail=str(fehler))
+    except ratgeber.SlugFehler as fehler:
+        raise HTTPException(status_code=400, detail=str(fehler))
 
 
 @router.get("/{slug}")

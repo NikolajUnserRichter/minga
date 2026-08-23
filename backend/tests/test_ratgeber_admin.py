@@ -97,3 +97,34 @@ def test_warteschlange_sortieren(web):
     r = web.post(f"{API}/queue", json={"slugs": ["c", "a", "b"]}, headers=kopf())
     assert r.status_code == 200
     assert [x.slug for x in ratgeber.list_all(status="warteschlange")] == ["c", "a", "b"]
+
+
+# --- KI-Redaktionstool --------------------------------------------------------
+
+
+def test_ki_entwurf_ohne_key_gibt_503(web, monkeypatch):
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    r = web.post(f"{API}/generate", json={"thema": "ERP-Einführung"}, headers=kopf())
+    assert r.status_code == 503
+
+
+def test_ki_entwurf_ohne_admin_key_gibt_401(web):
+    assert web.post(f"{API}/generate", json={"thema": "x"}).status_code == 401
+
+
+def test_ki_entwurf_landet_im_editor(web, monkeypatch):
+    from app.core import ratgeber as r_mod
+    from app.services import ratgeber_ki
+
+    def fake_generate(thema, cluster=""):
+        return r_mod.save(r_mod.Article(
+            slug="erp-einfuehrung", title="ERP-Einführung",
+            cluster=cluster, body="## Test", status="entwurf"))
+
+    monkeypatch.setattr(ratgeber_ki, "generate_article", fake_generate)
+    r = web.post(f"{API}/generate",
+                 json={"thema": "ERP-Einführung", "cluster": "Einführung"},
+                 headers=kopf())
+    assert r.status_code == 200
+    assert r.json()["status"] == "entwurf"
+    assert r.json()["cluster"] == "Einführung"
