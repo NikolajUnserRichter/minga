@@ -264,6 +264,11 @@ class ProductCreate(ProductBase):
     storage_temp_max: Optional[Decimal] = Field(None, description="Max. Lagertemperatur °C")
     min_stock_quantity: Optional[Decimal] = Field(None, ge=0, description="Mindestbestand")
 
+    # Pfand (Mehrwegtrays, Pfandkisten) — ohne Angabe wird der Steuersatz auf
+    # STANDARD (19 %) gesetzt, siehe create_product.
+    is_deposit: bool = Field(default=False, description="Pfandartikel")
+    deposit_value: Optional[Decimal] = Field(None, ge=0, description="Pfandwert je Einheit")
+
     # Bundle (FIXED via bundle_components-Tabelle ODER VARIABLE für Gastrotray)
     is_bundle: bool = Field(default=False, description="FIXED Bundle (Mischkiste)")
     bundle_components: Optional[list[dict]] = Field(None, description="Legacy JSON")
@@ -290,6 +295,8 @@ class ProductUpdate(BaseModel):
     storage_temp_min: Optional[Decimal] = None
     storage_temp_max: Optional[Decimal] = None
     min_stock_quantity: Optional[Decimal] = None
+    is_deposit: Optional[bool] = None
+    deposit_value: Optional[Decimal] = None
     is_bundle: Optional[bool] = None
     bundle_components: Optional[list[dict]] = None
     is_variable_bundle: Optional[bool] = None
@@ -315,6 +322,8 @@ class ProductResponse(ProductBase):
     storage_temp_min: Optional[Decimal]
     storage_temp_max: Optional[Decimal]
     min_stock_quantity: Optional[Decimal] = Field(validation_alias="min_stock_level")
+    is_deposit: bool = False
+    deposit_value: Optional[Decimal] = None
     is_bundle: bool
     bundle_components: Optional[list[dict]]
     is_variable_bundle: bool = False

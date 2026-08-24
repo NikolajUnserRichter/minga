@@ -268,6 +268,10 @@ export default function Invoices() {
         />
       ) : (
         <div className="card overflow-hidden">
+          {/* overflow-x-auto: die Tabelle ist breiter als schmale Fenster —
+              ohne Scrollcontainer schnitt die Karte die rechten Spalten
+              (Betrag, Aktionen) ersatzlos ab. */}
+          <div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
             <thead className="bg-gray-50 dark:bg-gray-800">
               <tr>
@@ -414,6 +418,7 @@ export default function Invoices() {
               ))}
             </tbody>
           </table>
+          </div>
           {displayInvoices.length > itemsPerPage && (
             <Pagination
               currentPage={currentPage}
@@ -1131,6 +1136,14 @@ function InvoiceDetail({ invoice: initial }: { invoice: Invoice }) {
           <span>Gesamt:</span>
           <span>{invoice.total.toFixed(2)} €</span>
         </div>
+        {/* Pfand steckt im Gesamtbetrag, gehört aber dem Kunden — er bekommt
+            es mit dem Gebinde zurück. Nachrichtlich, nicht addieren. */}
+        {!!invoice.total_deposit && invoice.total_deposit > 0 && (
+          <div className="flex justify-between text-sm text-gray-500 dark:text-gray-400 mt-1">
+            <span>darin enthaltenes Pfand:</span>
+            <span>{invoice.total_deposit.toFixed(2)} €</span>
+          </div>
+        )}
         {invoice.paid_amount > 0 && (
           <div className="flex justify-between text-sm text-green-600 dark:text-green-400 mt-1">
             <span>Bezahlt:</span>

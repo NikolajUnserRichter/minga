@@ -319,6 +319,9 @@ def _auto_migrate(engine: Engine) -> None:
         # Keimende + Herkunft des Parametersatzes an der Wachstumscharge
         _add_col_if_missing("grow_batches", "keimende_datum",   "DATE")
         _add_col_if_missing("grow_batches", "parameter_quelle", "VARCHAR(10)")
+        # Mischsorten (z.B. Brotzeitmix) — die Rezept- und Chargentabellen
+        # legt create_all an, nur die Kennzeichnung fehlt in alten Schemata.
+        _add_col_if_missing("seeds", "is_mix", "BOOLEAN", "0")
     except Exception as e:
         logger.error(f"[auto-migrate] failed: {e}")
 

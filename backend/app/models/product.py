@@ -15,6 +15,7 @@ from app.database import Base
 
 if TYPE_CHECKING:
     from app.models.unit import UnitOfMeasure
+    from app.models.seed import Seed
 
 from app.models.enums import TaxRate
 
@@ -265,6 +266,12 @@ class Product(Base):
 
     # Relationships
     base_unit: Mapped["UnitOfMeasure"] = relationship("UnitOfMeasure")
+    # Das verknüpfte Saatgut trägt die botanische Sorte ('Black Oil'); der
+    # Belegdruck braucht sie bei sortenreinen Artikeln. Nur lesend — die
+    # Zuordnung läuft über seed_id.
+    seed: Mapped[Optional["Seed"]] = relationship(
+        "Seed", foreign_keys=[seed_id], viewonly=True
+    )
     grow_plan: Mapped[Optional["GrowPlan"]] = relationship(
         "GrowPlan", back_populates="products", foreign_keys=[grow_plan_id]
     )

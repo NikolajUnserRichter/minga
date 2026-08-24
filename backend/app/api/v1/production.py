@@ -56,13 +56,31 @@ def create_grow_batch(data: GrowBatchCreate, db: DBSession):
     GrowBatch im Status KEIMUNG an.
     """
     from datetime import timedelta
-    from app.models.seed import SeedBatch
+    from app.models.seed import Seed, SeedBatch
+    from app.services.seed_mix import NichtGenugSaatgut, mische_charge
 
-    seed_batch = db.get(SeedBatch, data.seed_batch_id)
-    if not seed_batch:
-        raise HTTPException(status_code=404, detail="Saatgut-Charge nicht gefunden")
+    if data.seed_batch_id:
+        seed_batch = db.get(SeedBatch, data.seed_batch_id)
+        if not seed_batch:
+            raise HTTPException(status_code=404, detail="Saatgut-Charge nicht gefunden")
+        seed = seed_batch.seed
+    else:
+        # Mischsorte: die Charge entsteht erst hier, aus dem Bestand der
+        # Ausgangssorten. Erst mischen, dann wie gewohnt weiterrechnen.
+        seed = db.get(Seed, data.seed_id)
+        if not seed:
+            raise HTTPException(status_code=404, detail="Saatgut-Sorte nicht gefunden")
+        if not seed.is_mix:
+            raise HTTPException(
+                status_code=400,
+                detail=f"'{seed.name}' ist keine Mischsorte — bitte eine Saatgut-Charge wählen.",
+            )
+        try:
+            seed_batch = mische_charge(db, seed, data.tray_anzahl, data.aussaat_datum)
+        except NichtGenugSaatgut as fehler:
+            db.rollback()
+            raise HTTPException(status_code=400, detail=str(fehler))
 
-    seed = seed_batch.seed
     if not seed:
         raise HTTPException(status_code=400, detail="Saatgut-Charge hat keine Sorte zugeordnet")
 
@@ -82,7 +100,7 @@ def create_grow_batch(data: GrowBatchCreate, db: DBSession):
     erwartete_ernte_max = data.aussaat_datum + timedelta(days=params.erntefenster_max_tage)
 
     grow_batch = GrowBatch(
-        seed_batch_id=data.seed_batch_id,
+        seed_batch_id=seed_batch.id,
         tray_anzahl=data.tray_anzahl,
         aussaat_datum=data.aussaat_datum,
         erwartete_ernte_min=erwartete_ernte_min,
@@ -149,9 +167,41 @@ def get_grow_batch_label(batch_id: UUID, db: DBSession):
         raise HTTPException(status_code=404, detail="Charge nicht gefunden")
         
     pdf_content = LabelService.generate_grow_label(batch)
-    
+
     filename = f"Label_Charge_{batch.id}.pdf"
-    
+
+    return Response(
+        content=pdf_content,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f"attachment; filename={filename}",
+        }
+    )
+
+
+@router.get("/labels/grow-batches")
+def get_aussaat_label_sheet(
+    db: DBSession,
+    datum: Optional[date] = Query(None, description="Aussaattag, Vorgabe: heute"),
+    format: str = Query("avery-48x17", description="Etikettenformat"),
+):
+    """Etikettenbogen für alle Aussaaten eines Tages — ein Etikett je Tray.
+
+    Beklebt wird jedes Tray, nicht die Charge; gedruckt wird tagesweise für
+    alle Sorten auf einmal (Avery Zweckform 48,5 × 16,9 mm, 64 je A4).
+    """
+    from app.services.label_service import (
+        KeineAussaat, UnbekanntesFormat, baue_aussaat_etikettenbogen,
+    )
+
+    tag = datum or date.today()
+    try:
+        pdf_content, filename = baue_aussaat_etikettenbogen(db, tag, format)
+    except UnbekanntesFormat as fehler:
+        raise HTTPException(status_code=400, detail=str(fehler))
+    except KeineAussaat as fehler:
+        raise HTTPException(status_code=404, detail=str(fehler))
+
     return Response(
         content=pdf_content,
         media_type="application/pdf",

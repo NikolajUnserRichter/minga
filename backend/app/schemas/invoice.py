@@ -173,6 +173,8 @@ class InvoiceResponse(InvoiceBase):
     discount_percent: Decimal
     discount_amount: Decimal
     paid_amount: Decimal
+    #: Im Gesamtbetrag enthaltenes Pfand (brutto) — kommt mit dem Gebinde zurück
+    total_deposit: Decimal = Decimal("0.00")
     currency: str
 
     # DATEV

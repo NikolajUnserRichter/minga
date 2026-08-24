@@ -26,8 +26,25 @@ export interface Seed {
   winter_erntefenster_max_tage: number | null
   aktiv: boolean
   gesamte_wachstumsdauer: number
+  // Mischsorte (z.B. Brotzeitmix): wird nicht eingekauft, sondern bei der
+  // Aussaat aus den Komponenten gemischt — daher ohne eigene Charge.
+  is_mix: boolean
+  mix_components: SeedMixComponent[]
   created_at: string
   updated_at: string
+}
+
+export interface SeedMixComponent {
+  seed_id: string
+  gramm_pro_tray: number
+  seed_name: string | null
+}
+
+export interface SeedBatchComponent {
+  component_seed_id: string
+  seed_name: string | null
+  charge_nummer: string
+  menge_gramm: number
 }
 
 export interface SeedSupplierLink {
@@ -459,6 +476,10 @@ export interface Product {
   storage_temp_min: number | null
   storage_temp_max: number | null
   min_stock_quantity: number | null
+  /** Pfandgebinde (Mehrwegtray, Pfandkiste) — 19 % MwSt */
+  is_deposit: boolean
+  /** Pfandwert je Einheit */
+  deposit_value: number | null
   is_bundle: boolean
   is_variable_bundle: boolean
   variable_bundle_min_slots: number | null
@@ -584,6 +605,8 @@ export interface Invoice {
   tax_amount: number
   total: number
   paid_amount: number
+  /** Im Gesamtbetrag enthaltenes Pfand (brutto) */
+  total_deposit?: number
   billing_address: Record<string, string> | null
   shipping_address: Record<string, string> | null
   header_text: string | null
@@ -672,6 +695,8 @@ export interface SeedInventory {
   days_until_expiry?: number | null
   seed_name?: string
   location_name?: string
+  /** Angebrochene Charge ("in Verwendung"); null = unberührt im Lager */
+  in_production_at?: string | null
 }
 
 export interface FinishedGoodsInventory {

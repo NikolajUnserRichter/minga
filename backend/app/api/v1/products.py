@@ -15,6 +15,7 @@ from app.models.product import (
     ProductCategory
 )
 from app.models.unit import UnitOfMeasure
+from app.models.enums import TaxRate
 from app.schemas.product import (
     ProductCreate, ProductUpdate, ProductResponse, ProductDetailResponse,
     ProductGroupCreate, ProductGroupUpdate, ProductGroupResponse,
@@ -82,8 +83,14 @@ def get_product(product_id: UUID, db: DBSession):
 def create_product(data: ProductCreate, db: DBSession):
     """Erstellt ein neues Produkt."""
     service = ProductService(db)
+    payload = data.model_dump()
+    # Pfand auf Mehrweggebinde ist ein eigener Umsatz zum Regelsatz — der
+    # Lebensmittelsatz von 7 % (unser Default) gilt dafür nicht. Eine bewusst
+    # gesetzte Angabe bleibt unangetastet.
+    if payload.get("is_deposit") and "tax_rate" not in data.model_fields_set:
+        payload["tax_rate"] = TaxRate.STANDARD
     try:
-        product = service.create_product(**data.model_dump())
+        product = service.create_product(**payload)
         db.commit()
         db.refresh(product)
         return product

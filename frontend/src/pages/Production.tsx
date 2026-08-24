@@ -17,10 +17,12 @@ import {
   useToast,
   SelectOption,
   Input,
+  getRelativeDate,
 } from '../components/ui';
-import { Plus, Sprout, Search, LayoutGrid, List, Columns3 } from 'lucide-react';
+import { Plus, Sprout, Search, LayoutGrid, List, Columns3, Printer, Download } from 'lucide-react';
 import type { GrowBatch, GrowBatchStatus, Seed } from '../types';
 import { getErrorMessage } from '../services/errors';
+import { druckePdf, ladePdfHerunter } from '../services/print';
 
 const statusOptions: SelectOption[] = [
   { value: '', label: 'Alle Status' },
@@ -41,9 +43,16 @@ export default function Production() {
   const [viewMode, setViewMode] = useState<'grid' | 'list' | 'kanban'>('grid');
   const [activeTab, setActiveTab] = useState('all');
   const [isCreating, setIsCreating] = useState(false);
+  // Sorte, mit der das Aussaat-Popup vorbelegt wird (leer = frei wählen)
+  const [sowingSeedId, setSowingSeedId] = useState('');
   const [harvestingBatch, setHarvestingBatch] = useState<GrowBatch | null>(null);
   const [timelineBatch, setTimelineBatch] = useState<GrowBatch | null>(null);
   const [packagingDate, setPackagingDate] = useState(new Date().toISOString().split('T')[0]);
+  // Etikettenbogen: ein Etikett je Tray für alle Aussaaten eines Tages
+  const [labelSheetOpen, setLabelSheetOpen] = useState(false);
+  const [labelDate, setLabelDate] = useState(new Date().toISOString().split('T')[0]);
+  const [labelFormat, setLabelFormat] = useState('avery-48x17');
+  const [labelAktion, setLabelAktion] = useState<'druck' | 'download' | null>(null);
 
   const [searchParams] = useSearchParams();
   const highlightId = searchParams.get('highlight');
@@ -86,6 +95,7 @@ export default function Production() {
     mutationFn: async (data: {
       seed_id: string;
       seed_batch_id?: string;
+      is_mix?: boolean;
       tray_anzahl: number;
       aussaat_datum: string;
       regal_position?: string;
@@ -93,7 +103,7 @@ export default function Production() {
       soaking_started_at?: string;
       soaking_employee?: string;
     }) => {
-      if (!data.seed_batch_id) {
+      if (!data.seed_batch_id && !data.is_mix) {
         throw {
           response: {
             data: {
@@ -103,7 +113,10 @@ export default function Production() {
         };
       }
       const batch = await productionApi.createGrowBatch({
-        seed_batch_id: data.seed_batch_id,
+        // Mischsorte: das Backend mischt und legt die Charge selbst an.
+        ...(data.seed_batch_id
+          ? { seed_batch_id: data.seed_batch_id }
+          : { seed_id: data.seed_id }),
         tray_anzahl: data.tray_anzahl,
         aussaat_datum: data.aussaat_datum,
         regal_position: data.regal_position || undefined,
@@ -130,10 +143,15 @@ export default function Production() {
       queryClient.invalidateQueries({ queryKey: ['growBatches'] });
       queryClient.invalidateQueries({ queryKey: ['capacity'] });
       queryClient.invalidateQueries({ queryKey: ['seed-batches'] });
+      // Eine Mischung zieht direkt vom Saatgut-Lagerbestand ab.
+      queryClient.invalidateQueries({ queryKey: ['seed-inventory'] });
       setIsCreating(false);
+      // Nicht pauschal "morgen": die Aussaat kann auch heute oder erst in
+      // ein paar Tagen anstehen — dann stimmt der Hinweis sonst nicht.
+      const wann = getRelativeDate(vars.aussaat_datum).toLowerCase();
       toast.success(
         vars.needs_soaking
-          ? 'Aussaat angelegt — Einweichen läuft, Aussaat morgen abschließen'
+          ? `Aussaat angelegt — Einweichen läuft, Aussaat ${wann} abschließen`
           : 'Aussaat angelegt'
       );
     },
@@ -182,6 +200,42 @@ export default function Production() {
   // Derived State
   // Backend liefert flaches Array – legacy-Fallback auf .items für Kompat
   const batches = Array.isArray(batchesData) ? batchesData : ((batchesData as any)?.items || []);
+  const meldeEtikettenFehler = (e: any) => {
+    // Blob-Antworten tragen die Meldung nicht als JSON — der 404 bedeutet
+    // hier immer: an dem Tag ist keine Aussaat erfasst.
+    toast.error(
+      e?.response?.status === 404
+        ? 'Für diesen Tag ist keine Aussaat erfasst.'
+        : 'Etiketten konnten nicht erzeugt werden.'
+    );
+  };
+
+  const printAussaatLabels = async () => {
+    setLabelAktion('druck');
+    try {
+      const response = await productionApi.downloadAussaatLabels(labelDate, labelFormat);
+      druckePdf(response.data);
+      setLabelSheetOpen(false);
+    } catch (e: any) {
+      meldeEtikettenFehler(e);
+    } finally {
+      setLabelAktion(null);
+    }
+  };
+
+  const downloadAussaatLabels = async () => {
+    setLabelAktion('download');
+    try {
+      const response = await productionApi.downloadAussaatLabels(labelDate, labelFormat);
+      ladePdfHerunter(response.data, `Aussaat-Etiketten_${labelDate}.pdf`);
+      setLabelSheetOpen(false);
+    } catch (e: any) {
+      meldeEtikettenFehler(e);
+    } finally {
+      setLabelAktion(null);
+    }
+  };
+
   const filteredBatches = batches.filter((batch: GrowBatch) =>
     batch.seed_name?.toLowerCase().includes(search.toLowerCase()) ||
     batch.id.toLowerCase().includes(search.toLowerCase())
@@ -237,7 +291,14 @@ export default function Production() {
                 secondaryLabel="übersprungen"
                 onImported={() => queryClient.invalidateQueries({ queryKey: ['growBatches'] })}
               />
-              <button className="btn btn-primary" onClick={() => setIsCreating(true)}>
+              <button className="btn btn-secondary" onClick={() => setLabelSheetOpen(true)}>
+                <Printer className="w-4 h-4" />
+                Etiketten
+              </button>
+              <button className="btn btn-primary" onClick={() => {
+                  setSowingSeedId('');
+                  setIsCreating(true);
+                }}>
                 <Plus className="w-4 h-4" />
                 Neue Aussaat
               </button>
@@ -258,7 +319,10 @@ export default function Production() {
                 <div
                   key={seed.id}
                   className="p-4 bg-gray-50 dark:bg-gray-700/50 rounded-lg text-center hover:bg-minga-50 dark:bg-minga-900/30 transition-colors cursor-pointer"
-                  onClick={() => setIsCreating(true)}
+                  onClick={() => {
+                    setSowingSeedId(seed.id);
+                    setIsCreating(true);
+                  }}
                 >
                   <div className="w-10 h-10 bg-minga-100 dark:bg-minga-900/50 rounded-full flex items-center justify-center mx-auto mb-2">
                     <Sprout className="w-5 h-5 text-minga-600 dark:text-minga-400" />
@@ -388,7 +452,10 @@ export default function Production() {
               description={search ? 'Versuche eine andere Suche.' : 'Starte deine erste Aussaat.'}
               action={
                 !search && (
-                  <button className="btn btn-primary" onClick={() => setIsCreating(true)}>
+                  <button className="btn btn-primary" onClick={() => {
+                  setSowingSeedId('');
+                  setIsCreating(true);
+                }}>
                     <Plus className="w-4 h-4" />
                     Erste Aussaat
                   </button>
@@ -415,13 +482,7 @@ export default function Production() {
                   onPrintLabel={async () => {
                     try {
                       const response = await productionApi.downloadLabel(batch.id);
-                      const url = window.URL.createObjectURL(new Blob([response.data]));
-                      const link = document.createElement('a');
-                      link.href = url;
-                      link.setAttribute('download', `Label_${batch.id}.pdf`);
-                      document.body.appendChild(link);
-                      link.click();
-                      link.remove();
+                      druckePdf(response.data);
                     } catch (e) {
                       toast.error("Fehler beim Laden des Labels");
                     }
@@ -510,11 +571,60 @@ export default function Production() {
       {/* Create Modal */}
       <Modal open={isCreating} onClose={() => setIsCreating(false)} title="Neue Aussaat" size="lg">
         <SowingForm
+          // key: das Formular liest defaultSeedId nur beim Mounten — ohne
+          // Remount bliebe die zuvor geklickte Sorte stehen
+          key={sowingSeedId}
+          defaultSeedId={sowingSeedId}
           seeds={seedsData?.items || []}
           loading={createSowingMutation.isPending}
           onSubmit={(data) => createSowingMutation.mutate(data)}
           onCancel={() => setIsCreating(false)}
         />
+      </Modal>
+
+      {/* Tagesweise Tray-Etiketten: gedruckt wird für alle Sorten auf einmal */}
+      <Modal open={labelSheetOpen} onClose={() => setLabelSheetOpen(false)} title="Etiketten drucken">
+        <div className="space-y-4">
+          <Input
+            label="Aussaattag"
+            type="date"
+            value={labelDate}
+            onChange={(e) => setLabelDate(e.target.value)}
+            hint="ein Etikett je Kiste, für alle an diesem Tag ausgesäten Sorten"
+          />
+          <Select
+            label="Format"
+            value={labelFormat}
+            onChange={(e) => setLabelFormat(e.target.value)}
+            options={[
+              { value: 'avery-48x17', label: 'Avery Zweckform 48,5 × 16,9 mm (64 je A4)' },
+              { value: '45x25', label: 'Etikettendrucker 45 × 25 mm (Rolle)' },
+            ]}
+          />
+          <div className="flex justify-end gap-2">
+            <button className="btn btn-secondary" onClick={() => setLabelSheetOpen(false)}>
+              Abbrechen
+            </button>
+            {/* Herunterladen bleibt als Rückfalltür, falls der Druckdialog
+                im Browser des Nutzers nicht aufgeht. */}
+            <button
+              className="btn btn-secondary"
+              onClick={downloadAussaatLabels}
+              disabled={labelAktion !== null}
+            >
+              <Download className="w-4 h-4" />
+              {labelAktion === 'download' ? 'Erzeuge …' : 'Herunterladen'}
+            </button>
+            <button
+              className="btn btn-primary"
+              onClick={printAussaatLabels}
+              disabled={labelAktion !== null}
+            >
+              <Printer className="w-4 h-4" />
+              {labelAktion === 'druck' ? 'Erzeuge …' : 'Drucken'}
+            </button>
+          </div>
+        </div>
       </Modal>
 
       {/* Harvest Modal */}
@@ -551,6 +661,7 @@ export default function Production() {
         open={!!timelineBatch}
         onClose={() => setTimelineBatch(null)}
         growBatchId={timelineBatch?.id || null}
+        seedBatchId={timelineBatch?.seed_batch_id || null}
         batchLabel={timelineBatch ? `${timelineBatch.seed_name || (timelineBatch as any).seed?.name || 'Charge'} #${timelineBatch.id.slice(0, 8)}` : undefined}
       />
     </div>

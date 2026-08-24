@@ -29,6 +29,7 @@ import { TraceabilityView } from '../components/domain/TraceabilityView';
 import { StockCorrectionModal } from '../components/domain/StockCorrectionModal';
 import { TraceabilityChain, InventoryType } from '../types';
 import { getErrorMessage } from '../services/errors';
+import { druckePdf } from '../services/print';
 
 const LOCATION_TYPE_LABELS: Record<LocationType, string> = {
   LAGER: 'Lager',
@@ -473,6 +474,7 @@ function SeedMasterEditModal({ item, onClose, onSaved }: { item: SeedInventory; 
     organic_certificate: item.organic_certificate || '',
     best_before_date: item.best_before_date ? item.best_before_date.split('T')[0] : '',
     supplier_name: item.supplier_name || '',
+    in_production_at: item.in_production_at ? item.in_production_at.split('T')[0] : '',
   });
 
   const handleSave = async () => {
@@ -483,6 +485,7 @@ function SeedMasterEditModal({ item, onClose, onSaved }: { item: SeedInventory; 
         organic_certificate: form.organic_certificate || null,
         best_before_date: form.best_before_date || null,
         supplier_name: form.supplier_name || null,
+        in_production_at: form.in_production_at || null,
       });
       toast.success('Stammdaten gespeichert');
       onSaved();
@@ -537,6 +540,15 @@ function SeedMasterEditModal({ item, onClose, onSaved }: { item: SeedInventory; 
           value={form.supplier_name}
           onChange={(e) => setForm({ ...form, supplier_name: e.target.value })}
         />
+        {/* Nachträglich setzbar: beim Wareneingang weiß man oft noch nicht,
+            wann die Charge angebrochen wird. Leeren = zurück ins Lager. */}
+        <Input
+          label="In Produktion ab"
+          type="date"
+          value={form.in_production_at}
+          onChange={(e) => setForm({ ...form, in_production_at: e.target.value })}
+          hint="gesetzt = Charge ist in Verwendung, leer = unberührt im Lager"
+        />
       </div>
     </Modal>
   );
@@ -570,7 +582,16 @@ function SeedInventoryTab({ inventory, search, onCorrect, onAttachments, onEditM
         <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
           {filtered.map((item) => (
             <tr key={item.id} className="hover:bg-gray-50 dark:bg-gray-700/50">
-              <td className="px-6 py-4 text-sm font-mono">{item.batch_number}</td>
+              <td className="px-6 py-4 text-sm font-mono">
+                {item.batch_number}
+                {/* Angebrochene Charge auf einen Blick: sonst sieht man erst
+                    im Stammdaten-Dialog, ob die Tüte schon offen ist. */}
+                {item.in_production_at && (
+                  <Badge variant="info" className="ml-2">
+                    In Verwendung
+                  </Badge>
+                )}
+              </td>
               <td className="px-6 py-4 text-sm">{item.seed_name}</td>
               <td className="px-6 py-4 text-sm text-gray-500 dark:text-gray-400">{item.location_name}</td>
               <td className="px-6 py-4">
@@ -677,13 +698,7 @@ function FinishedGoodsTab({
                       e.stopPropagation();
                       try {
                         const response = await inventoryApi.downloadLabel(item.id);
-                        const url = window.URL.createObjectURL(new Blob([response.data]));
-                        const link = document.createElement('a');
-                        link.href = url;
-                        link.setAttribute('download', `Label_Ware_${item.batch_number || item.id}.pdf`);
-                        document.body.appendChild(link);
-                        link.click();
-                        link.remove();
+                        druckePdf(response.data);
                       } catch (err) {
                         fgToast.error('Fehler beim Laden des Labels');
                       }

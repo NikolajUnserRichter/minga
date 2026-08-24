@@ -82,6 +82,8 @@ def _create_order_from_subscription(db, sub: Subscription):
             "name": customer.billing_address.name or customer.name,
             "strasse": customer.billing_address.strasse,
             "hausnummer": customer.billing_address.hausnummer,
+            # ohne adresszusatz fehlt die Zustellinfo auf allen Abo-Belegen
+            "adresszusatz": customer.billing_address.adresszusatz,
             "plz": customer.billing_address.plz,
             "ort": customer.billing_address.ort,
             "land": customer.billing_address.land
@@ -96,6 +98,7 @@ def _create_order_from_subscription(db, sub: Subscription):
             "name": customer.shipping_address.name or customer.name,
             "strasse": customer.shipping_address.strasse,
             "hausnummer": customer.shipping_address.hausnummer,
+            "adresszusatz": customer.shipping_address.adresszusatz,
             "plz": customer.shipping_address.plz,
             "ort": customer.shipping_address.ort,
             "land": customer.shipping_address.land

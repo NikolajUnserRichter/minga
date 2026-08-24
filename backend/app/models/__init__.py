@@ -3,7 +3,7 @@ SQLAlchemy Models für Minga-Greens ERP
 Vollständiges ERP-Datenmodell für Microgreens-Produktion
 """
 # Basis-Models
-from app.models.seed import Seed, SeedBatch
+from app.models.seed import Seed, SeedBatch, SeedMixComponent, SeedBatchComponent
 from app.models.production import GrowBatch, Harvest, GrowBatchStatus
 
 # Units und Products (Core)
@@ -96,6 +96,9 @@ from app.models.attachment import (
 # App-Settings (Runtime-Konfiguration via Admin-Center)
 from app.models.app_setting import AppSetting
 
+# Druck-Warteschlange (Etikettendrucker im Hofnetz)
+from app.models.print_job import PrintJob, PrintJobStatus
+
 # Customer-spezifische Preise
 from app.models.customer_price import CustomerPrice
 
@@ -120,6 +123,8 @@ __all__ = [
     # Seed & Production
     "Seed",
     "SeedBatch",
+    "SeedMixComponent",
+    "SeedBatchComponent",
     "GrowBatch",
     "GrowBatchStatus",
     "Harvest",
@@ -192,6 +197,9 @@ __all__ = [
     "CERTIFICATE_TYPES",
     # App-Settings
     "AppSetting",
+    # Druck-Warteschlange
+    "PrintJob",
+    "PrintJobStatus",
     # Customer-Pricing
     "CustomerPrice",
     # Production-Timeline

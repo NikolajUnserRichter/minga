@@ -23,6 +23,7 @@ from sqlalchemy import func, select
 
 from app.api.deps import DBSession
 from app.models.customer import Customer, CustomerType
+from app.services.customer_service import next_customer_number
 from app.models.seed import Seed, Supplier
 from app.models.product import Product, ProductCategory
 from app.models.inventory import InventoryLocation, LocationType
@@ -80,6 +81,9 @@ COLUMNS = {
     "products": [
         ("sku", "sku", True, "str"),
         ("name", "name", True, "str"),
+        # Sortenreine Artikel führen die Sorte als Zusatzzeile auf Lieferschein
+        # und Rechnung — der Artikelname allein sagt sie nicht.
+        ("sorte", "seed_variety", False, "str"),
         ("category", "category", True, "enum:MICROGREEN|SEED|PACKAGING|BUNDLE"),
         ("gtin", "gtin", False, "str"),
         ("old_article_number", "old_article_number", False, "str"),
@@ -88,6 +92,10 @@ COLUMNS = {
         ("base_price", "base_price", False, "decimal"),
         ("tax_rate", "tax_rate", False, "enum:REDUZIERT|STANDARD|STEUERFREI"),
         ("shelf_life_days", "shelf_life_days", False, "int"),
+        # Pfandgebinde (Mehrwegtray, Pfandkiste): tax_rate gehört auf STANDARD,
+        # Pfand ist kein Lebensmittelumsatz.
+        ("pfand", "is_deposit", False, "bool"),
+        ("pfandwert", "deposit_value", False, "decimal"),
     ],
     "locations": [
         ("code", "code", True, "str"),
@@ -198,10 +206,14 @@ def _examples(entity: str) -> list[list[Any]]:
         ]
     if entity == "products":
         return [
-            ["MG-RUC-100", "Rucola 100 g Schale", "MICROGREEN", "4260123456789", "A-1001",
-             "BIO", "Frische Rucola-Microgreens in der 100-g-Schale", "3.90", "REDUZIERT", 7],
-            ["MG-ERB-200", "Erbsengrün 200 g Schale", "MICROGREEN", "", "A-1002",
-             "BIO", "", "4.50", "REDUZIERT", 7],
+            ["MG-RUC-100", "Rucola 100 g Schale", "Coltivata", "MICROGREEN", "4260123456789",
+             "A-1001", "BIO", "Frische Rucola-Microgreens in der 100-g-Schale", "3.90",
+             "REDUZIERT", 7, "nein", ""],
+            ["MG-ERB-200", "Erbsengrün 200 g Schale", "Grünschnitt", "MICROGREEN", "",
+             "A-1002", "BIO", "", "4.50", "REDUZIERT", 7, "nein", ""],
+            # Pfandgebinde: 19 % statt 7 %, Pfandwert je Stück
+            ["PFAND-KISTE", "Pfandkiste E2", "", "PACKAGING", "", "", "", "", "4.50",
+             "STANDARD", "", "ja", "4.50"],
         ]
     if entity == "locations":
         return [
@@ -229,7 +241,10 @@ HINWEISE = {
         "mit mehreren Positionen. Kunde und produkt_sku müssen bereits angelegt sein."
     ),
     "grow_batches": "Die Sorte muss vorher als Saatgut angelegt sein.",
-    "products": "Preise mit Punkt oder Komma — beides wird erkannt.",
+    "products": (
+        "Preise mit Punkt oder Komma — beides wird erkannt. Pfandgebinde: "
+        "'pfand' = ja, 'pfandwert' je Stück, tax_rate = STANDARD (19 %)."
+    ),
 }
 
 
@@ -343,7 +358,13 @@ def _import_customers(db, rows: list[dict]) -> tuple[int, int]:
             existing.typ = typ
             updated += 1
         else:
-            db.add(Customer(**{**r, "typ": typ}))
+            # Kundennummer wie in der Maske vergeben — ohne sie fehlt die
+            # Zeile "Kundennummer" später auf Lieferschein und Rechnung.
+            kunde = Customer(**{**r, "typ": typ})
+            if not kunde.customer_number:
+                kunde.customer_number = next_customer_number(db)
+            db.add(kunde)
+            db.flush()  # damit die nächste Zeile die vergebene Nummer sieht
             created += 1
     db.commit()
     return created, updated

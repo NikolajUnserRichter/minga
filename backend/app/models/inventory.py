@@ -165,6 +165,29 @@ class SeedInventory(Base):
         back_populates="seed_inventory"
     )
 
+    # Spiegel-Charge aus der Rückverfolgbarkeit: der Wareneingang legt
+    # SeedInventory und SeedBatch parallel an, verbunden nur über Sorte +
+    # Chargennummer (kein Fremdschlüssel). viewonly — hier wird gelesen,
+    # geschrieben wird über die jeweilige Seite selbst.
+    seed_batch: Mapped[Optional["SeedBatch"]] = relationship(
+        "SeedBatch",
+        primaryjoin=(
+            "and_(SeedInventory.seed_id == foreign(SeedBatch.seed_id), "
+            "SeedInventory.batch_number == foreign(SeedBatch.charge_nummer))"
+        ),
+        viewonly=True,
+        uselist=False,
+    )
+
+    @property
+    def in_production_at(self) -> Optional[date]:
+        """'In Produktion ab' — das Feld lebt an der Rückverfolgbarkeits-Charge.
+
+        Die Bestandsliste braucht es, um eine angebrochene Charge von einer
+        zu unterscheiden, die noch unberührt im Lager steht.
+        """
+        return self.seed_batch.in_production_at if self.seed_batch else None
+
     @property
     def seed_name(self) -> Optional[str]:
         """Sortenname für die Bestandsliste (Spalte 'Sorte')."""

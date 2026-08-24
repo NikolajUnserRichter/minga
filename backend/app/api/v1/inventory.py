@@ -2,7 +2,7 @@ from typing import Optional
 """
 Lager-API - Endpoints für Bestandsverwaltung und Rückverfolgbarkeit
 """
-from datetime import date
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -145,6 +145,9 @@ def update_seed_inventory(inventory_id: UUID, data: SeedInventoryUpdate, db: DBS
         raise HTTPException(status_code=404, detail="Saatgut-Bestand nicht gefunden")
 
     update_data = data.model_dump(exclude_unset=True)
+    # in_production_at ist keine Spalte des Bestands, sondern eine Lese-
+    # Eigenschaft der Spiegel-Charge — direkt zuweisen würde scheitern.
+    in_production_at = update_data.pop("in_production_at", ...)
     for field, value in update_data.items():
         setattr(inventory, field, value)
 
@@ -162,6 +165,16 @@ def update_seed_inventory(inventory_id: UUID, data: SeedInventoryUpdate, db: DBS
             seed_batch.kontrollstelle = update_data["organic_certificate"]
         if "best_before_date" in update_data:
             seed_batch.mhd = update_data["best_before_date"]
+        if in_production_at is not ...:
+            # Charge nachträglich als "in Verwendung" kennzeichnen; None
+            # setzt sie wieder auf "unberührt im Lager" zurück.
+            seed_batch.in_production_at = in_production_at
+    elif in_production_at is not ...:
+        raise HTTPException(
+            status_code=404,
+            detail="Keine Rückverfolgbarkeits-Charge zu diesem Bestand — "
+                   "'In Produktion ab' kann nicht gesetzt werden",
+        )
 
     db.commit()
     db.refresh(inventory)
@@ -278,11 +291,14 @@ def consume_seed_for_sowing(
     """Verbraucht Saatgut für Aussaat."""
     service = InventoryService(db)
     try:
-        inventory, movement = service.consume_seed_for_sowing(
+        # Der Service gibt nur die Buchung zurück; der Bestand hängt daran.
+        movement = service.consume_seed_for_sowing(
             seed_inventory_id=inventory_id,
             quantity_kg=quantity,
             grow_batch_id=grow_batch_id,
+            reason=notes,
         )
+        inventory = db.get(SeedInventory, inventory_id)
         db.commit()
         return {
             "inventory": SeedInventoryResponse.model_validate(inventory),
@@ -803,32 +819,25 @@ def correct_inventory(
     db: DBSession,
 ):
     """Führt eine manuelle Bestandskorrektur durch."""
-    service = InventoryService(db)
     try:
-        # Determine table based on type
-        if inventory_type == InventoryItemType.SEED:
-            item = db.get(SeedInventory, inventory_id)
-        elif inventory_type == InventoryItemType.FINISHED_GOODS:
-            item = db.get(FinishedGoodsInventory, inventory_id)
-        elif inventory_type == InventoryItemType.PACKAGING:
-            item = db.get(PackagingInventory, inventory_id)
-        else:
-            raise ValueError("Ungültiger Inventartyp")
+        # Bestandstabelle, Mengenspalte, Bewegungs-FK und Einheit je Typ.
+        # Substrat und Pfandkisten liegen mit in PackagingInventory — sie
+        # unterscheiden sich dort nur über article_type.
+        CORRECTABLE = {
+            InventoryItemType.SAATGUT:    (SeedInventory,          "current_quantity_kg", "seed_inventory_id", "KG"),
+            InventoryItemType.FERTIGWARE: (FinishedGoodsInventory, "current_quantity_g",  "finished_goods_id", "G"),
+            InventoryItemType.VERPACKUNG: (PackagingInventory,     "current_quantity",    "packaging_id",      None),
+            InventoryItemType.SUBSTRAT:   (PackagingInventory,     "current_quantity",    "packaging_id",      None),
+            InventoryItemType.PFANDKISTE: (PackagingInventory,     "current_quantity",    "packaging_id",      None),
+        }
+        if inventory_type not in CORRECTABLE:
+            raise ValueError(f"Bestandskorrektur für {inventory_type.value} nicht möglich")
+
+        model, qty_field, fk_field, fixed_unit = CORRECTABLE[inventory_type]
+        item = db.get(model, inventory_id)
 
         if not item:
             raise HTTPException(status_code=404, detail="Bestand nicht gefunden")
-
-        # Spaltennamen je Typ (Models verwenden _kg / _g / generisch)
-        qty_field = {
-            InventoryItemType.SEED:           "current_quantity_kg",
-            InventoryItemType.FINISHED_GOODS: "current_quantity_g",
-            InventoryItemType.PACKAGING:      "current_quantity",
-        }[inventory_type]
-        fk_field = {
-            InventoryItemType.SEED:           "seed_inventory_id",
-            InventoryItemType.FINISHED_GOODS: "finished_goods_id",
-            InventoryItemType.PACKAGING:      "packaging_id",
-        }[inventory_type]
 
         current_qty = Decimal(str(getattr(item, qty_field)))
         diff = actual_quantity - current_qty
@@ -840,9 +849,11 @@ def correct_inventory(
             item_type=inventory_type,
             movement_type=MovementType.KORREKTUR,
             quantity=abs(diff),
+            # unit ist Pflichtfeld — ohne Wert scheitert der Insert
+            unit=fixed_unit or getattr(item, "unit", None) or "STK",
             quantity_before=current_qty,
             quantity_after=actual_quantity,
-            movement_date=date.today(),
+            movement_date=datetime.now(timezone.utc),
             reason=f"Korrektur: {reason}",
             **{fk_field: inventory_id},
         )

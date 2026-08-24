@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Seed } from '../../types';
 import { seedsApi, capacityApi } from '../../services/api';
-import { Input, Select, DatePicker, Button, SelectOption } from '../ui';
+import { Input, Select, DatePicker, Button, SelectOption, getRelativeDate } from '../ui';
 import { Sprout, Scale } from 'lucide-react';
 
 interface SowingFormProps {
@@ -16,6 +16,8 @@ interface SowingFormProps {
 export interface SowingFormData {
   seed_id: string;
   seed_batch_id?: string;
+  /** Mischsorte: ohne Charge aussäen, das Backend mischt aus dem Bestand. */
+  is_mix?: boolean;
   tray_anzahl: number;
   aussaat_datum: string;
   regal_position: string;
@@ -58,11 +60,14 @@ export function SowingForm({
   const [errors, setErrors] = useState<Partial<Record<keyof SowingFormData, string>>>({});
 
   const selectedSeed = seeds.find((s) => s.id === formData.seed_id);
+  // Mischsorten haben keine eingekaufte Charge — sie werden beim Aussäen aus
+  // den Komponenten gemischt, die Mischcharge entsteht dabei im Backend.
+  const istMix = !!selectedSeed?.is_mix;
 
   const { data: seedBatches = [] } = useQuery({
     queryKey: ['seed-batches', formData.seed_id],
     queryFn: () => seedsApi.listBatches(formData.seed_id),
-    enabled: !!formData.seed_id,
+    enabled: !!formData.seed_id && !istMix,
   });
 
   const { data: capacities = [] } = useQuery({
@@ -72,8 +77,13 @@ export function SowingForm({
 
   const selectedBatch = seedBatches.find((b) => b.id === formData.seed_batch_id);
 
-  // Saatgut-Dichte: vom Seed-Stammdatensatz (Sortenebene) — Fallback auf Default
-  const seedPerTray = selectedSeed?.saatgut_pro_einheit_gramm ?? DEFAULT_SEED_PER_TRAY;
+  // Saatgut-Dichte: vom Seed-Stammdatensatz (Sortenebene) — Fallback auf Default.
+  // Beim Mix ergibt sie sich aus dem Rezept, ein eigener Wert wäre redundant.
+  const mixComponents = selectedSeed?.mix_components ?? [];
+  const mixPerTray = mixComponents.reduce((summe, k) => summe + Number(k.gramm_pro_tray), 0);
+  const seedPerTray = istMix
+    ? mixPerTray
+    : (selectedSeed?.saatgut_pro_einheit_gramm ?? DEFAULT_SEED_PER_TRAY);
   const seedRequired = formData.tray_anzahl * seedPerTray;
   const expectedYield = selectedSeed
     ? (formData.tray_anzahl * selectedSeed.ertrag_gramm_pro_tray * (1 - selectedSeed.verlustquote_prozent / 100)) / 1000
@@ -115,7 +125,7 @@ export function SowingForm({
     if (!formData.seed_id) {
       newErrors.seed_id = 'Saatgut ist erforderlich';
     }
-    if (!formData.seed_batch_id) {
+    if (!istMix && !formData.seed_batch_id) {
       newErrors.seed_batch_id = 'Bitte eine Saatgut-Charge wählen (ggf. erst im Lager erfassen)';
     }
     if (formData.tray_anzahl <= 0) {
@@ -133,7 +143,7 @@ export function SowingForm({
       return;
     }
 
-    onSubmit(formData);
+    onSubmit({ ...formData, is_mix: istMix, seed_batch_id: istMix ? undefined : formData.seed_batch_id });
   };
 
   const seedOptions: SelectOption[] = seeds
@@ -183,8 +193,39 @@ export function SowingForm({
         placeholder="Saatgut auswählen..."
       />
 
+      {/* Mischsorte: statt einer Charge zeigt das Formular das Rezept —
+          gemischt wird beim Absenden aus dem Bestand der Ausgangssorten. */}
+      {istMix && (
+        <div className="p-3 rounded-lg bg-minga-50 dark:bg-minga-900/30 border border-minga-200 text-sm">
+          <p className="font-medium text-minga-800 dark:text-minga-200">
+            Mischung — wird beim Aussäen aus dem Lager zusammengestellt
+          </p>
+          {mixComponents.length > 0 ? (
+            <ul className="mt-2 space-y-1 text-gray-700 dark:text-gray-300">
+              {mixComponents.map((k) => (
+                <li key={k.seed_id} className="flex justify-between">
+                  <span>{k.seed_name || 'Unbekannte Sorte'}</span>
+                  <span className="font-medium">
+                    {Number(k.gramm_pro_tray)} g/Kiste · {(Number(k.gramm_pro_tray) * formData.tray_anzahl).toFixed(0)} g gesamt
+                  </span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="mt-2 text-amber-700 dark:text-amber-300">
+              Für diese Mischung sind noch keine Ausgangssorten hinterlegt —
+              bitte unter <b>Saatgut → Sorte bearbeiten</b> ergänzen.
+            </p>
+          )}
+          <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
+            Die Mischcharge (MIX-…) entsteht beim Anlegen und hält fest, welche
+            Chargen der Ausgangssorten darin stecken.
+          </p>
+        </div>
+      )}
+
       {/* Seed Batch Selection */}
-      {formData.seed_id && batchOptions.length > 0 && (
+      {!istMix && formData.seed_id && batchOptions.length > 0 && (
         <>
           <Select
             label="Saatgut-Charge *"
@@ -216,7 +257,7 @@ export function SowingForm({
           )}
         </>
       )}
-      {formData.seed_id && batchOptions.length === 0 && (
+      {!istMix && formData.seed_id && batchOptions.length === 0 && (
         <div className="text-sm text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-900/20 p-3 rounded border border-amber-200 dark:border-amber-800">
           ⚠️ Für diese Sorte ist noch keine Saatgut-Charge im Lager.
           Bitte erst unter <b>Lager → Wareneingang Saatgut</b> eine Charge erfassen.
@@ -237,7 +278,10 @@ export function SowingForm({
         <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
           <span className="inline-flex items-center gap-1">
             <Scale className="w-3 h-3" />
-            {seedRequired}g Saatgut benötigt ({seedPerTray} g/Kiste{!selectedSeed?.saatgut_pro_einheit_gramm && ' — Default, Sorte konfigurieren'})
+            {seedRequired}g Saatgut benötigt ({seedPerTray} g/Kiste
+            {istMix
+              ? ' — Summe des Rezepts'
+              : !selectedSeed?.saatgut_pro_einheit_gramm && ' — Default, Sorte konfigurieren'})
           </span>
         </p>
         {selectedBatch && !hasEnoughSeed && (
@@ -273,10 +317,11 @@ export function SowingForm({
               onChange={(e) => setFormData({ ...formData, soaking_employee: e.target.value })}
             />
             <p className="text-xs text-gray-500 dark:text-gray-400 md:col-span-2">
-              Charge wird heute angelegt. Aussaat startet morgen — das
+              Charge wird sofort angelegt, Aussaat ist für{' '}
+              {getRelativeDate(formData.aussaat_datum).toLowerCase()} geplant — das
               SOAKING_STARTED-Event wird sofort in die Timeline geschrieben.
-              Über die Timeline kannst du dann morgen „Aussaat gestartet" und
-              „Aussaat abgeschlossen" eintragen.
+              Über die Timeline trägst du dann „Aussaat gestartet" und
+              „Aussaat abgeschlossen" ein.
             </p>
           </div>
         )}

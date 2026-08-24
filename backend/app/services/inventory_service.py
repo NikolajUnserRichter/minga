@@ -90,8 +90,10 @@ class InventoryService:
         self,
         seed_inventory_id: UUID,
         quantity_kg: Decimal,
-        grow_batch_id: UUID,
+        grow_batch_id: Optional[UUID] = None,
         created_by: Optional[str] = None,
+        reason: Optional[str] = None,
+        reference_number: Optional[str] = None,
     ) -> InventoryMovement:
         """
         Verbucht Saatgut-Verbrauch für eine Aussaat.
@@ -123,6 +125,10 @@ class InventoryService:
             from_location_id=inventory.location_id,
             grow_batch_id=grow_batch_id,
             created_by=created_by,
+            # Bei Mischungen gibt es (noch) keine Wachstumscharge — dort hängt
+            # der Beleg an der Mischchargennummer.
+            reason=reason,
+            reference_number=reference_number,
         )
 
         return movement

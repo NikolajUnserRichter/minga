@@ -20,10 +20,19 @@ class GrowBatchBase(BaseModel):
 
 class GrowBatchCreate(GrowBatchBase):
     """Schema zum Erstellen einer Wachstumscharge"""
-    seed_batch_id: UUID = Field(..., description="ID der Saatgut-Charge")
+    seed_batch_id: Optional[UUID] = Field(None, description="ID der Saatgut-Charge")
+    # Mischsorten haben keine eingekaufte Charge — sie werden beim Aussäen aus
+    # dem Bestand der Ausgangssorten gemischt, die Charge entsteht dabei.
+    seed_id: Optional[UUID] = Field(None, description="ID einer Mischsorte (statt einer Charge)")
     # Chargen-Abweichung (Tage): wird an der Saatgut-Charge persistiert und
     # verschiebt das Erntefenster (z.B. +1 bei langsamer Keimung)
     zusatz_tage: Optional[int] = Field(None, ge=-7, le=14, description="Erntefenster-Verschiebung der Saatgut-Charge in Tagen")
+
+    @model_validator(mode="after")
+    def _charge_oder_sorte(self):
+        if not self.seed_batch_id and not self.seed_id:
+            raise ValueError("Bitte eine Saatgut-Charge oder eine Mischsorte angeben")
+        return self
 
 
 class GrowBatchUpdate(BaseModel):

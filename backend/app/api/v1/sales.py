@@ -12,7 +12,7 @@ from sqlalchemy.orm import joinedload
 
 from app.api.deps import DBSession, Pagination, CurrentUser
 from app.models.customer import Customer, CustomerType, Contact, CustomerAddress, AddressType, Subscription
-from app.models.order import Order, OrderLine, OrderStatus, OrderAuditLog, TaxRate
+from app.models.order import Order, OrderLine, OrderStatus, OrderAuditLog, TaxRate, vat_from_lines
 from app.models.seed import Seed
 from app.models.product import Product, ProductVariant
 from app.models.unit import UnitOfMeasure
@@ -29,6 +29,7 @@ from app.schemas.order import (
     BulkStatusUpdate
 )
 from app.tasks.forecast_tasks import update_forecast_from_order
+from app.services.customer_service import next_customer_number
 from app.services.datev_service import DatevService
 
 import logging
@@ -116,20 +117,7 @@ async def create_customer(customer_data: CustomerCreate, db: DBSession):
 
     # Auto-Kundennummer wenn nicht angegeben
     if not data.get("customer_number"):
-        last_with_num = db.execute(
-            select(Customer)
-            .where(Customer.customer_number.like("KD-%"))
-            .order_by(Customer.customer_number.desc())
-            .limit(1)
-        ).scalar_one_or_none()
-        if last_with_num and last_with_num.customer_number:
-            try:
-                last_num = int(last_with_num.customer_number.split("-")[-1])
-            except (ValueError, IndexError):
-                last_num = 10000
-        else:
-            last_num = 10000
-        data["customer_number"] = f"KD-{last_num + 1:05d}"
+        data["customer_number"] = next_customer_number(db)
 
     customer = Customer(**data)
     db.add(customer)
@@ -555,6 +543,7 @@ async def create_subscription(sub_data: SubscriptionCreate, db: DBSession):
     response = SubscriptionResponse.model_validate(subscription)
     response.kunde_name = customer.name
     response.seed_name = (seed.name if seed else (product.name if product else None))
+    response.product_name = product.name if product else None
     return response
 
 
@@ -563,7 +552,11 @@ async def update_subscription(sub_id: UUID, sub_data: SubscriptionUpdate, db: DB
     """Abonnement aktualisieren."""
     subscription = db.execute(
         select(Subscription)
-        .options(joinedload(Subscription.kunde), joinedload(Subscription.seed))
+        .options(
+            joinedload(Subscription.kunde),
+            joinedload(Subscription.seed),
+            joinedload(Subscription.product),
+        )
         .where(Subscription.id == sub_id)
     ).scalar_one_or_none()
 
@@ -578,8 +571,12 @@ async def update_subscription(sub_id: UUID, sub_data: SubscriptionUpdate, db: DB
     db.refresh(subscription)
 
     response = SubscriptionResponse.model_validate(subscription)
-    response.kunde_name = subscription.kunde.name
-    response.seed_name = subscription.seed.name
+    # Produkt-Abos (Bundles/Kartons) haben kein seed. Ohne die Null-Prüfung
+    # endete jedes Speichern und jedes Deaktivieren eines Produkt-Abos in
+    # einem 500er — in der UI sichtbar als "Fehler beim Aktualisieren".
+    response.kunde_name = subscription.kunde.name if subscription.kunde else None
+    response.seed_name = subscription.seed.name if subscription.seed else None
+    response.product_name = subscription.product.name if subscription.product else None
     return response
 
 @router.post("/subscriptions/process-today", status_code=status.HTTP_200_OK)
@@ -636,9 +633,14 @@ def _calculate_line_amounts(line: OrderLine) -> None:
 
 
 def _calculate_order_totals(order: Order) -> None:
-    """Berechnet Gesamtbeträge der Bestellung."""
+    """Berechnet Gesamtbeträge der Bestellung.
+
+    Die Steuer kommt aus vat_from_lines (Summe je Steuersatz, einmal
+    gerundet) — positionsweises Runden ergab bei 13 × 18,68 € netto
+    17,03 € statt der korrekten 17,00 €.
+    """
     order.total_net = sum(line.line_net for line in order.lines)
-    order.total_vat = sum(line.line_vat for line in order.lines)
+    order.total_vat = vat_from_lines(order.lines)
     order.total_gross = order.total_net + order.total_vat
 
 
@@ -871,12 +873,16 @@ async def create_order(order_data: OrderCreate, db: DBSession, user: CurrentUser
     order_number = _generate_order_number(db)
 
     # Adressen vom Kunden übernehmen falls nicht angegeben
+    # adresszusatz gehört in den Schnappschuss: er trägt die Zustellinfo
+    # ("Werk 2 - Tor 210"). Fehlt er hier, ist er auf jedem später aus der
+    # Bestellung erzeugten Beleg unwiederbringlich weg.
     billing_addr = order_data.billing_address
     if not billing_addr and customer.billing_address:
         billing_addr = {
             "name": customer.billing_address.name or customer.name,
             "strasse": customer.billing_address.strasse,
             "hausnummer": customer.billing_address.hausnummer,
+            "adresszusatz": customer.billing_address.adresszusatz,
             "plz": customer.billing_address.plz,
             "ort": customer.billing_address.ort,
             "land": customer.billing_address.land
@@ -888,6 +894,7 @@ async def create_order(order_data: OrderCreate, db: DBSession, user: CurrentUser
             "name": customer.shipping_address.name or customer.name,
             "strasse": customer.shipping_address.strasse,
             "hausnummer": customer.shipping_address.hausnummer,
+            "adresszusatz": customer.shipping_address.adresszusatz,
             "plz": customer.shipping_address.plz,
             "ort": customer.shipping_address.ort,
             "land": customer.shipping_address.land

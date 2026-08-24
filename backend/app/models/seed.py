@@ -108,6 +108,10 @@ class Seed(Base):
         Numeric(5, 2), default=Decimal("0")
     )
 
+    # Mischung (z.B. 'Brotzeitmix'): wird nicht eingekauft, sondern beim
+    # Aussäen aus den Komponenten gemischt — siehe SeedMixComponent.
+    is_mix: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+
     # Status
     aktiv: Mapped[bool] = mapped_column(Boolean, default=True)
 
@@ -120,6 +124,12 @@ class Seed(Base):
     # Beziehungen
     batches: Mapped[list["SeedBatch"]] = relationship(
         "SeedBatch", back_populates="seed", cascade="all, delete-orphan"
+    )
+    mix_components: Mapped[list["SeedMixComponent"]] = relationship(
+        "SeedMixComponent",
+        back_populates="mix_seed",
+        foreign_keys="SeedMixComponent.mix_seed_id",
+        cascade="all, delete-orphan",
     )
     supplier_links: Mapped[list["SeedSupplier"]] = relationship(
         "SeedSupplier", back_populates="seed", cascade="all, delete-orphan"
@@ -194,6 +204,73 @@ class SeedBatch(Base):
 
     def __repr__(self) -> str:
         return f"<SeedBatch(charge='{self.charge_nummer}', id={self.id})>"
+
+
+class SeedMixComponent(Base):
+    """
+    Rezept einer Mischsorte: welche Sorte mit wie viel Gramm je Kiste.
+
+    Der Mix selbst ist eine ganz normale Sorte (Seed mit is_mix=True) — nur
+    hat er keinen eigenen Wareneingang, sondern entsteht bei jeder Aussaat neu.
+    """
+    __tablename__ = "seed_mix_components"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    mix_seed_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("seeds.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    component_seed_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("seeds.id"), nullable=False
+    )
+    gramm_pro_tray: Mapped[Decimal] = mapped_column(Numeric(8, 2), nullable=False)
+
+    mix_seed: Mapped["Seed"] = relationship(
+        "Seed", back_populates="mix_components", foreign_keys=[mix_seed_id]
+    )
+    component_seed: Mapped["Seed"] = relationship("Seed", foreign_keys=[component_seed_id])
+
+    # Nach außen heißt die Komponente schlicht 'seed_id' — für die Maske ist
+    # sie eine Sorte mit Menge, nicht eine Beziehung zwischen zwei Sorten.
+    @property
+    def seed_id(self) -> uuid.UUID:
+        return self.component_seed_id
+
+    @property
+    def seed_name(self) -> Optional[str]:
+        return self.component_seed.name if self.component_seed else None
+
+    def __repr__(self) -> str:
+        return f"<SeedMixComponent(mix={self.mix_seed_id}, seed={self.component_seed_id})>"
+
+
+class SeedBatchComponent(Base):
+    """
+    Rückverfolgbarkeit einer Mischcharge: welche Ausgangschargen stecken drin.
+
+    Die Chargennummer wird als Text mitgeschrieben und nicht nur verlinkt —
+    sie muss auch dann noch lesbar sein, wenn der Bestand längst abverkauft
+    und aufgeräumt ist.
+    """
+    __tablename__ = "seed_batch_components"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    mix_batch_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("seed_batches.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    component_seed_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("seeds.id"), nullable=False
+    )
+    charge_nummer: Mapped[str] = mapped_column(String(50), nullable=False)
+    menge_gramm: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
+
+    component_seed: Mapped["Seed"] = relationship("Seed", foreign_keys=[component_seed_id])
+
+    @property
+    def seed_name(self) -> Optional[str]:
+        return self.component_seed.name if self.component_seed else None
+
+    def __repr__(self) -> str:
+        return f"<SeedBatchComponent(charge='{self.charge_nummer}', menge={self.menge_gramm})>"
 
 
 class SeedSupplier(Base):

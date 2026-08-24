@@ -9,7 +9,8 @@ import type {
   ArticleType, LocationType, TraceabilityChain, Capacity,
   RevenueStats, YieldStats, Subscription, AccuracySummary, AccuracyDetail,
   Contact, Supplier, ProductVariant, UnitOfMeasure, CustomerAddress, BundleComponent,
-  PurchaseOrder, PurchaseOrderListItem, PurchaseOrderStatus, TradeGoodsStock
+  PurchaseOrder, PurchaseOrderListItem, PurchaseOrderStatus, TradeGoodsStock,
+  SeedBatchComponent
 } from '../types'
 
 import keycloak from './auth';
@@ -50,6 +51,12 @@ api.interceptors.request.use(async (config) => {
 });
 
 // Seeds API
+// Beim Speichern trägt eine Rezeptzeile nur Sorte und Menge — der Sortenname
+// kommt aus der Antwort und wird nicht zurückgeschickt.
+export type SeedPayload = Partial<Omit<Seed, 'mix_components'>> & {
+  mix_components?: Array<{ seed_id: string; gramm_pro_tray: number }>
+}
+
 export const seedsApi = {
   list: (params?: { aktiv?: boolean; search?: string }) =>
     api.get<ListResponse<Seed>>('/seeds', { params }).then(r => r.data),
@@ -57,10 +64,10 @@ export const seedsApi = {
   get: (id: string) =>
     api.get<Seed>(`/seeds/${id}`).then(r => r.data),
 
-  create: (data: Partial<Seed>) =>
+  create: (data: SeedPayload) =>
     api.post<Seed>('/seeds', data).then(r => r.data),
 
-  update: (id: string, data: Partial<Seed>) =>
+  update: (id: string, data: SeedPayload) =>
     api.patch<Seed>(`/seeds/${id}`, data).then(r => r.data),
 
   delete: (id: string) =>
@@ -118,6 +125,10 @@ export const seedsApi = {
     erntefenster_max_tage?: number | null
   }) =>
     api.patch(`/seeds/batches/${batchId}`, data).then(r => r.data),
+
+  // Ausgangschargen einer Mischcharge — leer bei einer normalen Charge
+  listBatchComponents: (batchId: string) =>
+    api.get<SeedBatchComponent[]>(`/seeds/batches/${batchId}/components`).then(r => r.data),
 }
 
 // Production API
@@ -129,7 +140,10 @@ export const productionApi = {
     api.get<GrowBatch>(`/production/grow-batches/${id}`).then(r => r.data),
 
   createGrowBatch: (data: {
-    seed_batch_id: string
+    // Entweder eine eingekaufte Charge — oder, bei Mischsorten, die Sorte
+    // selbst; die Mischcharge entsteht dann beim Anlegen.
+    seed_batch_id?: string
+    seed_id?: string
     tray_anzahl: number
     aussaat_datum: string
     regal_position?: string
@@ -142,6 +156,13 @@ export const productionApi = {
 
   downloadLabel: (id: string) =>
     api.get(`/production/grow-batches/${id}/label`, { responseType: 'blob' }),
+
+  // Etikettenbogen für einen Aussaattag — ein Etikett je Tray, alle Sorten
+  downloadAussaatLabels: (datum: string, format = 'avery-48x17') =>
+    api.get('/production/labels/grow-batches', {
+      params: { datum, format },
+      responseType: 'blob',
+    }),
 
   // Production-Timeline-Events
   listEvents: (batchId: string) =>
@@ -761,6 +782,7 @@ export const inventoryApi = {
     organic_certificate?: string | null
     best_before_date?: string | null
     supplier_name?: string | null
+    in_production_at?: string | null
   }) =>
     api.patch<SeedInventory>(`/inventory/seeds/${id}`, data).then(r => r.data),
 

@@ -30,13 +30,36 @@ def unit_label(unit: Optional[str]) -> str:
     return UNIT_LABELS.get(unit or "", unit or "")
 
 
+def product_sorte(product) -> Optional[str]:
+    """Botanische Sorte eines sortenreinen Artikels ('Black Oil').
+
+    Mischkisten haben keine eigene Sorte — dort listet die Belegzeile bereits
+    die enthaltenen Artikel. Das Produktfeld `seed_variety` schlägt die Sorte
+    des Saatgut-Stammsatzes, weil es die tatsächlich verkaufte Sorte benennt.
+    """
+    if product is None:
+        return None
+    if getattr(product, "is_bundle", False) or getattr(product, "is_variable_bundle", False):
+        return None
+    variety = (getattr(product, "seed_variety", None) or "").strip()
+    if variety:
+        return variety
+    seed = getattr(product, "seed", None)
+    return (getattr(seed, "sorte", None) or "").strip() or None
+
+
 def line_desc_cell(main: Optional[str], product, styles) -> Paragraph:
-    """Beschreibungszelle: Artikelname + Bundle-Inhalt und EAN/GTIN als
+    """Beschreibungszelle: Artikelname + Sorte, Bundle-Inhalt und EAN/GTIN als
     graue Zusatzzeilen (wie auf den Minga-Altbelegen)."""
     from xml.sax.saxutils import escape
     text = escape(main or "-")
     extras: list[str] = []
     if product is not None:
+        # Sorte zuerst: bei sortenreinen Artikeln sagt der Artikelname nichts
+        # darüber aus, welche Sorte in der Schale liegt.
+        sorte = product_sorte(product)
+        if sorte:
+            extras.append(f"Sorte: {sorte}")
         if getattr(product, "is_bundle", False):
             comps = sorted(product.components or [], key=lambda c: (c.sort_order or 0))
             names = " | ".join(
@@ -274,11 +297,19 @@ class PDFService:
                 ["USt:", f"{invoice.tax_amount:.2f} €"],
                 ["Gesamtbetrag:", f"{invoice.total:.2f} €"]
             ]
+            # Zeile des Gesamtbetrags merken: sie bleibt fett und unterstrichen,
+            # auch wenn darunter noch der Pfandhinweis folgt.
+            gesamt_row = len(totals_data) - 1
+            # Pfand steckt im Gesamtbetrag, gehört aber dem Kunden: er bekommt
+            # es mit dem Gebinde zurück. Deshalb nachrichtlich ausweisen.
+            deposit = invoice.total_deposit or 0
+            if deposit > 0:
+                totals_data.append(["darin enthaltenes Pfand:", f"{deposit:.2f} €"])
             totals_table = Table(totals_data, colWidths=[13.5*cm, 3.5*cm])
             totals_table.setStyle(TableStyle([
                 ('ALIGN', (0,0), (-1,-1), 'RIGHT'),
-                ('FONTNAME', (-1,-1), (-1,-1), 'Helvetica-Bold'),
-                ('LINEABOVE', (0,-1), (-1,-1), 1, colors.black),
+                ('FONTNAME', (-1,gesamt_row), (-1,gesamt_row), 'Helvetica-Bold'),
+                ('LINEABOVE', (0,gesamt_row), (-1,gesamt_row), 1, colors.black),
             ]))
             elements.append(totals_table)
             elements.append(Spacer(1, 16))
@@ -402,10 +433,13 @@ class PDFService:
             meta_data.append(["Auftragsnummer:", order.customer_reference])
         if order.delivery_address:
             addr = order.delivery_address
-            parts = [addr.get("strasse",""), addr.get("hausnummer","")]
-            addr_line = " ".join(p for p in parts if p)
+            addr_line = " ".join(p for p in (addr.get("strasse"), addr.get("hausnummer")) if p)
             city = f"{addr.get('plz','')} {addr.get('ort','')}".strip()
-            meta_data.append(["Lieferadresse:", f"{addr_line}, {city}".strip(", ")])
+            # Adresszusatz zwischen Straße und Ort (DIN 5008) — er trägt die
+            # eigentliche Zustellinfo ("Werk 2 - Tor 210"); ohne ihn steht der
+            # Fahrer am falschen Tor.
+            segmente = [s for s in (addr_line, addr.get("adresszusatz"), city) if s]
+            meta_data.append(["Lieferadresse:", ", ".join(segmente)])
         if order.requested_delivery_date:
             meta_data.append(["Lieferdatum:", order.requested_delivery_date.strftime("%d.%m.%Y")])
 
@@ -705,9 +739,13 @@ class PDFService:
             body.append(Spacer(1, 6 if with_prices else 16))
             if with_prices:
                 # Summenblock wie auf dem Minga-Altbeleg: Zwischensumme / USt / Endbetrag
+                from app.models.order import vat_from_lines
                 netto_sum = sum((line.line_net or 0) for line in order.lines)
-                vat_sum = sum((line.line_vat or 0) for line in order.lines)
-                gross_sum = sum((line.line_gross or 0) for line in order.lines)
+                # Steuer auf die Netto-Summe je Satz, nicht auf jede Zeile
+                # einzeln (§ 16 Abs. 1 UStG) — sonst weicht der Lieferschein
+                # um die Rundungsreste von der Rechnung ab.
+                vat_sum = vat_from_lines(order.lines)
+                gross_sum = netto_sum + vat_sum
                 sum_table = Table([
                     ["Zwischensumme:", f"{netto_sum:.2f} €"],
                     ["USt:", f"{vat_sum:.2f} €"],

@@ -120,6 +120,9 @@ class SeedInventoryUpdate(BaseModel):
     organic_certificate: Optional[str] = None
     best_before_date: Optional[date] = None
     supplier_name: Optional[str] = None
+    #: Charge nachträglich als angebrochen kennzeichnen ("in Verwendung").
+    #: Liegt physisch an der SeedBatch, wird von hier aus mitgepflegt.
+    in_production_at: Optional[date] = None
 
 
 class SeedInventoryResponse(SeedInventoryBase):
@@ -150,6 +153,7 @@ class SeedInventoryResponse(SeedInventoryBase):
     # Expandierte Felder
     seed_name: Optional[str] = None
     location_name: Optional[str] = None
+    in_production_at: Optional[date] = None
 
 
 class SeedInventoryListResponse(BaseModel):

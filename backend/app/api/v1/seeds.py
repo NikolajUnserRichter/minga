@@ -8,14 +8,31 @@ from sqlalchemy import select, func
 from sqlalchemy.orm import Session
 
 from app.api.deps import DBSession, Pagination
-from app.models.seed import Seed, SeedBatch, SeedSupplier, Supplier
+from app.models.seed import (
+    Seed, SeedBatch, SeedBatchComponent, SeedMixComponent, SeedSupplier, Supplier,
+)
 from app.schemas.seed import (
     SeedCreate, SeedUpdate, SeedResponse, SeedListResponse,
     SeedBatchCreate, SeedBatchUpdate, SeedBatchResponse,
-    SeedSupplierLink, SeedSupplierResponse,
+    SeedBatchComponentResponse, SeedSupplierLink, SeedSupplierResponse,
 )
 
 router = APIRouter()
+
+
+def _rezept_setzen(db: Session, seed: Seed, komponenten) -> None:
+    """Ersetzt das Mischrezept einer Sorte durch die übergebenen Zeilen."""
+    seed.mix_components.clear()
+    for zeile in komponenten:
+        if not db.get(Seed, zeile.seed_id):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Komponente der Mischung nicht gefunden"
+            )
+        seed.mix_components.append(SeedMixComponent(
+            component_seed_id=zeile.seed_id,
+            gramm_pro_tray=zeile.gramm_pro_tray,
+        ))
 
 
 # ============== Seed Endpoints ==============
@@ -87,7 +104,11 @@ async def create_seed(seed_data: SeedCreate, db: DBSession):
             detail="Erntefenster ungültig: min <= optimal <= max erforderlich"
         )
 
-    seed = Seed(**seed_data.model_dump())
+    # Das Rezept einer Mischsorte hängt an eigenen Zeilen, nicht am Stammsatz.
+    felder = seed_data.model_dump(exclude={"mix_components"})
+    seed = Seed(**felder)
+    _rezept_setzen(db, seed, seed_data.mix_components)
+
     db.add(seed)
     db.commit()
     db.refresh(seed)
@@ -105,9 +126,13 @@ async def update_seed(seed_id: UUID, seed_data: SeedUpdate, db: DBSession):
             detail="Saatgut-Sorte nicht gefunden"
         )
 
-    update_data = seed_data.model_dump(exclude_unset=True)
+    update_data = seed_data.model_dump(exclude_unset=True, exclude={"mix_components"})
     for field, value in update_data.items():
         setattr(seed, field, value)
+
+    # None heißt 'Rezept unverändert', [] heißt 'Rezept leeren'.
+    if seed_data.mix_components is not None:
+        _rezept_setzen(db, seed, seed_data.mix_components)
 
     db.commit()
     db.refresh(seed)
@@ -314,6 +339,29 @@ async def get_seed_batch(batch_id: UUID, db: DBSession):
             detail="Saatgut-Charge nicht gefunden"
         )
     return SeedBatchResponse.model_validate(batch)
+
+
+@router.get("/batches/{batch_id}/components", response_model=list[SeedBatchComponentResponse])
+async def list_seed_batch_components(batch_id: UUID, db: DBSession):
+    """Ausgangschargen einer Mischcharge — leer bei einer normalen Charge.
+
+    Die Mischung entsteht erst beim Aussäen; hier steht, welche Charge welcher
+    Ausgangssorte mit welcher Menge darin gelandet ist.
+    """
+    batch = db.get(SeedBatch, batch_id)
+    if not batch:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Saatgut-Charge nicht gefunden"
+        )
+
+    komponenten = db.execute(
+        select(SeedBatchComponent)
+        .where(SeedBatchComponent.mix_batch_id == batch_id)
+        .order_by(SeedBatchComponent.charge_nummer)
+    ).scalars().all()
+
+    return [SeedBatchComponentResponse.model_validate(k) for k in komponenten]
 
 
 @router.patch("/batches/{batch_id}", response_model=SeedBatchResponse)

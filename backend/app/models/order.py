@@ -5,7 +5,7 @@ Implementiert nach ERP-Standard mit vollständiger Header-Line Architektur.
 """
 import uuid
 from datetime import datetime, date, timezone
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from enum import Enum
 from sqlalchemy import String, Integer, Numeric, DateTime, Date, ForeignKey, Text, Enum as SQLEnum, Boolean, event
 from sqlalchemy.types import Uuid, JSON
@@ -16,6 +16,29 @@ from app.database import Base
 
 
 from app.models.enums import OrderStatus, TaxRate
+
+
+def vat_from_lines(lines, discount_percent: Decimal = Decimal("0")) -> Decimal:
+    """Umsatzsteuer je Steuersatz auf die Summe der Bemessungsgrundlagen.
+
+    § 16 Abs. 1 UStG berechnet die Steuer auf die Summe der Entgelte je
+    Steuersatz — nicht je Position. Wer positionsweise rundet und dann
+    summiert, schiebt den Rundungsrest jeder Zeile in die Steuer:
+    13 × 18,68 € = 242,84 € ergaben so 17,03 € statt 17,00 €.
+
+    Die Position behält ihren eigenen gerundeten `line_vat` (die Zeile muss
+    für sich stimmen); für den Summenblock zählt allein dieser Wert.
+    """
+    basen: dict[TaxRate, Decimal] = {}
+    for line in lines:
+        netto = line.line_net if line.line_net is not None else Decimal("0")
+        basen[line.tax_rate] = basen.get(line.tax_rate, Decimal("0")) + netto
+
+    faktor = Decimal("1") - (discount_percent or Decimal("0")) / 100
+    return sum(
+        (basis * faktor * rate.rate).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        for rate, basis in basen.items()
+    ) or Decimal("0.00")
 
 
 class Order(Base):
@@ -170,20 +193,15 @@ class Order(Base):
         Muss nach jeder Änderung an Positionen aufgerufen werden.
         """
         total_net = Decimal("0.00")
-        total_vat = Decimal("0.00")
-
         for line in self.lines:
             total_net += line.line_net
-            total_vat += line.line_vat
 
         # Rabatt anwenden
         if self.discount_percent > 0:
             self.discount_amount = (total_net * self.discount_percent / 100).quantize(Decimal("0.01"))
             total_net -= self.discount_amount
-            total_vat = sum(
-                (line.line_net * (1 - self.discount_percent / 100) * line.tax_rate.rate).quantize(Decimal("0.01"))
-                for line in self.lines
-            )
+
+        total_vat = vat_from_lines(self.lines, self.discount_percent)
 
         self.total_net = total_net.quantize(Decimal("0.01"))
         self.total_vat = total_vat.quantize(Decimal("0.01"))

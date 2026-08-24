@@ -336,7 +336,10 @@ function ProductForm({ product, growPlans, productGroups, onSubmit, onCancel }: 
     base_price: product?.base_price || 0,
     tax_rate: product?.tax_rate || 'REDUZIERT',
     grow_plan_id: product?.grow_plan_id || '',
+    seed_variety: product?.seed_variety || '',
     shelf_life_days: product?.shelf_life_days || 7,
+    is_deposit: product?.is_deposit ?? false,
+    deposit_value: product?.deposit_value ?? 0,
     is_bundle: product?.is_bundle ?? false,
     is_variable_bundle: product?.is_variable_bundle ?? false,
     variable_bundle_min_slots: product?.variable_bundle_min_slots ?? 1,
@@ -357,6 +360,8 @@ function ProductForm({ product, growPlans, productGroups, onSubmit, onCancel }: 
         gtin: formData.gtin || null,
         old_article_number: formData.old_article_number || null,
         certification: formData.certification || null,
+        seed_variety: formData.seed_variety || null,
+        deposit_value: formData.is_deposit ? formData.deposit_value : null,
       };
 
       if (product) {
@@ -491,12 +496,24 @@ function ProductForm({ product, growPlans, productGroups, onSubmit, onCancel }: 
       </div>
 
       {formData.category === 'MICROGREEN' && (
-        <Select
-          label="Wachstumsplan"
-          options={planOptions}
-          value={formData.grow_plan_id}
-          onChange={(e) => setFormData({ ...formData, grow_plan_id: e.target.value })}
-        />
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <Select
+            label="Wachstumsplan"
+            options={planOptions}
+            value={formData.grow_plan_id}
+            onChange={(e) => setFormData({ ...formData, grow_plan_id: e.target.value })}
+          />
+          {/* Steht als Zusatzzeile auf Lieferschein und Rechnung — der
+              Artikelname allein verrät die Sorte nicht. Leer = die Sorte
+              des verknüpften Saatguts. */}
+          <Input
+            label="Sorte"
+            value={formData.seed_variety}
+            onChange={(e) => setFormData({ ...formData, seed_variety: e.target.value })}
+            placeholder="z.B. Black Oil"
+            hint="erscheint auf Lieferschein und Rechnung"
+          />
+        </div>
       )}
 
       {formData.category === 'BUNDLE' && (
@@ -544,6 +561,41 @@ function ProductForm({ product, growPlans, productGroups, onSubmit, onCancel }: 
       {product && formData.category === 'BUNDLE' && !formData.is_variable_bundle && (
         <BundleComponentList productId={product.id} />
       )}
+
+      {/* Pfandgebinde: Pfandtrays und Pfandkisten. Der Pfand wird auf der
+          Rechnung gesondert ausgewiesen und läuft zum Regelsatz (19 %) —
+          er ist kein Lebensmittelumsatz. */}
+      <fieldset className="border border-gray-200 dark:border-gray-700 rounded-lg p-4 space-y-3">
+        <legend className="px-2 text-sm font-medium text-gray-700 dark:text-gray-300">Pfand</legend>
+        <label className="flex items-center gap-2">
+          <input
+            type="checkbox"
+            checked={formData.is_deposit}
+            onChange={(e) => setFormData({
+              ...formData,
+              is_deposit: e.target.checked,
+              // 19 % vorschlagen, sobald Pfand angehakt wird
+              tax_rate: e.target.checked ? 'STANDARD' : formData.tax_rate,
+            })}
+            className="w-4 h-4 rounded border-gray-300 dark:border-gray-600 text-minga-600 dark:text-minga-400 focus:ring-minga-500"
+          />
+          <span className="text-sm text-gray-700 dark:text-gray-300">
+            Pfandartikel (Mehrwegtray, Pfandkiste)
+          </span>
+        </label>
+        {formData.is_deposit && (
+          <Input
+            label="Pfandwert je Einheit"
+            type="number"
+            step="0.01"
+            min={0}
+            value={formData.deposit_value}
+            onChange={(e) => setFormData({ ...formData, deposit_value: Number(e.target.value) })}
+            endIcon="€"
+            hint="wird auf der Rechnung als 'darin enthaltenes Pfand' ausgewiesen"
+          />
+        )}
+      </fieldset>
 
       <div className="flex gap-4">
         <label className="flex items-center gap-2">

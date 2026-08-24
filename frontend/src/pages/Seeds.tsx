@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Search } from 'lucide-react';
+import { Plus, Search, Trash2 } from 'lucide-react';
 import { seedsApi, suppliersApi } from '../services/api';
 import { Seed } from '../types';
 import { PageHeader, FilterBar } from '../components/common/Layout';
@@ -136,6 +136,7 @@ export default function Seeds() {
       >
         <SeedForm
           seed={editingSeed}
+          alleSorten={seeds}
           onSubmit={() => {
             queryClient.invalidateQueries({ queryKey: ['seeds'] });
             setIsCreating(false);
@@ -167,11 +168,13 @@ export default function Seeds() {
 // Seed Form Component
 interface SeedFormProps {
   seed: Seed | null;
+  /** Für das Mischrezept: aus diesen Sorten wird eine Mischung zusammengesetzt. */
+  alleSorten: Seed[];
   onSubmit: () => void;
   onCancel: () => void;
 }
 
-function SeedForm({ seed, onSubmit, onCancel }: SeedFormProps) {
+function SeedForm({ seed, alleSorten, onSubmit, onCancel }: SeedFormProps) {
   const toast = useToast();
   const [loading, setLoading] = useState(false);
 
@@ -199,7 +202,17 @@ function SeedForm({ seed, onSubmit, onCancel }: SeedFormProps) {
     winter_erntefenster_optimal_tage: seed?.winter_erntefenster_optimal_tage ?? null as number | null,
     winter_erntefenster_max_tage: seed?.winter_erntefenster_max_tage ?? null as number | null,
     aktiv: seed?.aktiv ?? true,
+    is_mix: seed?.is_mix ?? false,
   });
+
+  // Rezept einer Mischsorte: Sorte + Menge je Kiste. Wird getrennt vom
+  // Stammsatz gehalten, weil die Zeilen einzeln hinzukommen und wegfallen.
+  const [rezept, setRezept] = useState<Array<{ seed_id: string; gramm_pro_tray: number }>>(
+    (seed?.mix_components ?? []).map((k) => ({
+      seed_id: k.seed_id,
+      gramm_pro_tray: Number(k.gramm_pro_tray),
+    }))
+  );
 
   const processOptions: SelectOption[] = [
     { value: 'STANDARD', label: 'Standard (Erde/Substrat)' },
@@ -207,19 +220,33 @@ function SeedForm({ seed, onSubmit, onCancel }: SeedFormProps) {
     { value: 'PLATTE_STEINE', label: 'Platte und Steine' },
   ];
 
+  // Eine Mischung aus Mischungen wäre nicht auflösbar — nur echte Sorten.
+  const komponentenOptions: SelectOption[] = alleSorten
+    .filter((s) => !s.is_mix && s.id !== seed?.id)
+    .map((s) => ({ value: s.id, label: `${s.name}${s.sorte ? ` - ${s.sorte}` : ''}` }));
+
+  const rezeptSumme = rezept.reduce((summe, z) => summe + (Number(z.gramm_pro_tray) || 0), 0);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setLoading(true);
 
+    const zeilen = rezept.filter((z) => z.seed_id && z.gramm_pro_tray > 0);
+    if (formData.is_mix && zeilen.length === 0) {
+      toast.error('Eine Mischung braucht mindestens eine Ausgangssorte mit Menge.');
+      return;
+    }
+
+    setLoading(true);
     try {
+      const payload = { ...formData, mix_components: formData.is_mix ? zeilen : [] };
       if (seed) {
-        await seedsApi.update(seed.id, formData);
+        await seedsApi.update(seed.id, payload);
       } else {
-        await seedsApi.create(formData);
+        await seedsApi.create(payload);
       }
       onSubmit();
     } catch (error) {
-      toast.error('Fehler beim Speichern');
+      toast.error(getErrorMessage(error, 'Fehler beim Speichern'));
     } finally {
       setLoading(false);
     }
@@ -249,6 +276,77 @@ function SeedForm({ seed, onSubmit, onCancel }: SeedFormProps) {
         onChange={(e) => setFormData({ ...formData, lieferant: e.target.value })}
         placeholder="z.B. Bio-Saatgut München GmbH"
       />
+
+      {/* Mischsorte (z.B. Brotzeitmix): kein Wareneingang, sondern ein Rezept.
+          Gemischt wird bei jeder Aussaat aus dem Bestand der Ausgangssorten. */}
+      <div className="border rounded-lg p-3 dark:border-gray-700 bg-gray-50/40 dark:bg-gray-800/40 space-y-3">
+        <label className="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300">
+          <input
+            type="checkbox"
+            checked={formData.is_mix}
+            onChange={(e) => setFormData({ ...formData, is_mix: e.target.checked })}
+            className="rounded"
+          />
+          Mischung aus mehreren Sorten (z.B. Brotzeitmix)
+        </label>
+
+        {formData.is_mix && (
+          <div className="space-y-2">
+            <p className="text-xs text-gray-500 dark:text-gray-400">
+              Die Mischung wird nicht eingekauft: Bei der Aussaat zieht das System
+              die Mengen von den Ausgangssorten ab und hält fest, welche Chargen
+              darin stecken.
+            </p>
+
+            {rezept.map((zeile, index) => (
+              <div key={index} className="flex gap-2 items-end">
+                <div className="flex-1">
+                  <Select
+                    options={komponentenOptions}
+                    value={zeile.seed_id}
+                    onChange={(e) => setRezept(rezept.map((z, i) =>
+                      i === index ? { ...z, seed_id: e.target.value } : z))}
+                    placeholder="Sorte wählen..."
+                  />
+                </div>
+                <div className="w-40">
+                  <Input
+                    type="number"
+                    step="0.1"
+                    min={0}
+                    value={zeile.gramm_pro_tray || ''}
+                    onChange={(e) => setRezept(rezept.map((z, i) =>
+                      i === index ? { ...z, gramm_pro_tray: Number(e.target.value) } : z))}
+                    endIcon="g/Kiste"
+                  />
+                </div>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => setRezept(rezept.filter((_, i) => i !== index))}
+                  aria-label="Zeile entfernen"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </Button>
+              </div>
+            ))}
+
+            <div className="flex items-center justify-between">
+              <Button
+                type="button"
+                variant="secondary"
+                icon={<Plus className="w-4 h-4" />}
+                onClick={() => setRezept([...rezept, { seed_id: '', gramm_pro_tray: 0 }])}
+              >
+                Sorte hinzufügen
+              </Button>
+              <span className="text-sm text-gray-600 dark:text-gray-300">
+                Summe: <b>{rezeptSumme} g</b> je Kiste
+              </span>
+            </div>
+          </div>
+        )}
+      </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <Select

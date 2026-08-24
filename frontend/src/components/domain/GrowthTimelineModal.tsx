@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Modal } from '../ui/Modal';
 import { Button, Input, useToast } from '../ui';
-import { productionApi, GrowthEvent, GrowthEventTypeKey } from '../../services/api';
+import { productionApi, seedsApi, GrowthEvent, GrowthEventTypeKey } from '../../services/api';
 import { Calendar, User, Plus, Droplet, Sprout, Move, Snowflake, Package, ListChecks } from 'lucide-react';
 import { getErrorMessage } from '../../services/errors';
 
@@ -11,6 +11,8 @@ interface Props {
   onClose: () => void;
   growBatchId: string | null;
   batchLabel?: string;
+  /** Saatgut-Charge der Aussaat — bei einer Mischung stehen dort die Ausgangschargen. */
+  seedBatchId?: string | null;
 }
 
 const ICONS: Partial<Record<GrowthEventTypeKey, JSX.Element>> = {
@@ -33,7 +35,7 @@ const formatTs = (ts: string) =>
     hour: '2-digit', minute: '2-digit',
   });
 
-export function GrowthTimelineModal({ open, onClose, growBatchId, batchLabel }: Props) {
+export function GrowthTimelineModal({ open, onClose, growBatchId, batchLabel, seedBatchId }: Props) {
   const toast = useToast();
   const queryClient = useQueryClient();
   const [employeeName, setEmployeeName] = useState('');
@@ -48,6 +50,14 @@ export function GrowthTimelineModal({ open, onClose, growBatchId, batchLabel }: 
   const { data: eventTypes = [] } = useQuery({
     queryKey: ['growth-event-types'],
     queryFn: () => productionApi.listEventTypes(),
+  });
+
+  // Bei einer normalen Charge kommt eine leere Liste zurück — dann bleibt der
+  // Block aus und die Timeline sieht aus wie bisher.
+  const { data: mischung = [] } = useQuery({
+    queryKey: ['seed-batch-components', seedBatchId],
+    queryFn: () => seedsApi.listBatchComponents(seedBatchId!),
+    enabled: open && !!seedBatchId,
   });
 
   const createMutation = useMutation({
@@ -74,6 +84,23 @@ export function GrowthTimelineModal({ open, onClose, growBatchId, batchLabel }: 
       footer={<Button variant="secondary" onClick={onClose}>Schließen</Button>}
     >
       <div className="space-y-5">
+        {/* Mischcharge: woraus wurde gemischt (Rückverfolgbarkeit) */}
+        {mischung.length > 0 && (
+          <div className="border rounded-lg p-3 dark:border-gray-700 bg-minga-50 dark:bg-minga-900/30">
+            <h4 className="font-medium text-sm text-minga-800 dark:text-minga-200 mb-2">
+              Mischung aus
+            </h4>
+            <ul className="space-y-1 text-sm text-gray-700 dark:text-gray-300">
+              {mischung.map((k) => (
+                <li key={`${k.component_seed_id}-${k.charge_nummer}`} className="flex justify-between">
+                  <span>{k.seed_name || 'Unbekannte Sorte'} · Charge #{k.charge_nummer}</span>
+                  <span className="font-medium">{Number(k.menge_gramm)} g</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
         {/* Quick-Add Section */}
         <div className="border rounded-lg p-3 dark:border-gray-700 bg-gray-50/40 dark:bg-gray-800/40 space-y-3">
           <h4 className="font-medium text-sm text-gray-800 dark:text-gray-200 flex items-center gap-2">

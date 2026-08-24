@@ -34,9 +34,25 @@ class SeedBase(BaseModel):
     winter_erntefenster_max_tage: Optional[int] = Field(None, ge=1, description="Spätester Erntezeitpunkt im Winter")
 
 
+class SeedMixComponentInput(BaseModel):
+    """Eine Komponente im Rezept einer Mischsorte"""
+    seed_id: UUID = Field(..., description="Ausgangssorte")
+    gramm_pro_tray: Decimal = Field(..., gt=0, description="Saatgutmenge je Kiste in Gramm")
+
+
+class SeedMixComponentResponse(SeedMixComponentInput):
+    """Rezeptzeile inkl. Sortenname für die Anzeige"""
+    model_config = ConfigDict(from_attributes=True)
+
+    seed_name: Optional[str] = None
+
+
 class SeedCreate(SeedBase):
     """Schema zum Erstellen einer Saatgut-Sorte"""
-    pass
+    # Mischsorte: das Rezept ersetzt den Wareneingang — gemischt wird bei der
+    # Aussaat aus dem Bestand der Ausgangssorten.
+    is_mix: bool = Field(default=False, description="Mischsorte (z.B. Brotzeitmix)")
+    mix_components: list[SeedMixComponentInput] = Field(default_factory=list)
 
 
 class SeedUpdate(BaseModel):
@@ -63,6 +79,9 @@ class SeedUpdate(BaseModel):
     winter_erntefenster_optimal_tage: Optional[int] = Field(None, ge=1)
     winter_erntefenster_max_tage: Optional[int] = Field(None, ge=1)
     aktiv: Optional[bool] = None
+    is_mix: Optional[bool] = None
+    #: None = Rezept unverändert lassen, [] = Rezept leeren
+    mix_components: Optional[list[SeedMixComponentInput]] = None
 
 
 class SeedResponse(SeedBase):
@@ -76,6 +95,10 @@ class SeedResponse(SeedBase):
 
     # Berechnete Felder
     gesamte_wachstumsdauer: int
+
+    # Mischsorte + Rezept
+    is_mix: bool = False
+    mix_components: list[SeedMixComponentResponse] = Field(default_factory=list)
 
 
 class SeedListResponse(BaseModel):
@@ -138,6 +161,16 @@ class SeedBatchResponse(SeedBatchBase):
     seed_id: UUID
     verbleibend_gramm: Decimal
     created_at: datetime
+
+
+class SeedBatchComponentResponse(BaseModel):
+    """Ausgangscharge einer Mischcharge (Rückverfolgbarkeit)"""
+    model_config = ConfigDict(from_attributes=True)
+
+    component_seed_id: UUID
+    seed_name: Optional[str] = None
+    charge_nummer: str
+    menge_gramm: Decimal
 
 
 # Seed-Supplier Link (M:N)

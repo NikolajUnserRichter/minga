@@ -332,21 +332,40 @@ class InvoiceService:
 
         return invoice, credit_note
 
+    #: Rechnung ist überfällig, wenn sie raus ist und noch Geld offen steht.
+    #: ENTWURF (nie versendet), BEZAHLT und STORNIERT gehören nicht dazu.
+    OVERDUE_STATES = (
+        InvoiceStatus.OFFEN,
+        InvoiceStatus.TEILBEZAHLT,
+        InvoiceStatus.UEBERFAELLIG,
+        InvoiceStatus.MAHNVERFAHREN,
+    )
+
     def check_overdue_invoices(self) -> list[Invoice]:
         """
         Prüft und markiert überfällige Rechnungen.
+
+        Gibt ALLE überfälligen Rechnungen zurück, nicht nur die in diesem
+        Aufruf frisch markierten: sonst leert sich die Liste beim zweiten
+        Aufruf, weil die Rechnungen dann schon UEBERFAELLIG sind und nicht
+        mehr auf OFFEN matchen — der Reiter "Überfällig" und die Kennzahl
+        standen dadurch auf 0, während die Rechnung unter "Alle" sichtbar
+        als überfällig markiert war.
         """
         today = date.today()
         overdue = self.db.execute(
             select(Invoice)
             .where(
-                Invoice.status == InvoiceStatus.OFFEN,
+                Invoice.status.in_(self.OVERDUE_STATES),
                 Invoice.due_date < today
             )
         ).scalars().all()
 
         for invoice in overdue:
-            invoice.status = InvoiceStatus.UEBERFAELLIG
+            # TEILBEZAHLT und MAHNVERFAHREN behalten ihren Status — er sagt
+            # mehr aus als "überfällig" und geht sonst verloren.
+            if invoice.status == InvoiceStatus.OFFEN:
+                invoice.status = InvoiceStatus.UEBERFAELLIG
 
         return overdue
 

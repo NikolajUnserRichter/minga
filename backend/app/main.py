@@ -28,6 +28,7 @@ from app.tenancy import (
     resolve_slug_from_host, set_request_tenant, DEFAULT_TENANT_SLUG,
 )
 from app.api.v1 import seeds, production, sales, forecasting, products, invoices, inventory, analytics, capacity, suppliers, units, imports, documents, attachments, admin, document_templates, platform, procurement, integrations, staff
+from app.api.v1 import print_jobs
 from app.api.v1 import ratgeber as ratgeber_admin
 from app.api.v1 import seo_dashboard
 from app.api import ratgeber_public, seo_public
@@ -405,6 +406,11 @@ async def basic_auth_middleware(request: Request, call_next):
     if request.url.path.startswith("/health"):
         return await call_next(request)
 
+    # Der Druck-Agent im Hofnetz ist kein ERP-Benutzer — er weist sich mit
+    # X-Print-Agent-Key aus, geprüft im Endpoint selbst.
+    if request.url.path.startswith("/api/v1/print-agent"):
+        return await call_next(request)
+
     # Apex (novaerp.de) = öffentliche Marketing-Seite. admin.novaerp.de =
     # Platform-Admin-UI (statisch; Aktionen sind durch X-Platform-Admin-Key
     # geschützt). Beide ohne Basic-Auth-Gate.
@@ -742,6 +748,20 @@ app.include_router(
     document_templates.router,
     prefix="/api/v1",
     dependencies=_auth_deps,
+)
+
+# Druck-Warteschlange: einreihen und nachsehen tut der angemeldete Benutzer
+app.include_router(
+    print_jobs.router,
+    prefix="/api/v1",
+    dependencies=_auth_deps,
+)
+
+# … abgeholt wird sie vom Agenten im Hofnetz, der kein ERP-Benutzer ist und
+# sich mit X-Print-Agent-Key ausweist. Deshalb KEINE _auth_deps.
+app.include_router(
+    print_jobs.agent_router,
+    prefix="/api/v1",
 )
 
 # Platform-Admin: KEINE _auth_deps — eigener X-Platform-Admin-Key

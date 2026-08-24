@@ -29,10 +29,23 @@ export function SeedCard({ seed, onEdit, onDelete, onClick, showActions = true }
               {seed.sorte && <p className="text-sm text-gray-500 dark:text-gray-400">{seed.sorte}</p>}
             </div>
           </div>
-          <Badge variant={seed.aktiv ? 'success' : 'gray'}>
-            {seed.aktiv ? 'Aktiv' : 'Inaktiv'}
-          </Badge>
+          <div className="flex items-center gap-2">
+            {/* Eine Mischung hat keinen eigenen Wareneingang — das muss man
+                der Karte ansehen, sonst sucht man vergeblich nach Chargen. */}
+            {seed.is_mix && <Badge variant="info">Mischung</Badge>}
+            <Badge variant={seed.aktiv ? 'success' : 'gray'}>
+              {seed.aktiv ? 'Aktiv' : 'Inaktiv'}
+            </Badge>
+          </div>
         </div>
+
+        {seed.is_mix && seed.mix_components?.length > 0 && (
+          <p className="mt-3 text-sm text-gray-600 dark:text-gray-400">
+            {seed.mix_components
+              .map((k) => `${k.seed_name || 'Unbekannt'} ${Number(k.gramm_pro_tray)} g`)
+              .join(' · ')}
+          </p>
+        )}
 
         <div className="grid grid-cols-2 gap-4 mt-4">
           <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">

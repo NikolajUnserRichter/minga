@@ -511,6 +511,7 @@ function AddressList({ customerId }: { customerId: string }) {
                 <div className="text-xs text-gray-600 dark:text-gray-400">
                   {a.name && <>{a.name}<br /></>}
                   {a.strasse} {a.hausnummer || ''}<br />
+                  {a.adresszusatz && <>{a.adresszusatz}<br /></>}
                   {a.plz} {a.ort} {a.land !== 'DE' && `(${a.land})`}
                 </div>
               </div>
@@ -545,6 +546,14 @@ function AddressList({ customerId }: { customerId: string }) {
           onChange={(e) => setNewAddr({ ...newAddr, hausnummer: e.target.value })}
         />
       </div>
+      {/* Adresszusatz: Werkstor, Gebäude, c/o. Das Feld gibt es im Backend
+          seit jeher — es fehlte nur die Eingabe, deshalb blieb der Zusatz
+          auf Lieferschein und Rechnung leer. */}
+      <Input
+        placeholder="Adresszusatz (z.B. Werk 2 – Tor 210, c/o, Etage)"
+        value={newAddr.adresszusatz || ''}
+        onChange={(e) => setNewAddr({ ...newAddr, adresszusatz: e.target.value })}
+      />
       <div className="grid grid-cols-4 gap-2">
         <Input
           placeholder="PLZ"
