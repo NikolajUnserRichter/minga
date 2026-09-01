@@ -345,7 +345,18 @@ def get_day_plan(
     """
     from datetime import timedelta
     from app.models.forecast import ProductionSuggestion, SuggestionStatus
-    from app.models.seed import Seed, SeedBatch
+    from app.models.seed import Seed, SeedBatch, SeedBatchComponent
+
+    def _rezept_zeilen(seed, trays: int) -> list:
+        """Einzelsorten einer Mischsorte — wer mischt, muss die Mengen sehen."""
+        if not seed or not seed.is_mix:
+            return []
+        return [{
+            "seed_name": k.component_seed.name if k.component_seed else None,
+            "gramm_pro_tray": float(k.gramm_pro_tray),
+            "gramm_gesamt": float(k.gramm_pro_tray) * trays,
+            "charge_nummer": None,  # steht erst nach dem Anmischen fest
+        } for k in seed.mix_components]
 
     # Aussaat: genehmigte Vorschläge für diesen Tag
     suggestions = db.execute(
@@ -362,6 +373,7 @@ def get_day_plan(
         "substrat": seed.substrat,
         "saatgut_gramm": float(seed.saatgut_pro_einheit_gramm or 0) * sug.empfohlene_trays,
         "status": sug.status.value,
+        "mix_components": _rezept_zeilen(seed, sug.empfohlene_trays),
     } for sug, seed in suggestions]
 
     # Bereits angelegte Chargen mit Aussaatdatum = Tag. Ohne diesen Block
@@ -375,6 +387,24 @@ def get_day_plan(
     ).scalars().unique().all()
     for b in gesaet:
         seed_obj = b.seed_batch.seed if b.seed_batch else None
+
+        # Mischcharge: die tatsächlich angemischten Ausgangschargen stehen an
+        # der Charge — genauer als das Rezept, weil inklusive Chargennummer.
+        komponenten = []
+        if b.seed_batch_id:
+            komponenten = [{
+                "seed_name": k.seed_name,
+                "gramm_pro_tray": float(k.menge_gramm) / max(b.tray_anzahl, 1),
+                "gramm_gesamt": float(k.menge_gramm),
+                "charge_nummer": k.charge_nummer,
+            } for k in db.execute(
+                select(SeedBatchComponent)
+                .where(SeedBatchComponent.mix_batch_id == b.seed_batch_id)
+                .order_by(SeedBatchComponent.charge_nummer)
+            ).scalars().all()]
+        if not komponenten:
+            komponenten = _rezept_zeilen(seed_obj, b.tray_anzahl)
+
         aussaat.append({
             "seed_name": b.seed_name or "Unbekannt",
             "trays": b.tray_anzahl,
@@ -383,6 +413,7 @@ def get_day_plan(
             "status": "ANGELEGT",
             "batch_id": str(b.id),
             "regal_position": b.regal_position,
+            "mix_components": komponenten,
         })
 
     # Ernte: Chargen im Erntefenster
@@ -423,6 +454,8 @@ def get_day_plan(
 
     def _order_ref(o: Order) -> dict:
         return {
+            # Ohne die ID kann der Tagesplan keine Packliste anfordern
+            "order_id": str(o.id),
             "order_number": o.order_number,
             "customer_name": o.customer.name if o.customer else "—",
             "delivery_date": o.requested_delivery_date.isoformat(),
@@ -430,6 +463,13 @@ def get_day_plan(
             "packing_date_explizit": o.packing_date is not None,
             "status": "Entwurf" if o.status == OrderStatus.ENTWURF else o.status.value,
             "positionen": len(o.lines),
+            # Was zu packen ist — der Mitarbeiter soll dafür nicht in die
+            # Bestellungen wechseln müssen.
+            "lines": [{
+                "product_name": line.beschreibung or "Position",
+                "quantity": float(line.quantity),
+                "unit": line.unit,
+            } for line in sorted(o.lines, key=lambda l: l.position or 0)],
         }
 
     verpacken = [_order_ref(o) for o in orders if o.effective_packing_date == target_date]

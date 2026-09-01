@@ -132,6 +132,20 @@ export const seedsApi = {
 }
 
 // Production API
+// Bestellung im Tagesplan (Verpacken/Ausliefern) — trägt die Positionen mit,
+// damit der Mitarbeiter dafür nicht in die Bestellungen wechseln muss.
+export interface DayPlanOrder {
+  order_id: string
+  order_number: string
+  customer_name: string
+  delivery_date: string
+  packing_date: string | null
+  packing_date_explizit: boolean
+  status: string
+  positionen: number
+  lines: Array<{ product_name: string; quantity: number; unit: string }>
+}
+
 export const productionApi = {
   listGrowBatches: (params?: { status?: string; erntereif?: boolean }) =>
     api.get<GrowBatch[]>('/production/grow-batches', { params }).then(r => r.data),
@@ -211,10 +225,12 @@ export const productionApi = {
   getDayPlan: (targetDate: string) =>
     api.get<{
       target_date: string
-      aussaat: Array<{ seed_name: string; trays: number; substrat: string | null; saatgut_gramm: number; status: string }>
+      // mix_components: Einzelsorten einer Mischaussaat mit Gramm je Kiste
+      // und gesamt — nach dem Anmischen zusätzlich mit der Ausgangscharge.
+      aussaat: Array<{ seed_name: string; trays: number; substrat: string | null; saatgut_gramm: number; status: string; mix_components: Array<{ seed_name: string | null; gramm_pro_tray: number; gramm_gesamt: number; charge_nummer: string | null }> }>
       ernte: Array<{ batch_id: string; seed_name: string; trays: number; regal_position: string | null; optimal: string; ist_optimal_heute: boolean }>
-      verpacken: Array<{ order_number: string; customer_name: string; delivery_date: string; packing_date: string | null; packing_date_explizit: boolean; status: string; positionen: number }>
-      ausliefern: Array<{ order_number: string; customer_name: string; delivery_date: string; packing_date: string | null; packing_date_explizit: boolean; status: string; positionen: number }>
+      verpacken: Array<DayPlanOrder>
+      ausliefern: Array<DayPlanOrder>
       dienst: Array<{ employee_name: string; start_time: string | null; end_time: string | null; aufgabe: string | null }>
       aufgaben: Array<{ id: string; titel: string; beschreibung: string | null; employee_name: string | null; erledigt: boolean }>
     }>(`/production/day-plan`, { params: { target_date: targetDate } }).then(r => r.data),

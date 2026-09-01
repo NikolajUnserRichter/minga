@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { Sprout, Scissors, Package, Truck, Users, Boxes, ListTodo, Plus } from 'lucide-react';
-import { productionApi, staffApi } from '../services/api';
+import { Sprout, Scissors, Package, Truck, Users, Boxes, ListTodo, Plus, FileText, ChevronDown, ChevronRight } from 'lucide-react';
+import { productionApi, staffApi, documentsApi } from '../services/api';
 import { PageHeader } from '../components/common/Layout';
 import { Input, EmptyState, Badge, PageLoader, Button, useToast } from '../components/ui';
 
@@ -49,6 +49,21 @@ export default function Tagesplan() {
     queryFn: () => productionApi.getPackagingPlan(date),
   });
 
+  // Welche Verpacken-Bestellung ist aufgeklappt (Positionen sichtbar)
+  const [offeneBestellung, setOffeneBestellung] = useState<string | null>(null);
+
+  // Packliste aus dem Tagesplan heraus: existiert schon ein Lieferschein,
+  // nimm dessen Packliste — sonst wird er angelegt (Positionen 1:1 aus der
+  // Bestellung) und das PDF öffnet sich direkt.
+  const packlisteMutation = useMutation({
+    mutationFn: async (orderId: string) => {
+      const notes = await documentsApi.listDeliveryNotes(orderId);
+      const note = notes[0] ?? (await documentsApi.createDeliveryNote(orderId, {}));
+      await documentsApi.downloadPackingListPdf(note);
+    },
+    onError: () => toast.error('Packliste konnte nicht geöffnet werden'),
+  });
+
   if (isLoading) return <PageLoader />;
 
   const sections = [
@@ -59,7 +74,7 @@ export default function Tagesplan() {
       count: plan?.aussaat.length ?? 0,
       empty: 'Keine Aussaaten geplant (genehmigte Produktionsvorschläge erscheinen hier).',
       rows: (plan?.aussaat ?? []).map((a, i) => (
-        <div key={i} className="flex items-center justify-between p-3 bg-green-50 dark:bg-green-900/20 rounded-lg">
+        <div key={i} className="flex items-start justify-between p-3 bg-green-50 dark:bg-green-900/20 rounded-lg">
           <div>
             <p className="font-medium text-gray-900 dark:text-white">{a.seed_name}</p>
             <p className="text-sm text-gray-500 dark:text-gray-400">
@@ -69,6 +84,20 @@ export default function Tagesplan() {
                 <> · Substrat: <span className="font-semibold text-green-700 dark:text-green-300">{a.substrat}</span></>
               )}
             </p>
+            {/* Mischsorte: die Einzelsorten mit Mengen — wer mischt, braucht
+                sie hier und nicht in den Stammdaten. */}
+            {(a.mix_components ?? []).length > 0 && (
+              <div className="mt-2 pl-3 border-l-2 border-green-200 dark:border-green-800 space-y-0.5">
+                {a.mix_components.map((k, j) => (
+                  <p key={j} className="text-sm text-gray-600 dark:text-gray-300">
+                    {k.seed_name || 'Unbekannt'}:{' '}
+                    <span className="font-semibold">{k.gramm_gesamt.toFixed(0)} g</span>
+                    <span className="text-gray-400"> ({k.gramm_pro_tray.toFixed(0)} g/Kiste)</span>
+                    {k.charge_nummer && <span className="text-gray-400"> · Charge {k.charge_nummer}</span>}
+                  </p>
+                ))}
+              </div>
+            )}
           </div>
           <Badge variant={a.status === 'GENEHMIGT' ? 'success' : 'warning'}>{a.status}</Badge>
         </div>
@@ -98,18 +127,51 @@ export default function Tagesplan() {
       icon: <Package className="w-5 h-5 text-blue-600 dark:text-blue-400" />,
       count: plan?.verpacken.length ?? 0,
       empty: 'Nichts zu verpacken (Bestellungen werden am Tag vor der Lieferung gepackt).',
-      rows: (plan?.verpacken ?? []).map((o, i) => (
-        <div key={i} className="flex items-center justify-between p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
-          <div>
-            <p className="font-medium text-gray-900 dark:text-white">{o.customer_name}</p>
-            <p className="text-sm text-gray-500 dark:text-gray-400">
-              {o.order_number} · {o.positionen} Positionen · Lieferung {new Date(o.delivery_date).toLocaleDateString('de-DE')}
-            </p>
+      rows: (plan?.verpacken ?? []).map((o) => (
+        <div key={o.order_id} className="p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
+          <div
+            className="flex items-center justify-between cursor-pointer"
+            onClick={() => setOffeneBestellung(offeneBestellung === o.order_id ? null : o.order_id)}
+          >
+            <div className="flex items-center gap-2">
+              {offeneBestellung === o.order_id
+                ? <ChevronDown className="w-4 h-4 text-gray-400 shrink-0" />
+                : <ChevronRight className="w-4 h-4 text-gray-400 shrink-0" />}
+              <div>
+                <p className="font-medium text-gray-900 dark:text-white">{o.customer_name}</p>
+                <p className="text-sm text-gray-500 dark:text-gray-400">
+                  {o.order_number} · {o.positionen} Positionen · Lieferung {new Date(o.delivery_date).toLocaleDateString('de-DE')}
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              {o.packing_date_explizit && <Badge variant="warning">Packtag fix</Badge>}
+              <Badge variant={o.status === 'Entwurf' ? 'warning' : 'info'}>{o.status}</Badge>
+              <button
+                className="btn btn-ghost btn-sm"
+                title="Packliste öffnen"
+                disabled={packlisteMutation.isPending}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  packlisteMutation.mutate(o.order_id);
+                }}
+              >
+                <FileText className="w-4 h-4" />
+                Packliste
+              </button>
+            </div>
           </div>
-          <div className="flex items-center gap-2">
-            {o.packing_date_explizit && <Badge variant="warning">Packtag fix</Badge>}
-            <Badge variant={o.status === 'Entwurf' ? 'warning' : 'info'}>{o.status}</Badge>
-          </div>
+          {/* Aufgeklappt: was in die Kiste gehört, ohne Seitenwechsel */}
+          {offeneBestellung === o.order_id && (
+            <div className="mt-2 ml-6 pl-3 border-l-2 border-blue-200 dark:border-blue-800 space-y-0.5">
+              {o.lines.map((l, j) => (
+                <p key={j} className="text-sm text-gray-600 dark:text-gray-300">
+                  <span className="font-semibold">{Number(l.quantity).toLocaleString('de-DE')} {l.unit}</span>{' '}
+                  {l.product_name}
+                </p>
+              ))}
+            </div>
+          )}
         </div>
       )),
     },
