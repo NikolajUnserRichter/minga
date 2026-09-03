@@ -138,15 +138,30 @@ def create_tenant_user(
         user_id = users[0]["id"]
 
         # 3) Realm-Rolle holen + zuweisen
+        #
+        # Eine fehlende Rolle MUSS hier scheitern. Früher wurde sie still
+        # übersprungen: der Aufrufer bekam "angelegt, Rolle production_staff"
+        # zurück, im Token stand aber keine. Genau so fehlten production_staff
+        # und accounting unbemerkt im Realm — solange niemand Rollen prüfte,
+        # bedeutete das sogar Vollzugriff.
         role_resp = client.get(f"{c['url']}/admin/realms/{realm}/roles/{role}", headers=h, timeout=15)
-        if role_resp.status_code == 200:
-            client.post(
-                f"{c['url']}/admin/realms/{realm}/users/{user_id}/role-mappings/realm",
-                headers=h,
-                json=[role_resp.json()],
-                timeout=15,
+        if role_resp.status_code != 200:
+            raise KeycloakAdminError(
+                f"Rolle '{role}' gibt es im Realm '{realm}' nicht — '{email}' wurde "
+                f"angelegt, hat aber keine Rechte. Rolle in Keycloak anlegen und "
+                f"den Aufruf wiederholen."
             )
-        # (Wenn Rolle fehlt: User existiert trotzdem, nur ohne Rolle — kein harter Fehler)
+        zuweisung = client.post(
+            f"{c['url']}/admin/realms/{realm}/users/{user_id}/role-mappings/realm",
+            headers=h,
+            json=[role_resp.json()],
+            timeout=15,
+        )
+        if zuweisung.status_code >= 400:
+            raise KeycloakAdminError(
+                f"Rolle '{role}' konnte '{email}' nicht zugewiesen werden "
+                f"(HTTP {zuweisung.status_code})."
+            )
 
     return {
         "username": email,
