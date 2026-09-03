@@ -1122,45 +1122,6 @@ async def get_weekly_forecast_summary(
 
 # ============== Helper Functions ==============
 
-async def _calculate_base_demand(db, seed_id: UUID, forecast_date: date) -> Decimal:
-    """
-    Berechnet Basis-Nachfrage aus historischen Bestellungen.
-
-    Analysiert gleiche Wochentage der letzten 8 Wochen.
-    """
-    weekday = forecast_date.weekday()
-
-    # Historische Bestellungen für gleichen Wochentag
-    eight_weeks_ago = forecast_date - timedelta(weeks=8)
-
-    historical_orders = db.execute(
-        select(func.sum(OrderLine.menge))
-        .join(Order)
-        .where(
-            OrderLine.seed_id == seed_id,
-            Order.liefer_datum >= eight_weeks_ago,
-            Order.liefer_datum < forecast_date,
-            func.extract('dow', Order.liefer_datum) == weekday,
-            Order.status != OrderStatus.STORNIERT
-        )
-    ).scalar() or Decimal("0")
-
-    # Anzahl Wochen mit Daten
-    weeks_with_data = db.execute(
-        select(func.count(func.distinct(Order.liefer_datum)))
-        .join(OrderLine)
-        .where(
-            OrderLine.seed_id == seed_id,
-            Order.liefer_datum >= eight_weeks_ago,
-            Order.liefer_datum < forecast_date,
-            func.extract('dow', Order.liefer_datum) == weekday
-        )
-    ).scalar() or 1
-
-    # Durchschnitt berechnen
-    return historical_orders / max(1, weeks_with_data)
-
-
 async def _calculate_subscription_demand(
     db, seed_id: UUID, forecast_date: date, kunde_id: Optional[UUID]
 ) -> Decimal:

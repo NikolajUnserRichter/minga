@@ -166,10 +166,13 @@ const navigationSections: NavSection[] = [
         roles: ['ADMIN', 'SALES', 'ACCOUNTING'],
       },
       {
+        // Auch für die Halle: bei Ausfall der Betriebsleitung müssen die
+        // Mitarbeiter Bestellungen erfassen und Lieferscheine erzeugen können
+        // (Gernot, 03.09.2026).
         name: 'Bestellungen',
         href: '/orders',
         icon: FileText,
-        roles: ['ADMIN', 'SALES', 'PRODUCTION_PLANNER', 'ACCOUNTING'],
+        roles: ['ADMIN', 'SALES', 'PRODUCTION_PLANNER', 'PRODUCTION_STAFF', 'ACCOUNTING'],
       },
       {
         name: 'Shopify',

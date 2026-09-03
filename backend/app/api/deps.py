@@ -119,6 +119,39 @@ def require_role(required_roles: list[str]):
     return check_role
 
 
+#: Methoden, die nichts verändern.
+SICHERE_METHODEN = frozenset({"GET", "HEAD", "OPTIONS"})
+
+
+def require_access(lesen: list[str], schreiben: list[str]):
+    """Dependency Factory, die Lesen und Ändern getrennt prüft.
+
+    Gebraucht, weil „darf den Bereich sehen" und „darf darin etwas ändern"
+    nicht dasselbe sind: die Produktionshalle bucht Aussaat, Ernte und
+    Entnahmen, pflegt aber keine Sortenstammdaten.
+
+    Verwendung als Router-Abhängigkeit:
+        dependencies=[Depends(require_access(lesen=[...], schreiben=[...]))]
+    """
+    lesen_set, schreiben_set = set(lesen), set(schreiben)
+
+    async def check_access(request: Request, user: CurrentUser):
+        rollen = set(user.get("roles", []))
+        if rollen & schreiben_set:
+            return user
+        if request.method in SICHERE_METHODEN and rollen & lesen_set:
+            return user
+        # Wer lesen darf, aber nicht ändern, bekommt die deutlichere Meldung.
+        detail = (
+            "Nur Leserechte für diesen Bereich"
+            if rollen & lesen_set
+            else "Keine Berechtigung für diesen Bereich"
+        )
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=detail)
+
+    return check_access
+
+
 # Pagination Parameter
 class PaginationParams:
     """Standard Pagination Parameter"""

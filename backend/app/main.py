@@ -69,14 +69,14 @@ _auth_deps = [Depends(get_current_user)]
 #
 # Die Trennung wird gebraucht, sobald Mitarbeiter eigene Logins bekommen (z.B.
 # Tablet in der Produktionshalle): wer Kisten packt, hat an Rechnungen, Preisen
-# und Kundendaten nichts verloren. Durchgesetzt wird grob je Router — Lesen und
-# Schreiben sind bewusst noch nicht getrennt.
+# nichts verloren. Durchgesetzt wird je Router, dabei getrennt nach Lesen und
+# Ändern: die Halle bucht Bewegungen, pflegt aber keine Stammdaten.
 #
 # Ohne passende Rolle antwortet der Router mit 403. Ein Login ganz ohne Rolle
 # kommt damit nirgends hin; das ist Absicht, sonst wäre eine vergessene
 # Rollenzuweisung in Keycloak ein stiller Vollzugriff.
 # ---------------------------------------------------------------------------
-from app.api.deps import require_role  # noqa: E402
+from app.api.deps import require_access  # noqa: E402
 
 ADMIN = "admin"
 SALES = "sales"
@@ -87,23 +87,51 @@ BUCHHALTUNG = "accounting"
 ALLE_ROLLEN = [ADMIN, SALES, PLANER, PRODUKTION, BUCHHALTUNG]
 
 
-def _rollen(*erlaubt: str) -> list:
-    """Router-Abhängigkeit: nur diese Rollen kommen durch (admin immer)."""
-    return [Depends(get_current_user), Depends(require_role([ADMIN, *erlaubt]))]
+def _rollen(*lesen: str, schreiben: Optional[list] = None) -> list:
+    """Router-Abhängigkeit: wer sehen darf — und wer ändern darf.
+
+    ``schreiben`` ohne Angabe heißt: wer lesen darf, darf auch ändern.
+    ``admin`` ist immer in beidem enthalten.
+    """
+    darf_schreiben = lesen if schreiben is None else schreiben
+    return [
+        Depends(get_current_user),
+        Depends(require_access(
+            lesen=[ADMIN, *lesen],
+            schreiben=[ADMIN, *darf_schreiben],
+        )),
+    ]
 
 
-# Produktion — der Alltag in der Halle
+# Produktion — der Alltag in der Halle: aussäen, ernten, Status setzen
 _deps_produktion = _rollen(PLANER, PRODUKTION)
-# Saatgut/Lager schauen auch Vertrieb und Buchhaltung an (Bestand, Rückverfolgung)
-_deps_lager = _rollen(PLANER, PRODUKTION, SALES, BUCHHALTUNG)
-# Kaufmännisches — ohne die Produktionsmitarbeiter
+# Kapazitäten plant nur die Planung
+_deps_kapazitaet = _rollen(PLANER)
+# Stammdaten (Sorten, Lieferanten): viele schauen rein, gepflegt von der Planung
+_deps_stammdaten = _rollen(PLANER, PRODUKTION, SALES, BUCHHALTUNG, schreiben=[PLANER])
+# Lager: die Halle bucht Entnahmen und Verluste selbst
+_deps_lager = _rollen(PLANER, PRODUKTION, SALES, BUCHHALTUNG, schreiben=[PLANER, PRODUKTION])
+# Dienstplan: die Halle liest ihre Schichten, umgebaut wird er von der Planung
+_deps_dienstplan = _rollen(PLANER, PRODUKTION, schreiben=[PLANER])
+# Zusatzaufgaben im Tagesplan hakt die Halle selbst ab
+_deps_aufgaben = _rollen(PLANER, PRODUKTION)
+# Aufträge: Kunden und Bestellungen. Ausdrücklich auch für die Halle — bei
+# Ausfall der Betriebsleitung müssen die Mitarbeiter erfassen können
+# (Gernot, 03.09.2026). Die Geldseite bleibt davon getrennt.
+_deps_auftraege = _rollen(SALES, BUCHHALTUNG, PLANER, PRODUKTION)
+# Übriges Kaufmännisches — ohne die Halle
 _deps_vertrieb = _rollen(SALES, BUCHHALTUNG, PLANER)
 _deps_geld = _rollen(SALES, BUCHHALTUNG)
-_deps_planung = _rollen(PLANER, SALES, BUCHHALTUNG)
-# Belegkette: die Packliste hängt am Lieferschein, deshalb auch für die Halle
+# Prognosen liest auch der Vertrieb; genehmigt werden sie von der Planung
+_deps_planung = _rollen(PLANER, SALES, BUCHHALTUNG, schreiben=[PLANER])
+# Belegkette: Lieferscheine und Packlisten erstellt auch die Halle
 _deps_belege = _rollen(SALES, BUCHHALTUNG, PLANER, PRODUKTION)
-# Stammdaten, die jede Rolle zum Anzeigen braucht (Einheiten, Anhänge, Etiketten)
-_deps_gemeinsam = _rollen(*ALLE_ROLLEN)
+# Einheiten: alle lesen, ändern nur die Verwaltung
+_deps_einheiten = _rollen(*ALLE_ROLLEN, schreiben=[])
+# Anhänge (Zertifikate, Datenblätter): alle lesen, hochladen nicht die Halle
+_deps_anhaenge = _rollen(*ALLE_ROLLEN, schreiben=[PLANER, SALES, BUCHHALTUNG])
+# Etiketten drucken darf jeder, der damit arbeitet
+_deps_etiketten = _rollen(*ALLE_ROLLEN)
 # Nur die Verwaltung
 _deps_admin = _rollen()
 
@@ -645,7 +673,7 @@ app.include_router(
     seeds.router,
     prefix="/api/v1/seeds",
     tags=["Saatgut"],
-    dependencies=_deps_lager,
+    dependencies=_deps_stammdaten,
 )
 
 app.include_router(
@@ -659,21 +687,21 @@ app.include_router(
     staff.router,
     prefix="/api/v1",
     tags=["Dienstplan"],
-    dependencies=_deps_produktion,
+    dependencies=_deps_dienstplan,
 )
 
 app.include_router(
     staff.tasks_router,
     prefix="/api/v1",
     tags=["Dienstplan"],
-    dependencies=_deps_produktion,
+    dependencies=_deps_aufgaben,
 )
 
 app.include_router(
     sales.router,
     prefix="/api/v1/sales",
     tags=["Vertrieb"],
-    dependencies=_deps_vertrieb,
+    dependencies=_deps_auftraege,
 )
 
 app.include_router(
@@ -723,13 +751,13 @@ app.include_router(
 app.include_router(
     capacity.router,
     prefix="/api/v1",
-    dependencies=_deps_produktion,
+    dependencies=_deps_kapazitaet,
 )
 
 app.include_router(
     suppliers.router,
     prefix="/api/v1",
-    dependencies=_deps_lager,
+    dependencies=_deps_stammdaten,
 )
 
 app.include_router(
@@ -753,7 +781,7 @@ app.include_router(
 app.include_router(
     units.router,
     prefix="/api/v1",
-    dependencies=_deps_gemeinsam,
+    dependencies=_deps_einheiten,
 )
 
 app.include_router(
@@ -772,7 +800,7 @@ app.include_router(
 app.include_router(
     attachments.router,
     prefix="/api/v1",
-    dependencies=_deps_gemeinsam,
+    dependencies=_deps_anhaenge,
 )
 
 app.include_router(
@@ -798,7 +826,7 @@ app.include_router(
 app.include_router(
     print_jobs.router,
     prefix="/api/v1",
-    dependencies=_deps_gemeinsam,
+    dependencies=_deps_etiketten,
 )
 
 # … abgeholt wird sie vom Agenten im Hofnetz, der kein ERP-Benutzer ist und
