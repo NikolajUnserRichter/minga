@@ -37,6 +37,7 @@ import QRScanner from './QRScanner';
 import CommandPalette from './CommandPalette';
 import { NovaLogo } from './Logo';
 import { useBranding } from '../../context/BrandingContext';
+import { useAuth } from '../../context/AuthContext';
 import { UserRole, User } from '../../types';
 import { useTheme } from '../../context/ThemeContext';
 import { useToast } from '../ui';
@@ -59,10 +60,12 @@ const navigationSections: NavSection[] = [
     title: '',
     items: [
       {
+        // Ohne PRODUCTION_STAFF: das Dashboard zeigt offene Bestellungen und
+        // Rechnungen — beides für die Halle gesperrt, die Kacheln blieben leer.
         name: 'Dashboard',
         href: '/dashboard',
         icon: LayoutDashboard,
-        roles: ['ADMIN', 'SALES', 'PRODUCTION_PLANNER', 'PRODUCTION_STAFF', 'ACCOUNTING'],
+        roles: ['ADMIN', 'SALES', 'PRODUCTION_PLANNER', 'ACCOUNTING'],
       },
       {
         name: 'Auswertungen',
@@ -245,10 +248,11 @@ const roleDisplayNames: Record<UserRole, string> = {
   ACCOUNTING: 'Buchhaltung',
 };
 
-// User Context for role-based UI
+// User Context for role-based UI.
+// Nur lesend: die Rolle kommt aus dem Token und darf im Browser nicht
+// veränderbar sein — sonst wäre jede Einschränkung einen Klick weit weg.
 interface UserContextType {
   user: User;
-  setUser: (user: User) => void;
 }
 
 const UserContext = createContext<UserContextType | null>(null);
@@ -261,13 +265,25 @@ export function useUser() {
   return context;
 }
 
-// Mock user - in real app, this would come from auth
-const mockUser: User = {
-  id: '1',
-  name: 'Max Mustermann',
-  email: 'max@minga-greens.de',
-  role: 'ADMIN',
-};
+// Rollen kommen aus dem Keycloak-Token (klein geschrieben) und werden hier auf
+// die Anzeigerollen abgebildet. Reihenfolge = Rangfolge: wer mehrere Rollen
+// hat, sieht die weiteste Ansicht.
+const ROLLEN_RANGFOLGE: Array<[string, UserRole]> = [
+  ['admin', 'ADMIN'],
+  ['production_planner', 'PRODUCTION_PLANNER'],
+  ['sales', 'SALES'],
+  ['accounting', 'ACCOUNTING'],
+  ['production_staff', 'PRODUCTION_STAFF'],
+];
+
+function rolleAusToken(roles: string[] | undefined): UserRole {
+  for (const [ausToken, anzeige] of ROLLEN_RANGFOLGE) {
+    if (roles?.includes(ausToken)) return anzeige;
+  }
+  // Kein Treffer: engste Ansicht. Die Endpunkte antworten ohnehin mit 403 —
+  // eine breitere Oberfläche würde nur Fehlermeldungen zeigen.
+  return 'PRODUCTION_STAFF';
+}
 
 export default function Layout() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -290,7 +306,15 @@ export default function Layout() {
     mq.addEventListener('change', handler);
     return () => mq.removeEventListener('change', handler);
   }, []);
-  const [user, setUser] = useState<User>(mockUser);
+  // Der angemeldete Benutzer samt Rolle aus dem Token — nicht mehr fest verdrahtet.
+  const { user: authUser, logout } = useAuth();
+  const user: User = {
+    id: authUser?.username || 'unbekannt',
+    name: [authUser?.firstName, authUser?.lastName].filter(Boolean).join(' ')
+      || authUser?.username || authUser?.email || 'Angemeldet',
+    email: authUser?.email || '',
+    role: rolleAusToken(authUser?.roles),
+  };
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [showScanner, setShowScanner] = useState(false);
   const [showCommandPalette, setShowCommandPalette] = useState(false);
@@ -346,7 +370,7 @@ export default function Layout() {
   };
 
   return (
-    <UserContext.Provider value={{ user, setUser }}>
+    <UserContext.Provider value={{ user }}>
       <div className="min-h-screen bg-gray-50 dark:bg-gray-900 transition-colors">
         {/* Mobile Sidebar Overlay */}
         {sidebarOpen && (
@@ -443,29 +467,17 @@ export default function Layout() {
               {/* User Dropdown Menu */}
               {userMenuOpen && (
                 <div className="absolute bottom-full left-0 right-0 mb-2 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 py-1 animate-slide-up">
+                  {/* Kein Rollenwechsler mehr: die Rolle steht im Token und wird
+                      serverseitig geprüft. Sie hier umschalten zu können, hätte
+                      jede Einschränkung mit einem Klick aufgehoben. */}
                   <div className="px-3 py-2 border-b border-gray-100 dark:border-gray-700">
-                    <p className="text-xs text-gray-500 dark:text-gray-400">Rolle wechseln (Demo)</p>
+                    <p className="text-sm text-gray-900 dark:text-white truncate">{user.email || user.name}</p>
+                    <p className="text-xs text-gray-500 dark:text-gray-400">{roleDisplayNames[user.role]}</p>
                   </div>
-                  {(
-                    ['ADMIN', 'SALES', 'PRODUCTION_PLANNER', 'PRODUCTION_STAFF', 'ACCOUNTING'] as UserRole[]
-                  ).map((role) => (
-                    <button
-                      key={role}
-                      onClick={() => {
-                        setUser({ ...user, role });
-                        setUserMenuOpen(false);
-                      }}
-                      className={`w-full text-left px-3 py-2 text-sm hover:bg-gray-50 dark:hover:bg-gray-700 ${user.role === role ? 'text-minga-600 dark:text-minga-400 font-medium' : 'text-gray-700 dark:text-gray-300'
-                        }`}
-                    >
-                      {roleDisplayNames[role]}
-                      {user.role === role && ' ✓'}
-                    </button>
-                  ))}
-                  <div className="border-t border-gray-100 dark:border-gray-700 mt-1 pt-1">
+                  <div className="mt-1 pt-1">
                     <button
                       className="w-full text-left px-3 py-2 text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 flex items-center gap-2"
-                      onClick={() => { window.location.href = '/'; }}
+                      onClick={() => logout()}
                     >
                       <LogOut className="w-4 h-4" />
                       Abmelden

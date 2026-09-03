@@ -1,3 +1,4 @@
+from collections import defaultdict
 from datetime import date, timedelta
 from decimal import Decimal
 from typing import List, Dict, Any
@@ -19,33 +20,35 @@ def get_revenue_stats(db: DBSession, months: int = 12) -> List[Dict[str, Any]]:
     """
     # Start date
     start_date = date.today().replace(day=1) - timedelta(days=months*30)
-    
-    # Query
-    results = db.execute(
+
+    # Nach Monat gruppiert wird in Python, nicht in SQL: to_char() gibt es nur
+    # in Postgres, jeder Mandant läuft aber auf SQLite — die Auswertung lief
+    # deshalb immer in einen 500er. Die Rechnungsmengen sind klein genug, dass
+    # sich eine dialektabhängige Datumsfunktion nicht lohnt.
+    rows = db.execute(
         select(
-            func.to_char(Invoice.invoice_date, 'YYYY-MM').label("month"),
+            Invoice.invoice_date,
             Customer.typ.label("customer_type"),
-            func.sum(Invoice.subtotal).label("revenue")
+            Invoice.subtotal,
         )
         .join(Customer, Invoice.customer_id == Customer.id)
         .where(
             Invoice.invoice_date >= start_date,
             Invoice.status.in_([InvoiceStatus.OFFEN, InvoiceStatus.BEZAHLT])
         )
-        .group_by("month", Customer.typ)
-        .order_by("month")
     ).all()
-    
-    # Transform to list of dicts
-    data = []
-    for row in results:
-        data.append({
-            "month": row.month,
-            "customer_type": row.customer_type,
-            "revenue": row.revenue
-        })
-        
-    return data
+
+    summen: Dict[tuple, Decimal] = defaultdict(Decimal)
+    for invoice_date, customer_type, subtotal in rows:
+        monat = invoice_date.strftime("%Y-%m")
+        typ = customer_type.value if hasattr(customer_type, "value") else customer_type
+        summen[(monat, typ)] += Decimal(str(subtotal or 0))
+
+    # Aufsteigend nach Monat — das Diagramm zeichnet in dieser Reihenfolge.
+    return [
+        {"month": monat, "customer_type": typ, "revenue": betrag}
+        for (monat, typ), betrag in sorted(summen.items())
+    ]
 
 @router.get("/yield")
 def get_yield_stats(db: DBSession) -> List[Dict[str, Any]]:

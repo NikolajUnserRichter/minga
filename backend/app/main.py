@@ -64,6 +64,50 @@ limiter = Limiter(key_func=get_remote_address, default_limits=["120/minute"])
 _auth_deps = [Depends(get_current_user)]
 
 
+# ---------------------------------------------------------------------------
+# Rollen: wer welchen Bereich sieht
+#
+# Die Trennung wird gebraucht, sobald Mitarbeiter eigene Logins bekommen (z.B.
+# Tablet in der Produktionshalle): wer Kisten packt, hat an Rechnungen, Preisen
+# und Kundendaten nichts verloren. Durchgesetzt wird grob je Router — Lesen und
+# Schreiben sind bewusst noch nicht getrennt.
+#
+# Ohne passende Rolle antwortet der Router mit 403. Ein Login ganz ohne Rolle
+# kommt damit nirgends hin; das ist Absicht, sonst wäre eine vergessene
+# Rollenzuweisung in Keycloak ein stiller Vollzugriff.
+# ---------------------------------------------------------------------------
+from app.api.deps import require_role  # noqa: E402
+
+ADMIN = "admin"
+SALES = "sales"
+PLANER = "production_planner"
+PRODUKTION = "production_staff"
+BUCHHALTUNG = "accounting"
+
+ALLE_ROLLEN = [ADMIN, SALES, PLANER, PRODUKTION, BUCHHALTUNG]
+
+
+def _rollen(*erlaubt: str) -> list:
+    """Router-Abhängigkeit: nur diese Rollen kommen durch (admin immer)."""
+    return [Depends(get_current_user), Depends(require_role([ADMIN, *erlaubt]))]
+
+
+# Produktion — der Alltag in der Halle
+_deps_produktion = _rollen(PLANER, PRODUKTION)
+# Saatgut/Lager schauen auch Vertrieb und Buchhaltung an (Bestand, Rückverfolgung)
+_deps_lager = _rollen(PLANER, PRODUKTION, SALES, BUCHHALTUNG)
+# Kaufmännisches — ohne die Produktionsmitarbeiter
+_deps_vertrieb = _rollen(SALES, BUCHHALTUNG, PLANER)
+_deps_geld = _rollen(SALES, BUCHHALTUNG)
+_deps_planung = _rollen(PLANER, SALES, BUCHHALTUNG)
+# Belegkette: die Packliste hängt am Lieferschein, deshalb auch für die Halle
+_deps_belege = _rollen(SALES, BUCHHALTUNG, PLANER, PRODUKTION)
+# Stammdaten, die jede Rolle zum Anzeigen braucht (Einheiten, Anhänge, Etiketten)
+_deps_gemeinsam = _rollen(*ALLE_ROLLEN)
+# Nur die Verwaltung
+_deps_admin = _rollen()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup und Shutdown Events"""
@@ -601,160 +645,160 @@ app.include_router(
     seeds.router,
     prefix="/api/v1/seeds",
     tags=["Saatgut"],
-    dependencies=_auth_deps,
+    dependencies=_deps_lager,
 )
 
 app.include_router(
     production.router,
     prefix="/api/v1/production",
     tags=["Produktion"],
-    dependencies=_auth_deps,
+    dependencies=_deps_produktion,
 )
 
 app.include_router(
     staff.router,
     prefix="/api/v1",
     tags=["Dienstplan"],
-    dependencies=_auth_deps,
+    dependencies=_deps_produktion,
 )
 
 app.include_router(
     staff.tasks_router,
     prefix="/api/v1",
     tags=["Dienstplan"],
-    dependencies=_auth_deps,
+    dependencies=_deps_produktion,
 )
 
 app.include_router(
     sales.router,
     prefix="/api/v1/sales",
     tags=["Vertrieb"],
-    dependencies=_auth_deps,
+    dependencies=_deps_vertrieb,
 )
 
 app.include_router(
     forecasting.router,
     prefix="/api/v1/forecasting",
     tags=["Forecasting"],
-    dependencies=_auth_deps,
+    dependencies=_deps_planung,
 )
 
 # ERP Module
 app.include_router(
     products.router,
     prefix="/api/v1",
-    dependencies=_auth_deps,
+    dependencies=_deps_vertrieb,
 )
 
 app.include_router(
     products.groups_router,
     prefix="/api/v1",
-    dependencies=_auth_deps,
+    dependencies=_deps_vertrieb,
 )
 
 app.include_router(
     products.grow_plans_router,
     prefix="/api/v1",
-    dependencies=_auth_deps,
+    dependencies=_deps_vertrieb,
 )
 
 app.include_router(
     products.price_lists_router,
     prefix="/api/v1",
-    dependencies=_auth_deps,
+    dependencies=_deps_geld,
 )
 
 app.include_router(
     invoices.router,
     prefix="/api/v1",
-    dependencies=_auth_deps,
+    dependencies=_deps_geld,
 )
 
 app.include_router(
     inventory.router,
     prefix="/api/v1",
-    dependencies=_auth_deps,
+    dependencies=_deps_lager,
 )
 
 app.include_router(
     capacity.router,
     prefix="/api/v1",
-    dependencies=_auth_deps,
+    dependencies=_deps_produktion,
 )
 
 app.include_router(
     suppliers.router,
     prefix="/api/v1",
-    dependencies=_auth_deps,
+    dependencies=_deps_lager,
 )
 
 app.include_router(
     procurement.router,
     prefix="/api/v1",
-    dependencies=_auth_deps,
+    dependencies=_deps_vertrieb,
 )
 
 app.include_router(
     procurement.stock_router,
     prefix="/api/v1",
-    dependencies=_auth_deps,
+    dependencies=_deps_lager,
 )
 
 app.include_router(
     integrations.router,
     prefix="/api/v1",
-    dependencies=_auth_deps,
+    dependencies=_deps_admin,
 )
 
 app.include_router(
     units.router,
     prefix="/api/v1",
-    dependencies=_auth_deps,
+    dependencies=_deps_gemeinsam,
 )
 
 app.include_router(
     imports.router,
     prefix="/api/v1",
-    dependencies=_auth_deps,
+    dependencies=_deps_vertrieb,
 )
 
 app.include_router(
     documents.router,
     prefix="/api/v1/sales",
     tags=["Belegkette"],
-    dependencies=_auth_deps,
+    dependencies=_deps_belege,
 )
 
 app.include_router(
     attachments.router,
     prefix="/api/v1",
-    dependencies=_auth_deps,
+    dependencies=_deps_gemeinsam,
 )
 
 app.include_router(
     admin.router,
     prefix="/api/v1",
-    dependencies=_auth_deps,
+    dependencies=_deps_admin,
 )
 
 app.include_router(
     analytics.router,
     prefix="/api/v1/analytics",
     tags=["Analytics"],
-    dependencies=_auth_deps,
+    dependencies=_deps_geld,
 )
 
 app.include_router(
     document_templates.router,
     prefix="/api/v1",
-    dependencies=_auth_deps,
+    dependencies=_deps_admin,
 )
 
 # Druck-Warteschlange: einreihen und nachsehen tut der angemeldete Benutzer
 app.include_router(
     print_jobs.router,
     prefix="/api/v1",
-    dependencies=_auth_deps,
+    dependencies=_deps_gemeinsam,
 )
 
 # … abgeholt wird sie vom Agenten im Hofnetz, der kein ERP-Benutzer ist und

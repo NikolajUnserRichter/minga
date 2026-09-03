@@ -1,4 +1,5 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { useAuth } from './context/AuthContext';
 import Layout from './components/common/Layout';
 import Dashboard from './pages/Dashboard';
 import Production from './pages/Production';
@@ -26,12 +27,21 @@ import Locations from './pages/Locations';
 import Capacities from './pages/Capacities';
 import DocumentTemplates from './pages/DocumentTemplates';
 
+/** Startseite je Rolle: die Halle landet im Tagesplan, nicht im Dashboard. */
+function Startseite() {
+  const { user } = useAuth();
+  const nurProduktion =
+    user?.roles?.includes('production_staff') &&
+    !['admin', 'sales', 'production_planner', 'accounting'].some((r) => user?.roles?.includes(r));
+  return <Navigate to={nurProduktion ? '/day-plan' : '/dashboard'} replace />;
+}
+
 function App() {
   return (
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<Layout />}>
-          <Route index element={<Navigate to="/dashboard" replace />} />
+          <Route index element={<Startseite />} />
           <Route path="dashboard" element={<Dashboard />} />
           <Route path="analytics" element={<Analytics />} />
 
