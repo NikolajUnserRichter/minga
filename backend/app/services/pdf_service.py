@@ -243,6 +243,13 @@ class PDFService:
                 meta_data.append(["Ihre USt-IdNr.:", invoice.customer.ust_id])
             if invoice.delivery_date:
                 meta_data.append(["Lieferdatum:", invoice.delivery_date.strftime("%d.%m.%Y")])
+            # Sammelrechnung: der Leistungszeitraum gehört auf den Beleg (R2.4)
+            if invoice.service_period_start and invoice.service_period_end:
+                meta_data.append([
+                    "Leistungszeitraum:",
+                    f"{invoice.service_period_start.strftime('%d.%m.%Y')} – "
+                    f"{invoice.service_period_end.strftime('%d.%m.%Y')}",
+                ])
             # Kundenbestellnummer (z.B. EB4475142) aus der zugehörigen Bestellung
             if invoice.order is not None and invoice.order.customer_reference:
                 meta_data.append(["Auftragsnummer:", invoice.order.customer_reference])
@@ -360,6 +367,41 @@ class PDFService:
             )
             elements.append(Paragraph(f"<i>{ownership_text}</i>", styles['Normal']))
             elements.append(Spacer(1, 14))
+
+        # Sammelrechnung: Anhangstabelle "Enthaltene Lieferscheine" (R2.3) —
+        # der Kunde muss nachvollziehen können, welche Lieferungen drinstecken.
+        if db is not None:
+            from sqlalchemy import select as _select
+            from app.models.documents import DeliveryNote as _DN
+            enthaltene = db.execute(
+                _select(_DN).where(_DN.invoice_id == invoice.id)
+            ).scalars().all()
+            if enthaltene:
+                elements.append(Paragraph("<b>Enthaltene Lieferscheine</b>", styles['Normal']))
+                elements.append(Spacer(1, 4))
+                ls_daten = [["Lieferschein", "Lieferdatum", "Betrag (netto)"]]
+                for n in enthaltene:
+                    datum = n.actual_delivery_date or (
+                        n.order.requested_delivery_date if n.order else None
+                    )
+                    betrag = sum(
+                        (l.quantity * l.unit_price for l in (n.order.lines if n.order else [])),
+                        Decimal("0"),
+                    )
+                    ls_daten.append([
+                        n.delivery_note_number,
+                        datum.strftime("%d.%m.%Y") if datum else "—",
+                        f"{betrag:.2f} EUR",
+                    ])
+                ls_tabelle = Table(ls_daten, colWidths=[6*cm, 4*cm, 4*cm])
+                ls_tabelle.setStyle(TableStyle([
+                    ("GRID", (0, 0), (-1, -1), 0.4, colors.grey),
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#EEEEEE")),
+                    ("ALIGN", (2, 1), (2, -1), "RIGHT"),
+                    ("FONTSIZE", (0, 0), (-1, -1), 8),
+                ]))
+                elements.append(ls_tabelle)
+                elements.append(Spacer(1, 12))
 
         # Danke-Text — custom text aus Template wenn gesetzt
         if _en(tmpl, "thanks", default=True):

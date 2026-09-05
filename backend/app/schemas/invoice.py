@@ -168,6 +168,9 @@ class InvoiceResponse(InvoiceBase):
     order_id: Optional[UUID]
     original_invoice_id: Optional[UUID]
     status: InvoiceStatus
+    # Leistungszeitraum (gesetzt bei Sammelrechnungen)
+    service_period_start: Optional[date] = None
+    service_period_end: Optional[date] = None
 
     # Adressen
     billing_address: Optional[dict]

@@ -488,3 +488,178 @@ def get_invoice_pdf(
             "Content-Disposition": f"attachment; filename={filename}",
         }
     )
+
+
+# =====================================================================
+# Sammelrechnung (Warenfluss-Release, AP2)
+#
+# Ein Lauf je Zeitraum: alle nicht abgerechneten Lieferscheine der Kunden
+# werden je Artikel + Einheit + Einzelpreis + Steuersatz aggregiert.
+# Vorschau rechnet nur; erst das Festschreiben vergibt Nummern und setzt
+# delivery_notes.invoice_id — der Doppelabrechnungsschutz (R2.5).
+# =====================================================================
+
+from pydantic import BaseModel as _BaseModel, Field as _Field
+
+from app.models.documents import DeliveryNote
+from app.models.enums import OrderStatus
+from app.models.invoice import InvoiceLineSource
+from app.models.order import Order, OrderLine
+
+
+class BatchRunRequest(_BaseModel):
+    period_from: date
+    period_to: date
+    customer_ids: Optional[list[UUID]] = _Field(None, description="leer = alle Kunden")
+    invoice_date: Optional[date] = None
+
+
+def _abrechenbare_lieferscheine(db, anfrage: BatchRunRequest):
+    """Lieferscheine des Zeitraums, die noch in keiner Rechnung stecken.
+
+    Leistungsdatum je Lieferschein: das tatsächliche Lieferdatum, ersatzweise
+    das Wunschlieferdatum der Bestellung. Stornierte Bestellungen bleiben
+    draußen.
+    """
+    notes = db.execute(
+        select(DeliveryNote)
+        .join(Order, DeliveryNote.order_id == Order.id)
+        .where(
+            DeliveryNote.invoice_id.is_(None),
+            Order.status != OrderStatus.STORNIERT,
+        )
+    ).scalars().all()
+
+    ergebnis = []
+    for note in notes:
+        leistungsdatum = note.actual_delivery_date or note.order.requested_delivery_date
+        if not (anfrage.period_from <= leistungsdatum <= anfrage.period_to):
+            continue
+        if anfrage.customer_ids and note.order.customer_id not in anfrage.customer_ids:
+            continue
+        ergebnis.append((note, leistungsdatum))
+    return ergebnis
+
+
+def _aggregiere(notes) -> dict:
+    """Je Kunde: Positionen aggregiert nach (Artikel, Einheit, Preis, Steuersatz).
+
+    Merkt sich je Position, welcher Lieferschein wie viel beigetragen hat —
+    daraus entstehen beim Festschreiben die invoice_line_sources (R2.3).
+    """
+    kunden: dict = {}
+    for note, leistungsdatum in notes:
+        order = note.order
+        k = kunden.setdefault(order.customer_id, {
+            "customer_id": order.customer_id,
+            "customer_name": order.customer.name if order.customer else "—",
+            "lieferscheine": [],
+            "positionen": {},
+        })
+        k["lieferscheine"].append(note)
+        for line in order.lines:
+            key = (line.beschreibung or "Position", line.unit,
+                   line.unit_price, line.tax_rate)
+            pos = k["positionen"].setdefault(key, {"menge": Decimal("0"), "quellen": []})
+            pos["menge"] += line.quantity
+            pos["quellen"].append((note.id, line.quantity))
+    return kunden
+
+
+@router.post("/batch-run/preview")
+def batch_run_preview(anfrage: BatchRunRequest, db: DBSession):
+    """Vorschau des Sammelrechnungslaufs — rechnet, schreibt nichts (R2.6)."""
+    kunden = _aggregiere(_abrechenbare_lieferscheine(db, anfrage))
+    return {
+        "period_from": anfrage.period_from.isoformat(),
+        "period_to": anfrage.period_to.isoformat(),
+        "kunden": [{
+            "customer_id": str(k["customer_id"]),
+            "customer_name": k["customer_name"],
+            "anzahl_lieferscheine": len(k["lieferscheine"]),
+            "positionen": [{
+                "description": key[0], "unit": key[1],
+                "unit_price": key[2], "tax_rate": key[3].value,
+                "quantity": pos["menge"],
+            } for key, pos in sorted(k["positionen"].items(), key=lambda e: (e[0][0], e[0][2]))],
+            "summe_netto": sum((pos["menge"] * key[2] for key, pos in k["positionen"].items()),
+                               Decimal("0")),
+        } for k in kunden.values()],
+    }
+
+
+@router.post("/batch-run/commit", status_code=201)
+def batch_run_commit(anfrage: BatchRunRequest, db: DBSession):
+    """Schreibt den Lauf fest: eine Rechnung je Kunde, Nummern aus dem
+    regulären Kreis, Lieferscheine fest zugeordnet (R2.1–R2.5)."""
+    kunden = _aggregiere(_abrechenbare_lieferscheine(db, anfrage))
+    service = InvoiceService(db)
+    rechnungen = []
+
+    for k in kunden.values():
+        invoice = service.create_invoice(
+            customer_id=k["customer_id"],
+            invoice_date=anfrage.invoice_date or date.today(),
+            header_text=(
+                f"Sammelrechnung — Leistungszeitraum "
+                f"{anfrage.period_from.strftime('%d.%m.%Y')}–{anfrage.period_to.strftime('%d.%m.%Y')}"
+            ),
+        )
+        invoice.service_period_start = anfrage.period_from
+        invoice.service_period_end = anfrage.period_to
+
+        for (beschreibung, unit, preis, steuersatz), pos in sorted(
+            k["positionen"].items(), key=lambda e: (e[0][0], e[0][2])
+        ):
+            line = service.add_line(
+                invoice_id=invoice.id,
+                description=beschreibung,
+                quantity=pos["menge"],
+                unit=unit,
+                unit_price=preis,
+                tax_rate=steuersatz,
+            )
+            db.flush()
+            for note_id, menge in pos["quellen"]:
+                db.add(InvoiceLineSource(
+                    invoice_line_id=line.id,
+                    delivery_note_id=note_id,
+                    quantity=menge,
+                ))
+
+        # Doppelabrechnungsschutz: ab jetzt hängt der Lieferschein an dieser
+        # Rechnung — der nächste Lauf sieht ihn nicht mehr (R2.5).
+        for note in k["lieferscheine"]:
+            note.invoice_id = invoice.id
+
+        # Summen über ALLE Zeilen: die lines-Relationship kann nach dem
+        # zeilenweisen add_line noch den alten Stand tragen.
+        db.flush()
+        db.refresh(invoice)
+        invoice.calculate_totals()
+
+        invoice.status = InvoiceStatus.OFFEN
+        rechnungen.append(invoice)
+
+    db.commit()
+    return {
+        "rechnungen": [InvoiceResponse.model_validate(r) for r in rechnungen],
+    }
+
+
+@router.get("/{invoice_id}/delivery-notes")
+def invoice_delivery_notes(invoice_id: UUID, db: DBSession):
+    """Die in einer (Sammel-)Rechnung enthaltenen Lieferscheine (R2.3)."""
+    invoice = db.get(Invoice, invoice_id)
+    if not invoice:
+        raise HTTPException(status_code=404, detail="Rechnung nicht gefunden")
+
+    notes = db.execute(
+        select(DeliveryNote).where(DeliveryNote.invoice_id == invoice_id)
+    ).scalars().all()
+    return [{
+        "id": str(n.id),
+        "delivery_note_number": n.delivery_note_number,
+        "lieferdatum": (n.actual_delivery_date or n.order.requested_delivery_date).isoformat(),
+        "betrag_netto": sum((l.quantity * l.unit_price for l in n.order.lines), Decimal("0")),
+    } for n in notes]

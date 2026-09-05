@@ -57,6 +57,10 @@ class Invoice(Base):
     invoice_date: Mapped[date] = mapped_column(Date, nullable=False, default=date.today)
     delivery_date: Mapped[Optional[date]] = mapped_column(Date)  # Liefer-/Leistungsdatum
     due_date: Mapped[date] = mapped_column(Date, nullable=False)  # Fälligkeitsdatum
+    # Leistungszeitraum (Sammelrechnung): umsatzsteuerlich gehört der Zeitraum
+    # auf den Beleg, wenn über mehrere Lieferungen abgerechnet wird.
+    service_period_start: Mapped[Optional[date]] = mapped_column(Date)
+    service_period_end: Mapped[Optional[date]] = mapped_column(Date)
 
     # Status
     status: Mapped[InvoiceStatus] = mapped_column(
@@ -346,6 +350,25 @@ class Payment(Base):
 
 
 # Hilfsfunktion für Rechnungsnummer-Generierung
+class InvoiceLineSource(Base):
+    """Herkunft einer Sammelrechnungs-Position (R2.3).
+
+    Eine aggregierte Position fasst Mengen aus mehreren Lieferscheinen
+    zusammen — hier steht, welcher Lieferschein wie viel beigetragen hat.
+    Damit bleibt die Rechnung drilldown-fähig und exportierbar.
+    """
+    __tablename__ = "invoice_line_sources"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    invoice_line_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("invoice_lines.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    delivery_note_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("delivery_notes.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    quantity: Mapped[Decimal] = mapped_column(Numeric(12, 3), nullable=False)
+
+
 def generate_invoice_number(year: int, sequence: int, prefix: str = "RE") -> str:
     """
     Generiert eine fortlaufende Rechnungsnummer.

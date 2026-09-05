@@ -47,6 +47,7 @@ from app.models.procurement import (
 from app.models.invoice import (
     Invoice,
     InvoiceLine,
+    InvoiceLineSource,
     Payment,
     InvoiceStatus,
     InvoiceType,
@@ -162,6 +163,7 @@ __all__ = [
     # Invoice & Accounting
     "Invoice",
     "InvoiceLine",
+    "InvoiceLineSource",
     "Payment",
     "InvoiceStatus",
     "InvoiceType",

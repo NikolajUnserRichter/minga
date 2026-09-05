@@ -333,6 +333,9 @@ def _auto_migrate(engine: Engine) -> None:
         _add_col_if_missing("harvests", "import_run_id", "CHAR(32)")
         # Sammelrechnung/Storno: Abrechnungsstatus am Lieferschein
         _add_col_if_missing("delivery_notes", "invoice_id", "CHAR(32)")
+        # Sammelrechnung: Leistungszeitraum auf dem Beleg
+        _add_col_if_missing("invoices", "service_period_start", "DATE")
+        _add_col_if_missing("invoices", "service_period_end", "DATE")
         if inspector.has_table("inventory_movements"):
             with engine.begin() as conn:
                 conn.execute(text(
