@@ -29,6 +29,7 @@ from app.tenancy import (
 )
 from app.api.v1 import seeds, production, sales, forecasting, products, invoices, inventory, analytics, capacity, suppliers, units, imports, documents, attachments, admin, document_templates, platform, procurement, integrations, staff
 from app.api.v1 import print_jobs
+from app.api.v1 import reports
 from app.api.v1 import ratgeber as ratgeber_admin
 from app.api.v1 import seo_dashboard
 from app.api import ratgeber_public, seo_public
@@ -814,6 +815,13 @@ app.include_router(
     prefix="/api/v1/analytics",
     tags=["Analytics"],
     dependencies=_deps_geld,
+)
+
+# Warenfluss-Reports: Zertifizierungs-/Auditnachweis — Planung + Buchhaltung
+app.include_router(
+    reports.router,
+    prefix="/api/v1",
+    dependencies=_deps_planung,
 )
 
 app.include_router(

@@ -120,3 +120,102 @@ class TestGegenbuchung:
         r = client.post("/api/v1/inventory/movements/00000000-0000-0000-0000-0000000000ff/reverse",
                         json={"grund": "x"})
         assert r.status_code == 404, r.text
+
+
+HEUTE = None  # wird unten aus date.today() gesetzt — Reports rechnen mit echten Daten
+
+
+class TestWarenflussReport:
+    """AP5: Saatgut-Warenfluss je Sorte — der Zertifizierungsnachweis.
+
+    Einheiten-Falle: Saatgut-Bewegungen aus dem Lager laufen in kg, die aus
+    dem Historien-Import in g. Der Report normalisiert auf Gramm.
+    """
+
+    def _saatgut_szenario(self, client, sample_seed, sample_location):
+        """Zugang 1000 g, Entnahme 250 g — beides heute."""
+        bestand = _bestand(client, sample_location, sample_seed, "WF-1", 1000)
+        r = client.post(f"/api/v1/inventory/seeds/{bestand['id']}/consume",
+                        params={"quantity": 0.25})
+        assert r.status_code == 200, r.text
+
+    def _report(self, client, **params):
+        from datetime import date
+        params.setdefault("material_type", "SAATGUT")
+        params.setdefault("von", "2026-01-01")
+        params.setdefault("bis", date.today().isoformat())
+        r = client.get("/api/v1/reports/material-flow", params=params)
+        assert r.status_code == 200, r.text
+        return r.json()
+
+    def test_saatgut_summen_je_sorte_in_gramm(self, client, sample_seed, sample_location):
+        self._saatgut_szenario(client, sample_seed, sample_location)
+
+        report = self._report(client)
+
+        zeile = next(z for z in report["zeilen"] if z["schluessel"] == sample_seed["name"])
+        assert Decimal(str(zeile["zugang"])) == Decimal("1000")
+        assert Decimal(str(zeile["verbrauch"])) == Decimal("-250")
+        assert Decimal(str(zeile["endbestand"])) == Decimal("750")
+
+    def test_anfangsbestand_kommt_aus_bewegungen_vor_dem_zeitraum(self, client, sample_seed, sample_location):
+        from datetime import date, timedelta
+        self._saatgut_szenario(client, sample_seed, sample_location)
+
+        # Zeitraum beginnt erst morgen → alles Heutige wandert in den Anfangsbestand
+        morgen = (date.today() + timedelta(days=1)).isoformat()
+        report = self._report(client, von=morgen, bis=morgen)
+
+        zeile = next(z for z in report["zeilen"] if z["schluessel"] == sample_seed["name"])
+        assert Decimal(str(zeile["anfangsbestand"])) == Decimal("750")
+        assert Decimal(str(zeile["zugang"])) == Decimal("0")
+        assert Decimal(str(zeile["endbestand"])) == Decimal("750")
+
+    def test_substrat_und_verpackung_getrennt(self, client):
+        for sku, art in [("ERDE-9", "SUBSTRAT"), ("SCHALE-9", "VERPACKUNG")]:
+            r = client.post("/api/v1/inventory/packaging/receive", params={
+                "sku": sku, "name": f"Artikel {sku}", "quantity": 100, "article_type": art,
+            })
+            assert r.status_code == 201, r.text
+
+        substrat = self._report(client, material_type="SUBSTRAT")
+        schluessel = [z["schluessel"] for z in substrat["zeilen"]]
+        assert "Artikel ERDE-9" in schluessel
+        assert "Artikel SCHALE-9" not in schluessel
+
+    def test_drilldown_kennzeichnet_importierte_bewegungen(self, client, sample_seed):
+        """R5.6: importierte Historie ist im Drilldown als solche erkennbar."""
+        import io as _io
+        from openpyxl import Workbook
+        wb = Workbook(); ws = wb.active; ws.title = "Daten"
+        ws.append(["sorte", "aussaat_datum", "tray_anzahl", "externe_chargennummer", "saatgut_gramm"])
+        ws.append([sample_seed["name"], "2026-03-10", 4, "DD-1", 200])
+        buf = _io.BytesIO(); wb.save(buf)
+        r = client.post("/api/v1/imports/grow-batches/commit", files={
+            "file": ("h.xlsx", buf.getvalue(),
+                     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")})
+        assert r.status_code == 201, r.text
+
+        details = client.get("/api/v1/reports/material-flow/details", params={
+            "material_type": "SAATGUT", "von": "2026-03-01", "bis": "2026-03-31",
+        })
+        assert details.status_code == 200, details.text
+        zeilen = details.json()
+        assert len(zeilen) == 1
+        assert zeilen[0]["aus_import"] is True
+        assert zeilen[0]["sorte"] == sample_seed["name"]
+
+    def test_export_csv_und_pdf(self, client, sample_seed, sample_location):
+        self._saatgut_szenario(client, sample_seed, sample_location)
+
+        csv = client.get("/api/v1/reports/material-flow/export",
+                         params={"material_type": "SAATGUT", "format": "csv",
+                                 "von": "2026-01-01", "bis": "2026-12-31"})
+        assert csv.status_code == 200, csv.text
+        assert sample_seed["name"] in csv.text
+
+        pdf = client.get("/api/v1/reports/material-flow/export",
+                         params={"material_type": "SAATGUT", "format": "pdf",
+                                 "von": "2026-01-01", "bis": "2026-12-31"})
+        assert pdf.status_code == 200
+        assert pdf.content.startswith(b"%PDF")
