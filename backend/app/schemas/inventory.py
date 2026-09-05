@@ -360,6 +360,7 @@ class InventoryMovementResponse(InventoryMovementBase):
     created_by: Optional[str]
     reason: Optional[str]
     reference_number: Optional[str]
+    reverses_movement_id: Optional[UUID] = None
     movement_date: datetime
     created_at: datetime
 

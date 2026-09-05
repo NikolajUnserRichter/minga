@@ -322,6 +322,16 @@ def _auto_migrate(engine: Engine) -> None:
         # Mischsorten (z.B. Brotzeitmix) — die Rezept- und Chargentabellen
         # legt create_all an, nur die Kennzeichnung fehlt in alten Schemata.
         _add_col_if_missing("seeds", "is_mix", "BOOLEAN", "0")
+
+        # Warenfluss-Release: Gegenbuchung verweist auf die Ursprungsbewegung;
+        # der Index trägt die Stichtags-Summierung der Warenfluss-Reports.
+        _add_col_if_missing("inventory_movements", "reverses_movement_id", "CHAR(32)")
+        if inspector.has_table("inventory_movements"):
+            with engine.begin() as conn:
+                conn.execute(text(
+                    "CREATE INDEX IF NOT EXISTS ix_movements_item_date "
+                    "ON inventory_movements (item_type, movement_date)"
+                ))
     except Exception as e:
         logger.error(f"[auto-migrate] failed: {e}")
 

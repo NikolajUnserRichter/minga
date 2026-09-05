@@ -20,6 +20,22 @@ from app.models.seed import Seed
 from app.models.order import Order, OrderLine
 
 
+
+_ARTICLE_ITEM_TYPES = {
+    "SUBSTRAT": InventoryItemType.SUBSTRAT,
+    "PFANDKISTE": InventoryItemType.PFANDKISTE,
+}
+
+
+def _packaging_item_type(inventory: "PackagingInventory") -> InventoryItemType:
+    """Journaltyp aus dem Artikeltyp — Substrat und Pfand sind keine Verpackung.
+
+    Wurde hier hart VERPACKUNG gebucht, waren die Materialflüsse im Journal
+    nicht unterscheidbar und der Warenfluss-Report je Materialart unmöglich.
+    """
+    return _ARTICLE_ITEM_TYPES.get(inventory.article_type, InventoryItemType.VERPACKUNG)
+
+
 class InventoryService:
     """Service für Lagerverwaltungs-Operationen"""
 
@@ -342,7 +358,7 @@ class InventoryService:
 
             self._record_movement(
                 movement_type=MovementType.EINGANG,
-                item_type=InventoryItemType.VERPACKUNG,
+                item_type=_packaging_item_type(existing),
                 packaging_id=existing.id,
                 quantity=Decimal(quantity),
                 unit=unit,
@@ -370,7 +386,7 @@ class InventoryService:
 
         self._record_movement(
             movement_type=MovementType.EINGANG,
-            item_type=InventoryItemType.VERPACKUNG,
+            item_type=_packaging_item_type(inventory),
             packaging_id=inventory.id,
             quantity=Decimal(quantity),
             unit=unit,
@@ -406,7 +422,7 @@ class InventoryService:
 
         movement = self._record_movement(
             movement_type=MovementType.PRODUKTION,
-            item_type=InventoryItemType.VERPACKUNG,
+            item_type=_packaging_item_type(inventory),
             packaging_id=packaging_id,
             quantity=Decimal(-quantity),
             unit=inventory.unit,
@@ -746,7 +762,7 @@ class InventoryService:
             for item in packaging_items:
                 count_item = InventoryCountItem(
                     count_id=count.id,
-                    item_type=InventoryItemType.VERPACKUNG,
+                    item_type=_packaging_item_type(item),
                     packaging_id=item.id,
                     system_quantity=Decimal(item.current_quantity),
                     unit=item.unit,

@@ -6,6 +6,7 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import select
 
@@ -666,6 +667,85 @@ def create_movement(data: InventoryMovementCreate, db: DBSession):
     db.commit()
     db.refresh(movement)
     return movement
+
+
+class MovementReverseRequest(BaseModel):
+    """Gegenbuchung: der Grund ist Pflicht — er landet im Journal."""
+    grund: str = Field(..., min_length=1, max_length=500)
+
+
+@router.post("/movements/{movement_id}/reverse",
+             response_model=InventoryMovementResponse, status_code=201)
+def reverse_movement(movement_id: UUID, data: MovementReverseRequest, db: DBSession):
+    """Neutralisiert eine Fehlbuchung durch eine Gegenbuchung (R4.7).
+
+    Bewegungen werden nie geändert oder gelöscht — GoBD. Die Gegenbuchung
+    trägt die Menge mit umgekehrtem Vorzeichen, verweist auf das Original
+    und stellt den Bestand wieder her.
+    """
+    original = db.get(InventoryMovement, movement_id)
+    if not original:
+        raise HTTPException(status_code=404, detail="Bewegung nicht gefunden")
+
+    if original.reverses_movement_id is not None:
+        raise HTTPException(
+            status_code=400,
+            detail="Eine Gegenbuchung kann nicht rückgängig gemacht werden — "
+                   "bitte den Vorgang neu buchen.",
+        )
+
+    schon_da = db.execute(
+        select(InventoryMovement)
+        .where(InventoryMovement.reverses_movement_id == movement_id)
+    ).scalars().first()
+    if schon_da:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Bewegung wurde bereits gegengebucht ({schon_da.id}).",
+        )
+
+    delta = -original.quantity
+
+    # Bestand wiederherstellen — je nachdem, an welchem Lager die Bewegung hing
+    vorher = nachher = Decimal("0")
+    if original.seed_inventory_id:
+        inv = db.get(SeedInventory, original.seed_inventory_id)
+        if inv:
+            vorher = inv.current_quantity_kg
+            inv.current_quantity_kg = vorher + delta
+            nachher = inv.current_quantity_kg
+    elif original.finished_goods_id:
+        inv = db.get(FinishedGoodsInventory, original.finished_goods_id)
+        if inv:
+            vorher = inv.current_quantity_g
+            inv.current_quantity_g = vorher + delta
+            nachher = inv.current_quantity_g
+    elif original.packaging_id:
+        inv = db.get(PackagingInventory, original.packaging_id)
+        if inv:
+            vorher = Decimal(inv.current_quantity)
+            inv.current_quantity = int(vorher + delta)
+            nachher = Decimal(inv.current_quantity)
+
+    gegen = InventoryMovement(
+        movement_type=MovementType.KORREKTUR,
+        item_type=original.item_type,
+        seed_inventory_id=original.seed_inventory_id,
+        finished_goods_id=original.finished_goods_id,
+        packaging_id=original.packaging_id,
+        trade_goods_id=original.trade_goods_id,
+        quantity=delta,
+        unit=original.unit,
+        quantity_before=vorher,
+        quantity_after=nachher,
+        reverses_movement_id=original.id,
+        reason=data.grund,
+        reference_number=original.reference_number,
+    )
+    db.add(gegen)
+    db.commit()
+    db.refresh(gegen)
+    return gegen
 
 
 # ========================================

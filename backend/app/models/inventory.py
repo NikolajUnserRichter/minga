@@ -451,6 +451,12 @@ class InventoryMovement(Base):
     reason: Mapped[Optional[str]] = mapped_column(Text)  # Grund (bei Korrektur/Verlust)
     reference_number: Mapped[Optional[str]] = mapped_column(String(50))  # z.B. Lieferschein-Nr
 
+    # Gegenbuchung: Bewegungen werden nie geändert oder gelöscht — eine
+    # Fehlbuchung wird durch eine Gegenbuchung mit Verweis hierauf neutralisiert.
+    reverses_movement_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid, ForeignKey("inventory_movements.id", ondelete="SET NULL")
+    )
+
     # Timestamps
     movement_date: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
