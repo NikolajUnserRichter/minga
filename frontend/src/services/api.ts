@@ -1403,3 +1403,147 @@ export const documentTemplatesApi = {
 }
 
 export default api
+
+// ============================================================
+// Warenfluss-Release: Import v2, Reports, Inventur, Sammelrechnung
+// ============================================================
+
+export interface ImportReportZeile {
+  zeile: number
+  status: 'OK' | 'WARNUNG' | 'FEHLER'
+  meldung: string
+  sorte?: string | null
+}
+
+export interface ImportReport {
+  zeilen: ImportReportZeile[]
+  zusammenfassung: { ok: number; warnung: number; fehler: number }
+  fehlende_sorten: string[]
+  fehlende_substrate: string[]
+}
+
+export interface ImportRunInfo {
+  id: string
+  entity: string
+  filename: string | null
+  status: string
+  created: number
+  skipped: number
+  movements: number
+  created_at: string
+}
+
+export interface ChargenGridZeile {
+  sorte: string
+  aussaat_datum: string
+  tray_anzahl: number | ''
+  saatgut_gramm?: number | ''
+  regal_position?: string
+  externe_chargennummer?: string
+  notiz?: string
+}
+
+export const chargenImportApi = {
+  // Datei-Import, zweistufig: erst prüfen, dann ausführen
+  validate: (file: File) => {
+    const form = new FormData()
+    form.append('file', file)
+    return api.post<ImportReport>('/imports/grow-batches/validate', form).then(r => r.data)
+  },
+  commit: (file: File, lagerbewegungen: boolean) => {
+    const form = new FormData()
+    form.append('file', file)
+    return api.post<{ import_run_id: string; created: number; skipped: number; movements: number }>(
+      `/imports/grow-batches/commit?lagerbewegungen=${lagerbewegungen}`, form).then(r => r.data)
+  },
+  // Grid-Zeilen ohne Datei — gleiche Prüfungen, gleiche Transaktion
+  validateRows: (zeilen: Record<string, unknown>[]) =>
+    api.post<ImportReport>('/imports/grow-batches/validate-rows', { zeilen }).then(r => r.data),
+  commitRows: (zeilen: Record<string, unknown>[], lagerbewegungen: boolean) =>
+    api.post<{ import_run_id: string; created: number; skipped: number; movements: number }>(
+      '/imports/grow-batches/commit-rows', { zeilen, lagerbewegungen }).then(r => r.data),
+  listRuns: () => api.get<ImportRunInfo[]>('/imports/runs').then(r => r.data),
+  rollback: (runId: string) => api.delete(`/imports/runs/${runId}`).then(r => r.data),
+  suggestions: (targetWeek: string) =>
+    api.get<Array<{ suggestion_id: string; sorte: string; aussaat_datum: string; tray_anzahl: number; saatgut_gramm: number | null; geplantes_ernte_datum: string }>>(
+      '/production/grow-batch-suggestions', { params: { target_week: targetWeek } }).then(r => r.data),
+}
+
+export interface WarenflussZeile {
+  schluessel: string
+  anfangsbestand: number
+  zugang: number
+  verbrauch: number
+  sonstiges: number
+  korrektur: number
+  endbestand: number
+}
+
+export const reportsApi = {
+  materialFlow: (params: { material_type: string; von?: string; bis?: string }) =>
+    api.get<{ material_type: string; von: string; bis: string; zeilen: WarenflussZeile[] }>(
+      '/reports/material-flow', { params }).then(r => r.data),
+  materialFlowDetails: (params: { material_type: string; von?: string; bis?: string; schluessel?: string }) =>
+    api.get<Array<{ datum: string; sorte: string | null; movement_type: string; menge: number; einheit: string; referenz: string | null; grund: string | null; aus_import: boolean }>>(
+      '/reports/material-flow/details', { params }).then(r => r.data),
+  exportMaterialFlow: (params: { material_type: string; format: 'csv' | 'pdf'; von?: string; bis?: string }) =>
+    _openPdfFromResponse(
+      `/reports/material-flow/export?${new URLSearchParams(params as Record<string, string>)}`,
+      `Warenfluss_${params.material_type}.${params.format}`),
+}
+
+export interface InventurPosition {
+  id: string
+  item_type: string
+  system_quantity: number
+  counted_quantity: number | null
+  difference: number | null
+  unit: string
+  notes: string | null
+  wert: number | null
+}
+
+export interface Inventur {
+  id: string
+  count_number: string
+  typ: string
+  status: string
+  count_date: string
+  notes: string | null
+  counted_by: string | null
+  items?: InventurPosition[]
+  gesamtwert?: number | null
+}
+
+export const inventurApi = {
+  list: () => api.get<Inventur[]>('/inventory/counts').then(r => r.data),
+  get: (id: string) => api.get<Inventur>(`/inventory/counts/${id}`).then(r => r.data),
+  create: (params: { typ: string; count_date?: string; counted_by?: string; article_type?: string }) =>
+    api.post<Inventur>('/inventory/counts', null, { params }).then(r => r.data),
+  updateItem: (countId: string, itemId: string, data: { counted_quantity?: number; notes?: string }) =>
+    api.put<InventurPosition>(`/inventory/counts/${countId}/items/${itemId}`, data).then(r => r.data),
+  finalize: (countId: string) =>
+    api.post<Inventur>(`/inventory/counts/${countId}/finalize`).then(r => r.data),
+  zaehlliste: (countId: string, blind: boolean) =>
+    _openPdfFromResponse(`/inventory/counts/${countId}/zaehlliste?blind=${blind}`, `Zaehlliste.pdf`),
+  export: (countId: string, format: 'pdf' | 'xlsx') =>
+    _openPdfFromResponse(`/inventory/counts/${countId}/export?format=${format}`, `Inventur.${format}`),
+}
+
+export interface SammelrechnungVorschauKunde {
+  customer_id: string
+  customer_name: string
+  anzahl_lieferscheine: number
+  positionen: Array<{ description: string; unit: string; unit_price: number; tax_rate: string; quantity: number }>
+  summe_netto: number
+}
+
+export const sammelrechnungApi = {
+  preview: (data: { period_from: string; period_to: string; customer_ids?: string[] }) =>
+    api.post<{ kunden: SammelrechnungVorschauKunde[] }>('/invoices/batch-run/preview', data).then(r => r.data),
+  commit: (data: { period_from: string; period_to: string; customer_ids?: string[]; invoice_date?: string }) =>
+    api.post<{ rechnungen: Invoice[] }>('/invoices/batch-run/commit', data).then(r => r.data),
+  deliveryNotes: (invoiceId: string) =>
+    api.get<Array<{ id: string; delivery_note_number: string; lieferdatum: string; betrag_netto: number }>>(
+      `/invoices/${invoiceId}/delivery-notes`).then(r => r.data),
+}

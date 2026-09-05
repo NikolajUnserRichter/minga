@@ -2,6 +2,8 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { useAuth } from './context/AuthContext';
 import Layout from './components/common/Layout';
 import Dashboard from './pages/Dashboard';
+import Warenfluss from './pages/Warenfluss';
+import Inventur from './pages/Inventur';
 import Production from './pages/Production';
 import Tagesplan from './pages/Tagesplan';
 import Dienstplan from './pages/Dienstplan';
@@ -44,6 +46,8 @@ function App() {
           <Route index element={<Startseite />} />
           <Route path="dashboard" element={<Dashboard />} />
           <Route path="analytics" element={<Analytics />} />
+          <Route path="warenfluss" element={<Warenfluss />} />
+          <Route path="inventur" element={<Inventur />} />
 
           {/* Stammdaten */}
           <Route path="seeds" element={<Seeds />} />

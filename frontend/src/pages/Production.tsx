@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { productionApi, seedsApi } from '../services/api';
 import { PageHeader, FilterBar } from '../components/common/Layout';
-import { ExcelImport } from '../components/common/ExcelImport';
+import { ChargenGridModal } from '../components/domain/ChargenGridModal';
 import { GrowBatchCard } from '../components/domain/GrowBatchCard';
 import { GrowthTimelineModal } from '../components/domain/GrowthTimelineModal';
 import { SowingForm } from '../components/domain/SowingForm';
@@ -50,6 +50,8 @@ export default function Production() {
   const [packagingDate, setPackagingDate] = useState(new Date().toISOString().split('T')[0]);
   // Etikettenbogen: ein Etikett je Tray für alle Aussaaten eines Tages
   const [labelSheetOpen, setLabelSheetOpen] = useState(false);
+  // Chargen-Grid: Massenanlage + Historien-Import mit Zeilenreport
+  const [chargenGridOpen, setChargenGridOpen] = useState(false);
   const [labelDate, setLabelDate] = useState(new Date().toISOString().split('T')[0]);
   const [labelFormat, setLabelFormat] = useState('avery-48x17');
   const [labelAktion, setLabelAktion] = useState<'druck' | 'download' | null>(null);
@@ -285,12 +287,9 @@ export default function Production() {
             </div>
           ) : (
             <div className="flex items-center gap-2">
-              <ExcelImport
-                entity="grow_batches"
-                label="Chargen-Import"
-                secondaryLabel="übersprungen"
-                onImported={() => queryClient.invalidateQueries({ queryKey: ['growBatches'] })}
-              />
+              <button className="btn btn-secondary" onClick={() => setChargenGridOpen(true)}>
+                Chargen-Import
+              </button>
               <button className="btn btn-secondary" onClick={() => setLabelSheetOpen(true)}>
                 <Printer className="w-4 h-4" />
                 Etiketten
@@ -581,6 +580,12 @@ export default function Production() {
           onCancel={() => setIsCreating(false)}
         />
       </Modal>
+
+      <ChargenGridModal
+        open={chargenGridOpen}
+        onClose={() => setChargenGridOpen(false)}
+        onImported={() => queryClient.invalidateQueries({ queryKey: ['growBatches'] })}
+      />
 
       {/* Tagesweise Tray-Etiketten: gedruckt wird für alle Sorten auf einmal */}
       <Modal open={labelSheetOpen} onClose={() => setLabelSheetOpen(false)} title="Etiketten drucken">

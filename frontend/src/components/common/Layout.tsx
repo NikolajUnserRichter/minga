@@ -73,6 +73,13 @@ const navigationSections: NavSection[] = [
         icon: BarChart3,
         roles: ['ADMIN', 'SALES', 'ACCOUNTING'],
       },
+      {
+        // Zertifizierungs-/Auditnachweis — braucht die Rollen der Planungsseite
+        name: 'Warenfluss',
+        href: '/warenfluss',
+        icon: BarChart3,
+        roles: ['ADMIN', 'SALES', 'PRODUCTION_PLANNER', 'ACCOUNTING'],
+      },
     ],
   },
   {
@@ -107,6 +114,13 @@ const navigationSections: NavSection[] = [
         href: '/locations',
         icon: Warehouse,
         roles: ['ADMIN', 'PRODUCTION_PLANNER'],
+      },
+      {
+        // Zählung läuft auch am Tablet in der Halle — Lager-Schreibrecht genügt
+        name: 'Inventur',
+        href: '/inventur',
+        icon: Warehouse,
+        roles: ['ADMIN', 'PRODUCTION_PLANNER', 'PRODUCTION_STAFF', 'ACCOUNTING'],
       },
     ],
   },

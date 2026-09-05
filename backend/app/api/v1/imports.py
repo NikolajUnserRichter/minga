@@ -935,22 +935,36 @@ async def validate_grow_batch_import(db: DBSession, file: UploadFile = File(...)
     return _chargen_report(db, geparste)
 
 
-@router.post("/grow-batches/commit", status_code=201)
-async def commit_grow_batch_import(
-    db: DBSession,
-    file: UploadFile = File(...),
-    lagerbewegungen: bool = True,
-):
-    """Führt den Chargen-Import aus (R3.4–R3.6).
+def _json_zu_zeilen(rows: list[dict]) -> list[tuple[int, Optional[dict], Optional[str]]]:
+    """Grid-Zeilen (JSON) in dieselbe Form bringen wie geparste Datei-Zeilen.
 
-    Enthält die Datei Fehlerzeilen, wird komplett abgelehnt — der Report
-    steht in der Fehlermeldung. Warnungen importieren.
+    Das Chargen-Grid schickt Zeilen direkt statt einer Datei — Validierung,
+    Idempotenz und Bestandswirkung sind dieselben (R4.1/R4.2).
     """
-    geparste = _parse_rows_mit_zeilen(file, "grow_batches")
+    cols = COLUMNS["grow_batches"]
+    ergebnis: list[tuple[int, Optional[dict], Optional[str]]] = []
+    for nr, roh in enumerate(rows, start=1):
+        record: dict[str, Any] = {}
+        fehler: Optional[str] = None
+        for header, attr, required, type_hint in cols:
+            value = _coerce(roh.get(header), type_hint)
+            if required and value is None:
+                fehler = f"'{header}' fehlt"
+                break
+            record[attr] = value
+        ergebnis.append((nr, None if fehler else record, fehler))
+    return ergebnis
+
+
+def _commit_chargen(db, geparste, filename: Optional[str], lagerbewegungen: bool) -> dict:
+    """Gemeinsamer Commit für Datei-Import und Chargen-Grid.
+
+    Fehlerzeilen lehnen den ganzen Lauf ab; Warnungen importieren.
+    """
     report = _chargen_report(db, geparste)
     if report["zusammenfassung"]["fehler"] > 0:
         raise HTTPException(status_code=400, detail={
-            "meldung": "Datei enthält Fehlerzeilen — nichts wurde importiert.",
+            "meldung": "Eingabe enthält Fehlerzeilen — nichts wurde importiert.",
             "report": report,
         })
 
@@ -967,7 +981,7 @@ async def commit_grow_batch_import(
         ).all()
     }
 
-    run = ImportRun(entity="grow_batches", filename=file.filename)
+    run = ImportRun(entity="grow_batches", filename=filename)
     db.add(run)
     db.flush()
 
@@ -1121,6 +1135,38 @@ async def commit_grow_batch_import(
         "movements": bewegungen,
         "report": report,
     }
+
+
+@router.post("/grow-batches/commit", status_code=201)
+async def commit_grow_batch_import(
+    db: DBSession,
+    file: UploadFile = File(...),
+    lagerbewegungen: bool = True,
+):
+    """Führt den Datei-Import aus (R3.4–R3.6)."""
+    geparste = _parse_rows_mit_zeilen(file, "grow_batches")
+    return _commit_chargen(db, geparste, file.filename, lagerbewegungen)
+
+
+from pydantic import BaseModel as _BM
+
+
+class ChargenZeilenRequest(_BM):
+    zeilen: list[dict]
+    lagerbewegungen: bool = True
+
+
+@router.post("/grow-batches/validate-rows")
+def validate_grow_batch_rows(anfrage: ChargenZeilenRequest, db: DBSession):
+    """Dry-Run für Grid-Zeilen — gleiche Prüfungen wie beim Datei-Import."""
+    return _chargen_report(db, _json_zu_zeilen(anfrage.zeilen))
+
+
+@router.post("/grow-batches/commit-rows", status_code=201)
+def commit_grow_batch_rows(anfrage: ChargenZeilenRequest, db: DBSession):
+    """Sammelanlage aus dem Chargen-Grid — eine Transaktion (R4.4)."""
+    return _commit_chargen(db, _json_zu_zeilen(anfrage.zeilen), "chargen-grid",
+                           anfrage.lagerbewegungen)
 
 
 @router.get("/runs")

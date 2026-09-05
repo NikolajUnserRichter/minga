@@ -223,3 +223,31 @@ class TestChargenVorschlag:
         assert zeilen[0]["sorte"] == sample_seed["name"]
         assert zeilen[0]["tray_anzahl"] == 6
         assert zeilen[0]["aussaat_datum"] == "2026-09-07"
+
+
+class TestGridZeilen:
+    """R4.1/R4.2: das Chargen-Grid schickt JSON-Zeilen statt einer Datei —
+    gleiche Validierung, gleiche Transaktion, gleicher Lauf."""
+
+    def test_commit_rows_legt_chargen_an(self, client, sample_seed):
+        r = client.post("/api/v1/imports/grow-batches/commit-rows", json={
+            "zeilen": [
+                {"sorte": sample_seed["name"], "aussaat_datum": "2026-09-07",
+                 "tray_anzahl": 4, "saatgut_gramm": 120},
+                {"sorte": sample_seed["name"], "aussaat_datum": "2026-09-07",
+                 "tray_anzahl": 2, "saatgut_gramm": 60,
+                 "externe_chargennummer": "GRID-2"},
+            ],
+            "lagerbewegungen": True,
+        })
+        assert r.status_code == 201, r.text
+        assert r.json()["created"] == 2
+        assert len(_batches(client)) == 2
+
+    def test_validate_rows_meldet_fehler_mit_zeile(self, client, sample_seed):
+        r = client.post("/api/v1/imports/grow-batches/validate-rows", json={
+            "zeilen": [{"sorte": "Fantasia", "aussaat_datum": "2026-09-07", "tray_anzahl": 1}],
+        })
+        assert r.status_code == 200, r.text
+        assert r.json()["zeilen"][0]["status"] == "FEHLER"
+        assert r.json()["zeilen"][0]["zeile"] == 1

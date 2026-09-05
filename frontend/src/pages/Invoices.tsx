@@ -18,6 +18,7 @@ import {
 } from '../components/ui';
 import { ListPageSkeleton } from '../components/ui/Skeleton';
 import { getErrorMessage } from '../services/errors';
+import { sammelrechnungApi, SammelrechnungVorschauKunde } from '../services/api';
 
 const STATUS_LABELS: Record<InvoiceStatus, string> = {
   ENTWURF: 'Entwurf',
@@ -54,6 +55,18 @@ export default function Invoices() {
   const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [showDatevExport, setShowDatevExport] = useState(false);
+  // Storno: Grund-Auswahl + Freitext, erzeugt die Stornorechnung
+  const [stornoFuer, setStornoFuer] = useState<Invoice | null>(null);
+  const [stornoGrundCode, setStornoGrundCode] = useState('FALSCHE_MENGE');
+  const [stornoGrund, setStornoGrund] = useState('');
+  // Sammelrechnung: Zeitraum → Vorschau → Festschreiben
+  const [sammelOffen, setSammelOffen] = useState(false);
+  const [sammelVon, setSammelVon] = useState(() => {
+    const j = new Date();
+    return new Date(j.getFullYear(), j.getMonth(), 1).toISOString().split('T')[0];
+  });
+  const [sammelBis, setSammelBis] = useState(new Date().toISOString().split('T')[0]);
+  const [sammelVorschau, setSammelVorschau] = useState<SammelrechnungVorschauKunde[] | null>(null);
   const [activeTab, setActiveTab] = useState('all');
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 20;
@@ -115,6 +128,39 @@ export default function Invoices() {
       toast.success(res.updated ? 'Als bezahlt übernommen' : `lexoffice-Status: ${res.lexoffice_status}`);
     },
     onError: (e: any) => toast.error(getErrorMessage(e, 'Statusabruf fehlgeschlagen')),
+  });
+
+  const stornoMutation = useMutation({
+    mutationFn: () => invoicesApi.cancel(stornoFuer!.id, {
+      reason: stornoGrund,
+      reason_code: stornoGrundCode,
+    } as any),
+    onSuccess: (res: any) => {
+      queryClient.invalidateQueries({ queryKey: ['invoices'] });
+      setStornoFuer(null);
+      setStornoGrund('');
+      toast.success(`Stornorechnung ${res?.credit_note?.invoice_number ?? ''} erstellt — Lieferscheine sind wieder abrechenbar`);
+    },
+    onError: (e: any) => toast.error(getErrorMessage(e, 'Storno fehlgeschlagen')),
+  });
+
+  const sammelVorschauMutation = useMutation({
+    mutationFn: () => sammelrechnungApi.preview({ period_from: sammelVon, period_to: sammelBis }),
+    onSuccess: (res) => setSammelVorschau(res.kunden),
+    onError: (e: any) => toast.error(getErrorMessage(e, 'Vorschau fehlgeschlagen')),
+  });
+
+  const sammelCommitMutation = useMutation({
+    mutationFn: () => sammelrechnungApi.commit({ period_from: sammelVon, period_to: sammelBis }),
+    onSuccess: (res) => {
+      queryClient.invalidateQueries({ queryKey: ['invoices'] });
+      setSammelOffen(false);
+      setSammelVorschau(null);
+      toast.success(res.rechnungen.length
+        ? `${res.rechnungen.length} Sammelrechnung(en) festgeschrieben`
+        : 'Keine offenen Lieferscheine im Zeitraum');
+    },
+    onError: (e: any) => toast.error(getErrorMessage(e, 'Festschreiben fehlgeschlagen')),
   });
 
   const filteredInvoices = invoices.filter(
@@ -183,6 +229,9 @@ export default function Invoices() {
           <div className="flex gap-2">
             <Button variant="secondary" icon={<Download className="w-4 h-4" />} onClick={() => setShowDatevExport(true)}>
               DATEV Export
+            </Button>
+            <Button variant="secondary" onClick={() => setSammelOffen(true)}>
+              Sammelrechnung
             </Button>
             <Button icon={<Plus className="w-4 h-4" />} onClick={() => setIsCreating(true)}>
               Neue Rechnung
@@ -343,6 +392,17 @@ export default function Invoices() {
                         PDF
                       </Button>
                     )}
+                    {['OFFEN', 'TEILBEZAHLT', 'UEBERFAELLIG', 'BEZAHLT'].includes(invoice.status)
+                      && invoice.invoice_type === 'RECHNUNG' && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-red-600 dark:text-red-400"
+                        onClick={(e) => { e.stopPropagation(); setStornoFuer(invoice); }}
+                      >
+                        Stornieren
+                      </Button>
+                    )}
                     {lexStatus?.enabled && ['OFFEN', 'TEILBEZAHLT', 'UEBERFAELLIG', 'BEZAHLT'].includes(invoice.status) && (
                       invoice.lexoffice_id ? (
                         <span className="ml-1 inline-flex items-center gap-1" title={`Übertragen am ${invoice.lexoffice_synced_at ? new Date(invoice.lexoffice_synced_at).toLocaleDateString('de-DE') : ''}`}>
@@ -478,6 +538,99 @@ export default function Invoices() {
       {/* DATEV Export Modal */}
       <Modal open={showDatevExport} onClose={() => setShowDatevExport(false)} title="DATEV Export">
         <DatevExportForm onClose={() => setShowDatevExport(false)} />
+      </Modal>
+
+      {/* Storno: eigene Nummer aus dem regulären Kreis, Original wird gesperrt */}
+      <Modal open={!!stornoFuer} onClose={() => setStornoFuer(null)}
+             title={`Rechnung ${stornoFuer?.invoice_number ?? ''} stornieren`}>
+        <div className="space-y-4">
+          <p className="text-sm text-gray-600 dark:text-gray-300">
+            Es wird eine <b>Stornorechnung mit eigener Nummer</b> erzeugt; das Original
+            bleibt erhalten und wird schreibgeschützt. Zugeordnete Lieferscheine werden
+            wieder abrechenbar.
+          </p>
+          <Select label="Grund" value={stornoGrundCode}
+                  onChange={(e) => setStornoGrundCode(e.target.value)}
+                  options={[
+                    { value: 'FALSCHER_EMPFAENGER', label: 'Falscher Empfänger' },
+                    { value: 'FALSCHE_MENGE', label: 'Falsche Menge' },
+                    { value: 'PREISFEHLER', label: 'Preisfehler' },
+                    { value: 'LIEFERUNG_NICHT_ERFOLGT', label: 'Lieferung nicht erfolgt' },
+                    { value: 'SONSTIGES', label: 'Sonstiges' },
+                  ]} />
+          <Input label="Erläuterung" value={stornoGrund}
+                 onChange={(e) => setStornoGrund(e.target.value)}
+                 placeholder="z.B. Kunde hat 5 statt 10 Schalen erhalten" />
+          <div className="flex justify-end gap-2">
+            <button className="btn btn-secondary" onClick={() => setStornoFuer(null)}>Abbrechen</button>
+            <Button onClick={() => stornoMutation.mutate()}
+                    loading={stornoMutation.isPending}
+                    disabled={!stornoGrund.trim()}>
+              Stornorechnung erstellen
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Sammelrechnung: Zeitraum → Vorschau je Kunde → Festschreiben */}
+      <Modal open={sammelOffen} onClose={() => { setSammelOffen(false); setSammelVorschau(null); }}
+             title="Sammelrechnung (Monatsrechnung)">
+        <div className="space-y-4">
+          <p className="text-sm text-gray-600 dark:text-gray-300">
+            Fasst alle noch nicht abgerechneten Lieferscheine des Zeitraums je Kunde zu
+            einer Rechnung zusammen. Erst <b>Festschreiben</b> vergibt Nummern.
+          </p>
+          <div className="flex gap-3">
+            <div className="flex-1">
+              <Input label="Von" type="date" value={sammelVon}
+                     onChange={(e) => { setSammelVon(e.target.value); setSammelVorschau(null); }} />
+            </div>
+            <div className="flex-1">
+              <Input label="Bis" type="date" value={sammelBis}
+                     onChange={(e) => { setSammelBis(e.target.value); setSammelVorschau(null); }} />
+            </div>
+          </div>
+
+          {sammelVorschau && (
+            <div className="border border-gray-200 dark:border-gray-700 rounded-lg p-3 max-h-64 overflow-y-auto space-y-3">
+              {sammelVorschau.length === 0 ? (
+                <p className="text-sm text-gray-500 italic">Keine offenen Lieferscheine im Zeitraum.</p>
+              ) : sammelVorschau.map((k) => (
+                <div key={k.customer_id}>
+                  <p className="font-medium text-sm">
+                    {k.customer_name}
+                    <span className="text-gray-500 font-normal"> · {k.anzahl_lieferscheine} Lieferscheine · {Number(k.summe_netto).toFixed(2)} € netto</span>
+                  </p>
+                  <ul className="text-sm text-gray-600 dark:text-gray-300 ml-4 list-disc">
+                    {k.positionen.map((pos, i) => (
+                      <li key={i}>
+                        {Number(pos.quantity).toLocaleString('de-DE')} {pos.unit} {pos.description}
+                        {' '}à {Number(pos.unit_price).toFixed(2)} €
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="flex justify-end gap-2">
+            <button className="btn btn-secondary"
+                    onClick={() => { setSammelOffen(false); setSammelVorschau(null); }}>
+              Abbrechen
+            </button>
+            <Button variant="secondary" onClick={() => sammelVorschauMutation.mutate()}
+                    loading={sammelVorschauMutation.isPending}>
+              Vorschau
+            </Button>
+            <Button onClick={() => sammelCommitMutation.mutate()}
+                    loading={sammelCommitMutation.isPending}
+                    disabled={!sammelVorschau || sammelVorschau.length === 0}
+                    title={!sammelVorschau ? 'Erst die Vorschau prüfen' : ''}>
+              Festschreiben
+            </Button>
+          </div>
+        </div>
       </Modal>
 
       {/* Invoice Detail Modal */}
