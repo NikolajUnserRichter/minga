@@ -185,3 +185,41 @@ class TestRollback:
         assert r.status_code in (200, 201), r.text
 
         assert client.delete(f"/api/v1/imports/runs/{run_id}").status_code == 409
+
+
+class TestChargenVorschlag:
+    """R4.3: der Forecast liefert Grid-kompatible Vorschlagszeilen —
+    dieselbe Form wie der Import, damit das Chargen-Grid sie vorbefüllen kann."""
+
+    def test_vorschlaege_der_zielwoche_als_grid_zeilen(self, client, db, sample_seed):
+        from uuid import UUID
+        from app.models.forecast import Forecast, ProductionSuggestion, SuggestionStatus
+
+        forecast = Forecast(seed_id=UUID(sample_seed["id"]),
+                            datum=date.today(), horizont_tage=7,
+                            prognostizierte_menge=100, effektive_menge=100, modell_typ="MANUAL")
+        db.add(forecast)
+        db.flush()
+        db.add(ProductionSuggestion(
+            forecast_id=forecast.id, seed_id=UUID(sample_seed["id"]),
+            empfohlene_trays=6, aussaat_datum=date(2026, 9, 7),   # Montag der Zielwoche
+            erwartete_ernte_datum=date(2026, 9, 18),
+            status=SuggestionStatus.VORGESCHLAGEN,
+        ))
+        db.add(ProductionSuggestion(  # andere Woche → draußen
+            forecast_id=forecast.id, seed_id=UUID(sample_seed["id"]),
+            empfohlene_trays=2, aussaat_datum=date(2026, 9, 21),
+            erwartete_ernte_datum=date(2026, 10, 2),
+            status=SuggestionStatus.VORGESCHLAGEN,
+        ))
+        db.commit()
+
+        r = client.get("/api/v1/production/grow-batch-suggestions",
+                       params={"target_week": "2026-09-09"})  # Mittwoch derselben Woche
+
+        assert r.status_code == 200, r.text
+        zeilen = r.json()
+        assert len(zeilen) == 1
+        assert zeilen[0]["sorte"] == sample_seed["name"]
+        assert zeilen[0]["tray_anzahl"] == 6
+        assert zeilen[0]["aussaat_datum"] == "2026-09-07"

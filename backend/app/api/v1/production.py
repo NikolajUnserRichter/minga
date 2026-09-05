@@ -696,3 +696,47 @@ def get_packaging_plan(
         "items": list(plan.values()),
         "komponenten": sorted(komponenten.values(), key=lambda k: k["product_name"]),
     }
+
+
+@router.get("/grow-batch-suggestions")
+def grow_batch_suggestions(
+    db: DBSession,
+    target_week: date = Query(..., description="ein beliebiger Tag der Zielwoche"),
+):
+    """Vorschlagszeilen fürs Chargen-Grid (R4.3).
+
+    Liefert offene Produktionsvorschläge der Zielwoche in derselben Form wie
+    der Chargen-Import — das Grid kann sie vorbefüllen, der Nutzer prüft,
+    ändert und bestätigt. Eigener Pfad statt /grow-batches/…: der
+    UUID-Pfadparameter der Detailroute würde 'suggestions' sonst mit 422
+    abfangen.
+    """
+    from datetime import timedelta as _td
+    from app.models.forecast import ProductionSuggestion, SuggestionStatus
+    from app.models.seed import Seed
+
+    montag = target_week - _td(days=target_week.weekday())
+    sonntag = montag + _td(days=6)
+
+    vorschlaege = db.execute(
+        select(ProductionSuggestion, Seed)
+        .join(Seed, ProductionSuggestion.seed_id == Seed.id)
+        .where(
+            ProductionSuggestion.status == SuggestionStatus.VORGESCHLAGEN,
+            ProductionSuggestion.aussaat_datum >= montag,
+            ProductionSuggestion.aussaat_datum <= sonntag,
+        )
+        .order_by(ProductionSuggestion.aussaat_datum, Seed.name)
+    ).all()
+
+    return [{
+        "suggestion_id": str(s.id),
+        "sorte": seed.name,
+        "aussaat_datum": s.aussaat_datum.isoformat(),
+        "tray_anzahl": s.empfohlene_trays,
+        "saatgut_gramm": (
+            float(seed.saatgut_pro_einheit_gramm * s.empfohlene_trays)
+            if seed.saatgut_pro_einheit_gramm else None
+        ),
+        "geplantes_ernte_datum": s.erwartete_ernte_datum.isoformat(),
+    } for s, seed in vorschlaege]
