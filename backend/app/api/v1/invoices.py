@@ -158,6 +158,10 @@ def update_invoice(
     for field, value in update_data.items():
         setattr(invoice, field, value)
 
+    # Ein geänderter Einmalrabatt muss sofort in den Summen landen — sonst
+    # zeigt die Rechnung den alten Betrag, bis irgendwann eine Zeile angefasst wird.
+    invoice.calculate_totals()
+
     db.commit()
     db.refresh(invoice)
     return invoice

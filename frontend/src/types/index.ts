@@ -453,7 +453,7 @@ export interface AccuracyDetail {
 // ============== ERP TYPES ==============
 
 // Products
-export type ProductCategory = 'MICROGREEN' | 'SEED' | 'PACKAGING' | 'BUNDLE'
+export type ProductCategory = 'MICROGREEN' | 'SEED' | 'PACKAGING' | 'BUNDLE' | 'PFAND'
 export type TaxRate = 'STANDARD' | 'REDUZIERT' | 'STEUERFREI'
 
 export interface Product {

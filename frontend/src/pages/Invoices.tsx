@@ -984,16 +984,19 @@ function InvoiceDetail({ invoice: initial }: { invoice: Invoice }) {
     customer_id: '',
     invoice_date: '',
     due_date: '',
+    discount_percent: '0',
   });
   const [headerDirty, setHeaderDirty] = useState(false);
   // Sync edit-state when invoice changes
   if (!headerDirty && (headerEdit.customer_id !== invoice.customer_id ||
       headerEdit.invoice_date !== invoice.invoice_date.slice(0, 10) ||
-      headerEdit.due_date !== (invoice.due_date ? invoice.due_date.slice(0, 10) : ''))) {
+      headerEdit.due_date !== (invoice.due_date ? invoice.due_date.slice(0, 10) : '') ||
+      headerEdit.discount_percent !== String(Number(invoice.discount_percent ?? 0)))) {
     setHeaderEdit({
       customer_id: invoice.customer_id,
       invoice_date: invoice.invoice_date.slice(0, 10),
       due_date: invoice.due_date ? invoice.due_date.slice(0, 10) : '',
+      discount_percent: String(Number(invoice.discount_percent ?? 0)),
     });
   }
   const saveHeaderMutation = useMutation({
@@ -1001,6 +1004,8 @@ function InvoiceDetail({ invoice: initial }: { invoice: Invoice }) {
       customer_id: headerEdit.customer_id,
       invoice_date: headerEdit.invoice_date,
       due_date: headerEdit.due_date || undefined,
+      // Einmalrabatt: gilt nur für diese Rechnung, der Kunden-Stammrabatt bleibt
+      discount_percent: Number(headerEdit.discount_percent || 0),
     } as any),
     onSuccess: () => {
       setHeaderDirty(false);
@@ -1106,6 +1111,15 @@ function InvoiceDetail({ invoice: initial }: { invoice: Invoice }) {
                 className="block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-800 dark:text-white rounded-md"
               />
             </div>
+            <div>
+              <label className="text-sm text-gray-500 dark:text-gray-400">Einmalrabatt (%)</label>
+              <input
+                type="number" min="0" max="100" step="0.5"
+                value={headerEdit.discount_percent}
+                onChange={(e) => { setHeaderEdit({ ...headerEdit, discount_percent: e.target.value }); setHeaderDirty(true); }}
+                className="block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-800 dark:text-white rounded-md"
+              />
+            </div>
           </div>
           {headerDirty && (
             <div className="flex justify-end gap-2">
@@ -1117,6 +1131,7 @@ function InvoiceDetail({ invoice: initial }: { invoice: Invoice }) {
                     customer_id: invoice.customer_id,
                     invoice_date: invoice.invoice_date.slice(0, 10),
                     due_date: invoice.due_date ? invoice.due_date.slice(0, 10) : '',
+                    discount_percent: String(Number(invoice.discount_percent ?? 0)),
                   });
                   setHeaderDirty(false);
                 }}

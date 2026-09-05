@@ -84,7 +84,7 @@ COLUMNS = {
         # Sortenreine Artikel führen die Sorte als Zusatzzeile auf Lieferschein
         # und Rechnung — der Artikelname allein sagt sie nicht.
         ("sorte", "seed_variety", False, "str"),
-        ("category", "category", True, "enum:MICROGREEN|SEED|PACKAGING|BUNDLE"),
+        ("category", "category", True, "enum:MICROGREEN|SEED|PACKAGING|BUNDLE|PFAND"),
         ("gtin", "gtin", False, "str"),
         ("old_article_number", "old_article_number", False, "str"),
         ("certification", "certification", False, "enum:BIO|KONVENTIONELL|TRANSITIONAL"),

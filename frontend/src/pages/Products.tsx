@@ -26,13 +26,15 @@ const CATEGORY_LABELS: Record<ProductCategory, string> = {
   SEED: 'Saatgut',
   PACKAGING: 'Verpackung',
   BUNDLE: 'Bundle',
+  PFAND: 'Pfand',
 };
 
-const CATEGORY_COLORS: Record<ProductCategory, 'success' | 'info' | 'gray' | 'purple'> = {
+const CATEGORY_COLORS: Record<ProductCategory, 'success' | 'info' | 'gray' | 'purple' | 'warning'> = {
   MICROGREEN: 'success',
   SEED: 'info',
   PACKAGING: 'gray',
   BUNDLE: 'purple',
+  PFAND: 'warning',
 };
 
 export default function Products() {
@@ -95,6 +97,7 @@ export default function Products() {
     { value: 'SEED', label: 'Saatgut' },
     { value: 'PACKAGING', label: 'Verpackung' },
     { value: 'BUNDLE', label: 'Bundle' },
+    { value: 'PFAND', label: 'Pfand' },
   ];
 
   const activeOptions: SelectOption[] = [
@@ -382,6 +385,7 @@ function ProductForm({ product, growPlans, productGroups, onSubmit, onCancel }: 
     { value: 'SEED', label: 'Saatgut' },
     { value: 'PACKAGING', label: 'Verpackung' },
     { value: 'BUNDLE', label: 'Bundle' },
+    { value: 'PFAND', label: 'Pfand' },
   ];
 
   const taxOptions: SelectOption[] = [

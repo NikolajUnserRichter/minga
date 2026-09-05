@@ -26,6 +26,7 @@ class ProductCategory(str, Enum):
     SEED = "SEED"               # Saatgut (Rohstoff)
     PACKAGING = "PACKAGING"     # Verpackungsmaterial
     BUNDLE = "BUNDLE"           # Produktbündel/Set
+    PFAND = "PFAND"             # Pfandgebinde (Mehrwegkisten) — 19 %, auf der Rechnung ausgewiesen
 
 
 class ProductGroup(Base):

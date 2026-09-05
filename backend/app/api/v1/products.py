@@ -84,6 +84,10 @@ def create_product(data: ProductCreate, db: DBSession):
     """Erstellt ein neues Produkt."""
     service = ProductService(db)
     payload = data.model_dump()
+    # Kategorie PFAND heißt: das IST ein Pfandgebinde — Kennzeichen setzen,
+    # sofern der Nutzer nichts anderes bestimmt hat.
+    if payload.get("category") == ProductCategory.PFAND and "is_deposit" not in data.model_fields_set:
+        payload["is_deposit"] = True
     # Pfand auf Mehrweggebinde ist ein eigener Umsatz zum Regelsatz — der
     # Lebensmittelsatz von 7 % (unser Default) gilt dafür nicht. Eine bewusst
     # gesetzte Angabe bleibt unangetastet.
