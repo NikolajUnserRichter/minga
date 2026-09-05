@@ -326,6 +326,11 @@ def _auto_migrate(engine: Engine) -> None:
         # Warenfluss-Release: Gegenbuchung verweist auf die Ursprungsbewegung;
         # der Index trägt die Stichtags-Summierung der Warenfluss-Reports.
         _add_col_if_missing("inventory_movements", "reverses_movement_id", "CHAR(32)")
+        # Historien-Import: Herkunftskennzeichnung + Rollback-Klammer
+        _add_col_if_missing("grow_batches", "source", "VARCHAR(10)")
+        _add_col_if_missing("grow_batches", "import_run_id", "CHAR(32)")
+        _add_col_if_missing("grow_batches", "externe_chargennummer", "VARCHAR(50)")
+        _add_col_if_missing("harvests", "import_run_id", "CHAR(32)")
         if inspector.has_table("inventory_movements"):
             with engine.begin() as conn:
                 conn.execute(text(

@@ -99,6 +99,9 @@ from app.models.app_setting import AppSetting
 # Druck-Warteschlange (Etikettendrucker im Hofnetz)
 from app.models.print_job import PrintJob, PrintJobStatus
 
+# Import-Läufe (Historien-Import mit Rollback)
+from app.models.import_run import ImportRun
+
 # Customer-spezifische Preise
 from app.models.customer_price import CustomerPrice
 
@@ -200,6 +203,8 @@ __all__ = [
     # Druck-Warteschlange
     "PrintJob",
     "PrintJobStatus",
+    # Import-Läufe
+    "ImportRun",
     # Customer-Pricing
     "CustomerPrice",
     # Production-Timeline

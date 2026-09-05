@@ -131,6 +131,18 @@ COLUMNS = {
         ("ernte_datum", "ernte_datum", False, "date"),
         ("ernte_menge_stueck", "ernte_menge_stueck", False, "int"),
         ("ernte_menge_gramm", "ernte_menge_gramm", False, "decimal"),
+        # Historien-Import (Warenfluss-Release): Idempotenzschlüssel,
+        # Bestandswirkung und Ausschuss je Charge
+        ("externe_chargennummer", "externe_chargennummer", False, "str"),
+        ("saatgut_gramm", "saatgut_gramm", False, "decimal"),
+        ("saatgut_los", "saatgut_los", False, "str"),
+        ("saatgut_lieferant", "saatgut_lieferant", False, "str"),
+        ("substrat", "substrat", False, "str"),
+        ("substrat_menge", "substrat_menge", False, "decimal"),
+        ("geplantes_ernte_datum", "geplantes_ernte_datum", False, "date"),
+        ("ausschuss_menge_gramm", "ausschuss_menge_gramm", False, "decimal"),
+        ("ausschuss_grund", "ausschuss_grund", False, "str"),
+        ("notiz", "notiz", False, "str"),
     ],
 }
 
@@ -747,3 +759,440 @@ async def import_entity(entity: str, db: DBSession, file: UploadFile = File(...)
         db.rollback()
         raise HTTPException(status_code=400, detail=f"Import fehlgeschlagen: {e}")
     return {"created": created, "updated": updated, "errors": parse_errors}
+
+
+# =====================================================================
+# Historien-Import v2 (Warenfluss-Release, AP3)
+#
+# Zweistufig: /grow-batches/validate liefert einen Zeilenreport, erst
+# /grow-batches/commit schreibt — als Import-Lauf, der über /runs/{id}
+# in einem Schritt rückrollbar ist, solange keine Folgebelege daran hängen.
+#
+# Festlegung Bestandswirkung: historische Bewegungen buchen ins JOURNAL
+# (movement_date = historisches Datum), nicht auf den Ist-Bestand. Der
+# Ist-Bestand ist gezählte Gegenwart; die Sorte hängt an der Bewegung über
+# grow_batch → seed_batch → seed, ein Bestandseintrag ist nicht nötig.
+# =====================================================================
+
+from datetime import time as _time, timedelta as _timedelta, timezone as _timezone
+
+from app.models.import_run import ImportRun
+from app.models.inventory import (
+    InventoryItemType, InventoryMovement, MovementType, PackagingInventory,
+)
+from app.models.production import GrowBatch, GrowBatchStatus, Harvest
+from app.models.seed import SeedBatch
+
+
+def _parse_rows_mit_zeilen(file: UploadFile, entity: str) -> list[tuple[int, Optional[dict], Optional[str]]]:
+    """Wie _parse_rows, aber je Zeile (zeilennummer, record, fehler).
+
+    Für den Validierungsreport: ein Fehler bricht nicht den ganzen Import ab,
+    sondern markiert genau seine Zeile.
+    """
+    cols = COLUMNS[entity]
+    try:
+        wb = load_workbook(io.BytesIO(file.file.read()), read_only=True, data_only=True)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Datei konnte nicht gelesen werden: {e}")
+
+    ws = wb[DATA_SHEET] if DATA_SHEET in wb.sheetnames else wb.active
+    header_to_idx: dict[str, int] = {}
+    for idx, cell in enumerate(next(ws.iter_rows(min_row=1, max_row=1, values_only=True))):
+        if cell:
+            header_to_idx[str(cell).split(" ")[0].strip().lower()] = idx
+
+    ergebnis: list[tuple[int, Optional[dict], Optional[str]]] = []
+    for row_num, raw_row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
+        if all(c is None or str(c).startswith("[") for c in raw_row):
+            continue
+        if all(c is None or str(c).strip() == "" for c in raw_row):
+            continue
+        record: dict[str, Any] = {}
+        fehler: Optional[str] = None
+        for header, attr, required, type_hint in cols:
+            col_idx = header_to_idx.get(header.lower())
+            raw = raw_row[col_idx] if col_idx is not None and col_idx < len(raw_row) else None
+            value = _coerce(raw, type_hint)
+            if required and value is None:
+                fehler = f"'{header}' fehlt"
+                break
+            record[attr] = value
+        ergebnis.append((row_num, None if fehler else record, fehler))
+    return ergebnis
+
+
+def _norm_name(s: str) -> str:
+    import unicodedata
+    return unicodedata.normalize("NFC", str(s).strip()).casefold()
+
+
+def _chargen_report(db, geparste) -> dict:
+    """Zeilenreport für den Chargen-Import (R3.3): OK / WARNUNG / FEHLER."""
+    seeds_index = {_norm_name(s.name): s for s in db.execute(select(Seed)).scalars().all()}
+    substrat_index = {
+        _norm_name(p.name): p
+        for p in db.execute(
+            select(PackagingInventory).where(PackagingInventory.article_type == "SUBSTRAT")
+        ).scalars().all()
+    }
+    vorhandene_extern = {
+        nr for (nr,) in db.execute(
+            select(GrowBatch.externe_chargennummer).where(GrowBatch.externe_chargennummer.isnot(None))
+        ).all()
+    }
+
+    zeilen = []
+    fehlende_sorten: list[str] = []
+    fehlende_substrate: list[str] = []
+    gesehen_extern: set[str] = set()
+
+    for zeile, record, parse_fehler in geparste:
+        if parse_fehler:
+            zeilen.append({"zeile": zeile, "status": "FEHLER", "meldung": parse_fehler})
+            continue
+
+        meldungen: list[str] = []
+        status = "OK"
+
+        seed = seeds_index.get(_norm_name(record["sorte"]))
+        if seed is None:
+            status = "FEHLER"
+            meldungen.append(f"Sorte '{record['sorte']}' nicht gefunden — bitte zuerst als Saatgut anlegen")
+            if record["sorte"] not in fehlende_sorten:
+                fehlende_sorten.append(record["sorte"])
+
+        extern = record.get("externe_chargennummer")
+        if extern:
+            if extern in gesehen_extern:
+                status = "FEHLER"
+                meldungen.append(f"externe_chargennummer '{extern}' kommt in der Datei doppelt vor")
+            gesehen_extern.add(extern)
+            if extern in vorhandene_extern and status != "FEHLER":
+                meldungen.append("bereits importiert — wird übersprungen")
+
+        if record.get("ernte_menge_gramm") and not record.get("ernte_datum"):
+            status = "FEHLER"
+            meldungen.append("ernte_menge_gramm ohne ernte_datum")
+
+        if status != "FEHLER":
+            if seed is not None and not record.get("saatgut_gramm") and not getattr(seed, "saatgut_pro_einheit_gramm", None):
+                status = "WARNUNG"
+                meldungen.append("kein saatgut_gramm und Sorte ohne Saatgutmenge je Kiste — es wird kein Verbrauch gebucht")
+            substrat = record.get("substrat")
+            if substrat and _norm_name(substrat) not in substrat_index:
+                status = "WARNUNG" if status == "OK" else status
+                meldungen.append(f"Substrat '{substrat}' nicht im Lager angelegt — Verbrauch wird nicht gebucht")
+                if substrat not in fehlende_substrate:
+                    fehlende_substrate.append(substrat)
+
+        zeilen.append({
+            "zeile": zeile, "status": status,
+            "meldung": "; ".join(meldungen) if meldungen else "in Ordnung",
+            "sorte": record.get("sorte"),
+        })
+
+    return {
+        "zeilen": zeilen,
+        "zusammenfassung": {
+            "ok": sum(1 for z in zeilen if z["status"] == "OK"),
+            "warnung": sum(1 for z in zeilen if z["status"] == "WARNUNG"),
+            "fehler": sum(1 for z in zeilen if z["status"] == "FEHLER"),
+        },
+        "fehlende_sorten": fehlende_sorten,
+        "fehlende_substrate": fehlende_substrate,
+    }
+
+
+def _historische_bewegung(run_id, *, movement_type, item_type, quantity, unit,
+                          movement_date, grow_batch_id=None, harvest_id=None,
+                          packaging_id=None, reason=None) -> InventoryMovement:
+    """Journalbuchung mit historischem Datum, ohne Ist-Bestand anzufassen.
+
+    quantity_before/after bleiben 0: zum historischen Zeitpunkt ist kein
+    Bestandsstand rekonstruierbar — die Auswertungen summieren quantity.
+    """
+    return InventoryMovement(
+        movement_type=movement_type,
+        item_type=item_type,
+        quantity=quantity,
+        unit=unit,
+        quantity_before=Decimal("0"),
+        quantity_after=Decimal("0"),
+        movement_date=datetime.combine(movement_date, _time.min),
+        grow_batch_id=grow_batch_id,
+        harvest_id=harvest_id,
+        packaging_id=packaging_id,
+        reason=reason,
+        reference_number=f"IMPORT:{run_id}",
+    )
+
+
+@router.post("/grow-batches/validate")
+async def validate_grow_batch_import(db: DBSession, file: UploadFile = File(...)):
+    """Dry-Run (R3.3): prüft die Datei Zeile für Zeile, schreibt nichts."""
+    geparste = _parse_rows_mit_zeilen(file, "grow_batches")
+    return _chargen_report(db, geparste)
+
+
+@router.post("/grow-batches/commit", status_code=201)
+async def commit_grow_batch_import(
+    db: DBSession,
+    file: UploadFile = File(...),
+    lagerbewegungen: bool = True,
+):
+    """Führt den Chargen-Import aus (R3.4–R3.6).
+
+    Enthält die Datei Fehlerzeilen, wird komplett abgelehnt — der Report
+    steht in der Fehlermeldung. Warnungen importieren.
+    """
+    geparste = _parse_rows_mit_zeilen(file, "grow_batches")
+    report = _chargen_report(db, geparste)
+    if report["zusammenfassung"]["fehler"] > 0:
+        raise HTTPException(status_code=400, detail={
+            "meldung": "Datei enthält Fehlerzeilen — nichts wurde importiert.",
+            "report": report,
+        })
+
+    seeds_index = {_norm_name(s.name): s for s in db.execute(select(Seed)).scalars().all()}
+    substrat_index = {
+        _norm_name(p.name): p
+        for p in db.execute(
+            select(PackagingInventory).where(PackagingInventory.article_type == "SUBSTRAT")
+        ).scalars().all()
+    }
+    vorhandene_extern = {
+        nr for (nr,) in db.execute(
+            select(GrowBatch.externe_chargennummer).where(GrowBatch.externe_chargennummer.isnot(None))
+        ).all()
+    }
+
+    run = ImportRun(entity="grow_batches", filename=file.filename)
+    db.add(run)
+    db.flush()
+
+    created = skipped = bewegungen = 0
+
+    for _zeile, record, _fehler in geparste:
+        seed = seeds_index[_norm_name(record["sorte"])]
+        aussaat = record["aussaat_datum"]
+        trays = record["tray_anzahl"]
+        extern = record.get("externe_chargennummer")
+
+        # Idempotenz: primär externe Chargennummer, ersatzweise fachlicher Schlüssel
+        if extern and extern in vorhandene_extern:
+            skipped += 1
+            continue
+        if not extern:
+            doppelt = db.execute(
+                select(GrowBatch)
+                .join(SeedBatch, GrowBatch.seed_batch_id == SeedBatch.id)
+                .where(SeedBatch.seed_id == seed.id,
+                       GrowBatch.aussaat_datum == aussaat,
+                       GrowBatch.tray_anzahl == trays)
+            ).scalars().first()
+            if doppelt:
+                skipped += 1
+                continue
+
+        # Saatgut-Charge: Los aus der Datei oder Import-Marker (Menge 0)
+        charge_nummer = record.get("saatgut_los") or record.get("charge_nummer") or f"IMPORT-{seed.name[:20]}"
+        seed_batch = db.execute(
+            select(SeedBatch).where(SeedBatch.seed_id == seed.id,
+                                    SeedBatch.charge_nummer == charge_nummer)
+        ).scalar_one_or_none()
+        if seed_batch is None:
+            # Lieferant steht als Freitext im Lieferschein-Feld — die Charge
+            # hat kein eigenes Lieferantenfeld, und für den Auditnachweis
+            # zählt, dass Los und Herkunft am Datensatz ablesbar sind.
+            seed_batch = SeedBatch(
+                seed_id=seed.id, charge_nummer=charge_nummer,
+                menge_gramm=Decimal("0"), verbleibend_gramm=Decimal("0"),
+                lieferschein_nr=record.get("saatgut_lieferant"),
+            )
+            db.add(seed_batch)
+            db.flush()
+
+        status = record.get("status")
+        if not status:
+            if record.get("ernte_datum"):
+                status = "GEERNTET"
+            elif aussaat + _timedelta(days=seed.erntefenster_max_tage) < date.today():
+                status = "GEERNTET"
+            elif aussaat + _timedelta(days=seed.erntefenster_min_tage) <= date.today():
+                status = "ERNTEREIF"
+            else:
+                status = "WACHSTUM"
+
+        batch = GrowBatch(
+            seed_batch_id=seed_batch.id,
+            tray_anzahl=trays,
+            aussaat_datum=aussaat,
+            erwartete_ernte_min=aussaat + _timedelta(days=seed.erntefenster_min_tage),
+            erwartete_ernte_optimal=record.get("geplantes_ernte_datum")
+                or aussaat + _timedelta(days=seed.erntefenster_optimal_tage),
+            erwartete_ernte_max=aussaat + _timedelta(days=seed.erntefenster_max_tage),
+            status=GrowBatchStatus(status),
+            regal_position=record.get("regal_position"),
+            notizen=record.get("notiz") or "Historien-Import",
+            source="import",
+            import_run_id=run.id,
+            externe_chargennummer=extern,
+        )
+        db.add(batch)
+        db.flush()
+
+        harvest = None
+        if record.get("ernte_datum") and (record.get("ernte_menge_stueck") or record.get("ernte_menge_gramm")):
+            stueck = record.get("ernte_menge_stueck")
+            harvest = Harvest(
+                grow_batch_id=batch.id,
+                ernte_datum=record["ernte_datum"],
+                einheit="STK" if stueck else "G",
+                menge_stueck=stueck,
+                menge_gramm=Decimal("0") if stueck else record.get("ernte_menge_gramm"),
+                import_run_id=run.id,
+            )
+            db.add(harvest)
+            db.flush()
+
+        if lagerbewegungen:
+            saatgut = record.get("saatgut_gramm") or (
+                (getattr(seed, "saatgut_pro_einheit_gramm", None) or 0) and
+                Decimal(str(seed.saatgut_pro_einheit_gramm)) * trays
+            )
+            if saatgut:
+                db.add(_historische_bewegung(
+                    run.id, movement_type=MovementType.PRODUKTION,
+                    item_type=InventoryItemType.SAATGUT,
+                    quantity=-Decimal(str(saatgut)), unit="G",
+                    movement_date=aussaat, grow_batch_id=batch.id,
+                    reason="Aussaat (Historien-Import)",
+                ))
+                bewegungen += 1
+            if harvest is not None and record.get("ernte_menge_gramm"):
+                db.add(_historische_bewegung(
+                    run.id, movement_type=MovementType.ERNTE,
+                    item_type=InventoryItemType.FERTIGWARE,
+                    quantity=Decimal(str(record["ernte_menge_gramm"])), unit="G",
+                    movement_date=record["ernte_datum"],
+                    grow_batch_id=batch.id, harvest_id=harvest.id,
+                    reason="Ernte (Historien-Import)",
+                ))
+                bewegungen += 1
+            if record.get("ausschuss_menge_gramm"):
+                db.add(_historische_bewegung(
+                    run.id, movement_type=MovementType.VERLUST,
+                    item_type=InventoryItemType.FERTIGWARE,
+                    quantity=-Decimal(str(record["ausschuss_menge_gramm"])), unit="G",
+                    movement_date=record.get("ernte_datum") or aussaat,
+                    grow_batch_id=batch.id,
+                    reason=record.get("ausschuss_grund") or "Ausschuss (Historien-Import)",
+                ))
+                bewegungen += 1
+            substrat = record.get("substrat")
+            if substrat and record.get("substrat_menge"):
+                artikel = substrat_index.get(_norm_name(substrat))
+                if artikel is not None:
+                    db.add(_historische_bewegung(
+                        run.id, movement_type=MovementType.PRODUKTION,
+                        item_type=InventoryItemType.SUBSTRAT,
+                        quantity=-Decimal(str(record["substrat_menge"])),
+                        unit=artikel.unit,
+                        movement_date=aussaat, grow_batch_id=batch.id,
+                        packaging_id=artikel.id,
+                        reason="Substratverbrauch (Historien-Import)",
+                    ))
+                    bewegungen += 1
+
+        if extern:
+            vorhandene_extern.add(extern)
+        created += 1
+
+    run.rows_created = created
+    run.rows_skipped = skipped
+    run.movements_created = bewegungen
+    db.commit()
+
+    return {
+        "import_run_id": str(run.id),
+        "created": created,
+        "skipped": skipped,
+        "movements": bewegungen,
+        "report": report,
+    }
+
+
+@router.get("/runs")
+def list_import_runs(db: DBSession):
+    """Alle Import-Läufe, neueste zuerst."""
+    runs = db.execute(select(ImportRun).order_by(ImportRun.created_at.desc())).scalars().all()
+    return [{
+        "id": str(r.id), "entity": r.entity, "filename": r.filename,
+        "status": r.status, "created": r.rows_created, "skipped": r.rows_skipped,
+        "movements": r.movements_created, "created_at": r.created_at.isoformat(),
+    } for r in runs]
+
+
+@router.delete("/runs/{run_id}")
+def rollback_import_run(run_id: UUID, db: DBSession):
+    """Rollt einen Import-Lauf komplett zurück (R3.6).
+
+    Blockiert, sobald Folgebelege an importierten Chargen hängen — eine
+    später erfasste echte Ernte oder Buchung darf nicht mit verschwinden.
+    Import-Marker-Saatgutchargen (Menge 0) bleiben stehen; sie sind
+    wirkungslos und können weitere Läufe tragen.
+    """
+    run = db.get(ImportRun, run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Import-Lauf nicht gefunden")
+    if run.status == "ZURUECKGEROLLT":
+        raise HTTPException(status_code=409, detail="Lauf wurde bereits zurückgerollt")
+
+    batches = db.execute(
+        select(GrowBatch).where(GrowBatch.import_run_id == run_id)
+    ).scalars().all()
+    batch_ids = [b.id for b in batches]
+
+    if batch_ids:
+        fremde_ernte = db.execute(
+            select(Harvest).where(
+                Harvest.grow_batch_id.in_(batch_ids),
+                (Harvest.import_run_id.is_(None)) | (Harvest.import_run_id != run_id),
+            )
+        ).scalars().first()
+        if fremde_ernte:
+            raise HTTPException(
+                status_code=409,
+                detail="An importierten Chargen hängen inzwischen echte Ernten — "
+                       "Rollback nicht möglich.",
+            )
+        fremde_bewegung = db.execute(
+            select(InventoryMovement).where(
+                InventoryMovement.grow_batch_id.in_(batch_ids),
+                (InventoryMovement.reference_number.is_(None))
+                | (InventoryMovement.reference_number != f"IMPORT:{run_id}"),
+            )
+        ).scalars().first()
+        if fremde_bewegung:
+            raise HTTPException(
+                status_code=409,
+                detail="An importierten Chargen hängen inzwischen echte Lagerbewegungen — "
+                       "Rollback nicht möglich.",
+            )
+
+        for bewegung in db.execute(
+            select(InventoryMovement)
+            .where(InventoryMovement.reference_number == f"IMPORT:{run_id}")
+        ).scalars().all():
+            db.delete(bewegung)
+        for ernte in db.execute(
+            select(Harvest).where(Harvest.import_run_id == run_id)
+        ).scalars().all():
+            db.delete(ernte)
+        for batch in batches:
+            db.delete(batch)
+
+    run.status = "ZURUECKGEROLLT"
+    db.commit()
+    return {"status": "ZURUECKGEROLLT", "geloescht": len(batch_ids)}

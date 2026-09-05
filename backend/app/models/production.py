@@ -61,6 +61,13 @@ class GrowBatch(Base):
     # Notizen
     notizen: Mapped[Optional[str]] = mapped_column(Text)
 
+    # Herkunft: 'import' bei rückwirkend eingespielten Chargen. Über den Lauf
+    # ist der Import als Ganzes rückrollbar und im Drilldown gekennzeichnet.
+    source: Mapped[Optional[str]] = mapped_column(String(10))
+    import_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid)
+    # Chargennummer aus dem Altsystem — primärer Idempotenzschlüssel des Imports
+    externe_chargennummer: Mapped[Optional[str]] = mapped_column(String(50))
+
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[datetime] = mapped_column(
@@ -123,6 +130,9 @@ class Harvest(Base):
     verlust_stueck: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     # Kistenformat zum Erntezeitpunkt (z.B. 15 oder 21 Stk pro Anzuchtkiste)
     stueck_pro_kiste: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    # Gesetzt, wenn die Ernte aus einem Historien-Import stammt — der Rollback
+    # eines Laufs darf nur seine eigenen Ernten entfernen.
+    import_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid)
 
     # Qualität (1-5 Sterne)
     qualitaet_note: Mapped[Optional[int]] = mapped_column(Integer)
