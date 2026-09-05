@@ -85,6 +85,13 @@ class DeliveryNote(Base):
     actual_delivery_date: Mapped[Optional[date]] = mapped_column(Date)
     notes: Mapped[Optional[str]] = mapped_column(Text)
 
+    # Abrechnungsstatus: gesetzt, sobald der Lieferschein in einer Rechnung
+    # steckt (Sammelrechnung). Genau EINE offene Rechnung je Lieferschein —
+    # ein Storno setzt das Feld wieder auf NULL (R1.6/R2.5).
+    invoice_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid, ForeignKey("invoices.id", ondelete="SET NULL")
+    )
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(timezone.utc), nullable=False
     )

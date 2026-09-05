@@ -215,8 +215,21 @@ class PDFService:
         
         # Invoice Title
         if _en(tmpl, "title", default=True):
-            title = "Rechnung" if invoice.invoice_type == InvoiceType.RECHNUNG else "Gutschrift"
+            if invoice.invoice_type == InvoiceType.RECHNUNG:
+                title = "Rechnung"
+            elif invoice.original_invoice_id:
+                # R1.5: der Storno heißt auf dem Beleg Stornorechnung und
+                # nennt das Original mit Nummer und Datum.
+                title = "Stornorechnung"
+            else:
+                title = "Gutschrift"
             elements.append(Paragraph(f"{title} Nr. {invoice.invoice_number}", styles['Heading2']))
+            if title == "Stornorechnung" and invoice.original_invoice is not None:
+                elements.append(Paragraph(
+                    f"Stornorechnung zur Rechnung Nr. {invoice.original_invoice.invoice_number} "
+                    f"vom {invoice.original_invoice.invoice_date.strftime('%d.%m.%Y')}",
+                    styles['Normal'],
+                ))
             elements.append(Spacer(1, 12))
 
         # Meta Info (Date, Customer)

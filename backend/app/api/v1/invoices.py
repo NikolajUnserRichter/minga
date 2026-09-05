@@ -94,7 +94,13 @@ def get_invoice(invoice_id: UUID, db: DBSession):
     invoice = db.get(Invoice, invoice_id)
     if not invoice:
         raise HTTPException(status_code=404, detail="Rechnung nicht gefunden")
-    return invoice
+
+    antwort = InvoiceDetailResponse.model_validate(invoice)
+    # Rückverweis auf die Stornorechnung — für die Verlinkung beider Belege
+    antwort.cancelled_by_invoice_id = db.execute(
+        select(Invoice.id).where(Invoice.original_invoice_id == invoice_id)
+    ).scalar_one_or_none()
+    return antwort
 
 
 @router.post("", response_model=InvoiceResponse, status_code=201)
@@ -274,9 +280,11 @@ def cancel_invoice(
     """Storniert eine Rechnung und erstellt optional eine Gutschrift."""
     service = InvoiceService(db)
     try:
+        # Auswahlgrund + Freitext zusammen — beides gehört in die Akte (R1.4)
+        grund = f"[{data.reason_code}] {data.reason}" if data.reason_code else data.reason
         invoice, credit_note = service.cancel_invoice(
             invoice_id=invoice_id,
-            reason=data.reason,
+            reason=grund,
             create_credit_note=data.create_credit_note,
         )
         db.commit()

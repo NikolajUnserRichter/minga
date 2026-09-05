@@ -298,9 +298,22 @@ class InvoiceService:
         if invoice.status == InvoiceStatus.STORNIERT:
             raise ValueError("Rechnung ist bereits storniert")
 
+        # R1.7: Der Storno eines Stornos würde die Beträge wieder aufleben
+        # lassen — der Weg ist eine neue, korrigierte Rechnung.
+        if invoice.invoice_type == InvoiceType.GUTSCHRIFT:
+            raise ValueError("Eine Stornorechnung kann nicht storniert werden")
+
         # Original stornieren
         invoice.status = InvoiceStatus.STORNIERT
         invoice.internal_notes = f"{invoice.internal_notes or ''}\n\nStorniert: {reason}".strip()
+
+        # R1.6: zugeordnete Lieferscheine wieder abrechenbar machen — sie
+        # gehören in die nächste, korrigierte (Sammel-)Rechnung.
+        from app.models.documents import DeliveryNote
+        for note in self.db.execute(
+            select(DeliveryNote).where(DeliveryNote.invoice_id == invoice_id)
+        ).scalars().all():
+            note.invoice_id = None
 
         credit_note = None
         if create_credit_note and invoice.total > 0:
@@ -309,8 +322,13 @@ class InvoiceService:
                 customer_id=invoice.customer_id,
                 invoice_type=InvoiceType.GUTSCHRIFT,
                 original_invoice_id=invoice_id,
-                header_text=f"Gutschrift zu Rechnung {invoice.invoice_number}",
+                header_text=(
+                    f"Stornorechnung zur Rechnung Nr. {invoice.invoice_number} "
+                    f"vom {invoice.invoice_date.strftime('%d.%m.%Y')}"
+                ),
             )
+            # Der Grund gehört an beide Belege — beim Prüfen liegt oft nur einer vor.
+            credit_note.internal_notes = f"Storno zu {invoice.invoice_number}: {reason}"
 
             # Positionen kopieren (mit negativen Beträgen)
             for line in invoice.lines:
@@ -411,7 +429,10 @@ class InvoiceService:
         concurrent access.
         """
         year = date.today().year
-        prefix = "GS" if invoice_type == InvoiceType.GUTSCHRIFT else "RE"
+        # Auch die Stornorechnung (GUTSCHRIFT) läuft im regulären Kreis (R1.1):
+        # EIN lückenloser, fortlaufender Nummernkreis für alle Belege — keine
+        # eigene GS-Nummernwelt. Alt-Belege mit GS-Präfix bleiben unberührt.
+        prefix = "RE"
 
         # Lock the latest invoice row to prevent concurrent duplicates
         last_invoice = self.db.execute(

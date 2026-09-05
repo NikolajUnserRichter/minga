@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Literal, Optional
 """
 Pydantic Schemas für Rechnungen (Invoices)
 Mit deutscher MwSt-Berechnung und DATEV-Export
@@ -16,10 +16,14 @@ from app.models.invoice import InvoiceStatus, InvoiceType, TaxRate, PaymentMetho
 # ============================================================
 
 class InvoiceLineBase(BaseModel):
-    """Basis-Schema für Rechnungsposition"""
+    """Basis-Schema für Rechnungsposition.
+
+    Menge hier bewusst OHNE gt=0: Stornorechnungen tragen ihre Positionen
+    mit negativem Vorzeichen — die Positivprüfung sitzt am Create-Schema.
+    """
     description: str = Field(..., min_length=1, description="Artikelbeschreibung")
     sku: Optional[str] = Field(None, max_length=50, description="Artikelnummer")
-    quantity: Decimal = Field(..., gt=0, description="Menge")
+    quantity: Decimal = Field(..., description="Menge")
     unit: str = Field(..., description="Einheit")
     unit_price: Decimal = Field(..., ge=0, description="Einzelpreis (netto)")
     discount_percent: Decimal = Field(default=Decimal("0"), ge=0, le=100, description="Rabatt %")
@@ -28,6 +32,9 @@ class InvoiceLineBase(BaseModel):
 
 class InvoiceLineCreate(InvoiceLineBase):
     """Schema zum Erstellen einer Rechnungsposition"""
+    # Von Hand erfasste Positionen sind immer positiv — negative Zeilen
+    # entstehen nur intern beim Storno.
+    quantity: Decimal = Field(..., gt=0, description="Menge")
     product_id: Optional[UUID] = Field(None, description="Produkt-ID")
     order_item_id: Optional[UUID] = Field(None, description="Bestellposition-ID")
     harvest_batch_ids: Optional[list[UUID]] = Field(None, description="Chargen-IDs für Rückverfolgung")
@@ -209,6 +216,8 @@ class InvoiceDetailResponse(InvoiceResponse):
     lines: list[InvoiceLineResponse] = []
     payments: list[PaymentResponse] = []
     tax_summary: Optional[list[dict]] = None
+    # Rückverweis: welche Stornorechnung hat diese Rechnung storniert
+    cancelled_by_invoice_id: Optional[UUID] = None
 
 
 class InvoiceListResponse(BaseModel):
@@ -234,9 +243,13 @@ class InvoiceSendRequest(BaseModel):
 
 
 class InvoiceCancelRequest(BaseModel):
-    """Request zum Stornieren einer Rechnung"""
-    reason: str = Field(..., min_length=1, description="Stornogrund")
-    create_credit_note: bool = Field(default=True, description="Gutschrift erstellen?")
+    """Request zum Stornieren einer Rechnung (R1.4: Auswahlliste + Freitext)."""
+    reason: str = Field(..., min_length=1, description="Stornogrund (Freitext)")
+    reason_code: Optional[Literal[
+        "FALSCHER_EMPFAENGER", "FALSCHE_MENGE", "PREISFEHLER",
+        "LIEFERUNG_NICHT_ERFOLGT", "SONSTIGES",
+    ]] = Field(None, description="Stornogrund aus der Auswahlliste")
+    create_credit_note: bool = Field(default=True, description="Stornorechnung erstellen?")
 
 
 class DatevExportRequest(BaseModel):

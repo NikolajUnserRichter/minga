@@ -331,6 +331,8 @@ def _auto_migrate(engine: Engine) -> None:
         _add_col_if_missing("grow_batches", "import_run_id", "CHAR(32)")
         _add_col_if_missing("grow_batches", "externe_chargennummer", "VARCHAR(50)")
         _add_col_if_missing("harvests", "import_run_id", "CHAR(32)")
+        # Sammelrechnung/Storno: Abrechnungsstatus am Lieferschein
+        _add_col_if_missing("delivery_notes", "invoice_id", "CHAR(32)")
         if inspector.has_table("inventory_movements"):
             with engine.begin() as conn:
                 conn.execute(text(
