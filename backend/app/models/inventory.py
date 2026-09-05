@@ -492,9 +492,15 @@ class InventoryCount(Base):
         Uuid, primary_key=True, default=uuid.uuid4
     )
 
-    # Inventurdatum
+    # Inventurdatum = STICHTAG: Korrekturen beim Abschluss buchen auf dieses
+    # Datum, nicht auf den Abschlusszeitpunkt (R6.7).
     count_date: Mapped[date] = mapped_column(Date, nullable=False)
     count_number: Mapped[str] = mapped_column(String(20), unique=True, nullable=False)
+
+    # JAHRESINVENTUR | STICHPROBE | ANLASSINVENTUR (R6.1)
+    typ: Mapped[str] = mapped_column(String(20), default="STICHPROBE", nullable=False)
+    # Vier-Augen-Prinzip auf der Abschlussliste
+    geprueft_von: Mapped[Optional[str]] = mapped_column(String(100))
 
     # Status
     status: Mapped[str] = mapped_column(String(20), default="OFFEN")  # OFFEN, IN_BEARBEITUNG, ABGESCHLOSSEN

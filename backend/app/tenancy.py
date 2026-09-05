@@ -336,6 +336,9 @@ def _auto_migrate(engine: Engine) -> None:
         # Sammelrechnung: Leistungszeitraum auf dem Beleg
         _add_col_if_missing("invoices", "service_period_start", "DATE")
         _add_col_if_missing("invoices", "service_period_end", "DATE")
+        # Inventur: Typ + Vier-Augen-Feld
+        _add_col_if_missing("inventory_counts", "typ", "VARCHAR(20)", "'STICHPROBE'")
+        _add_col_if_missing("inventory_counts", "geprueft_von", "VARCHAR(100)")
         if inspector.has_table("inventory_movements"):
             with engine.begin() as conn:
                 conn.execute(text(

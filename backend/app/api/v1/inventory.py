@@ -5,7 +5,7 @@ Lager-API - Endpoints für Bestandsverwaltung und Rückverfolgbarkeit
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from uuid import UUID
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import select
@@ -23,6 +23,7 @@ from app.schemas.inventory import (
     PackagingInventoryCreate, PackagingInventoryUpdate, PackagingInventoryResponse,
     InventoryMovementCreate, InventoryMovementResponse,
     InventoryCountCreate, InventoryCountResponse, InventoryCountItemCreate,
+    InventoryCountDetailResponse, InventoryCountItemResponse, InventoryCountItemUpdate,
     StockOverviewItem, TraceabilityResponse,
 )
 from app.services.inventory_service import InventoryService
@@ -779,32 +780,87 @@ def list_inventory_counts(
     return counts
 
 
-@router.get("/counts/{count_id}", response_model=InventoryCountResponse)
+def _position_wert(db, item: InventoryCountItem) -> Optional[Decimal]:
+    """Bewertung einer Position (R6.8): Menge × letzter EK der Bestandseinheit.
+
+    Der letzte Einkaufspreis liegt am Bestandseintrag (Entscheidung 05.09.2026,
+    gleitender Durchschnitt bewusst nicht). Ohne Preis bleibt der Wert leer.
+    """
+    menge = item.counted_quantity if item.counted_quantity is not None else item.system_quantity
+    preis = None
+    if item.seed_inventory_id:
+        inv = db.get(SeedInventory, item.seed_inventory_id)
+        preis = inv.purchase_price_per_kg if inv else None
+    elif item.packaging_id:
+        inv = db.get(PackagingInventory, item.packaging_id)
+        preis = inv.purchase_price if inv else None
+    if preis is None or menge is None:
+        return None
+    return (Decimal(str(menge)) * Decimal(str(preis))).quantize(Decimal("0.01"))
+
+
+def _position_name(db, item: InventoryCountItem) -> str:
+    """Lesbarer Name der Position für Zählliste und Export."""
+    if item.seed_inventory_id:
+        inv = db.get(SeedInventory, item.seed_inventory_id)
+        if inv and inv.seed:
+            return f"{inv.seed.name} · Charge {inv.batch_number or '—'}"
+    if item.packaging_id:
+        inv = db.get(PackagingInventory, item.packaging_id)
+        if inv:
+            return inv.name
+    if item.finished_goods_id:
+        inv = db.get(FinishedGoodsInventory, item.finished_goods_id)
+        if inv:
+            return getattr(inv, "product_name", None) or "Fertigware"
+    return item.item_type.value
+
+
+@router.get("/counts/{count_id}", response_model=InventoryCountDetailResponse)
 def get_inventory_count(count_id: UUID, db: DBSession):
-    """Gibt eine Inventur mit allen Positionen zurück."""
+    """Gibt eine Inventur mit allen Positionen und Bewertung zurück."""
     count = db.get(InventoryCount, count_id)
     if not count:
         raise HTTPException(status_code=404, detail="Inventur nicht gefunden")
-    return count
+
+    antwort = InventoryCountDetailResponse.model_validate(count)
+    gesamt = Decimal("0")
+    for pos in antwort.items:
+        item = db.get(InventoryCountItem, pos.id)
+        pos.wert = _position_wert(db, item)
+        if pos.wert is not None:
+            gesamt += pos.wert
+    antwort.gesamtwert = gesamt.quantize(Decimal("0.01"))
+    return antwort
 
 
 @router.post("/counts", response_model=InventoryCountResponse, status_code=201)
 def create_inventory_count(
-    location_id: UUID,
-    article_type: InventoryItemType,
     db: DBSession,
+    location_id: Optional[UUID] = None,
+    article_type: Optional[InventoryItemType] = None,
+    typ: str = Query("STICHPROBE", pattern="^(JAHRESINVENTUR|STICHPROBE|ANLASSINVENTUR)$"),
     count_date: Optional[date] = None,
+    counted_by: Optional[str] = None,
     notes: Optional[str] = None,
 ):
-    """Startet eine neue Inventur."""
+    """Startet eine Inventur.
+
+    Ohne location_id/article_type wird ALLES gezählt (R6.2, Default) — die
+    Jahresinventur braucht keinen Lagerort-Zwang. Der Sollbestand wird beim
+    Anlegen eingefroren (R6.3).
+    """
     service = InventoryService(db)
     try:
         count = service.create_inventory_count(
             location_id=location_id,
             item_type=article_type,
             count_date=count_date,
-            notes=notes,
+            counted_by=counted_by,
         )
+        count.typ = typ
+        if notes:
+            count.notes = notes
         db.commit()
         db.refresh(count)
         return count
@@ -812,13 +868,13 @@ def create_inventory_count(
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.post("/counts/{count_id}/items")
+@router.post("/counts/{count_id}/items", response_model=InventoryCountItemResponse, status_code=201)
 def add_count_item(
     count_id: UUID,
     data: InventoryCountItemCreate,
     db: DBSession,
 ):
-    """Fügt eine gezählte Position zur Inventur hinzu."""
+    """Fügt eine Fund-Position hinzu — gezählt, aber nicht im Soll (R6.5)."""
     count = db.get(InventoryCount, count_id)
     if not count:
         raise HTTPException(status_code=404, detail="Inventur nicht gefunden")
@@ -827,14 +883,175 @@ def add_count_item(
         raise HTTPException(status_code=400, detail="Inventur ist bereits abgeschlossen")
 
     item = InventoryCountItem(
-        inventory_count_id=count_id,
+        count_id=count_id,
         **data.model_dump(),
     )
+    item.calculate_difference()
     db.add(item)
     db.commit()
     db.refresh(item)
-
     return item
+
+
+@router.put("/counts/{count_id}/items/{item_id}", response_model=InventoryCountItemResponse)
+def update_count_item(
+    count_id: UUID,
+    item_id: UUID,
+    data: InventoryCountItemUpdate,
+    db: DBSession,
+):
+    """Trägt das Zählergebnis einer Position ein (R6.5)."""
+    count = db.get(InventoryCount, count_id)
+    if not count:
+        raise HTTPException(status_code=404, detail="Inventur nicht gefunden")
+    if count.status == "ABGESCHLOSSEN":
+        raise HTTPException(status_code=400, detail="Inventur ist bereits abgeschlossen")
+
+    item = db.get(InventoryCountItem, item_id)
+    if not item or item.count_id != count_id:
+        raise HTTPException(status_code=404, detail="Position nicht gefunden")
+
+    update = data.model_dump(exclude_unset=True)
+    for feld, wert in update.items():
+        setattr(item, feld, wert)
+    item.calculate_difference()
+    db.commit()
+    db.refresh(item)
+    return item
+
+
+@router.get("/counts/{count_id}/zaehlliste")
+def inventory_count_sheet(
+    count_id: UUID,
+    db: DBSession,
+    blind: bool = Query(False, description="ohne Sollbestand — für die Blindzählung"),
+):
+    """Druckbare Zählliste (R6.4)."""
+    count = db.get(InventoryCount, count_id)
+    if not count:
+        raise HTTPException(status_code=404, detail="Inventur nicht gefunden")
+
+    from reportlab.lib import colors as _colors
+    from reportlab.lib.pagesizes import A4 as _A4
+    from reportlab.lib.styles import getSampleStyleSheet as _styles
+    from reportlab.lib.units import cm as _cm
+    from reportlab.platypus import (
+        Paragraph as _P, SimpleDocTemplate as _Doc, Spacer as _Sp,
+        Table as _T, TableStyle as _TS,
+    )
+    import io as _io
+
+    styles = _styles()
+    buf = _io.BytesIO()
+    doc = _Doc(buf, pagesize=_A4)
+
+    kopf = [["Position", "Einheit"] + ([] if blind else ["Soll"]) + ["Gezählt", "Bemerkung"]]
+    for item in count.items:
+        kopf.append(
+            [_position_name(db, item), item.unit]
+            + ([] if blind else [str(item.system_quantity)])
+            + ["", ""]
+        )
+    tabelle = _T(kopf, repeatRows=1,
+                 colWidths=[7*_cm, 2*_cm] + ([] if blind else [2*_cm]) + [2.5*_cm, 4*_cm])
+    tabelle.setStyle(_TS([
+        ("GRID", (0, 0), (-1, -1), 0.4, _colors.grey),
+        ("BACKGROUND", (0, 0), (-1, 0), _colors.HexColor("#EEEEEE")),
+        ("FONTSIZE", (0, 0), (-1, -1), 9),
+    ]))
+    doc.build([
+        _P(f"Zählliste {count.count_number} ({count.typ})", styles["Title"]),
+        _P(f"Stichtag: {count.count_date.strftime('%d.%m.%Y')}"
+           + (" · Blindzählung" if blind else ""), styles["Normal"]),
+        _Sp(1, 12),
+        tabelle,
+        _Sp(1, 24),
+        _P("Gezählt von: ______________________    Datum: ______________", styles["Normal"]),
+    ])
+    return Response(
+        content=buf.getvalue(), media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename=Zaehlliste_{count.count_number}.pdf"},
+    )
+
+
+@router.get("/counts/{count_id}/export")
+def inventory_count_export(
+    count_id: UUID,
+    db: DBSession,
+    format: str = Query("pdf", pattern="^(pdf|xlsx)$"),
+):
+    """Abschlussliste (R6.9): PDF mit Unterschriftsfeldern, XLSX für die Buchhaltung."""
+    count = db.get(InventoryCount, count_id)
+    if not count:
+        raise HTTPException(status_code=404, detail="Inventur nicht gefunden")
+
+    zeilen = []
+    gesamt = Decimal("0")
+    for item in count.items:
+        wert = _position_wert(db, item)
+        if wert is not None:
+            gesamt += wert
+        zeilen.append([
+            _position_name(db, item), item.unit,
+            item.system_quantity, item.counted_quantity,
+            item.difference, wert, item.notes or "",
+        ])
+
+    if format == "xlsx":
+        import io as _io
+        from openpyxl import Workbook as _WB
+        wb = _WB()
+        ws = wb.active
+        ws.title = "Inventur"
+        ws.append(["Position", "Einheit", "Soll", "Ist", "Differenz", "Wert (EUR)", "Bemerkung"])
+        for z in zeilen:
+            ws.append([str(z[0]), z[1]] + [float(v) if v is not None else None for v in z[2:6]] + [z[6]])
+        ws.append([])
+        ws.append(["Gesamtwert", "", "", "", "", float(gesamt), ""])
+        buf = _io.BytesIO()
+        wb.save(buf)
+        return Response(
+            content=buf.getvalue(),
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f"attachment; filename=Inventur_{count.count_number}.xlsx"},
+        )
+
+    from reportlab.lib import colors as _colors
+    from reportlab.lib.pagesizes import landscape as _ls, A4 as _A4
+    from reportlab.lib.styles import getSampleStyleSheet as _styles
+    from reportlab.platypus import (
+        Paragraph as _P, SimpleDocTemplate as _Doc, Spacer as _Sp,
+        Table as _T, TableStyle as _TS,
+    )
+    import io as _io
+
+    styles = _styles()
+    buf = _io.BytesIO()
+    doc = _Doc(buf, pagesize=_ls(_A4))
+    daten = [["Position", "Einheit", "Soll", "Ist", "Differenz", "Wert (EUR)", "Bemerkung"]]
+    for z in zeilen:
+        daten.append([str(v) if v is not None else "—" for v in z])
+    tabelle = _T(daten, repeatRows=1)
+    tabelle.setStyle(_TS([
+        ("GRID", (0, 0), (-1, -1), 0.4, _colors.grey),
+        ("BACKGROUND", (0, 0), (-1, 0), _colors.HexColor("#2E4360")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), _colors.white),
+        ("FONTSIZE", (0, 0), (-1, -1), 8),
+    ]))
+    doc.build([
+        _P(f"Inventur {count.count_number} ({count.typ})", styles["Title"]),
+        _P(f"Stichtag: {count.count_date.strftime('%d.%m.%Y')} · Status: {count.status} · "
+           f"Gesamtwert: {gesamt:.2f} EUR", styles["Normal"]),
+        _Sp(1, 12),
+        tabelle,
+        _Sp(1, 30),
+        _P("Gezählt von: ______________________        "
+           "Geprüft von: ______________________", styles["Normal"]),
+    ])
+    return Response(
+        content=buf.getvalue(), media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename=Inventur_{count.count_number}.pdf"},
+    )
 
 
 @router.post("/counts/{count_id}/finalize", response_model=InventoryCountResponse)

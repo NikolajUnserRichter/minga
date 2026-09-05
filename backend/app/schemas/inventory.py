@@ -414,6 +414,9 @@ class InventoryCountItemResponse(InventoryCountItemBase):
     counted_quantity: Optional[Decimal]
     difference: Optional[Decimal]
     notes: Optional[str]
+    # Bewertung (R6.8): gezählte Menge × letzter EK der Bestandseinheit —
+    # berechnet im Endpoint, nicht persistiert
+    wert: Optional[Decimal] = None
 
     # Expandierte Felder
     item_name: Optional[str] = None
@@ -446,6 +449,8 @@ class InventoryCountResponse(InventoryCountBase):
     id: UUID
     count_number: str
     status: str
+    typ: str = "STICHPROBE"
+    geprueft_von: Optional[str] = None
     location_id: Optional[UUID]
     notes: Optional[str]
     counted_by: Optional[str]
@@ -463,6 +468,8 @@ class InventoryCountResponse(InventoryCountBase):
 class InventoryCountDetailResponse(InventoryCountResponse):
     """Detailliertes Inventur-Schema mit Positionen"""
     items: list[InventoryCountItemResponse] = []
+    # Summe der bewerteten Positionen (R6.8)
+    gesamtwert: Optional[Decimal] = None
 
 
 class InventoryCountListResponse(BaseModel):

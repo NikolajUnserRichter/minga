@@ -772,10 +772,15 @@ class InventoryService:
     def finalize_inventory_count(
         self,
         count_id: UUID,
-        apply_corrections: bool = True
+        apply_corrections: bool = True,
+        schwelle_prozent: Decimal = Decimal("5"),
     ) -> InventoryCount:
         """
-        Schließt Inventur ab und verbucht Korrekturen.
+        Schließt Inventur ab und verbucht Korrekturen — zum Stichtag (R6.7).
+
+        Ab `schwelle_prozent` Abweichung vom Soll ist eine Bemerkung an der
+        Position Pflicht (R6.6): große Differenzen brauchen eine Erklärung,
+        sonst taugt die Liste nicht als Nachweis.
         """
         count = self.db.get(InventoryCount, count_id)
         if not count:
@@ -784,15 +789,29 @@ class InventoryService:
         if count.status == "ABGESCHLOSSEN":
             raise ValueError("Inventur ist bereits abgeschlossen")
 
+        # Buchungsdatum aller Korrekturen: der Stichtag
+        stichtag = datetime.combine(count.count_date, datetime.min.time())
+
+        unerklaert = []
         for item in count.items:
             if item.counted_quantity is None:
                 raise ValueError(f"Position {item.id} wurde nicht gezählt")
-
             item.calculate_difference()
+            if item.system_quantity and item.difference:
+                abweichung = abs(item.difference) / abs(item.system_quantity) * 100
+                if abweichung > schwelle_prozent and not (item.notes or "").strip():
+                    unerklaert.append(f"{item.item_type.value} ({abweichung:.0f} %)")
+        if unerklaert:
+            raise ValueError(
+                "Differenz über der Schwelle ohne Bemerkung: " + ", ".join(unerklaert)
+                + " — bitte je Position begründen."
+            )
 
+        for item in count.items:
             if apply_corrections and item.difference != 0:
                 # Korrektur-Bewegung erstellen
                 self._record_movement(
+                    movement_date=stichtag,
                     movement_type=MovementType.KORREKTUR,
                     item_type=item.item_type,
                     seed_inventory_id=item.seed_inventory_id,
@@ -845,9 +864,13 @@ class InventoryService:
         created_by: Optional[str] = None,
         reason: Optional[str] = None,
         reference_number: Optional[str] = None,
+        movement_date: Optional[datetime] = None,
     ) -> InventoryMovement:
         """
         Erstellt eine Lagerbewegung.
+
+        movement_date: abweichendes Buchungsdatum — die Inventurkorrektur
+        bucht auf den Stichtag, nicht auf den Abschlusszeitpunkt.
         """
         movement = InventoryMovement(
             movement_type=movement_type,
@@ -868,7 +891,7 @@ class InventoryService:
             created_by=created_by,
             reason=reason,
             reference_number=reference_number,
-            movement_date=datetime.now(timezone.utc),
+            movement_date=movement_date or datetime.now(timezone.utc),
         )
 
         self.db.add(movement)
