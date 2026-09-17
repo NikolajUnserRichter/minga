@@ -54,7 +54,7 @@ export function GrowBatchStatusBadge({ status }: GrowBatchStatusBadgeProps) {
   return <span className={`badge ${config.class}`}>{config.label}</span>;
 }
 
-// Order Status Badge — supports both legacy + current backend enum values
+// Order Status Badge
 const orderStatusConfig: Record<string, { label: string; variant: BadgeVariant }> = {
   // Current backend (OrderStatus)
   ENTWURF: { label: 'Entwurf', variant: 'gray' },
@@ -63,9 +63,6 @@ const orderStatusConfig: Record<string, { label: string; variant: BadgeVariant }
   GELIEFERT: { label: 'Geliefert', variant: 'success' },
   FAKTURIERT: { label: 'Fakturiert', variant: 'gray' },
   STORNIERT: { label: 'Storniert', variant: 'danger' },
-  // Legacy
-  OFFEN: { label: 'Offen', variant: 'gray' },
-  BEREIT: { label: 'Bereit', variant: 'success' },
 };
 
 interface OrderStatusBadgeProps {

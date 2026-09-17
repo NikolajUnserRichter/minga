@@ -52,13 +52,13 @@ export default function Sales() {
   });
 
   const markReadyMutation = useMutation({
-    mutationFn: (id: string) => salesApi.updateOrderStatus(id, 'BEREIT'),
+    mutationFn: (id: string) => salesApi.updateOrderStatus(id, 'IN_PRODUKTION'),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['orders'] });
-      toast.success('Bestellung als bereit markiert');
+      toast.success('Bestellung in Produktion gesetzt');
     },
-    onError: () => {
-      toast.error('Fehler beim Aktualisieren');
+    onError: (e: any) => {
+      toast.error(e?.response?.data?.detail ?? 'Status konnte nicht geändert werden');
     },
   });
 
@@ -68,8 +68,8 @@ export default function Sales() {
       queryClient.invalidateQueries({ queryKey: ['orders'] });
       toast.success('Bestellung als geliefert markiert');
     },
-    onError: () => {
-      toast.error('Fehler beim Aktualisieren');
+    onError: (e: any) => {
+      toast.error(e?.response?.data?.detail ?? 'Status konnte nicht geändert werden');
     },
   });
 
@@ -95,11 +95,12 @@ export default function Sales() {
 
   const orderStatusOptions: SelectOption[] = [
     { value: '', label: 'Alle Status' },
-    { value: 'OFFEN', label: 'Offen' },
+    { value: 'ENTWURF', label: 'Entwurf' },
     { value: 'BESTAETIGT', label: 'Bestätigt' },
     { value: 'IN_PRODUKTION', label: 'In Produktion' },
-    { value: 'BEREIT', label: 'Bereit' },
     { value: 'GELIEFERT', label: 'Geliefert' },
+    { value: 'FAKTURIERT', label: 'Fakturiert' },
+    { value: 'STORNIERT', label: 'Storniert' },
   ];
 
   const tabs = [
@@ -118,7 +119,7 @@ export default function Sales() {
   ];
 
   // Stats
-  const openOrders = orders.filter((o: Order) => o.status === 'OFFEN').length;
+  const openOrders = orders.filter((o: Order) => o.status === 'ENTWURF').length;
   const todayOrders = orders.filter((o: Order) => {
     const today = new Date().toISOString().split('T')[0];
     return o.liefer_datum === today;
@@ -166,7 +167,7 @@ export default function Sales() {
       {/* Stats */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard
-          title="Offene Bestellungen"
+          title="Bestellungsentwürfe"
           value={openOrders}
           icon={<ShoppingCart className="w-5 h-5" />}
           variant="warning"
@@ -364,7 +365,7 @@ export default function Sales() {
               >
                 Schließen
               </button>
-              {(selectedOrder.status === 'IN_PRODUKTION' || selectedOrder.status === 'BESTAETIGT') && (
+              {selectedOrder.status === 'BESTAETIGT' && (
                 <button
                   className="btn btn-success"
                   onClick={() => {
@@ -372,10 +373,10 @@ export default function Sales() {
                     setSelectedOrder(null);
                   }}
                 >
-                  Als bereit markieren
+                  In Produktion setzen
                 </button>
               )}
-              {selectedOrder.status === 'BEREIT' && (
+              {selectedOrder.status === 'IN_PRODUKTION' && (
                 <button
                   className="btn btn-primary"
                   onClick={() => {

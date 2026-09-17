@@ -18,8 +18,8 @@ export function OrderCard({ order, onMarkReady, onMarkDelivered, onClick }: Orde
     0
   ) || 0;
 
-  const canMarkReady = order.status === 'IN_PRODUKTION' || order.status === 'BESTAETIGT';
-  const canMarkDelivered = order.status === 'BEREIT';
+  const canMarkReady = order.status === 'BESTAETIGT';
+  const canMarkDelivered = order.status === 'IN_PRODUKTION';
 
   return (
     <div
@@ -93,7 +93,7 @@ export function OrderCard({ order, onMarkReady, onMarkDelivered, onClick }: Orde
                 }}
               >
                 <Check className="w-4 h-4" />
-                Bereit
+                In Produktion
               </button>
             )}
             {canMarkDelivered && onMarkDelivered && (

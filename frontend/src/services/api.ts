@@ -360,8 +360,8 @@ export const salesApi = {
   }) =>
     api.post<Order>('/sales/orders', data).then(r => r.data),
 
-  updateOrderStatus: (id: string, status: string) =>
-    api.post<Order>(`/sales/orders/${id}/status/${status}`).then(r => r.data),
+  updateOrderStatus: (id: string, status: string, reason?: string) =>
+    api.post<Order>(`/sales/orders/${id}/status`, { status, reason }).then(r => r.data),
 
   runDailySubscriptions: () =>
     api.post('/sales/subscriptions/process-today').then(r => r.data),

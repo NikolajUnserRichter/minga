@@ -27,11 +27,12 @@ import { getErrorMessage } from '../services/errors';
 
 const statusOptions: SelectOption[] = [
   { value: 'all', label: 'Alle Status' },
-  { value: 'OFFEN', label: 'Offen' },
+  { value: 'ENTWURF', label: 'Entwurf' },
   { value: 'BESTAETIGT', label: 'Bestätigt' },
   { value: 'IN_PRODUKTION', label: 'In Produktion' },
-  { value: 'BEREIT', label: 'Bereit' },
   { value: 'GELIEFERT', label: 'Geliefert' },
+  { value: 'FAKTURIERT', label: 'Fakturiert' },
+  { value: 'STORNIERT', label: 'Storniert' },
 ];
 
 export default function Orders() {
@@ -74,11 +75,11 @@ export default function Orders() {
 
   const handleMarkReady = async (order: Order) => {
     try {
-      await salesApi.updateOrderStatus(order.id, 'BEREIT');
+      await salesApi.updateOrderStatus(order.id, 'IN_PRODUKTION');
       queryClient.invalidateQueries({ queryKey: ['orders'] });
-      toast.success('Bestellung als bereit markiert');
-    } catch (error) {
-      toast.error('Fehler beim Aktualisieren');
+      toast.success('Bestellung in Produktion gesetzt');
+    } catch (e: any) {
+      toast.error(e?.response?.data?.detail ?? 'Status konnte nicht geändert werden');
     }
   };
 
@@ -87,8 +88,8 @@ export default function Orders() {
       await salesApi.updateOrderStatus(order.id, 'GELIEFERT');
       queryClient.invalidateQueries({ queryKey: ['orders'] });
       toast.success('Bestellung als geliefert markiert');
-    } catch (error) {
-      toast.error('Fehler beim Aktualisieren');
+    } catch (e: any) {
+      toast.error(e?.response?.data?.detail ?? 'Status konnte nicht geändert werden');
     }
   };
 
@@ -99,14 +100,14 @@ export default function Orders() {
     try {
       await Promise.all(
         bulk.selectedItems
-          .filter((o) => o.status === 'IN_PRODUKTION' || o.status === 'BESTAETIGT')
-          .map((o) => salesApi.updateOrderStatus(o.id, 'BEREIT')),
+          .filter((o) => o.status === 'BESTAETIGT')
+          .map((o) => salesApi.updateOrderStatus(o.id, 'IN_PRODUKTION')),
       );
       queryClient.invalidateQueries({ queryKey: ['orders'] });
       bulk.clearSelection();
-      toast.success('Bestellungen als bereit markiert');
-    } catch (error) {
-      toast.error('Fehler beim Aktualisieren');
+      toast.success('Bestellungen in Produktion gesetzt');
+    } catch (e: any) {
+      toast.error(e?.response?.data?.detail ?? 'Status konnte nicht geändert werden');
     }
   };
 
@@ -114,14 +115,14 @@ export default function Orders() {
     try {
       await Promise.all(
         bulk.selectedItems
-          .filter((o) => o.status === 'BEREIT')
+          .filter((o) => o.status === 'IN_PRODUKTION')
           .map((o) => salesApi.updateOrderStatus(o.id, 'GELIEFERT')),
       );
       queryClient.invalidateQueries({ queryKey: ['orders'] });
       bulk.clearSelection();
       toast.success('Bestellungen als geliefert markiert');
-    } catch (error) {
-      toast.error('Fehler beim Aktualisieren');
+    } catch (e: any) {
+      toast.error(e?.response?.data?.detail ?? 'Status konnte nicht geändert werden');
     }
   };
 
@@ -245,7 +246,7 @@ export default function Orders() {
           className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium bg-minga-600 hover:bg-minga-700 text-white rounded-lg transition-colors"
         >
           <CheckCircle className="w-4 h-4" />
-          Bereit
+          In Produktion
         </button>
         <button
           onClick={handleBulkDelivered}
@@ -331,12 +332,12 @@ function OrderList({ orders, onMarkReady, onMarkDelivered, onOpenDocs, bulk }: O
                 }}
                 onClick={() => onOpenDocs(order)}
                 onMarkReady={
-                  order.status === 'IN_PRODUKTION' || order.status === 'BESTAETIGT'
+                  order.status === 'BESTAETIGT'
                     ? () => onMarkReady(order)
                     : undefined
                 }
                 onMarkDelivered={
-                  order.status === 'BEREIT' ? () => onMarkDelivered(order) : undefined
+                  order.status === 'IN_PRODUKTION' ? () => onMarkDelivered(order) : undefined
                 }
               />
               </div>

@@ -194,7 +194,7 @@ export interface Order {
   updated_at: string
 }
 
-export type OrderStatus = 'OFFEN' | 'BESTAETIGT' | 'IN_PRODUKTION' | 'BEREIT' | 'GELIEFERT' | 'STORNIERT'
+export type OrderStatus = 'ENTWURF' | 'BESTAETIGT' | 'IN_PRODUKTION' | 'GELIEFERT' | 'FAKTURIERT' | 'STORNIERT'
 
 // Einkauf / Wareneingang (Procurement)
 export type PurchaseOrderStatus =
