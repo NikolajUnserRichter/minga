@@ -928,7 +928,12 @@ async def create_order(order_data: OrderCreate, db: DBSession, user: CurrentUser
         product = None
         product_name = line_data.product_name
         line_unit = line_data.unit
+        # Hat der Client einen Preis mitgeschickt? Dann ist er verbindlich —
+        # gleich ob aus dem Sonderpreis-Lookup des Formulars oder von Hand
+        # eingetragen. Weder Kundenpreis noch Varianten-Override fassen ihn danach an.
+        client_hat_preis = line_data.unit_price not in (None, 0, Decimal("0"))
         line_price = line_data.unit_price
+        preis_ist_kundenspezifisch = False
 
         if line_data.product_id:
             product = db.get(Product, line_data.product_id)
@@ -946,7 +951,7 @@ async def create_order(order_data: OrderCreate, db: DBSession, user: CurrentUser
             # Preis "zum Bestellzeitpunkt" — sonst würde ein zukünftiger
             # Preistarif, dessen valid_from <= delivery_date ist, schon jetzt
             # greifen und der Kunde sähe einen anderen Preis als erwartet.
-            if line_data.unit_price in (None, 0, Decimal("0")):
+            if not client_hat_preis:
                 from datetime import date as _date
                 cp_price, is_cp = _resolve_unit_price(
                     db,
@@ -956,6 +961,7 @@ async def create_order(order_data: OrderCreate, db: DBSession, user: CurrentUser
                     on_date=_date.today(),
                 )
                 line_price = cp_price
+                preis_ist_kundenspezifisch = is_cp
 
         # Variante: ergänzt Name, Einheit (aus packaging_unit) und Preis (aus override
         # oder Eltern-Basispreis), wenn nicht explizit gesetzt.
@@ -972,10 +978,14 @@ async def create_order(order_data: OrderCreate, db: DBSession, user: CurrentUser
             packaging_unit = db.get(UnitOfMeasure, variant.packaging_unit_id)
             if packaging_unit:
                 line_unit = packaging_unit.code
-            if variant.price_override is not None:
-                line_price = variant.price_override
-            elif product and product.base_price is not None:
-                line_price = product.base_price
+            # Weder ein mitgeschickter Preis noch ein Kundenpreis darf hier
+            # überschrieben werden. Ein Sonderpreis gilt für das Produkt
+            # einschließlich seiner Verpackungsvarianten.
+            if not client_hat_preis and not preis_ist_kundenspezifisch:
+                if variant.price_override is not None:
+                    line_price = variant.price_override
+                elif product and product.base_price is not None:
+                    line_price = product.base_price
 
         # Variable Bundle (Gastrotray): Sorten-Auswahl validieren
         selections = line_data.variable_bundle_selections
