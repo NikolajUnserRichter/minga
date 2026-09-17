@@ -18,6 +18,7 @@ export interface HarvestFormData {
   menge_stueck?: number;
   verlust_stueck?: number;
   stueck_pro_kiste?: number;
+  entleerte_kisten: number;
   qualitaet_note: number;
   notizen?: string;
 }
@@ -37,6 +38,8 @@ function loadDefaultStkProKiste(): number {
 
 export function HarvestForm({ batch, onSubmit, onCancel, loading = false }: HarvestFormProps) {
   const today = new Date().toISOString().split('T')[0];
+  const verbleibendeKisten = batch.verbleibende_kisten;
+  const [entleerteKisten, setEntleerteKisten] = useState(verbleibendeKisten);
 
   const [einheit, setEinheit] = useState<'G' | 'STK'>(loadDefaultEinheit);
   const [stkProKiste, setStkProKiste] = useState<number>(loadDefaultStkProKiste);
@@ -114,6 +117,7 @@ export function HarvestForm({ batch, onSubmit, onCancel, loading = false }: Harv
       menge_stueck: einheit === 'STK' ? formData.menge : undefined,
       verlust_stueck: einheit === 'STK' ? formData.verlust : undefined,
       stueck_pro_kiste: einheit === 'STK' ? stkProKiste : undefined,
+      entleerte_kisten: entleerteKisten,
       qualitaet_note: formData.qualitaet_note,
       notizen: formData.notizen,
     });
@@ -141,6 +145,22 @@ export function HarvestForm({ batch, onSubmit, onCancel, loading = false }: Harv
         error={errors.ernte_datum}
         max={today}
       />
+
+      <label className="block">
+        <span className="text-sm font-medium">Entleerte Kisten</span>
+        <input
+          type="number"
+          min={0}
+          max={verbleibendeKisten}
+          value={entleerteKisten}
+          onChange={(e) => setEntleerteKisten(Number(e.target.value))}
+          className="input mt-1"
+        />
+        <span className="mt-1 block text-xs text-gray-500">
+          {verbleibendeKisten} Kisten stehen noch im Growroom.
+          Bei Teilernte die tatsächlich entnommene Anzahl eintragen.
+        </span>
+      </label>
 
       {/* Unit toggle */}
       <div className="form-group">

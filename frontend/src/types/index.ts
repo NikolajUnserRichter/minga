@@ -59,6 +59,7 @@ export interface GrowBatch {
   id: string
   seed_batch_id: string
   tray_anzahl: number
+  verbleibende_kisten: number
   aussaat_datum: string
   erwartete_ernte_min: string
   erwartete_ernte_optimal: string
@@ -87,6 +88,7 @@ export interface Harvest {
   menge_stueck: number | null
   verlust_stueck: number | null
   stueck_pro_kiste: number | null
+  entleerte_kisten: number | null
   qualitaet_note: number | null
   verlustquote: number
   created_at: string

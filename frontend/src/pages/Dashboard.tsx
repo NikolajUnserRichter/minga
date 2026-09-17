@@ -102,6 +102,7 @@ export default function Dashboard() {
       queryClient.invalidateQueries({ queryKey: ['growBatches'] });
       queryClient.invalidateQueries({ queryKey: ['dashboard'] });
       queryClient.invalidateQueries({ queryKey: ['harvests'] });
+      queryClient.invalidateQueries({ queryKey: ['growroom-capacity'] });
       setHarvestingBatch(null);
       toast.success('Ernte erfasst');
     },
@@ -379,6 +380,7 @@ export default function Dashboard() {
                 menge_stueck: data.menge_stueck,
                 verlust_stueck: data.verlust_stueck,
                 stueck_pro_kiste: data.stueck_pro_kiste,
+                entleerte_kisten: data.entleerte_kisten,
                 qualitaet_note: data.qualitaet_note,
                 notizen: data.notizen || undefined,
               });

@@ -3,7 +3,7 @@ from typing import List, Optional
 from uuid import UUID
 from fastapi import APIRouter, Depends, Query, HTTPException, Response
 from sqlalchemy import select, func, desc, or_
-from sqlalchemy.orm import joinedload
+from sqlalchemy.orm import joinedload, selectinload
 
 from app.api.deps import DBSession, Pagination
 from app.models.production import GrowBatch, Harvest, GrowBatchStatus
@@ -45,7 +45,8 @@ def list_grow_batches(
     from app.models.seed import SeedBatch
     # Seed mitladen: GrowBatch.seed_name läuft über seed_batch.seed
     query = select(GrowBatch).options(
-        joinedload(GrowBatch.seed_batch).joinedload(SeedBatch.seed)
+        joinedload(GrowBatch.seed_batch).joinedload(SeedBatch.seed),
+        selectinload(GrowBatch.harvests),
     ).order_by(desc(GrowBatch.aussaat_datum))
     
     if status:

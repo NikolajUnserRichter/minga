@@ -88,6 +88,11 @@ class GrowBatch(Base):
         return None
 
     @property
+    def verbleibende_kisten(self) -> int:
+        entleert = sum(h.entleerte_kisten or 0 for h in self.harvests)
+        return max(0, (self.tray_anzahl or 0) - entleert)
+
+    @property
     def tage_seit_aussaat(self) -> int:
         """Berechnet Tage seit Aussaat"""
         return (date.today() - self.aussaat_datum).days

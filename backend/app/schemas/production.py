@@ -61,6 +61,7 @@ class GrowBatchResponse(GrowBatchBase):
     # Berechnete Felder
     tage_seit_aussaat: int
     ist_erntereif: bool
+    verbleibende_kisten: int
 
     # Seed-Info (optional expandiert)
     seed_name: Optional[str] = None

@@ -55,6 +55,7 @@ export default function Production() {
   const [labelDate, setLabelDate] = useState(new Date().toISOString().split('T')[0]);
   const [labelFormat, setLabelFormat] = useState('avery-48x17');
   const [labelAktion, setLabelAktion] = useState<'druck' | 'download' | null>(null);
+  const [gesamtStellplaetze, setGesamtStellplaetze] = useState<string | null>(null);
 
   const [searchParams] = useSearchParams();
   const highlightId = searchParams.get('highlight');
@@ -73,6 +74,11 @@ export default function Production() {
   }, [highlightId]);
 
   // Data Queries
+  const { data: kapazitaet, isPending: kapazitaetLoading, isError: kapazitaetError } = useQuery({
+    queryKey: ['growroom-capacity'],
+    queryFn: productionApi.getGrowroomCapacity,
+  });
+
   const { data: batchesData } = useQuery({
     queryKey: ['growBatches', statusFilter, showErntereif],
     queryFn: () =>
@@ -169,6 +175,7 @@ export default function Production() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['growBatches'] });
       queryClient.invalidateQueries({ queryKey: ['harvests'] });
+      queryClient.invalidateQueries({ queryKey: ['growroom-capacity'] });
       setHarvestingBatch(null);
       toast.success('Ernte erfasst');
     },
@@ -192,10 +199,25 @@ export default function Production() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['growBatches'] });
       toast.success('Status aktualisiert');
+      queryClient.invalidateQueries({ queryKey: ['growroom-capacity'] });
     },
     onError: (_err, _vars, context) => {
       if (context?.prev) queryClient.setQueryData(['growBatches'], context.prev);
       toast.error('Fehler beim Aktualisieren');
+    },
+  });
+
+  const capacityMutation = useMutation({
+    mutationFn: productionApi.setGrowroomCapacity,
+    onSuccess: (data) => {
+      queryClient.setQueryData(['growroom-capacity'], data);
+      queryClient.invalidateQueries({ queryKey: ['growroom-capacity'] });
+      queryClient.invalidateQueries({ queryKey: ['capacity'] });
+      setGesamtStellplaetze(null);
+      toast.success('Gesamtzahl der Stellplätze gespeichert');
+    },
+    onError: (error) => {
+      toast.error(getErrorMessage(error, 'Stellplatzkapazität konnte nicht gespeichert werden'));
     },
   });
 
@@ -305,6 +327,67 @@ export default function Production() {
           )
         }
       />
+
+      <div className="card">
+        <h3 className="text-sm font-medium text-gray-500">Stellplätze Growroom</h3>
+        {kapazitaetLoading ? (
+          <p className="mt-2 text-sm text-gray-500">Stellplätze werden geladen …</p>
+        ) : kapazitaetError ? (
+          <p className="mt-2 text-sm text-red-600">Stellplatzkapazität konnte nicht geladen werden.</p>
+        ) : kapazitaet?.gesamt === null ? (
+          <p className="mt-2 text-sm text-gray-500">
+            {kapazitaet.belegt} Kisten belegt. Gesamtzahl der Stellplätze noch nicht hinterlegt.
+          </p>
+        ) : (
+          <div className="mt-2 flex gap-6">
+            <div>
+              <div className="text-2xl font-semibold">{kapazitaet?.gesamt}</div>
+              <div className="text-xs text-gray-500">insgesamt</div>
+            </div>
+            <div>
+              <div className="text-2xl font-semibold">{kapazitaet?.belegt}</div>
+              <div className="text-xs text-gray-500">belegt</div>
+            </div>
+            <div>
+              <div className="text-2xl font-semibold text-green-700">{kapazitaet?.frei}</div>
+              <div className="text-xs text-gray-500">frei</div>
+            </div>
+          </div>
+        )}
+        <form
+          className="mt-4 flex flex-wrap items-end gap-3"
+          onSubmit={(event) => {
+            event.preventDefault();
+            const gesamt = Number(gesamtStellplaetze ?? kapazitaet?.gesamt);
+            if (!Number.isSafeInteger(gesamt) || gesamt < 0) {
+              toast.error('Bitte eine ganze, nicht negative Stellplatzzahl eingeben');
+              return;
+            }
+            capacityMutation.mutate(gesamt);
+          }}
+        >
+          <label className="block">
+            <span className="text-sm font-medium">Gesamtzahl der Stellplätze</span>
+            <input
+              type="number"
+              min={0}
+              step={1}
+              required
+              value={gesamtStellplaetze ?? kapazitaet?.gesamt ?? ''}
+              onChange={(event) => setGesamtStellplaetze(event.target.value)}
+              className="input mt-1"
+              disabled={capacityMutation.isPending || kapazitaetLoading || kapazitaetError}
+            />
+          </label>
+          <button
+            type="submit"
+            className="btn btn-primary"
+            disabled={capacityMutation.isPending || kapazitaetLoading || kapazitaetError}
+          >
+            {capacityMutation.isPending ? 'Wird gespeichert …' : 'Speichern'}
+          </button>
+        </form>
+      </div>
 
       {activeTab !== 'PACKAGING' && (
         <div className="card">
@@ -652,6 +735,7 @@ export default function Production() {
                 menge_stueck: data.menge_stueck,
                 verlust_stueck: data.verlust_stueck,
                 stueck_pro_kiste: data.stueck_pro_kiste,
+                entleerte_kisten: data.entleerte_kisten,
                 qualitaet_note: data.qualitaet_note,
                 notizen: data.notizen || undefined,
               });

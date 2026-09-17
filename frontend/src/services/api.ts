@@ -147,6 +147,16 @@ export interface DayPlanOrder {
 }
 
 export const productionApi = {
+  getGrowroomCapacity: () =>
+    api.get<{ gesamt: number | null; belegt: number; frei: number | null }>(
+      '/production/growroom-capacity'
+    ).then(r => r.data),
+
+  setGrowroomCapacity: (gesamt: number) =>
+    api.put<{ gesamt: number | null; belegt: number; frei: number | null }>(
+      '/production/growroom-capacity', { gesamt }
+    ).then(r => r.data),
+
   listGrowBatches: (params?: { status?: string; erntereif?: boolean }) =>
     api.get<GrowBatch[]>('/production/grow-batches', { params }).then(r => r.data),
 
@@ -206,6 +216,7 @@ export const productionApi = {
     menge_stueck?: number
     verlust_stueck?: number
     stueck_pro_kiste?: number
+    entleerte_kisten?: number
     qualitaet_note?: number
     notizen?: string
   }) =>

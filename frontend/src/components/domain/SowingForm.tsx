@@ -164,7 +164,7 @@ export function SowingForm({
   });
 
   // Regal-Positionen aus Capacity (Typ REGAL) — fallback wenn keine konfiguriert
-  const regalCapacities = capacities.filter((c: any) => c.ressource_typ === 'REGAL');
+  const regalCapacities = capacities.filter((c: any) => c.ressource_typ === 'REGAL' && c.name !== 'Growroom');
   const regalOptions: SelectOption[] = regalCapacities.length
     ? regalCapacities.map((c: any) => ({
         value: c.name || c.id,
@@ -339,7 +339,7 @@ export function SowingForm({
 
       {/* Shelf Position */}
       <Select
-        label="Regal-Position"
+        label="Regal-Position (optional)"
         options={regalOptions}
         value={formData.regal_position}
         onChange={(e) => setFormData({ ...formData, regal_position: e.target.value })}
