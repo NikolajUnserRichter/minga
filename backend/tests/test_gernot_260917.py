@@ -141,3 +141,55 @@ class TestSonderpreisInBestellung:
         })
         assert r.status_code == 201, r.text
         assert Decimal(str(r.json()["lines"][0]["unit_price"])) == Decimal("11.99")
+
+
+def _bestellung(client, kunde):
+    r = client.post("/api/v1/sales/orders", json={
+        "customer_id": kunde["id"],
+        "requested_delivery_date": "2026-09-18",
+        "lines": [{
+            "product_name": "Freitext-Position", "quantity": 1,
+            "unit": "STK", "unit_price": "5.00",
+        }],
+    })
+    assert r.status_code == 201, r.text
+    return r.json()
+
+
+class TestBestellungAendern:
+    """Punkte 2 und 3: eine bestätigte Bestellung muss änderbar sein."""
+
+    def test_lieferdatum_der_bestaetigten_bestellung_aendern(self, client):
+        """Gernots Punkt 2. Als Entwurf ging das schon, als bestätigt kam ein 500."""
+        kunde = _kunde(client, "Änderungs-Testkunde")
+        best = _bestellung(client, kunde)
+        assert client.post(f"/api/v1/sales/orders/{best['id']}/confirm", json={}).status_code == 200
+
+        r = client.patch(f"/api/v1/sales/orders/{best['id']}",
+                         json={"requested_delivery_date": "2026-09-19"})
+        assert r.status_code == 200, r.text
+        assert r.json()["requested_delivery_date"] == "2026-09-19"
+
+    def test_aenderungsgrund_wird_angenommen(self, client):
+        kunde = _kunde(client, "Grund-Testkunde")
+        best = _bestellung(client, kunde)
+        client.post(f"/api/v1/sales/orders/{best['id']}/confirm", json={})
+
+        r = client.patch(f"/api/v1/sales/orders/{best['id']}", json={
+            "requested_delivery_date": "2026-09-19",
+            "change_reason": "Kunde hat telefonisch verschoben",
+        })
+        assert r.status_code == 200, r.text
+
+    def test_position_aendern_und_entfernen(self, client):
+        """Gernots Punkt 3. Beide Endpunkte lieferten 500."""
+        kunde = _kunde(client, "Positions-Testkunde")
+        best = _bestellung(client, kunde)
+        lid = best["lines"][0]["id"]
+
+        r = client.patch(f"/api/v1/sales/orders/{best['id']}/lines/{lid}",
+                         json={"quantity": 3})
+        assert r.status_code == 200, r.text
+
+        r = client.delete(f"/api/v1/sales/orders/{best['id']}/lines/{lid}")
+        assert r.status_code == 204, r.text

@@ -1085,8 +1085,8 @@ async def update_order(
     update_data = order_data.model_dump(exclude_unset=True)
 
     for field, value in update_data.items():
-        if field == "lines":
-            continue  # Lines separat behandeln
+        if field in ("lines", "change_reason"):
+            continue  # Lines separat behandelt; change_reason ist kein Order-Feld
         old_value = getattr(order, field, None)
         if old_value != value:
             old_values[field] = str(old_value) if old_value else None
@@ -1368,6 +1368,7 @@ async def add_order_line(
         position=line.position,
         product_id=line.product_id,
         product_name=product_name or "",
+        product_variant_id=line.product_variant_id,
         quantity=line.quantity,
         unit=line.unit,
         unit_price=line.unit_price,
@@ -1376,7 +1377,15 @@ async def add_order_line(
         tax_rate=line.tax_rate,
         line_vat=line.line_vat,
         line_gross=line.line_gross,
-        requested_delivery_date=line.requested_delivery_date
+        requested_delivery_date=line.requested_delivery_date,
+        seed_id=line.seed_id,
+        product_sku=line.product_sku,
+        product_description=line.beschreibung,  # Mapping beschreibung -> product_description
+        harvest_id=line.harvest_id,
+        batch_number=line.batch_number,
+        variable_bundle_selections=line.variable_bundle_selections,
+        created_at=line.created_at,
+        updated_at=line.updated_at,
     )
 
 
@@ -1393,7 +1402,7 @@ async def update_order_line(
         select(Order)
         .options(joinedload(Order.lines))
         .where(Order.id == order_id)
-    ).scalar_one_or_none()
+    ).unique().scalar_one_or_none()
 
     if not order:
         raise HTTPException(status_code=404, detail="Bestellung nicht gefunden")
@@ -1439,6 +1448,7 @@ async def update_order_line(
         position=line.position,
         product_id=line.product_id,
         product_name=line.product.name if line.product else line.beschreibung or "",
+        product_variant_id=line.product_variant_id,
         quantity=line.quantity,
         unit=line.unit,
         unit_price=line.unit_price,
@@ -1447,7 +1457,15 @@ async def update_order_line(
         tax_rate=line.tax_rate,
         line_vat=line.line_vat,
         line_gross=line.line_gross,
-        requested_delivery_date=line.requested_delivery_date
+        requested_delivery_date=line.requested_delivery_date,
+        seed_id=line.seed_id,
+        product_sku=line.product_sku,
+        product_description=line.beschreibung,  # Mapping beschreibung -> product_description
+        harvest_id=line.harvest_id,
+        batch_number=line.batch_number,
+        variable_bundle_selections=line.variable_bundle_selections,
+        created_at=line.created_at,
+        updated_at=line.updated_at,
     )
 
 
@@ -1463,7 +1481,7 @@ async def delete_order_line(
         select(Order)
         .options(joinedload(Order.lines))
         .where(Order.id == order_id)
-    ).scalar_one_or_none()
+    ).unique().scalar_one_or_none()
 
     if not order:
         raise HTTPException(status_code=404, detail="Bestellung nicht gefunden")

@@ -161,6 +161,7 @@ class OrderUpdate(BaseModel):
     packing_date: Optional[date] = None
     billing_address: Optional[AddressSchema] = None
     delivery_address: Optional[AddressSchema] = None
+    change_reason: Optional[str] = Field(None, description="Grund der Änderung, landet im Audit-Log")
 
 
 class OrderStatusUpdate(BaseModel):
