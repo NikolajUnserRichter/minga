@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Modal } from '../ui/Modal';
 import { Input, Select, Button, Combobox, useToast } from '../ui';
-import { salesApi, productsApi, seedsApi } from '../../services/api';
+import { salesApi, productsApi, seedsApi, customerPricesApi } from '../../services/api';
 import { Customer } from '../../types';
 import { Plus, Trash } from 'lucide-react';
 import { getErrorMessage } from '../../services/errors';
@@ -20,6 +20,8 @@ interface OrderLineRow {
     quantity: number;
     unit: string;
     unit_price: number;
+    is_customer_specific: boolean;
+    price_manually_edited: boolean;
     variable_bundle_selections: Array<{ product_id: string; quantity: number }>;
 }
 
@@ -30,6 +32,8 @@ const emptyLine = (): OrderLineRow => ({
     quantity: 1,
     unit: 'STK',  // Default: Stück (B3); kann pro Position überschrieben werden
     unit_price: 0,
+    is_customer_specific: false,
+    price_manually_edited: false,
     variable_bundle_selections: [],
 });
 
@@ -187,9 +191,44 @@ export function CreateOrderModal({ open, onClose, preselectedCustomer }: CreateO
         });
     };
 
+    const resolvePriceForLine = async (index: number, productId: string) => {
+        if (!customerId || !productId) return;
+        try {
+            const eff = await customerPricesApi.getEffective(customerId, productId);
+            setLines((prev) => {
+                const next = [...prev];
+                if (!next[index] || next[index].product_id !== productId) return prev;
+                if (next[index].price_manually_edited) return prev;
+                next[index] = {
+                    ...next[index],
+                    unit_price: Number(eff.unit_price),
+                    is_customer_specific: eff.is_customer_specific,
+                };
+                return next;
+            });
+        } catch {
+            // Kein Sonderpreis ermittelbar: der bereits gesetzte Listenpreis bleibt stehen.
+        }
+    };
+
+    useEffect(() => {
+        if (!customerId) return;
+        lines.forEach((l, i) => {
+            if (l.product_id && !l.price_manually_edited) void resolvePriceForLine(i, l.product_id);
+        });
+        // Absichtlich nur an customerId gebunden: die Auflösung soll beim
+        // Kundenwechsel laufen, nicht bei jeder Mengenänderung.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [customerId]);
+
     const updateLine = (index: number, field: keyof OrderLineRow, value: any) => {
         const newLines = [...lines];
         newLines[index] = { ...newLines[index], [field]: value };
+
+        if (field === 'unit_price') {
+            newLines[index].price_manually_edited = true;
+            newLines[index].is_customer_specific = false;
+        }
 
         if (field === 'product_id') {
             const selectedItem = availableItems.find(p => p.id === value);
@@ -198,8 +237,13 @@ export function CreateOrderModal({ open, onClose, preselectedCustomer }: CreateO
                 newLines[index].unit_price = selectedItem.price;
                 newLines[index].unit = selectedItem.unit || 'g';
                 newLines[index].product_variant_id = '';
+                newLines[index].is_customer_specific = false;
+                newLines[index].price_manually_edited = false;
             }
-            if (value) loadVariantsForProduct(value);
+            if (value) {
+                loadVariantsForProduct(value);
+                void resolvePriceForLine(index, value);
+            }
         }
 
         if (field === 'product_variant_id' && value) {
@@ -207,7 +251,9 @@ export function CreateOrderModal({ open, onClose, preselectedCustomer }: CreateO
             const variant = variants.find((v) => v.id === value);
             if (variant) {
                 if (variant.packaging_unit_code) newLines[index].unit = variant.packaging_unit_code;
-                if (variant.price_override !== null) newLines[index].unit_price = Number(variant.price_override);
+                if (variant.price_override !== null && !newLines[index].is_customer_specific) {
+                    newLines[index].unit_price = Number(variant.price_override);
+                }
                 if (variant.name_suffix) {
                     newLines[index].product_name = `${availableItems.find(p => p.id === newLines[index].product_id)?.name || ''} — ${variant.name_suffix}`;
                 }
@@ -386,6 +432,11 @@ export function CreateOrderModal({ open, onClose, preselectedCustomer }: CreateO
                                     step={0.01}
                                     placeholder="€/Einheit"
                                 />
+                                {line.is_customer_specific && (
+                                    <span className="mt-1 inline-block text-xs font-medium text-green-700 dark:text-green-400">
+                                        Sonderpreis
+                                    </span>
+                                )}
                             </div>
                             <Button
                                 type="button"
