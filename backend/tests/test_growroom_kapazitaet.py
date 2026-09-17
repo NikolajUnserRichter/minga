@@ -135,3 +135,43 @@ class TestKistenFreigabe:
         })
         assert r.status_code == 400, r.text
         assert "20" in r.json()["detail"]
+
+
+class TestKapazitaetsUebersicht:
+    """Gernots Beispiel: 20 Kisten, davon 8 entnommen → 12 bleiben belegt."""
+
+    def test_keimung_belegt_keine_stellplaetze(self, client):
+        client.put("/api/v1/production/growroom-capacity", json={"gesamt": 100})
+        _charge(client, trays=20)  # bleibt in KEIMUNG
+
+        r = client.get("/api/v1/production/growroom-capacity")
+        assert r.status_code == 200, r.text
+        assert r.json() == {"gesamt": 100, "belegt": 0, "frei": 100}
+
+    def test_transfer_belegt_alle_kisten(self, client):
+        client.put("/api/v1/production/growroom-capacity", json={"gesamt": 100})
+        charge = _charge(client, trays=20)
+        client.post(f"/api/v1/production/grow-batches/{charge['id']}/status/WACHSTUM")
+
+        r = client.get("/api/v1/production/growroom-capacity")
+        assert r.json() == {"gesamt": 100, "belegt": 20, "frei": 80}
+
+    def test_teilernte_gibt_nur_entnommene_frei(self, client):
+        client.put("/api/v1/production/growroom-capacity", json={"gesamt": 100})
+        charge = _charge(client, trays=20)
+        client.post(f"/api/v1/production/grow-batches/{charge['id']}/status/WACHSTUM")
+        client.post("/api/v1/production/harvests", json={
+            "grow_batch_id": charge["id"],
+            "ernte_datum": date.today().isoformat(),
+            "menge_gramm": "1680", "entleerte_kisten": 8,
+        })
+
+        r = client.get("/api/v1/production/growroom-capacity")
+        assert r.json() == {"gesamt": 100, "belegt": 12, "frei": 88}
+
+    def test_ohne_hinterlegte_gesamtzahl_bleibt_frei_unbekannt(self, client):
+        charge = _charge(client, trays=20)
+        client.post(f"/api/v1/production/grow-batches/{charge['id']}/status/WACHSTUM")
+
+        r = client.get("/api/v1/production/growroom-capacity")
+        assert r.json() == {"gesamt": None, "belegt": 20, "frei": None}

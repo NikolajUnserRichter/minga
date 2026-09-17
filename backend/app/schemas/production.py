@@ -134,6 +134,10 @@ class HarvestListResponse(BaseModel):
     total: int
 
 
+class GrowroomCapacityUpdate(BaseModel):
+    gesamt: int = Field(..., ge=0, description="Gesamtzahl der Kistenstellplätze im Growroom")
+
+
 class DashboardWoche(BaseModel):
     """Wochenfenster (Mo–So) der Dashboard-Zusammenfassung"""
     start: date

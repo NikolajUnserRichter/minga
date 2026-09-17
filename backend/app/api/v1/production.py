@@ -10,11 +10,26 @@ from app.models.production import GrowBatch, Harvest, GrowBatchStatus
 from app.models.order import Order, OrderLine, OrderStatus
 from app.schemas.production import (
     GrowBatchCreate, GrowBatchUpdate, GrowBatchResponse,
-    HarvestCreate, HarvestResponse, DashboardSummary
+    HarvestCreate, HarvestResponse, DashboardSummary, GrowroomCapacityUpdate
 )
+from app.services import growroom_capacity_service
 from app.services.label_service import LabelService
 
 router = APIRouter(tags=["Produktion"])
+
+
+@router.get("/growroom-capacity")
+def read_growroom_capacity(db: DBSession):
+    """Stellplätze im Growroom: insgesamt, belegt, frei."""
+    return growroom_capacity_service.kapazitaets_uebersicht(db)
+
+
+@router.put("/growroom-capacity")
+def set_growroom_capacity(data: GrowroomCapacityUpdate, db: DBSession):
+    """Legt die Gesamtzahl der Kistenstellplätze fest."""
+    growroom_capacity_service.set_gesamt(db, data.gesamt)
+    return growroom_capacity_service.kapazitaets_uebersicht(db)
+
 
 # ========================================
 # GROW BATCHES
