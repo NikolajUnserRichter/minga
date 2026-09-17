@@ -1,15 +1,16 @@
 import { OrderWithCustomer } from '../../types';
 import { OrderStatusBadge, formatDate, getRelativeDate } from '../ui';
-import { Calendar, Check, Truck } from 'lucide-react';
+import { Calendar, Check, ClipboardCheck, Truck } from 'lucide-react';
 
 interface OrderCardProps {
   order: OrderWithCustomer;
+  onConfirm?: () => void;
   onMarkReady?: () => void;
   onMarkDelivered?: () => void;
   onClick?: () => void;
 }
 
-export function OrderCard({ order, onMarkReady, onMarkDelivered, onClick }: OrderCardProps) {
+export function OrderCard({ order, onConfirm, onMarkReady, onMarkDelivered, onClick }: OrderCardProps) {
   // Prefer backend-computed total_gross; fall back to legacy gesamtwert / line-summation
   const totalValue = Number(
     (order as any).total_gross ??
@@ -18,6 +19,10 @@ export function OrderCard({ order, onMarkReady, onMarkDelivered, onClick }: Orde
     0
   ) || 0;
 
+  // Eine neu erfasste Bestellung steht auf ENTWURF. Ohne diesen Schritt
+  // ist die Statuskette aus der Oberfläche nicht begehbar, weil
+  // "In Produktion" erst ab BESTAETIGT erscheint.
+  const canConfirm = order.status === 'ENTWURF';
   const canMarkReady = order.status === 'BESTAETIGT';
   const canMarkDelivered = order.status === 'IN_PRODUKTION';
 
@@ -82,8 +87,20 @@ export function OrderCard({ order, onMarkReady, onMarkDelivered, onClick }: Orde
         </div>
 
         {/* Actions */}
-        {(canMarkReady || canMarkDelivered) && (
+        {(canConfirm || canMarkReady || canMarkDelivered) && (
           <div className="mt-4 flex gap-2">
+            {canConfirm && onConfirm && (
+              <button
+                className="btn btn-primary btn-sm flex-1"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onConfirm();
+                }}
+              >
+                <ClipboardCheck className="w-4 h-4" />
+                Bestätigen
+              </button>
+            )}
             {canMarkReady && onMarkReady && (
               <button
                 className="btn btn-success btn-sm flex-1"

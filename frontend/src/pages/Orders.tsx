@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Plus, Search, Calendar, CheckCircle, Truck, Pencil } from 'lucide-react';
+import { Plus, Search, Calendar, CheckCircle, ClipboardCheck, Truck, Pencil } from 'lucide-react';
 import { salesApi } from '../services/api';
 import { Order, OrderStatus } from '../types';
 import { PageHeader, FilterBar } from '../components/common/Layout';
@@ -75,6 +75,16 @@ export default function Orders() {
       order.id.toLowerCase().includes(search.toLowerCase())
   );
 
+  const handleConfirm = async (order: Order) => {
+    try {
+      await salesApi.confirmOrder(order.id);
+      queryClient.invalidateQueries({ queryKey: ['orders'] });
+      toast.success('Bestellung bestätigt');
+    } catch (e: any) {
+      toast.error(e?.response?.data?.detail ?? 'Bestellung konnte nicht bestätigt werden');
+    }
+  };
+
   const handleMarkReady = async (order: Order) => {
     try {
       await salesApi.updateOrderStatus(order.id, 'IN_PRODUKTION');
@@ -97,6 +107,22 @@ export default function Orders() {
 
   // Bulk selection
   const bulk = useBulkSelection(orders);
+
+  const handleBulkConfirm = async () => {
+    try {
+      const entwuerfe = bulk.selectedItems.filter((o) => o.status === 'ENTWURF');
+      if (entwuerfe.length === 0) {
+        toast.error('Keine der markierten Bestellungen ist ein Entwurf');
+        return;
+      }
+      await Promise.all(entwuerfe.map((o) => salesApi.confirmOrder(o.id)));
+      queryClient.invalidateQueries({ queryKey: ['orders'] });
+      bulk.clearSelection();
+      toast.success(`${entwuerfe.length} Bestellung(en) bestätigt`);
+    } catch (e: any) {
+      toast.error(e?.response?.data?.detail ?? 'Bestellungen konnten nicht bestätigt werden');
+    }
+  };
 
   const handleBulkReady = async () => {
     try {
@@ -203,6 +229,7 @@ export default function Orders() {
           <OrderList
             orders={todayOrders}
             title="Heutige Lieferungen"
+            onConfirm={handleConfirm}
             onMarkReady={handleMarkReady}
             onMarkDelivered={handleMarkDelivered}
             onOpenDocs={setDocsOrder}
@@ -214,6 +241,7 @@ export default function Orders() {
           <OrderList
             orders={tomorrowOrders}
             title="Morgen"
+            onConfirm={handleConfirm}
             onMarkReady={handleMarkReady}
             onMarkDelivered={handleMarkDelivered}
             onOpenDocs={setDocsOrder}
@@ -225,6 +253,7 @@ export default function Orders() {
           <OrderList
             orders={upcomingOrders}
             title="Kommende Bestellungen"
+            onConfirm={handleConfirm}
             onMarkReady={handleMarkReady}
             onMarkDelivered={handleMarkDelivered}
             onOpenDocs={setDocsOrder}
@@ -236,6 +265,7 @@ export default function Orders() {
           <OrderList
             orders={filteredOrders}
             title="Alle Bestellungen"
+            onConfirm={handleConfirm}
             onMarkReady={handleMarkReady}
             onMarkDelivered={handleMarkDelivered}
             onOpenDocs={setDocsOrder}
@@ -247,6 +277,13 @@ export default function Orders() {
 
       {/* Bulk Action Bar */}
       <BulkActionBar count={bulk.count} onClear={bulk.clearSelection}>
+        <button
+          onClick={handleBulkConfirm}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors"
+        >
+          <ClipboardCheck className="w-4 h-4" />
+          Bestätigen
+        </button>
         <button
           onClick={handleBulkReady}
           className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium bg-minga-600 hover:bg-minga-700 text-white rounded-lg transition-colors"
@@ -286,6 +323,7 @@ export default function Orders() {
 interface OrderListProps {
   orders: Order[];
   title: string;
+  onConfirm: (order: Order) => void;
   onMarkReady: (order: Order) => void;
   onMarkDelivered: (order: Order) => void;
   onOpenDocs: (order: Order) => void;
@@ -293,7 +331,7 @@ interface OrderListProps {
   bulk: ReturnType<typeof useBulkSelection<Order>>;
 }
 
-function OrderList({ orders, onMarkReady, onMarkDelivered, onOpenDocs, onEdit, bulk }: OrderListProps) {
+function OrderList({ orders, onConfirm, onMarkReady, onMarkDelivered, onOpenDocs, onEdit, bulk }: OrderListProps) {
   if (orders.length === 0) {
     return (
       <EmptyState
@@ -343,6 +381,9 @@ function OrderList({ orders, onMarkReady, onMarkDelivered, onOpenDocs, onEdit, b
                   kunde: { name: order.kunde_name } as any,
                 }}
                 onClick={() => onOpenDocs(order)}
+                onConfirm={
+                  order.status === 'ENTWURF' ? () => onConfirm(order) : undefined
+                }
                 onMarkReady={
                   order.status === 'BESTAETIGT'
                     ? () => onMarkReady(order)

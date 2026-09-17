@@ -360,6 +360,16 @@ export const salesApi = {
   }) =>
     api.post<Order>('/sales/orders', data).then(r => r.data),
 
+  // Bestätigen läuft über /confirm statt über einen reinen Statuswechsel:
+  // der Endpunkt weist Bestellungen ohne Positionen ab, setzt das bestätigte
+  // Lieferdatum und schreibt einen CONFIRM-Eintrag ins Audit-Log.
+  confirmOrder: (id: string, confirmedDeliveryDate?: string) =>
+    api.post<Order>(
+      `/sales/orders/${id}/confirm`,
+      undefined,
+      confirmedDeliveryDate ? { params: { confirmed_delivery_date: confirmedDeliveryDate } } : undefined,
+    ).then(r => r.data),
+
   updateOrderStatus: (id: string, status: string, reason?: string) =>
     api.post<Order>(`/sales/orders/${id}/status`, { status, reason }).then(r => r.data),
 
