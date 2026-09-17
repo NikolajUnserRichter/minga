@@ -363,6 +363,33 @@ export const salesApi = {
   updateOrderStatus: (id: string, status: string, reason?: string) =>
     api.post<Order>(`/sales/orders/${id}/status`, { status, reason }).then(r => r.data),
 
+  updateOrder: (id: string, data: {
+    requested_delivery_date?: string
+    confirmed_delivery_date?: string
+    packing_date?: string
+    customer_reference?: string
+    notes?: string
+    change_reason?: string
+  }) => api.patch<Order>(`/sales/orders/${id}`, data).then(r => r.data),
+
+  addOrderLine: (orderId: string, data: {
+    product_id?: string
+    product_variant_id?: string
+    product_name: string
+    quantity: number
+    unit: string
+    unit_price: number
+  }) => api.post(`/sales/orders/${orderId}/lines`, data).then(r => r.data),
+
+  updateOrderLine: (orderId: string, lineId: string, data: {
+    quantity?: number
+    unit_price?: number
+    product_name?: string
+  }) => api.patch(`/sales/orders/${orderId}/lines/${lineId}`, data).then(r => r.data),
+
+  deleteOrderLine: (orderId: string, lineId: string) =>
+    api.delete(`/sales/orders/${orderId}/lines/${lineId}`).then(r => r.data),
+
   runDailySubscriptions: () =>
     api.post('/sales/subscriptions/process-today').then(r => r.data),
 

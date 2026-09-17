@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Plus, Search, Calendar, CheckCircle, Truck } from 'lucide-react';
+import { Plus, Search, Calendar, CheckCircle, Truck, Pencil } from 'lucide-react';
 import { salesApi } from '../services/api';
 import { Order, OrderStatus } from '../types';
 import { PageHeader, FilterBar } from '../components/common/Layout';
@@ -9,6 +9,7 @@ import { useBulkSelection } from '../hooks/useBulkSelection';
 import { OrderCard } from '../components/domain/OrderCard';
 import { CreateOrderModal } from '../components/domain/CreateOrderModal';
 import { OrderDocumentsModal } from '../components/domain/OrderDocumentsModal';
+import { EditOrderModal } from '../components/domain/EditOrderModal';
 import { ExcelImport } from '../components/common/ExcelImport';
 import { ListPageSkeleton } from '../components/ui/Skeleton';
 import {
@@ -43,6 +44,7 @@ export default function Orders() {
   const [search, setSearch] = useState('');
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [docsOrder, setDocsOrder] = useState<Order | null>(null);
+  const [editOrder, setEditOrder] = useState<Order | null>(null);
 
   // Fetch orders
   const { data: ordersData, isLoading, isError, error, refetch, isFetching } = useQuery({
@@ -204,6 +206,7 @@ export default function Orders() {
             onMarkReady={handleMarkReady}
             onMarkDelivered={handleMarkDelivered}
             onOpenDocs={setDocsOrder}
+            onEdit={setEditOrder}
             bulk={bulk}
           />
         </TabPanel>
@@ -214,6 +217,7 @@ export default function Orders() {
             onMarkReady={handleMarkReady}
             onMarkDelivered={handleMarkDelivered}
             onOpenDocs={setDocsOrder}
+            onEdit={setEditOrder}
             bulk={bulk}
           />
         </TabPanel>
@@ -224,6 +228,7 @@ export default function Orders() {
             onMarkReady={handleMarkReady}
             onMarkDelivered={handleMarkDelivered}
             onOpenDocs={setDocsOrder}
+            onEdit={setEditOrder}
             bulk={bulk}
           />
         </TabPanel>
@@ -234,6 +239,7 @@ export default function Orders() {
             onMarkReady={handleMarkReady}
             onMarkDelivered={handleMarkDelivered}
             onOpenDocs={setDocsOrder}
+            onEdit={setEditOrder}
             bulk={bulk}
           />
         </TabPanel>
@@ -267,6 +273,11 @@ export default function Orders() {
         order={docsOrder}
         onClose={() => setDocsOrder(null)}
       />
+      <EditOrderModal
+        open={!!editOrder}
+        order={editOrder}
+        onClose={() => setEditOrder(null)}
+      />
     </div>
   );
 }
@@ -278,10 +289,11 @@ interface OrderListProps {
   onMarkReady: (order: Order) => void;
   onMarkDelivered: (order: Order) => void;
   onOpenDocs: (order: Order) => void;
+  onEdit: (order: Order) => void;
   bulk: ReturnType<typeof useBulkSelection<Order>>;
 }
 
-function OrderList({ orders, onMarkReady, onMarkDelivered, onOpenDocs, bulk }: OrderListProps) {
+function OrderList({ orders, onMarkReady, onMarkDelivered, onOpenDocs, onEdit, bulk }: OrderListProps) {
   if (orders.length === 0) {
     return (
       <EmptyState
@@ -340,6 +352,10 @@ function OrderList({ orders, onMarkReady, onMarkDelivered, onOpenDocs, bulk }: O
                   order.status === 'IN_PRODUKTION' ? () => onMarkDelivered(order) : undefined
                 }
               />
+                <Button variant="secondary" size="sm" className="mt-2" icon={<Pencil className="w-4 h-4" />}
+                  onClick={() => onEdit(order)}>
+                  Bearbeiten
+                </Button>
               </div>
             ))}
           </div>
