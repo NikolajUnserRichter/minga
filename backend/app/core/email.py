@@ -91,7 +91,7 @@ PAYMENT_REMINDER_TEMPLATE = """
     <p>Falls sich Ihre Zahlung mit diesem Schreiben überschnitten hat, betrachten Sie es bitte als gegenstandslos.</p>
     
     <p>Mit freundlichen Grüßen,<br>
-    Ihr Minga Greens Team</p>
+    Ihr Team</p>
 </body>
 </html>
 """
@@ -122,7 +122,7 @@ DUNNING_LEVEL2_TEMPLATE = """
     gezwungen, weitere Maßnahmen einzuleiten.</p>
 
     <p>Mit freundlichen Grüßen,<br>
-    Ihr Minga Greens Team</p>
+    Ihr Team</p>
 </body>
 </html>
 """
@@ -156,7 +156,7 @@ DUNNING_LEVEL3_TEMPLATE = """
     ein Inkassoverfahren einleiten.</p>
 
     <p>Mit freundlichen Grüßen,<br>
-    Ihr Minga Greens Team</p>
+    Ihr Team</p>
 </body>
 </html>
 """

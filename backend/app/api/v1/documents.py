@@ -139,7 +139,7 @@ def send_confirmation(conf_id: UUID, data: OrderConfirmationSend, db: DBSession)
                     f"Sehr geehrte Damen und Herren bei {customer_name},\n\n"
                     f"anbei finden Sie die Auftragsbestätigung {conf.confirmation_number}\n"
                     f"zu Ihrer Bestellung {conf.order.order_number}.\n\n"
-                    f"Mit freundlichen Grüßen\nIhr Minga-Greens-Team"
+                    f"Mit freundlichen Grüßen\nIhr Team"
                 ),
                 attachment_bytes=pdf,
                 attachment_filename=f"{conf.confirmation_number}.pdf",
