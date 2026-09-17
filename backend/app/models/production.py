@@ -130,6 +130,10 @@ class Harvest(Base):
     verlust_stueck: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     # Kistenformat zum Erntezeitpunkt (z.B. 15 oder 21 Stk pro Anzuchtkiste)
     stueck_pro_kiste: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    # Wie viele Kisten diese Ernte im Growroom geleert hat. Steuert die
+    # Freigabe von Stellplätzen. None bei Alt- und Importdaten — dort ist
+    # die Kistenzahl nicht rekonstruierbar.
+    entleerte_kisten: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     # Gesetzt, wenn die Ernte aus einem Historien-Import stammt — der Rollback
     # eines Laufs darf nur seine eigenen Ernten entfernen.
     import_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid)

@@ -298,6 +298,7 @@ def _auto_migrate(engine: Engine) -> None:
         _add_col_if_missing("harvests", "menge_stueck",     "INTEGER")
         _add_col_if_missing("harvests", "verlust_stueck",   "INTEGER")
         _add_col_if_missing("harvests", "stueck_pro_kiste", "INTEGER")
+        _add_col_if_missing("harvests", "entleerte_kisten", "INTEGER")
         # Preise auf Lieferschein (pro Kunde)
         _add_col_if_missing("customers", "show_prices_on_delivery_note", "BOOLEAN", "0")
         # Substrattyp + Winterzyklus (pro Sorte), Chargen-Abweichung (pro Saatgut-Charge)

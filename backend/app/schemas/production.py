@@ -104,6 +104,11 @@ class HarvestBase(BaseModel):
 class HarvestCreate(HarvestBase):
     """Schema zum Erstellen einer Ernte"""
     grow_batch_id: UUID = Field(..., description="ID der Wachstumscharge")
+    entleerte_kisten: Optional[int] = Field(
+        None, ge=0,
+        description="Wie viele Kisten diese Ernte im Growroom geleert hat. "
+                    "Leer = alle noch belegten Kisten der Charge.",
+    )
     # Wird als Harvest.quality_notes gespeichert
     notizen: Optional[str] = Field(None, description="Beobachtungen zur Ernte")
 
@@ -116,6 +121,7 @@ class HarvestResponse(HarvestBase):
     grow_batch_id: UUID
     created_at: datetime
     quality_notes: Optional[str] = None
+    entleerte_kisten: Optional[int] = None
 
     # Berechnete Felder
     verlustquote: Decimal
@@ -148,4 +154,3 @@ class DashboardSummary(BaseModel):
     ernten_diese_woche_stueck: int = 0
     verluste_diese_woche_stueck: int = 0
     woche: DashboardWoche
-

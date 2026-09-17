@@ -305,18 +305,40 @@ def create_harvest(data: HarvestCreate, db: DBSession):
     """Erfasst eine Ernte und gibt das Regal frei (Capacity-Decrement)."""
     from app.models.capacity import Capacity, ResourceType
 
+    batch = db.get(GrowBatch, data.grow_batch_id)
+    if not batch:
+        raise HTTPException(status_code=404, detail="Wachstumscharge nicht gefunden")
+
+    # Wie viele Kisten dieser Charge stehen noch im Growroom?
+    bereits_entleert = sum(h.entleerte_kisten or 0 for h in batch.harvests)
+    verbleibend = max(0, (batch.tray_anzahl or 0) - bereits_entleert)
+
+    entleerte = data.entleerte_kisten
+    if entleerte is None:
+        # Keine Angabe = die Charge wird vollständig abgeerntet (bisheriges Verhalten).
+        entleerte = verbleibend
+    elif entleerte > verbleibend:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Die Charge hat nur noch {verbleibend} Kisten im Growroom, "
+                   f"{entleerte} wurden angegeben.",
+        )
+
     payload = data.model_dump()
-    # Formular-Feld "notizen" landet in Harvest.quality_notes
     notizen = payload.pop("notizen", None)
+    payload["entleerte_kisten"] = entleerte
     harvest = Harvest(**payload, quality_notes=notizen)
     db.add(harvest)
 
-    batch = db.get(GrowBatch, data.grow_batch_id)
-    if batch and batch.status != GrowBatchStatus.GEERNTET:
-        # Markiere Charge als geerntet (vereinfachte Annahme: eine Ernte pro Charge)
+    # Status erst wechseln, wenn wirklich nichts mehr im Growroom steht.
+    # Vorher stand hier ein unbedingtes GEERNTET mit dem Kommentar
+    # "vereinfachte Annahme: eine Ernte pro Charge" — genau diese Annahme
+    # bricht bei Teilernten.
+    if verbleibend - entleerte <= 0 and batch.status != GrowBatchStatus.GEERNTET:
         batch.status = GrowBatchStatus.GEERNTET
 
-        # Regal-Kapazität freigeben
+        # Alt-Verhalten unverändert: der regalbezogene Zähler wird weiterhin
+        # genau einmal je Charge freigegeben, nämlich beim vollständigen Abernten.
         if batch.regal_position:
             cap = db.execute(
                 select(Capacity).where(
