@@ -1,4 +1,5 @@
 from datetime import date, timedelta
+from decimal import Decimal
 from typing import List, Optional
 from uuid import UUID
 from fastapi import APIRouter, Depends, Query, HTTPException, Response
@@ -131,6 +132,40 @@ def create_grow_batch(data: GrowBatchCreate, db: DBSession):
         status=GrowBatchStatus.KEIMUNG,
     )
     db.add(grow_batch)
+
+    if data.seed_batch_id and seed.saatgut_pro_einheit_gramm:
+        from app.services.inventory_service import InventoryService
+        bedarf_g = Decimal(str(data.tray_anzahl)) * Decimal(str(seed.saatgut_pro_einheit_gramm))
+        db.flush()
+        try:
+            if seed_batch.bestaende:
+                bestand = next(
+                    (bestand for bestand in seed_batch.bestaende
+                     if bestand.is_active and not bestand.is_blocked
+                     and Decimal(str(bestand.current_quantity_kg)) * 1000 >= bedarf_g),
+                    None,
+                )
+                if bestand is None:
+                    raise ValueError(
+                        f"Nicht genug Saatgut in Charge {seed_batch.charge_nummer}: "
+                        f"benötigt {bedarf_g} g, verfügbar {seed_batch.verfuegbar_gramm} g"
+                    )
+                InventoryService(db).consume_seed_for_sowing(
+                    seed_inventory_id=bestand.id,
+                    quantity_kg=bedarf_g / 1000,
+                    grow_batch_id=grow_batch.id,
+                )
+            else:
+                rest = Decimal(str(seed_batch.verbleibend_gramm or 0))
+                if rest < bedarf_g:
+                    raise ValueError(
+                        f"Nicht genug Saatgut in Charge {seed_batch.charge_nummer}: "
+                        f"benötigt {bedarf_g} g, verfügbar {rest} g"
+                    )
+                seed_batch.verbleibend_gramm = rest - bedarf_g
+        except ValueError as fehler:
+            db.rollback()
+            raise HTTPException(status_code=400, detail=str(fehler))
 
     # Capacity-Decrement: erhöht aktuell_belegt für das Regal (Stringmatch auf Capacity.name).
     # Antwortet auf PDF-Hinweis "es ändert sich nichts an der Platz Verfügbarkeit".

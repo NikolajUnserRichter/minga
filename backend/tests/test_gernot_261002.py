@@ -223,3 +223,81 @@ class TestAbgeleiteteMenge:
         sorte = _sorte(client)
         _platzhalter_charge(sorte)
         assert Decimal(str(_chargen(client, sorte)[0]["verbleibend_gramm"])) == Decimal("0")
+
+
+def _aussaat(client, charge_id, kisten):
+    return client.post("/api/v1/production/grow-batches", json={
+        "seed_batch_id": charge_id, "tray_anzahl": kisten, "aussaat_datum": "2026-10-02",
+    })
+
+
+def _lagermenge_kg(inventory_id):
+    from app.models.inventory import SeedInventory
+    with TestingSessionLocal() as db:
+        return Decimal(str(db.get(SeedInventory, uuid.UUID(inventory_id)).current_quantity_kg))
+
+
+def _anzahl_wachstumschargen():
+    from app.models.production import GrowBatch
+    with TestingSessionLocal() as db:
+        return db.query(GrowBatch).count()
+
+
+class TestAbbuchungBeimAussaeen:
+
+    def test_aussaat_bucht_bedarf_ab(self, client):
+        """10 Kisten Borretsch à 80 g = 800 g von 10 kg."""
+        lort = _lagerort(client)
+        sorte = _sorte(client, gramm_pro_kiste=80)
+        inv = _wareneingang(client, sorte, lort, gramm=10000)
+        charge_id = _chargen(client, sorte)[0]["id"]
+
+        r = _aussaat(client, charge_id, 10)
+
+        assert r.status_code in (200, 201), r.text
+        assert _lagermenge_kg(inv["id"]) == Decimal("9.2")
+        assert Decimal(str(_chargen(client, sorte)[0]["verbleibend_gramm"])) == Decimal("9200")
+
+    def test_bewegung_verweist_auf_die_wachstumscharge(self, client):
+        from app.models.inventory import InventoryMovement, MovementType
+        lort = _lagerort(client)
+        sorte = _sorte(client, gramm_pro_kiste=80)
+        inv = _wareneingang(client, sorte, lort)
+        wb = _aussaat(client, _chargen(client, sorte)[0]["id"], 10).json()
+
+        with TestingSessionLocal() as db:
+            bewegung = db.query(InventoryMovement).filter_by(
+                seed_inventory_id=uuid.UUID(inv["id"]), movement_type=MovementType.PRODUKTION,
+            ).one()
+            assert str(bewegung.grow_batch_id) == wb["id"]
+
+    def test_zu_wenig_saatgut_bricht_ohne_halbe_charge_ab(self, client):
+        """Review Focus 1 + 3: Gernots auf 0 korrigiertes Los."""
+        lort = _lagerort(client)
+        sorte = _sorte(client, gramm_pro_kiste=80)
+        inv = _wareneingang(client, sorte, lort)
+        _korrektur(client, inv["id"], 0)
+        vorher = _anzahl_wachstumschargen()
+
+        r = _aussaat(client, _chargen(client, sorte)[0]["id"], 10)
+
+        assert r.status_code == 400, r.text
+        assert _anzahl_wachstumschargen() == vorher, "Keine Wachstumscharge bei gescheiterter Abbuchung"
+        assert _lagermenge_kg(inv["id"]) == Decimal("0")
+
+    def test_platzhalter_ist_nicht_aussaebar(self, client):
+        """Review Focus 5."""
+        sorte = _sorte(client, gramm_pro_kiste=80)
+        platzhalter = _platzhalter_charge(sorte)
+        r = _aussaat(client, platzhalter, 1)
+        assert r.status_code == 400, r.text
+
+    def test_ohne_saatgutdichte_wird_nicht_abgebucht(self, client):
+        lort = _lagerort(client)
+        sorte = _sorte(client, gramm_pro_kiste=None)
+        inv = _wareneingang(client, sorte, lort)
+
+        r = _aussaat(client, _chargen(client, sorte)[0]["id"], 10)
+
+        assert r.status_code in (200, 201), r.text
+        assert _lagermenge_kg(inv["id"]) == Decimal("10")
