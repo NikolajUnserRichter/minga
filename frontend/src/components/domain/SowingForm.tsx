@@ -64,7 +64,12 @@ export function SowingForm({
   // den Komponenten gemischt, die Mischcharge entsteht dabei im Backend.
   const istMix = !!selectedSeed?.is_mix;
 
-  const { data: seedBatches = [] } = useQuery({
+  const {
+    data: seedBatches = [],
+    isError: chargenFehler,
+    error: chargenFehlerDetail,
+    isLoading: chargenLaden,
+  } = useQuery({
     queryKey: ['seed-batches', formData.seed_id],
     queryFn: () => seedsApi.listBatches(formData.seed_id),
     enabled: !!formData.seed_id && !istMix,
@@ -257,7 +262,16 @@ export function SowingForm({
           )}
         </>
       )}
-      {!istMix && formData.seed_id && batchOptions.length === 0 && (
+      {!istMix && formData.seed_id && chargenFehler && (
+        <div className="text-sm text-red-700 dark:text-red-300 bg-red-50 dark:bg-red-900/20 p-3 rounded border border-red-200 dark:border-red-800">
+          Die Saatgut-Chargen konnten nicht geladen werden.
+          {(chargenFehlerDetail as any)?.response?.data?.detail
+            ? ` (${(chargenFehlerDetail as any).response.data.detail})`
+            : ''}
+          {' '}Bitte nicht erneut einbuchen, sondern den Fehler melden.
+        </div>
+      )}
+      {!istMix && formData.seed_id && !chargenFehler && !chargenLaden && batchOptions.length === 0 && (
         <div className="text-sm text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-900/20 p-3 rounded border border-amber-200 dark:border-amber-800">
           ⚠️ Für diese Sorte ist noch keine Saatgut-Charge im Lager.
           Bitte erst unter <b>Lager → Wareneingang Saatgut</b> eine Charge erfassen.
