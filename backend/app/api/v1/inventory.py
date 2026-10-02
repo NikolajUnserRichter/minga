@@ -253,6 +253,8 @@ def receive_seed_batch(
             erntefenster_max_tage=erntefenster_max_tage,
         )
         db.add(seed_batch)
+        db.flush()
+        inventory.seed_batch_id = seed_batch.id
         # Note: service.receive_seed_batch signature in 1015 has explicit args.
         # Check argument names carefully!
         # Step 1015: supplier_name (not supplier), best_before_date (not mhd),
@@ -1164,4 +1166,3 @@ def correct_inventory(
 
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-

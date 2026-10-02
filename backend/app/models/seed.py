@@ -198,6 +198,9 @@ class SeedBatch(Base):
 
     # Beziehungen
     seed: Mapped["Seed"] = relationship("Seed", back_populates="batches")
+    bestaende: Mapped[list["SeedInventory"]] = relationship(
+        "SeedInventory", back_populates="seed_batch"
+    )
     grow_batches: Mapped[list["GrowBatch"]] = relationship(
         "GrowBatch", back_populates="seed_batch"
     )

@@ -114,6 +114,9 @@ class SeedInventory(Base):
     seed_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("seeds.id"), nullable=False
     )
+    seed_batch_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid, ForeignKey("seed_batches.id"), nullable=True, index=True
+    )
 
     # Chargenidentifikation
     batch_number: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
@@ -165,18 +168,8 @@ class SeedInventory(Base):
         back_populates="seed_inventory"
     )
 
-    # Spiegel-Charge aus der Rückverfolgbarkeit: der Wareneingang legt
-    # SeedInventory und SeedBatch parallel an, verbunden nur über Sorte +
-    # Chargennummer (kein Fremdschlüssel). viewonly — hier wird gelesen,
-    # geschrieben wird über die jeweilige Seite selbst.
     seed_batch: Mapped[Optional["SeedBatch"]] = relationship(
-        "SeedBatch",
-        primaryjoin=(
-            "and_(SeedInventory.seed_id == foreign(SeedBatch.seed_id), "
-            "SeedInventory.batch_number == foreign(SeedBatch.charge_nummer))"
-        ),
-        viewonly=True,
-        uselist=False,
+        "SeedBatch", back_populates="bestaende"
     )
 
     @property

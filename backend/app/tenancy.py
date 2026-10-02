@@ -290,6 +290,7 @@ def _auto_migrate(engine: Engine) -> None:
         _add_col_if_missing("orders", "packing_date", "DATE")
         # Handelsware-Bestandsbewegung (Tradesk-Einkauf) auf bestehenden Tenant-DBs
         _add_col_if_missing("inventory_movements", "trade_goods_id", "CHAR(32)")
+        _add_col_if_missing("seed_inventory", "seed_batch_id", "CHAR(32)")
         # lexoffice-Übertragungsstatus auf bestehenden Rechnungen
         _add_col_if_missing("invoices", "lexoffice_id", "VARCHAR(64)")
         _add_col_if_missing("invoices", "lexoffice_synced_at", "DATETIME")
@@ -340,6 +341,13 @@ def _auto_migrate(engine: Engine) -> None:
         # Inventur: Typ + Vier-Augen-Feld
         _add_col_if_missing("inventory_counts", "typ", "VARCHAR(20)", "'STICHPROBE'")
         _add_col_if_missing("inventory_counts", "geprueft_von", "VARCHAR(100)")
+        from sqlalchemy.orm import Session
+        from app.services.saatgut_verknuepfung import verknuepfe_saatgutbestaende
+        if inspector.has_table("seed_inventory") and inspector.has_table("seed_batches"):
+            with Session(engine) as session:
+                verknuepfe_saatgutbestaende(session)
+                session.commit()
+
         if inspector.has_table("inventory_movements"):
             with engine.begin() as conn:
                 conn.execute(text(
