@@ -119,6 +119,7 @@ def list_seed_inventory(
     if low_stock_only:
         query = query.where(SeedInventory.current_quantity <= SeedInventory.min_quantity)
 
+    query = query.order_by(SeedInventory.created_at.desc(), SeedInventory.id)
     query = query.offset(pagination.offset).limit(pagination.page_size)
     inventory = db.execute(query).scalars().all()
     return inventory
@@ -512,6 +513,7 @@ def list_packaging(
     if low_stock_only:
         query = query.where(PackagingInventory.current_quantity <= PackagingInventory.min_quantity)
 
+    query = query.order_by(PackagingInventory.name, PackagingInventory.id)
     query = query.offset(pagination.offset).limit(pagination.page_size)
     inventory = db.execute(query).scalars().all()
     return inventory

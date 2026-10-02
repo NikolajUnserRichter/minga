@@ -819,7 +819,7 @@ export const inventoryApi = {
     api.patch<InventoryLocation>(`/inventory/locations/${id}`, data).then(r => r.data),
 
   // Seed Inventory
-  listSeedInventory: (params?: { seed_id?: string; location_id?: string; low_stock_only?: boolean }) =>
+  listSeedInventory: (params?: { seed_id?: string; location_id?: string; low_stock_only?: boolean; page_size?: number }) =>
     api.get<SeedInventory[]>('/inventory/seeds', { params }).then(r => r.data),
 
   receiveSeedBatch: (data: {
@@ -870,7 +870,7 @@ export const inventoryApi = {
     api.post(`/inventory/seeds/${inventoryId}/consume`, null, { params: data }).then(r => r.data),
 
   // Finished Goods
-  listFinishedGoods: (params?: { product_id?: string; location_id?: string; available_only?: boolean }) =>
+  listFinishedGoods: (params?: { product_id?: string; location_id?: string; available_only?: boolean; page_size?: number }) =>
     api.get<FinishedGoodsInventory[]>('/inventory/finished-goods', { params }).then(r => r.data),
 
   receiveHarvest: (data: {
@@ -902,7 +902,7 @@ export const inventoryApi = {
     api.get<TraceabilityChain>(`/inventory/traceability/${id}`).then(r => r.data),
 
   // Packaging
-  listPackaging: (params?: { location_id?: string; low_stock_only?: boolean }) =>
+  listPackaging: (params?: { location_id?: string; low_stock_only?: boolean; page_size?: number }) =>
     api.get<PackagingInventory[]>('/inventory/packaging', { params }).then(r => r.data),
 
   createPackaging: (data: Partial<PackagingInventory>) =>

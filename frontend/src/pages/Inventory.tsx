@@ -31,6 +31,8 @@ import { TraceabilityChain, InventoryType } from '../types';
 import { getErrorMessage } from '../services/errors';
 import { druckePdf } from '../services/print';
 
+const LISTENGRENZE = 100;
+
 const LOCATION_TYPE_LABELS: Record<LocationType, string> = {
   LAGER: 'Lager',
   KUEHLRAUM: 'Kühlraum',
@@ -76,6 +78,7 @@ export default function Inventory() {
     queryFn: () =>
       inventoryApi.listSeedInventory({
         location_id: filterLocation === 'all' ? undefined : filterLocation,
+        page_size: LISTENGRENZE,
       }),
   });
 
@@ -84,6 +87,7 @@ export default function Inventory() {
     queryFn: () =>
       inventoryApi.listFinishedGoods({
         location_id: filterLocation === 'all' ? undefined : filterLocation,
+        page_size: LISTENGRENZE,
       }),
   });
 
@@ -107,6 +111,7 @@ export default function Inventory() {
     queryFn: () =>
       inventoryApi.listPackaging({
         location_id: filterLocation === 'all' ? undefined : filterLocation,
+        page_size: LISTENGRENZE,
       }),
   });
 
@@ -195,6 +200,11 @@ export default function Inventory() {
       )}
 
       {/* Seeds Tab */}
+      {activeTab === 'seeds' && seedInventory.length === LISTENGRENZE && (
+        <p className="mb-2 text-sm text-amber-700 dark:text-amber-300">
+          Es werden die neuesten {LISTENGRENZE} Einträge angezeigt. Bitte nach Lagerort filtern, um alle zu sehen.
+        </p>
+      )}
       {activeTab === 'seeds' && (
         <SeedInventoryTab
           inventory={seedInventory}
@@ -229,6 +239,11 @@ export default function Inventory() {
       )}
 
       {/* Finished Goods Tab */}
+      {activeTab === 'finished' && finishedGoods.length === LISTENGRENZE && (
+        <p className="mb-2 text-sm text-amber-700 dark:text-amber-300">
+          Es werden die ersten {LISTENGRENZE} Einträge angezeigt. Bitte nach Lagerort filtern, um alle zu sehen.
+        </p>
+      )}
       {activeTab === 'finished' && (
         <FinishedGoodsTab
           inventory={finishedGoods}
@@ -251,6 +266,11 @@ export default function Inventory() {
       )}
 
       {/* Packaging Tab */}
+      {activeTab === 'packaging' && packaging.length === LISTENGRENZE && (
+        <p className="mb-2 text-sm text-amber-700 dark:text-amber-300">
+          Es werden die ersten {LISTENGRENZE} Einträge angezeigt. Bitte nach Lagerort filtern, um alle zu sehen.
+        </p>
+      )}
       {activeTab === 'packaging' && (
         <PackagingTab
           inventory={packaging}

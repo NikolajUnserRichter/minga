@@ -301,3 +301,27 @@ class TestAbbuchungBeimAussaeen:
 
         assert r.status_code in (200, 201), r.text
         assert _lagermenge_kg(inv["id"]) == Decimal("10")
+
+
+class TestInventarliste:
+    """Fehler 2: neue Wareneingänge fielen bei 'Alle Lagerorte' hinten ab."""
+
+    def test_neuester_eingang_steht_vorn(self, client):
+        lort = _lagerort(client)
+        sorte = _sorte(client)
+        for i in range(25):
+            _wareneingang(client, sorte, lort, charge=f"ALT-{i:02d}")
+        neu = _wareneingang(client, sorte, lort, charge="B20115")
+
+        r = client.get("/api/v1/inventory/seeds")
+        assert r.status_code == 200, r.text
+        assert r.json()[0]["id"] == neu["id"]
+
+    def test_volle_liste_mit_seitengroesse_100(self, client):
+        lort = _lagerort(client)
+        sorte = _sorte(client)
+        for i in range(30):
+            _wareneingang(client, sorte, lort, charge=f"L-{i:02d}")
+
+        r = client.get("/api/v1/inventory/seeds", params={"page_size": 100})
+        assert len(r.json()) == 30
