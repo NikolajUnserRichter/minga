@@ -205,6 +205,20 @@ class SeedBatch(Base):
         "GrowBatch", back_populates="seed_batch"
     )
 
+    @property
+    def verfuegbar_gramm(self) -> Decimal:
+        """Verfügbare Menge aus aktiven, nicht gesperrten Lagerbeständen.
+
+        Ohne verknüpften Lagerbestand gilt der gespeicherte Chargenwert.
+        """
+        if self.bestaende:
+            return sum(
+                (Decimal(str(bestand.current_quantity_kg)) * 1000
+                 for bestand in self.bestaende if bestand.is_active and not bestand.is_blocked),
+                Decimal("0"),
+            )
+        return Decimal(str(self.verbleibend_gramm or 0))
+
     def __repr__(self) -> str:
         return f"<SeedBatch(charge='{self.charge_nummer}', id={self.id})>"
 

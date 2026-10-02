@@ -5,7 +5,7 @@ Pydantic Schemas für Saatgut
 from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import AliasChoices, BaseModel, Field, ConfigDict
 
 
 class SeedBase(BaseModel):
@@ -161,7 +161,9 @@ class SeedBatchResponse(SeedBatchBase):
 
     id: UUID
     seed_id: UUID
-    verbleibend_gramm: Decimal
+    verbleibend_gramm: Decimal = Field(
+        validation_alias=AliasChoices("verfuegbar_gramm", "verbleibend_gramm")
+    )
     created_at: datetime
 
 

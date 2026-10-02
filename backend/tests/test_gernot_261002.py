@@ -184,3 +184,42 @@ class TestRueckfuellung:
 
         assert _bestand(inv["id"])[0] is None
         assert ergebnis["zu_weit_auseinander"] == 1
+
+
+def _korrektur(client, inventory_id, kg, grund="Korrektur: Eingabefehler"):
+    r = client.post("/api/v1/inventory/correction", params={
+        "inventory_id": inventory_id, "inventory_type": "SAATGUT",
+        "actual_quantity": kg, "reason": grund,
+    })
+    assert r.status_code == 200, r.text
+
+
+class TestAbgeleiteteMenge:
+    """Fehler 3: Korrekturen im Lager müssen im Aussaat-Formular ankommen."""
+
+    def test_korrigierte_doppelbuchung_zeigt_keine_phantommenge(self, client):
+        """Exakt Gernots B20115: zweimal 10 kg erfasst, den zweiten auf 0 korrigiert."""
+        lort = _lagerort(client)
+        sorte = _sorte(client)
+        _wareneingang(client, sorte, lort)
+        doppelt = _wareneingang(client, sorte, lort)
+        _korrektur(client, doppelt["id"], 0)
+
+        mengen = sorted(Decimal(str(c["verbleibend_gramm"])) for c in _chargen(client, sorte))
+        assert mengen == [Decimal("0"), Decimal("10000")]
+
+    def test_gesperrter_bestand_ist_nicht_verfuegbar(self, client):
+        from app.models.inventory import SeedInventory
+        lort = _lagerort(client)
+        sorte = _sorte(client)
+        inv = _wareneingang(client, sorte, lort)
+        with TestingSessionLocal() as db:
+            db.get(SeedInventory, uuid.UUID(inv["id"])).is_blocked = True
+            db.commit()
+
+        assert Decimal(str(_chargen(client, sorte)[0]["verbleibend_gramm"])) == Decimal("0")
+
+    def test_platzhalter_ohne_bestand_nutzt_gespeicherten_wert(self, client):
+        sorte = _sorte(client)
+        _platzhalter_charge(sorte)
+        assert Decimal(str(_chargen(client, sorte)[0]["verbleibend_gramm"])) == Decimal("0")
