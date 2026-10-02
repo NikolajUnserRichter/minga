@@ -157,6 +157,8 @@ class SeedBatchResponse(SeedBatchBase):
     """Schema für Saatgut-Charge-Antwort"""
     model_config = ConfigDict(from_attributes=True)
 
+    menge_gramm: Decimal = Field(..., ge=0, description="Gelieferte Menge in Gramm")
+
     id: UUID
     seed_id: UUID
     verbleibend_gramm: Decimal
