@@ -123,3 +123,47 @@ def get_user(user_id: UUID, mandant: Mandant, user: CurrentUser):
     if not _sichtbar(mandant, b):
         raise HTTPException(status_code=404, detail="Benutzer nicht gefunden.")
     return _antwort(b, user)
+
+
+def _ist_demo_login(user: dict) -> bool:
+    """Die öffentlichen Demo-Logins schreiben in KEINEM Mandanten — auch nicht, wenn
+    ihr tenant_slug verstellt wurde (B8-Plan, Deploy-Gate D5). Benutzername UND E-Mail,
+    weil sich die E-Mail je nach Realm-Einstellung selbst ändern lässt."""
+    return any((user.get(k) or "").strip().lower() in DEMO_LOGINS for k in ("username", "email"))
+
+
+def _mandant_schreiben(mandant: Mandant, user: CurrentUser) -> str:
+    if mandant == DEMO_MANDANT:
+        raise HTTPException(status_code=403, detail="In der Demo können Benutzer nicht geändert werden.")
+    if _ist_demo_login(user):
+        raise HTTPException(status_code=403, detail="Mit einem Demo-Login können Benutzer nicht geändert werden.")
+    return mandant
+
+
+MandantSchreiben = Annotated[str, Depends(_mandant_schreiben)]
+
+
+def _email_hash(email: str) -> str:
+    """SHA-256 der klein geschriebenen Adresse (E-M7): wiederholtes Abklopfen bleibt
+    erkennbar, ohne dass eine womöglich fremde Adresse im Klartext gespeichert wird."""
+    return hashlib.sha256(email.strip().lower().encode("utf-8")).hexdigest()
+
+
+@router.post("", response_model=BenutzerAngelegtResponse, status_code=201)
+def create_user(body: BenutzerCreate, mandant: MandantSchreiben, user: CurrentUser, response: Response):
+    try:
+        b = kc.create_user_for_tenant(
+            tenant_slug=mandant, email=body.email, first_name=body.first_name,
+            last_name=body.last_name, role=body.role,
+        )
+    except kc.KeycloakAdminError as e:
+        if isinstance(e, kc.KeycloakKonflikt):
+            # Die 409 verrät, dass die Adresse irgendwo im Realm existiert, womöglich
+            # bei einem anderen Mandanten: festhalten, aber nur als Hash (E-M7).
+            _audit("ANLAGE_KONFLIKT", mandant, user, ziel_email_sha256=_email_hash(body.email),
+                   grund="E-Mail vergeben")
+        raise _fehler(e, mandant, user)
+    _audit("BENUTZER_ANGELEGT", mandant, user, ziel_id=b["id"], ziel_email=b["email"], rolle=body.role)
+    response.headers["Cache-Control"] = "no-store"
+    pw = b.pop("temporary_password")
+    return BenutzerAngelegtResponse(**_antwort(b, user).model_dump(), temporary_password=pw)

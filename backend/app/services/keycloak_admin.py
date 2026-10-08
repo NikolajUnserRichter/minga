@@ -499,3 +499,123 @@ def get_tenant_user(tenant_slug: str, user_id: str) -> dict:
     with _Benutzerzugang() as kc:
         rep = _lade_mandanten_user(kc, user_id, tenant_slug)
         return _als_benutzer(rep, _app_rollen(kc, user_id))
+
+
+_HALB_ANGELEGT = (
+    "Benutzer wurde angelegt, die Rolle aber nicht zugewiesen. Er ist deaktiviert; "
+    "bitte über „Bearbeiten“ Rolle setzen und aktivieren."
+)
+_HALB_ANGELEGT_AKTIV = (
+    "Benutzer wurde angelegt, die Rolle aber nicht zugewiesen, und er konnte nicht "
+    "deaktiviert werden — bitte den Support informieren."
+)
+
+
+def _deaktivieren_best_effort(kc: _Benutzerzugang, user_id: str, username: str) -> bool:
+    """Kein Hard-Delete: ein halb angelegter Benutzer wird gesperrt, nicht gelöscht.
+
+    Nur, wenn die ID wirklich zu dem gerade angelegten Benutzernamen gehört —
+    sonst träfe ein Fehler bei der ID-Ermittlung einen fremden Benutzer.
+    Rückgabe: True, wenn er jetzt deaktiviert ist."""
+    try:
+        r = kc.call("GET", f"/users/{_require_user_id(user_id)}")
+        if r.status_code == 200 and r.json().get("username") == username:
+            p = kc.call("PUT", f"/users/{user_id}", json={**r.json(), "enabled": False})
+            if p.status_code in (200, 204):
+                return True
+    except KeycloakAdminError:
+        pass
+    logger.error("[keycloak] Benutzer %s konnte nach Fehler nicht deaktiviert werden", user_id)
+    return False
+
+
+def _rolle_rep(kc: _Benutzerzugang, role: str) -> dict:
+    r = kc.call("GET", f"/roles/{role}")
+    if r.status_code == 404:
+        raise KeycloakNichtErreichbar(
+            f"Rolle '{role}' fehlt in Keycloak — bitte den Support informieren."
+        )
+    if r.status_code != 200:
+        raise KeycloakAdminError(f"Rolle '{role}' konnte nicht gelesen werden (HTTP {r.status_code}).")
+    rolle = r.json()
+    if rolle.get("composite"):
+        # Eine zusammengesetzte Rolle vergäbe mehr als ihren Namen (z. B. realm-management).
+        raise KeycloakNichtErreichbar(
+            f"Rolle '{role}' ist in Keycloak zusammengesetzt und wird hier nicht vergeben — "
+            "bitte den Support informieren."
+        )
+    return rolle
+
+
+def _neue_user_id(kc: _Benutzerzugang, antwort: httpx.Response, username: str) -> str:
+    """ID des gerade angelegten Benutzers: aus dem Location-Header, sonst über
+    eine Suche, die genau EINEN Treffer mit genau diesem Benutzernamen verlangt."""
+    kandidat = antwort.headers.get("Location", "").rstrip("/").rsplit("/", 1)[-1]
+    try:
+        return _require_user_id(kandidat)
+    except KeycloakNichtGefunden:
+        pass
+    lookup = kc.call("GET", "/users", params={"username": username, "exact": "true"})
+    treffer = [u for u in (lookup.json() if lookup.status_code == 200 else [])
+               if u.get("username") == username]
+    if len(treffer) != 1:
+        logger.error("[keycloak] Neu angelegter Benutzer nicht eindeutig wiedergefunden (%d Treffer)", len(treffer))
+        raise KeycloakAdminError("Benutzer angelegt, aber nicht eindeutig wiedergefunden — bitte den Support informieren.")
+    return _require_user_id(treffer[0]["id"])
+
+
+def create_user_for_tenant(
+    *, tenant_slug: str, email: str, first_name: str, last_name: str, role: str,
+) -> dict:
+    """Legt einen Benutzer im Mandanten an. Rückgabe enthält das Einmalpasswort.
+
+    Reihenfolge ist Absicht:
+      1. Rolle im Realm prüfen — VOR der Anlage (create_tenant_user prüft erst
+         danach und hinterlässt bei fehlender Rolle einen Benutzer ohne Rechte).
+      2. Anlegen mit tenant_slug-Attribut, Passwort temporär.
+      3. Prüfen, dass Keycloak das Attribut gespeichert hat — VOR der Rollenvergabe.
+      4. Rolle zuweisen.
+    Scheitert 3 oder 4 (auch durch Ausfall), wird der Benutzer deaktiviert, nicht gelöscht.
+    """
+    tenant_slug = _require_safe_slug(tenant_slug)
+    if role not in MANDANTEN_ROLLEN:
+        raise RolleNichtErlaubt(f"Rolle '{role}' ist nicht erlaubt.")
+    email = email.strip().lower()
+    pw = _gen_password()
+    with _Benutzerzugang() as kc:
+        rolle = _rolle_rep(kc, role)
+        r = kc.call("POST", "/users", json={
+            "username": email,
+            "email": email,
+            "firstName": first_name,
+            "lastName": last_name,
+            "enabled": True,
+            "emailVerified": True,
+            "requiredActions": [],
+            "attributes": {"tenant_slug": [tenant_slug]},
+            "credentials": [{"type": "password", "value": pw, "temporary": True}],
+        })
+        if r.status_code == 409:
+            raise KeycloakKonflikt("Diese E-Mail-Adresse ist bereits vergeben.")
+        if r.status_code not in (201, 204):
+            raise KeycloakAdminError(f"Benutzer-Anlage abgelehnt (HTTP {r.status_code}).")
+        user_id = _neue_user_id(kc, r, email)
+
+        try:
+            rep = kc.call("GET", f"/users/{user_id}")
+            if rep.status_code != 200 or not _gehoert_zum_mandanten(rep.json(), tenant_slug):
+                raise KeycloakAdminError(
+                    "Keycloak hat das Attribut tenant_slug nicht gespeichert (User-Profile prüfen). "
+                    "Der Benutzer wurde deaktiviert und hat keine Rolle."
+                )
+            z = kc.call("POST", f"/users/{user_id}/role-mappings/realm", json=[rolle])
+            if z.status_code >= 400:
+                raise KeycloakNichtErreichbar(_HALB_ANGELEGT)
+        except KeycloakNichtErreichbar as e:
+            gesperrt = _deaktivieren_best_effort(kc, user_id, email)
+            raise KeycloakNichtErreichbar(_HALB_ANGELEGT if gesperrt else _HALB_ANGELEGT_AKTIV) from e
+        except KeycloakAdminError:
+            _deaktivieren_best_effort(kc, user_id, email)
+            raise
+        benutzer = _als_benutzer(rep.json(), [role])
+    return {**benutzer, "temporary_password": pw}

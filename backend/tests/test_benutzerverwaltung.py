@@ -452,3 +452,180 @@ def test_rollenlisten_stimmen_ueberein():
     from app.schemas.user import Rolle
     assert set(get_args(Rolle)) == set(keycloak_admin.MANDANTEN_ROLLEN) == set(ALLE_ROLLEN)
     assert keycloak_admin.MANDANTEN_ROLLEN == APP_ROLLEN
+
+
+def _neu(admin, **kw):
+    body = {"email": "lena@beispielfirma.de", "first_name": "Lena", "last_name": "Lager",
+            "role": "production_staff", **kw}
+    return admin.post("/api/v1/users", json=body)
+
+
+class TestAnlegen:
+    def test_mitarbeiter_anlegen(self, admin, kc):
+        r = _neu(admin)
+        assert r.status_code == 201, r.text
+        assert r.headers["cache-control"] == "no-store"
+        b = r.json()
+        assert (b["role"], b["roles"], b["enabled"]) == ("production_staff", ["production_staff"], True)
+        assert len(b["temporary_password"]) >= 16
+        assert kc.users[b["id"]]["attributes"] == {"tenant_slug": [MANDANT]}
+        assert kc.mappings[b["id"]] == {STANDARDROLLE, "production_staff"}
+        assert kc.passwords[b["id"]] == {"type": "password", "value": b["temporary_password"], "temporary": True}
+
+    @pytest.mark.parametrize("rolle", ["sales", "production_planner", "production_staff", "accounting"])
+    def test_nur_admin_legt_an(self, admin, kc, rolle):
+        _als(rollen=(rolle,))
+        assert _neu(admin).status_code == 403
+        assert kc.calls == []
+
+    def test_mandant_aus_body_abgelehnt(self, admin, kc):
+        assert _neu(admin, tenant_slug=FREMD).status_code == 422
+        assert _neu(admin, attributes={"tenant_slug": [FREMD]}).status_code == 422
+        assert kc.schreibende_calls() == []
+
+    @pytest.mark.parametrize("rolle", ["realm-admin", "readonly", "offline_access", "ADMIN", ""])
+    def test_rolle_ausserhalb_allowlist(self, admin, kc, rolle):
+        assert _neu(admin, role=rolle).status_code == 422
+        assert kc.schreibende_calls() == []
+
+    def test_rolle_fehlt_im_realm_nichts_angelegt(self, admin, kc):
+        del kc.roles["production_staff"]
+        r = _neu(admin)
+        assert r.status_code == 503, r.text
+        assert "production_staff" in r.json()["detail"]
+        assert kc.schreibende_calls() == []
+
+    def test_zusammengesetzte_rolle_nicht_vergeben(self, admin, kc):
+        """Enthielte eine App-Rolle in Produktion z. B. realm-management-Rollen,
+        vergäbe der Mandanten-Admin mehr, als die Allowlist zeigt."""
+        kc.roles["sales"]["composite"] = True
+        r = _neu(admin, role="sales")
+        assert r.status_code == 503, r.text
+        assert "zusammengesetzt" in r.json()["detail"]
+        assert kc.schreibende_calls() == []
+
+    def test_email_vergeben(self, admin, kc, caplog):
+        """E-M7: Die Adresse gehört womöglich einem anderen Mandanten — im Audit nur ihr Hash."""
+        caplog.set_level("WARNING", logger="app.audit.benutzer")
+        fremd = kc.add_user("lena@beispielfirma.de", FREMD)
+        r = _neu(admin, email="Lena@Beispielfirma.DE")
+        assert r.status_code == 409
+        assert r.json()["detail"] == "Diese E-Mail-Adresse ist bereits vergeben."
+        assert kc.schreibende_calls(fremd) == []
+        assert kc.users[fremd]["attributes"] == {"tenant_slug": [FREMD]}
+        z = _audit_zeilen(caplog)
+        assert (z[-1]["aktion"], z[-1]["von_id"]) == ("ANLAGE_KONFLIKT", ADMIN_ID)
+        assert z[-1]["ziel_email_sha256"] == hashlib.sha256(b"lena@beispielfirma.de").hexdigest()
+        assert "ziel_email" not in z[-1]
+        assert "lena@beispielfirma.de" not in caplog.text.lower()
+        assert "lena@beispielfirma.de" not in r.text.lower()
+
+    def test_email_klein_geschrieben(self, admin, kc):
+        r = _neu(admin, email="Lena.Lager@Beispielfirma.DE")
+        assert r.status_code == 201, r.text
+        assert kc.users[r.json()["id"]]["username"] == "lena.lager@beispielfirma.de"
+
+    def test_umlaut_in_email(self, admin, kc):
+        assert _neu(admin, email="jürgen@beispielfirma.de").status_code == 422
+        assert kc.schreibende_calls() == []
+
+    def test_attribut_nicht_gespeichert_keine_rolle(self, admin, kc):
+        kc.attribute_verwerfen = True
+        r = _neu(admin)
+        assert r.status_code == 502, r.text
+        neu = next(u for u in kc.users.values() if u["username"] == "lena@beispielfirma.de")
+        assert neu["enabled"] is False
+        assert kc.mappings[neu["id"]] == {STANDARDROLLE}
+
+    def test_lesen_nach_anlage_scheitert_deaktiviert(self, admin, kc, monkeypatch):
+        """Keycloak legt an und fällt dann aus: der Benutzer bleibt nicht aktiv ohne Rolle."""
+        orig = kc.handler
+        ausgefallen = []
+
+        def handler(request):
+            angelegt = any(c[0] == "POST" and c[1].endswith("/users") for c in kc.calls)
+            if (angelegt and not ausgefallen and request.method == "GET"
+                    and re.fullmatch(rf"/admin/realms/{REALM}/users/[0-9a-f-]+", request.url.path)):
+                ausgefallen.append(request.url.path)
+                return httpx.Response(503, json={"error": "kurz weg"})
+            return orig(request)
+
+        monkeypatch.setattr(keycloak_admin, "_http_client",
+                            lambda: httpx.Client(transport=httpx.MockTransport(handler)))
+        r = _neu(admin)
+        assert r.status_code == 503, r.text
+        neu = next(u for u in kc.users.values() if u["username"] == "lena@beispielfirma.de")
+        assert neu["enabled"] is False
+        assert kc.mappings[neu["id"]] == {STANDARDROLLE}
+        assert "deaktiviert" in r.json()["detail"]
+
+    def test_rueckfall_suche_trifft_keinen_fremden(self, admin, kc, monkeypatch):
+        """201 ohne Location-Header und eine username-Suche mit Teiltreffern:
+        weder Weiterarbeit noch Deaktivierung darf einen anderen Benutzer treffen."""
+        fremd = kc.add_user("xlena@beispielfirma.de", FREMD, roles={"admin"})
+        kc.attribute_verwerfen = True
+        orig = kc.handler
+
+        def handler(request):
+            pfad = request.url.path
+            if pfad == f"/admin/realms/{REALM}/users" and request.method == "POST":
+                antwort = orig(request)
+                return httpx.Response(201) if antwort.status_code == 201 else antwort
+            if pfad == f"/admin/realms/{REALM}/users" and "username" in request.url.params:
+                kc.calls.append(("GET", pfad, dict(request.url.params), None))
+                name = request.url.params["username"]
+                treffer = sorted((u for u in kc.users.values() if name in u["username"]),
+                                 key=lambda u: u["username"] != "xlena@beispielfirma.de")
+                return httpx.Response(200, json=copy.deepcopy(treffer))
+            return orig(request)
+
+        monkeypatch.setattr(keycloak_admin, "_http_client",
+                            lambda: httpx.Client(transport=httpx.MockTransport(handler)))
+        r = _neu(admin)
+        assert r.status_code == 502, r.text
+        assert kc.schreibende_calls(fremd) == []
+        assert kc.users[fremd]["enabled"] is True
+        neu = next(u for u in kc.users.values() if u["username"] == "lena@beispielfirma.de")
+        assert neu["enabled"] is False
+
+    def test_demo_gesperrt(self, admin, kc, monkeypatch):
+        """Demo-Logins sind öffentlich; der Demo-Reset setzt Keycloak nicht zurück."""
+        from app.api.v1 import users
+        assert users.DEMO_MANDANT == "demo"
+        monkeypatch.setattr(users, "DEMO_MANDANT", MANDANT)
+        assert admin.get("/api/v1/users").status_code == 200
+        assert _neu(admin).status_code == 403
+        assert kc.schreibende_calls() == []
+
+    @pytest.mark.parametrize("username,email", [
+        ("anna@demo.novaerp.de", "anna@demo.novaerp.de"),
+        ("anna@demo.novaerp.de", "umbenannt@beispielfirma.de"),
+        ("ANNA@demo.novaerp.de", None),
+    ])
+    def test_demo_login_schreibt_in_keinem_mandanten(self, admin, kc, username, email):
+        """Öffentlicher Demo-Login (demo1234) mit verstelltem tenant_slug: Mandant
+        ist nicht 'demo', die Slug-Sperre griffe nicht — die Login-Sperre schon."""
+        _als(username=username, email=email)
+        assert _neu(admin, role="admin").status_code == 403
+        assert kc.schreibende_calls() == []
+
+    def test_nicht_erreichbar(self, admin, kc):
+        kc.down = True
+        r = _neu(admin)
+        assert r.status_code == 503
+        assert "nicht erreichbar" in r.json()["detail"]
+
+    def test_audit_ohne_passwort(self, admin, kc, caplog):
+        caplog.set_level("WARNING", logger="app.audit.benutzer")
+        r = _neu(admin)
+        z = _audit_zeilen(caplog)
+        assert len(z) == 1
+        assert (z[0]["aktion"], z[0]["mandant"], z[0]["von_id"]) == ("BENUTZER_ANGELEGT", MANDANT, ADMIN_ID)
+        assert (z[0]["ziel_id"], z[0]["ziel_email"], z[0]["rolle"]) == (r.json()["id"], "lena@beispielfirma.de", "production_staff")
+        assert r.json()["temporary_password"] not in caplog.text
+
+    def test_dienst_prueft_rolle_selbst(self, kc):
+        with pytest.raises(keycloak_admin.RolleNichtErlaubt):
+            keycloak_admin.create_user_for_tenant(tenant_slug=MANDANT, email="a@beispielfirma.de",
+                                                  first_name="A", last_name="B", role="realm-admin")
+        assert kc.calls == []
