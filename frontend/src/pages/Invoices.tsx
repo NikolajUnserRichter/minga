@@ -39,6 +39,10 @@ const STATUS_COLORS: Record<InvoiceStatus, 'gray' | 'info' | 'warning' | 'succes
   STORNIERT: 'purple',
 };
 
+// Die Rechnungsliste lädt bis zu 100 Rechnungen (Obergrenze des Backends).
+// Kommen genau 100 zurück, ist sie womöglich gekürzt — das muss sichtbar sein.
+const LISTENGRENZE = 100;
+
 const TYPE_LABELS: Record<InvoiceType, string> = {
   RECHNUNG: 'Rechnung',
   GUTSCHRIFT: 'Gutschrift',
@@ -79,6 +83,7 @@ export default function Invoices() {
       invoicesApi.list({
         status: filterStatus === 'all' ? undefined : filterStatus as InvoiceStatus,
         invoice_type: filterType === 'all' ? undefined : filterType as InvoiceType,
+        page_size: LISTENGRENZE,
       }),
   });
 
@@ -227,7 +232,7 @@ export default function Invoices() {
     <div>
       <PageHeader
         title="Rechnungswesen"
-        subtitle={`${invoices.length} Rechnungen`}
+        subtitle={`${invoices.length === LISTENGRENZE ? `${LISTENGRENZE}+` : invoices.length} Rechnungen`}
         actions={
           <div className="flex gap-2">
             <Button variant="secondary" icon={<Download className="w-4 h-4" />} onClick={() => setShowDatevExport(true)}>
@@ -305,6 +310,12 @@ export default function Invoices() {
         <Select options={statusOptions} value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} />
         <Select options={typeOptions} value={filterType} onChange={(e) => setFilterType(e.target.value)} />
       </FilterBar>
+
+      {invoices.length === LISTENGRENZE && (
+        <p className="mb-2 text-sm text-amber-700 dark:text-amber-300">
+          Es werden die neuesten {LISTENGRENZE} Rechnungen angezeigt. Ältere Rechnungen über den Status- oder Typfilter eingrenzen.
+        </p>
+      )}
 
       {displayInvoices.length === 0 ? (
         <EmptyState

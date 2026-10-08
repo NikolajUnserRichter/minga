@@ -77,7 +77,10 @@ def list_invoices(
     if to_date:
         query = query.where(Invoice.invoice_date <= to_date)
 
-    query = query.order_by(Invoice.invoice_date.desc())
+    # Neueste zuerst, stabil: am selben Tag entscheidet die Nummer. Nur nach
+    # Datum sortiert lieferte SQLite gleiche Tage in Einfügereihenfolge, und
+    # die neueste Rechnung des Tages stand hinten oder fiel aus der Seite.
+    query = query.order_by(Invoice.invoice_date.desc(), Invoice.invoice_number.desc())
     query = query.offset(pagination.offset).limit(pagination.page_size)
 
     invoices = db.execute(query).scalars().unique().all()

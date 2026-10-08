@@ -2609,3 +2609,40 @@ class TestS5LieferscheinAnlage:
         anlage = client.get(f"/api/v1/invoices/{rechnung.json()['id']}/delivery-notes").json()
 
         assert [_d(x["betrag_netto"]) for x in anlage] == [Decimal("25.00")]
+
+
+class TestS5Rechnungsliste:
+    """Die Liste kürzte still auf 20 und sortierte gleiche Tage zufällig."""
+
+    def test_neueste_zuerst_auch_am_selben_tag(self, client):
+        kunde = _s5_kunde(client)
+        nummern = [_s5_entwurf(client, kunde)["invoice_number"] for _ in range(3)]
+
+        r = client.get("/api/v1/invoices")
+
+        assert r.status_code == 200, r.text
+        assert [x["invoice_number"] for x in r.json()] == list(reversed(nummern))
+
+    def test_seitengroesse_100(self, client):
+        """Vertrag fürs Frontend: page_size=100 liefert alle (bisher 20 still)."""
+        kunde = _s5_kunde(client)
+        for _ in range(25):
+            _s5_entwurf(client, kunde)
+
+        assert len(client.get("/api/v1/invoices").json()) == 20
+        assert len(client.get("/api/v1/invoices", params={"page_size": 100}).json()) == 25
+
+    @pytest.mark.usefixtures("_s5_ohne_forecast")
+    def test_filter_nach_bestellung(self, client):
+        """Vertrag aus S6 (GET /invoices?order_id=), auf den der Belege-Dialog baut."""
+        kunde = _s5_kunde(client)
+        ware = _s5_ware(client)
+        eins = _s5_bestellung(client, kunde, ware)
+        zwei = _s5_bestellung(client, kunde, ware)
+        r1 = client.post(f"/api/v1/invoices/from-order/{eins['id']}").json()
+        client.post(f"/api/v1/invoices/from-order/{zwei['id']}")
+
+        r = client.get("/api/v1/invoices", params={"order_id": eins["id"]})
+
+        assert r.status_code == 200, r.text
+        assert [x["id"] for x in r.json()] == [r1["id"]]
