@@ -1444,3 +1444,280 @@ class TestS3StornoWarnungenUndGrund:
         sto = client.get(f"/api/v1/invoices/{r.json()['credit_note']['id']}").json()
         assert "[FALSCHER_STEUERSATZ]" in orig["internal_notes"]
         assert "[FALSCHER_STEUERSATZ]" in sto["internal_notes"]
+
+
+# ---------------------------------------------------------------------------
+# S4: DATEV-Export
+# ---------------------------------------------------------------------------
+
+DATEV_KOPF = [
+    "Umsatz", "Soll/Haben", "WKZ", "Kurs", "Basisumsatz",
+    "Konto", "Gegenkonto", "BU-Schlüssel", "Belegdatum",
+    "Belegfeld 1", "Belegfeld 2", "Buchungstext",
+]
+
+#: Gemischte Rechnung wie RE-00002: Ware zu 7 %, Pfandkiste zu 19 %.
+#: 10 × 2,50 = 25,00 netto + 1,75 USt = 26,75 | 2 × 3,00 = 6,00 netto + 1,14 USt = 7,14
+DATEV_GEMISCHT = [
+    ("Erbsen-Schale", 10, "2.50", "REDUZIERT"),
+    ("Pfandkiste 6er", 2, "3.00", "STANDARD"),
+]
+
+
+def _datev_kunde(client, name="Ökoring Testkunde", konto="10008", rabatt=None):
+    body = {"name": name, "typ": "HANDEL"}
+    if konto is not None:
+        body["datev_account"] = konto
+    if rabatt is not None:
+        body["discount_percent"] = rabatt
+    r = client.post("/api/v1/sales/customers", json=body)
+    assert r.status_code == 201, r.text
+    return r.json()
+
+
+def _datev_rechnung(client, kunde, positionen, typ="RECHNUNG", finalisieren=True, **kopf):
+    """positionen: (Beschreibung, Menge, Preis, Satz[, Sonderkonto])."""
+    r = client.post("/api/v1/invoices", json={
+        "customer_id": kunde["id"], "invoice_date": date.today().isoformat(),
+        "invoice_type": typ, **kopf,
+    })
+    assert r.status_code == 201, r.text
+    rechnung = r.json()
+    for beschreibung, menge, preis, satz, *sonderkonto in positionen:
+        zeile = {
+            "description": beschreibung, "quantity": menge, "unit": "STK",
+            "unit_price": preis, "tax_rate": satz,
+        }
+        if sonderkonto:
+            zeile["buchungskonto"] = sonderkonto[0]
+        r = client.post(f"/api/v1/invoices/{rechnung['id']}/lines", json=zeile)
+        assert r.status_code == 201, r.text
+    if finalisieren:
+        r = client.post(f"/api/v1/invoices/{rechnung['id']}/finalize")
+        assert r.status_code == 200, r.text
+        rechnung = r.json()
+    return rechnung
+
+
+def _datev_export(client, erneut=None, zahlungen=False):
+    body = {
+        "from_date": date.today().isoformat(), "to_date": date.today().isoformat(),
+        "include_payments": zahlungen,
+    }
+    if erneut is not None:
+        body["erneut_exportieren"] = erneut
+    r = client.post("/api/v1/invoices/datev-export", json=body)
+    assert r.status_code == 200, r.text
+    daten = r.json()
+    zeilen = list(csv.reader(io.StringIO(daten["csv_content"]), delimiter=";"))
+    return daten, zeilen[0], zeilen[1:]
+
+
+def _datev_zeile(betrag, sh, konto, gegenkonto, belegnr, text):
+    """Eine erwartete Buchungszeile, Spalte für Spalte in Kopf-Reihenfolge."""
+    return [betrag, sh, "EUR", "", "", konto, gegenkonto, "",
+            date.today().strftime("%d%m"), belegnr, "", text]
+
+
+class TestDatevKontierung:
+    """Je Rechnung und Erlöskonto eine Zeile: Debitor an Erlös, Richtung über S/H."""
+
+    def test_gemischte_rechnung_spaltengenau(self, client):
+        kunde = _datev_kunde(client)
+        rechnung = _datev_rechnung(client, kunde, DATEV_GEMISCHT)
+        nr = rechnung["invoice_number"]
+
+        daten, kopf, zeilen = _datev_export(client)
+
+        assert kopf == DATEV_KOPF
+        assert zeilen == [
+            _datev_zeile("26,75", "S", "10008", "8300", nr, "Rechnung 7 % Ökoring Testkunde"),
+            _datev_zeile("7,14", "S", "10008", "8400", nr, "Rechnung 19 % Ökoring Testkunde"),
+        ]
+        assert daten["record_count"] == 2
+        assert Decimal(str(daten["total_amount"])) == Decimal("33.89")
+
+    def test_jede_zeile_hat_so_viele_felder_wie_der_kopf(self, client):
+        kunde = _datev_kunde(client)
+        rechnung = _datev_rechnung(client, kunde, DATEV_GEMISCHT)
+        client.post(f"/api/v1/invoices/{rechnung['id']}/payments", json={
+            "invoice_id": rechnung["id"], "amount": "33.89",
+            "payment_date": date.today().isoformat(),
+        })
+
+        _, kopf, zeilen = _datev_export(client, zahlungen=True)
+
+        assert len(zeilen) == 3
+        assert all(len(z) == len(kopf) for z in zeilen)
+
+    def test_kopfkonto_ueberschreibt_die_konten_je_satz_nicht(self, client):
+        """Altbestand: jede Rechnung trägt im Kopf 8300. Der Export darf es nicht verwenden."""
+        kunde = _datev_kunde(client)
+        rechnung = _datev_rechnung(client, kunde, DATEV_GEMISCHT, buchungskonto="8300")
+        assert rechnung["buchungskonto"] == "8300"
+
+        _, _, zeilen = _datev_export(client)
+
+        assert [z[6] for z in zeilen] == ["8300", "8400"]
+
+    def test_neue_rechnung_ohne_kopfkonto(self, client):
+        kunde = _datev_kunde(client)
+        rechnung = _datev_rechnung(client, kunde, DATEV_GEMISCHT, finalisieren=False)
+        assert rechnung["buchungskonto"] is None
+
+    def test_konto_folgt_dem_steuersatz_der_position(self, client):
+        """Ein nachträglich geänderter Satz darf nicht auf dem alten Standardkonto landen."""
+        kunde = _datev_kunde(client)
+        rechnung = _datev_rechnung(client, kunde, [("Pfandkiste", 1, "10.00", "REDUZIERT")],
+                                   finalisieren=False)
+        zeile = client.get(f"/api/v1/invoices/{rechnung['id']}").json()["lines"][0]
+        assert zeile["buchungskonto"] == "8300"
+        r = client.patch(f"/api/v1/invoices/{rechnung['id']}/lines/{zeile['id']}",
+                         json={"tax_rate": "STANDARD"})
+        assert r.status_code == 200, r.text
+        assert client.post(f"/api/v1/invoices/{rechnung['id']}/finalize").status_code == 200
+
+        _, _, zeilen = _datev_export(client)
+
+        assert zeilen == [
+            _datev_zeile("11,90", "S", "10008", "8400", rechnung["invoice_number"],
+                         "Rechnung 19 % Ökoring Testkunde"),
+        ]
+
+    def test_rechnungsrabatt_wie_steuerausweis_der_rechnung(self, client):
+        """Brutto je Satz = Entgelt + USt je Satz, so wie die Rechnung sie ausweist."""
+        from app.models.invoice import Invoice
+        kunde = _datev_kunde(client, rabatt="10")
+        rechnung = _datev_rechnung(client, kunde, DATEV_GEMISCHT)
+        nr = rechnung["invoice_number"]
+
+        _, _, zeilen = _datev_export(client)
+
+        # 25,00 − 2,50 = 22,50 + 1,58 USt = 24,08 | 6,00 − 0,60 = 5,40 + 1,03 USt = 6,43
+        assert zeilen == [
+            _datev_zeile("24,08", "S", "10008", "8300", nr, "Rechnung 7 % Ökoring Testkunde"),
+            _datev_zeile("6,43", "S", "10008", "8400", nr, "Rechnung 19 % Ökoring Testkunde"),
+        ]
+        with TestingSessionLocal() as db:
+            ausweis = db.get(Invoice, uuid.UUID(rechnung["id"])).get_tax_summary()
+        brutto_je_satz = sorted(f"{s['base'] + s['tax']:.2f}".replace(".", ",") for s in ausweis)
+        assert sorted(z[0] for z in zeilen) == brutto_je_satz
+
+    def test_rundungsgrenze_rabatt_wie_rechnungsbetrag(self, client):
+        """Rechenregel aus S2 an einer Rundungsgrenze: 22,15 € zu 7 %, 10 % Rabatt.
+        Rabatt 2,215 → 2,22, Entgelt 19,93, USt 1,3951 → 1,40, zusammen 21,33.
+        Den Rabatt ungerundet abziehen ergäbe 19,935 → 19,94 + 1,40 = 21,34 —
+        beim Debitor bliebe 1 ct offen."""
+        kunde = _datev_kunde(client, rabatt="10")
+        rechnung = _datev_rechnung(client, kunde, [("Erbsen-Schale", 1, "22.15", "REDUZIERT")])
+        assert Decimal(str(rechnung["total"])) == Decimal("21.33")
+
+        daten, _, zeilen = _datev_export(client)
+
+        assert zeilen == [
+            _datev_zeile("21,33", "S", "10008", "8300", rechnung["invoice_number"],
+                         "Rechnung 7 % Ökoring Testkunde"),
+        ]
+        assert Decimal(str(daten["total_amount"])) == Decimal(str(rechnung["total"]))
+
+    def test_sonderkonto_neben_standardkonto_rest_cent(self, client):
+        """Teilen sich zwei Konten einen Satz, rundet jedes Konto für sich:
+        25,00 → 22,50 + 1,58 = 24,08 und 22,15 → 19,93 + 1,40 = 21,33, zusammen 45,41.
+        Der Steuerausweis zu 7 % lautet 47,15 − 4,72 = 42,43 + 2,97 = 45,40.
+        Den Rest-Cent trägt die betragsgrößte Gruppe (8300): 24,07."""
+        kunde = _datev_kunde(client, rabatt="10")
+        rechnung = _datev_rechnung(client, kunde, [
+            ("Erbsen-Schale", 10, "2.50", "REDUZIERT"),
+            ("Kresse Sonderaktion", 1, "22.15", "REDUZIERT", "8301"),
+        ])
+        nr = rechnung["invoice_number"]
+        assert Decimal(str(rechnung["total"])) == Decimal("45.40")
+
+        daten, _, zeilen = _datev_export(client)
+
+        assert zeilen == [
+            _datev_zeile("24,07", "S", "10008", "8300", nr, "Rechnung 7 % Ökoring Testkunde"),
+            _datev_zeile("21,33", "S", "10008", "8301", nr, "Rechnung 7 % Ökoring Testkunde"),
+        ]
+        assert Decimal(str(daten["total_amount"])) == Decimal(str(rechnung["total"]))
+
+    def test_summe_der_zeilen_gleich_rechnungsbetrag(self, client):
+        """Der Debitor bekommt in DATEV genau den Rechnungsbetrag — sonst bleibt
+        nach Zahlung ein Cent offen. Wächter: schon vor Task 16 grün (der alte
+        Export summierte invoice.total); nach Task 16 grün, weil Export und
+        calculate_totals dieselbe Rechenregel steuer_je_satz (S2) nutzen."""
+        kunde = _datev_kunde(client, rabatt="10")
+        rechnung = _datev_rechnung(client, kunde, DATEV_GEMISCHT)
+
+        daten, _, _ = _datev_export(client)
+
+        assert Decimal(str(daten["total_amount"])) == Decimal(str(rechnung["total"]))
+
+    def test_ohne_debitorenkonto_sammeldebitor(self, client):
+        kunde = _datev_kunde(client, konto=None)
+        _datev_rechnung(client, kunde, [("Kresse", 1, "10.00", "REDUZIERT")])
+
+        _, _, zeilen = _datev_export(client)
+
+        assert [z[5] for z in zeilen] == ["10000"]
+
+    def test_export_aendert_keinen_beleg(self, client):
+        """GoBD: der Export liest. Nur die DATEV-Kennzeichen dürfen sich ändern."""
+        kunde = _datev_kunde(client)
+        rechnung = _datev_rechnung(client, kunde, DATEV_GEMISCHT)
+        vorher = client.get(f"/api/v1/invoices/{rechnung['id']}").json()
+
+        _datev_export(client)
+
+        nachher = client.get(f"/api/v1/invoices/{rechnung['id']}").json()
+        for feld in ("subtotal", "tax_amount", "total", "status", "invoice_number"):
+            assert nachher[feld] == vorher[feld], feld
+        assert nachher["lines"] == vorher["lines"]
+
+
+class TestDatevGutschrift:
+    """Gutschriften mindern: H mit positivem Umsatz."""
+
+    def test_storno_spaltengenau(self, client):
+        """Original und Stornorechnung sind beide Belege: S und H heben sich auf."""
+        kunde = _datev_kunde(client)
+        rechnung = _datev_rechnung(client, kunde, DATEV_GEMISCHT)
+        r = client.post(f"/api/v1/invoices/{rechnung['id']}/cancel",
+                        json={"reason": "Pfand mit 7 % berechnet"})
+        assert r.status_code == 200, r.text
+        storno = r.json()["credit_note"]
+        nr, snr = rechnung["invoice_number"], storno["invoice_number"]
+
+        daten, _, zeilen = _datev_export(client)
+
+        assert zeilen == [
+            _datev_zeile("26,75", "S", "10008", "8300", nr, "Rechnung 7 % Ökoring Testkunde"),
+            _datev_zeile("7,14", "S", "10008", "8400", nr, "Rechnung 19 % Ökoring Testkunde"),
+            _datev_zeile("26,75", "H", "10008", "8300", snr, f"Storno {nr} 7 % Ökoring Testkunde"),
+            _datev_zeile("7,14", "H", "10008", "8400", snr, f"Storno {nr} 19 % Ökoring Testkunde"),
+        ]
+        assert Decimal(str(daten["total_amount"])) == Decimal("0.00")
+
+    def test_storno_spaeter_exportiert_nur_die_stornorechnung(self, client):
+        kunde = _datev_kunde(client)
+        rechnung = _datev_rechnung(client, kunde, DATEV_GEMISCHT)
+        _datev_export(client)
+        r = client.post(f"/api/v1/invoices/{rechnung['id']}/cancel", json={"reason": "Preisfehler"})
+        snr = r.json()["credit_note"]["invoice_number"]
+
+        _, _, zeilen = _datev_export(client)
+
+        assert [(z[1], z[9]) for z in zeilen] == [("H", snr), ("H", snr)]
+
+    def test_manuelle_gutschrift_mindert(self, client):
+        """Gutschrift von Hand (positive Beträge) ist eine Minderung: H."""
+        kunde = _datev_kunde(client)
+        gs = _datev_rechnung(client, kunde, [("Preisnachlass", 1, "10.00", "REDUZIERT")],
+                             typ="GUTSCHRIFT")
+
+        _, _, zeilen = _datev_export(client)
+
+        assert zeilen == [
+            _datev_zeile("10,70", "H", "10008", "8300", gs["invoice_number"],
+                         "Gutschrift 7 % Ökoring Testkunde"),
+        ]

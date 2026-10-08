@@ -81,15 +81,19 @@ def test_datev_export_invoices_and_payments(db):
         to_date=date.today()
     )
 
-    # Verify
-    assert count >= 2 # 1 Invoice (Debit), 1 Revenue (Credit), 1 Payment (Debit Bank) = 3 lines actually.
-    # Wait, my logic: 1 Debit + N Revenues. So 2 lines for invoice. +1 for Payment. Total 3.
-    
-    # Invoice Lines
-    assert "RE-TEST-001" in csv_content
-    assert "119,00" in csv_content
-    assert "S" in csv_content # Debit
-    assert "H" in csv_content # Credit
-    
-    # Payment Lines
-    assert "Zahlung Invoice Customer" in csv_content
+    # Verify — spaltengenau: eine Erlöszeile (Debitor an 8400, S) und eine
+    # Zahlungszeile (Bank an Debitor, S). Keine Zeile auf 1400, kein Kopfkonto 8300.
+    import csv
+    import io
+    tag = date.today().strftime("%d%m")
+    zeilen = list(csv.reader(io.StringIO(csv_content), delimiter=";"))
+    assert zeilen == [
+        ["Umsatz", "Soll/Haben", "WKZ", "Kurs", "Basisumsatz", "Konto", "Gegenkonto",
+         "BU-Schlüssel", "Belegdatum", "Belegfeld 1", "Belegfeld 2", "Buchungstext"],
+        ["119,00", "S", "EUR", "", "", "10008", "8400", "", tag, "RE-TEST-001", "",
+         "Rechnung 19 % Invoice Customer"],
+        ["119,00", "S", "EUR", "", "", "1200", "10008", "", tag, "RE-TEST-001", "",
+         "Zahlung Invoice Customer"],
+    ]
+    assert count == 2
+    assert total == Decimal("119.00")

@@ -105,7 +105,10 @@ class InvoiceService:
             header_text=header_text,
             footer_text=footer_text,
             internal_notes=internal_notes,
-            buchungskonto=buchungskonto or STANDARD_ACCOUNTS["erloes_7"],  # Default 7% Erlöse
+            # Kein Kopf-Default mehr: das Erlöskonto steht je Position
+            # (InvoiceLine.buchungskonto, aus dem Steuersatz). Der frühere
+            # Default 8300 ließ im DATEV-Export 19 % auf 8300 landen.
+            buchungskonto=buchungskonto,
         )
 
         self.db.add(invoice)
