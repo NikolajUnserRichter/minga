@@ -18,7 +18,7 @@ from app.models.documents import DeliveryNote
 from app.schemas.invoice import (
     InvoiceCreate, InvoiceUpdate, InvoiceResponse, InvoiceDetailResponse,
     InvoiceLineCreate, InvoiceLineUpdate, InvoiceLineResponse,
-    PaymentCreate, PaymentResponse,
+    PaymentBase, PaymentResponse,
     InvoiceSendRequest, InvoiceCancelRequest,
     DatevExportRequest, DatevExportResponse,
 )
@@ -463,7 +463,7 @@ def list_invoice_payments(invoice_id: UUID, db: DBSession):
 @router.post("/{invoice_id}/payments", response_model=PaymentResponse, status_code=201)
 def record_payment(
     invoice_id: UUID,
-    data: PaymentCreate,
+    data: PaymentBase,
     db: DBSession,
 ):
     """Erfasst eine Zahlung für eine Rechnung."""
@@ -471,7 +471,7 @@ def record_payment(
     try:
         payment = service.record_payment(
             invoice_id=invoice_id,
-            **data.model_dump(exclude={"invoice_id"}),
+            **data.model_dump(),
         )
         db.commit()
         db.refresh(payment)

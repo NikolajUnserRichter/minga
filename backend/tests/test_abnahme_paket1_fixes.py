@@ -1,5 +1,7 @@
 """Regressionstests für die Abnahme-Befunde aus Paket 1."""
 
+from decimal import Decimal
+
 from app.models.unit import UnitCategory, UnitOfMeasure
 from tests.conftest import TestingSessionLocal
 
@@ -110,3 +112,44 @@ def test_price_list_item_patch_updates_price(client):
 
     assert response.status_code == 200, response.text
     assert response.json()["price"] == "3.25"
+
+
+def test_record_payment_uses_invoice_id_from_path(client, sample_customer):
+    created = client.post(
+        "/api/v1/invoices",
+        json={
+            "customer_id": sample_customer["id"],
+            "invoice_date": "2026-10-08",
+        },
+    )
+    assert created.status_code == 201, created.text
+    invoice_id = created.json()["id"]
+
+    line = client.post(
+        f"/api/v1/invoices/{invoice_id}/lines",
+        json={
+            "description": "Abnahmeartikel",
+            "quantity": 1,
+            "unit": "STK",
+            "unit_price": "10.00",
+            "tax_rate": "REDUZIERT",
+        },
+    )
+    assert line.status_code == 201, line.text
+
+    finalized = client.post(f"/api/v1/invoices/{invoice_id}/finalize")
+    assert finalized.status_code == 200, finalized.text
+
+    response = client.post(
+        f"/api/v1/invoices/{invoice_id}/payments",
+        json={
+            "amount": 5.0,
+            "payment_date": "2026-10-08",
+            "payment_method": "UEBERWEISUNG",
+        },
+    )
+
+    assert response.status_code == 201, response.text
+    invoice = client.get(f"/api/v1/invoices/{invoice_id}")
+    assert invoice.status_code == 200, invoice.text
+    assert Decimal(invoice.json()["paid_amount"]) == Decimal("5.00")
