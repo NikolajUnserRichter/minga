@@ -187,15 +187,43 @@ def download_confirmation_pdf(conf_id: UUID, db: DBSession):
     response_model=DeliveryNoteResponse,
     status_code=status.HTTP_201_CREATED,
 )
-def create_delivery_note(order_id: UUID, data: DeliveryNoteCreate, db: DBSession):
+def create_delivery_note(
+    order_id: UUID,
+    data: DeliveryNoteCreate,
+    db: DBSession,
+    zusaetzlich: bool = False,
+):
     """Lieferschein + zugehörige Verpackungsliste anlegen.
 
     Falls `packing_items` leer ist, werden Items 1:1 aus den Order-Lines
     übernommen (ohne Pfand-Container).
+
+    Ein weiterer Lieferschein zu derselben Bestellung nur mit
+    `?zusaetzlich=true`. Abgerechnet wird die Bestellung (einmal), nicht der
+    Lieferschein — ein zweiter ist also kein Abrechnungsrisiko mehr, aber fast
+    immer ein Versehen. Gewollt ist er, wenn die Bestellung nach dem ersten
+    Lieferschein geändert wurde und die Packliste (ein Schnappschuss) neu
+    gebraucht wird.
     """
     order = _load_order_with_lines(db, order_id)
     if not order.lines:
         raise HTTPException(status_code=400, detail="Bestellung hat keine Positionen")
+
+    vorhandene = db.execute(
+        select(DeliveryNote.delivery_note_number)
+        .where(DeliveryNote.order_id == order.id)
+        .order_by(DeliveryNote.delivery_note_number)
+    ).scalars().all()
+    if vorhandene and not zusaetzlich:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Zu dieser Bestellung gibt es bereits den Lieferschein "
+                f"{', '.join(vorhandene)}. Ein weiterer Lieferschein wird nicht "
+                f"zusätzlich berechnet; er ist nur nötig, wenn die Packliste nach "
+                f"einer Bestelländerung neu erstellt werden muss."
+            ),
+        )
 
     today = date.today()
     ls_number = _next_document_number(

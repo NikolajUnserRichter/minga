@@ -1384,8 +1384,12 @@ export const documentsApi = {
   listDeliveryNotes: (orderId: string) =>
     api.get<DeliveryNote[]>(`/sales/orders/${orderId}/delivery-notes`).then(r => r.data),
 
-  createDeliveryNote: (orderId: string, data: { notes?: string; total_weight_g?: number; total_packages?: number; packing_items?: Partial<PackingListItem>[] }) =>
-    api.post<DeliveryNote>(`/sales/orders/${orderId}/delivery-notes`, data).then(r => r.data),
+  // zusaetzlich: weiterer Lieferschein zu einer Bestellung, die schon einen
+  // hat — ohne das Flag antwortet das Backend mit 409.
+  createDeliveryNote: (orderId: string, data: { notes?: string; total_weight_g?: number; total_packages?: number; packing_items?: Partial<PackingListItem>[] }, opts?: { zusaetzlich?: boolean }) =>
+    api.post<DeliveryNote>(`/sales/orders/${orderId}/delivery-notes`, data, {
+      params: opts?.zusaetzlich ? { zusaetzlich: true } : undefined,
+    }).then(r => r.data),
 
   markDelivered: (noteId: string, data: { signed_by?: string; actual_delivery_date?: string }) =>
     api.patch<DeliveryNote>(`/sales/delivery-notes/${noteId}/mark-delivered`, data).then(r => r.data),

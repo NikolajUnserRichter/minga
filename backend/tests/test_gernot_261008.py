@@ -2136,3 +2136,26 @@ class TestS6SammellaufRechnetJedeBestellungEinmal:
 
         assert _s6_lauf(client, S6_PREVIEW)["kunden"] == []
         assert _s6_lauf(client, S6_COMMIT)["rechnungen"] == []
+
+
+class TestS6ZweiterLieferschein:
+    """(d) Ein weiterer Lieferschein nur mit ausdrücklicher Bestätigung."""
+
+    def test_zweiter_lieferschein_braucht_bestaetigung(self, client):
+        bestellung = _s6_bestellung(client, _s6_kunde(client))
+        ls1 = _s6_lieferschein(client, bestellung)
+
+        r = client.post(f"/api/v1/sales/orders/{bestellung['id']}/delivery-notes", json={})
+
+        assert r.status_code == 409, r.text
+        assert ls1["delivery_note_number"] in r.json()["detail"]
+        alle = client.get(f"/api/v1/sales/orders/{bestellung['id']}/delivery-notes").json()
+        assert len(alle) == 1
+
+    def test_mit_bestaetigung_wird_er_angelegt(self, client):
+        bestellung = _s6_bestellung(client, _s6_kunde(client))
+        ls1 = _s6_lieferschein(client, bestellung)
+
+        ls2 = _s6_lieferschein(client, bestellung, zusaetzlich=True)
+
+        assert ls2["delivery_note_number"] != ls1["delivery_note_number"]

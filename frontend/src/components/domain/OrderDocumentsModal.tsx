@@ -115,10 +115,24 @@ export function OrderDocumentsModal({ open, onClose, order }: Props) {
     );
 
   const createDeliveryNote = useMutation({
-    mutationFn: () => documentsApi.createDeliveryNote(orderId!, {}),
+    mutationFn: (zusaetzlich: boolean) => documentsApi.createDeliveryNote(orderId!, {}, { zusaetzlich }),
     onSuccess: (n) => { toast.success(`Lieferschein ${n.delivery_note_number} erstellt`); invalidate(); },
-    onError: (e: any) => toast.error(getErrorMessage(e, 'Fehler beim Erstellen des Lieferscheins')),
+    onError: (e: any) => {
+      // 409 = es gibt schon einen Lieferschein; das fragt neuerLieferschein() nach.
+      if (e?.response?.status === 409) return;
+      toast.error(getErrorMessage(e, 'Fehler beim Erstellen des Lieferscheins'));
+    },
   });
+
+  const neuerLieferschein = async () => {
+    try {
+      await createDeliveryNote.mutateAsync(false);
+    } catch (e: any) {
+      if (e?.response?.status !== 409) return; // Fehlermeldung kam schon aus onError
+      if (!window.confirm(`${getErrorMessage(e)}\n\nTrotzdem einen weiteren Lieferschein anlegen?`)) return;
+      await createDeliveryNote.mutateAsync(true).catch(() => undefined);
+    }
+  };
 
   const markDeliveredMutation = useMutation({
     mutationFn: ({ noteId, signed_by }: { noteId: string; signed_by: string }) =>
@@ -212,7 +226,7 @@ export function OrderDocumentsModal({ open, onClose, order }: Props) {
               size="sm"
               icon={<Plus className="w-3 h-3" />}
               loading={createDeliveryNote.isPending}
-              onClick={() => createDeliveryNote.mutate()}
+              onClick={neuerLieferschein}
             >
               Neuer LS
             </Button>
