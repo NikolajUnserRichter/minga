@@ -49,7 +49,9 @@ export default function Production() {
   const [sowingSeedId, setSowingSeedId] = useState('');
   const [harvestingBatch, setHarvestingBatch] = useState<GrowBatch | null>(null);
   const [timelineBatch, setTimelineBatch] = useState<GrowBatch | null>(null);
-  const [packagingDate, setPackagingDate] = useState(new Date().toISOString().split('T')[0]);
+  const [packagingDate, setPackagingDate] = useState(
+    () => new Date().toLocaleDateString('sv-SE', { timeZone: 'Europe/Berlin' })
+  );
   // Etikettenbogen: ein Etikett je Tray für alle Aussaaten eines Tages
   const [labelSheetOpen, setLabelSheetOpen] = useState(false);
   // Chargen-Grid: Massenanlage + Historien-Import mit Zeilenreport
