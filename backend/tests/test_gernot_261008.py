@@ -2390,3 +2390,49 @@ class TestS5Pfandkennzeichen:
         assert pfand["is_deposit"] is True
         zeilen = {l["id"]: l["is_deposit"] for l in _s5_detail(client, rechnung)["lines"]}
         assert zeilen == {ware["id"]: False, pfand["id"]: True}
+
+
+class TestS5KundenfeldPfandAbrechnung:
+    """Spec 08.10.2026, Variante C: pfand_abrechnung JE_LIEFERUNG oder KEINE."""
+
+    def test_standard_je_lieferung_und_pflegbar(self, client):
+        kunde = _s5_kunde(client)
+        assert kunde["pfand_abrechnung"] == "JE_LIEFERUNG"
+
+        r = client.patch(f"/api/v1/sales/customers/{kunde['id']}", json={"pfand_abrechnung": "KEINE"})
+
+        assert r.status_code == 200, r.text
+        assert r.json()["pfand_abrechnung"] == "KEINE"
+        assert client.get(f"/api/v1/sales/customers/{kunde['id']}").json()["pfand_abrechnung"] == "KEINE"
+
+    def test_anlage_mit_keine(self, client):
+        assert _s5_kunde(client, pfand_abrechnung="KEINE")["pfand_abrechnung"] == "KEINE"
+
+    @pytest.mark.parametrize("wert", ["MONATLICH", "JA", None])
+    def test_unbekannter_wert_und_null_werden_abgewiesen(self, client, wert):
+        """MONATLICH kommt erst mit Paket 3 — bis dahin gäbe es keine Logik dazu.
+        null hieße nicht 'unverändert', sondern schriebe NULL in eine NOT-NULL-Spalte."""
+        kunde = _s5_kunde(client)
+
+        r = client.patch(f"/api/v1/sales/customers/{kunde['id']}", json={"pfand_abrechnung": wert})
+
+        assert r.status_code == 422, r.text
+        assert client.get(f"/api/v1/sales/customers/{kunde['id']}").json()["pfand_abrechnung"] == "JE_LIEFERUNG"
+
+    def test_auto_migrate_ergaenzt_spalte(self, tmp_path):
+        """Bestehende Mandanten-DBs bekommen die Spalte beim Start; Altkunden stehen auf JE_LIEFERUNG."""
+        from sqlalchemy import create_engine, inspect, text
+        from app.tenancy import _auto_migrate
+
+        engine = create_engine(f"sqlite:///{tmp_path / 'alt.db'}")
+        with engine.begin() as conn:
+            conn.execute(text("CREATE TABLE customers (id CHAR(32) PRIMARY KEY, name VARCHAR(200))"))
+            conn.execute(text("INSERT INTO customers (id, name) VALUES ('a', 'Ökoring')"))
+
+        _auto_migrate(engine)
+
+        spalten = {c["name"] for c in inspect(engine).get_columns("customers")}
+        assert "pfand_abrechnung" in spalten
+        with engine.connect() as conn:
+            assert conn.execute(text("SELECT pfand_abrechnung FROM customers")).scalar() == "JE_LIEFERUNG"
+        engine.dispose()

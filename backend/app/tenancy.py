@@ -302,6 +302,8 @@ def _auto_migrate(engine: Engine) -> None:
         _add_col_if_missing("harvests", "entleerte_kisten", "INTEGER")
         # Preise auf Lieferschein (pro Kunde)
         _add_col_if_missing("customers", "show_prices_on_delivery_note", "BOOLEAN", "0")
+        # Pfandabrechnung je Kunde (Spec 08.10.2026): Bestandskunden JE_LIEFERUNG
+        _add_col_if_missing("customers", "pfand_abrechnung", "VARCHAR(20)", "'JE_LIEFERUNG'")
         # Substrattyp + Winterzyklus (pro Sorte), Chargen-Abweichung (pro Saatgut-Charge)
         _add_col_if_missing("seeds", "substrat",          "VARCHAR(100)")
         _add_col_if_missing("seeds", "winter_extra_tage", "INTEGER", "0")
