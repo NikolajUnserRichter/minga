@@ -594,7 +594,7 @@ export interface PriceListItem {
 // Invoices
 export type InvoiceStatus = 'ENTWURF' | 'OFFEN' | 'TEILBEZAHLT' | 'BEZAHLT' | 'UEBERFAELLIG' | 'STORNIERT'
 export type InvoiceType = 'RECHNUNG' | 'GUTSCHRIFT' | 'PROFORMA'
-export type PaymentMethod = 'UEBERWEISUNG' | 'LASTSCHRIFT' | 'BAR' | 'KARTE' | 'PAYPAL'
+export type PaymentMethod = 'UEBERWEISUNG' | 'LASTSCHRIFT' | 'BAR' | 'EC' | 'KREDITKARTE' | 'PAYPAL'
 
 export interface Invoice {
   id: string
