@@ -773,10 +773,10 @@ export const invoicesApi = {
     api.post<Payment>(`/invoices/${invoiceId}/payments`, data).then(r => r.data),
 
   // DATEV
-  exportDatev: (data: { from_date: string; to_date: string; include_payments?: boolean }) =>
+  exportDatev: (data: { from_date: string; to_date: string; include_payments?: boolean; erneut_exportieren?: boolean }) =>
     api.post('/invoices/datev-export', data).then(r => r.data),
 
-  downloadDatev: (data: { from_date: string; to_date: string; include_payments?: boolean }) =>
+  downloadDatev: (data: { from_date: string; to_date: string; include_payments?: boolean; erneut_exportieren?: boolean }) =>
     api.post('/invoices/datev-export/download', data, { responseType: 'blob' }),
 
   downloadPdf: (id: string) =>

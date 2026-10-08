@@ -681,7 +681,6 @@ function InvoiceCreateForm({ customers, onSubmit, onCancel }: InvoiceCreateFormP
     header_text: '',
     footer_text: '',
     internal_notes: '',
-    buchungskonto: '',
   });
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -697,7 +696,6 @@ function InvoiceCreateForm({ customers, onSubmit, onCancel }: InvoiceCreateFormP
         ...formData,
         delivery_date: formData.delivery_date || undefined,
         due_date: formData.due_date || undefined,
-        buchungskonto: formData.buchungskonto || undefined,
         internal_notes: formData.internal_notes || undefined,
       });
       onSubmit();
@@ -760,12 +758,6 @@ function InvoiceCreateForm({ customers, onSubmit, onCancel }: InvoiceCreateFormP
         />
       </div>
 
-      <Input
-        label="Buchungskonto"
-        placeholder="Standard (z.B. 8400)..."
-        value={formData.buchungskonto}
-        onChange={(e) => setFormData({ ...formData, buchungskonto: e.target.value })}
-      />
 
       <Input
         label="Kopftext"
@@ -906,12 +898,19 @@ function DatevExportForm({ onClose }: { onClose: () => void }) {
     from_date: new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0],
     to_date: new Date().toISOString().split('T')[0],
     include_payments: true,
+    erneut_exportieren: false,
   });
 
   const handleExport = async () => {
     setLoading(true);
     try {
       const result = await invoicesApi.exportDatev(formData);
+      if (result.record_count === 0) {
+        // Bereits exportierte Belege kommen nur mit "erneut exportieren" wieder —
+        // eine leere Datei herunterzuladen hilft niemandem.
+        toast.info('Keine neuen Buchungen im Zeitraum. Bereits exportierte nur über „Erneut exportieren".');
+        return;
+      }
       toast.success(`Export erfolgreich: ${result.record_count} Datensätze`);
 
       // Download CSV
@@ -956,6 +955,23 @@ function DatevExportForm({ onClose }: { onClose: () => void }) {
           className="w-4 h-4 rounded border-gray-300 dark:border-gray-600 text-minga-600 dark:text-minga-400 focus:ring-minga-500"
         />
         <span className="text-sm text-gray-700 dark:text-gray-300">Zahlungen einschließen</span>
+      </label>
+
+      <label className="flex items-start gap-2">
+        <input
+          type="checkbox"
+          checked={formData.erneut_exportieren}
+          onChange={(e) => setFormData({ ...formData, erneut_exportieren: e.target.checked })}
+          className="mt-0.5 w-4 h-4 rounded border-gray-300 dark:border-gray-600 text-minga-600 dark:text-minga-400 focus:ring-minga-500"
+        />
+        <span className="text-sm text-gray-700 dark:text-gray-300">
+          Bereits exportierte erneut exportieren
+          {formData.erneut_exportieren && (
+            <span className="block text-amber-700 dark:text-amber-300">
+              Nur verwenden, wenn die vorige Datei nicht in DATEV importiert wurde — sonst wird doppelt gebucht.
+            </span>
+          )}
+        </span>
       </label>
 
       <div className="flex gap-3 pt-4 border-t">
