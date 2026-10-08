@@ -538,3 +538,152 @@ class TestFehlertexte:
                         json={"grund": "Zu viel Ware im Lager"})
         assert r.status_code == 400
         assert r.json()["detail"] == "Vorschlag hat Status Umgesetzt, kann nicht abgelehnt werden"
+
+
+# ===========================================================================
+# P2 / A4 — Knopf "Gepackt" im Tagesplan
+#
+# IN_PRODUKTION heißt in der Oberfläche "Gepackt". Gepackte Bestellungen
+# fallen aus "Verpacken" und aus dem Sortenbedarf, bleiben aber in
+# "Ausliefern". Kein neuer Status, keine neue Spalte.
+# ===========================================================================
+import uuid
+from datetime import date, timedelta
+
+import pytest
+
+from tests.conftest import TestingSessionLocal
+
+
+@pytest.fixture()
+def _a4_ohne_celery():
+    """Anlegen, Bestätigen und Stornieren stoßen über Celery ein Forecast-Update an.
+
+    Ohne Redis wartet jeder dieser Aufrufe rund 20 s auf Wiederholungen. Für
+    diese Tests ist das Forecast-Update ohne Belang, deshalb abgeklemmt.
+    """
+    from unittest.mock import patch
+    with patch("app.tasks.forecast_tasks.update_forecast_from_order.delay"):
+        yield
+
+
+def _a4_bestellung(client, liefertag, *, bestaetigen=True, produkt="Erbsen-Schale", menge=5, **extra):
+    """Bestellung mit einer Position ohne Produktstamm (Sortenbedarf-Schlüssel = Name)."""
+    kunde = client.post("/api/v1/sales/customers", json={
+        "name": f"Packkunde {uuid.uuid4().hex[:6]}", "typ": "GASTRO",
+    })
+    assert kunde.status_code == 201, kunde.text
+    payload = {
+        "customer_id": kunde.json()["id"],
+        "requested_delivery_date": liefertag.isoformat(),
+        "lines": [{"product_name": produkt, "quantity": menge, "unit": "STK",
+                   "unit_price": 2.5, "tax_rate": "REDUZIERT"}],
+    }
+    payload.update(extra)
+    r = client.post("/api/v1/sales/orders", json=payload)
+    assert r.status_code == 201, r.text
+    order = r.json()
+    if bestaetigen:
+        r = client.post(f"/api/v1/sales/orders/{order['id']}/confirm")
+        assert r.status_code == 200, r.text
+        order = r.json()
+    return order
+
+
+def _a4_status(client, order, status, reason=None):
+    """Derselbe Aufruf wie der Knopf im Tagesplan (salesApi.updateOrderStatus)."""
+    return client.post(f"/api/v1/sales/orders/{order['id']}/status",
+                       json={"status": status, "reason": reason})
+
+
+def _a4_packen(client, order):
+    r = _a4_status(client, order, "IN_PRODUKTION", "Im Tagesplan als gepackt markiert")
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def _a4_tagesplan(client, tag):
+    r = client.get("/api/v1/production/day-plan", params={"target_date": tag.isoformat()})
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def _a4_packplan(client, tag):
+    r = client.get("/api/v1/production/packaging-plan", params={"target_date": tag.isoformat()})
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def _a4_nummern(zeilen):
+    return sorted(z["order_number"] for z in zeilen)
+
+
+@pytest.mark.usefixtures("_a4_ohne_celery")
+class TestGepacktBedeutung:
+    """Charakterisierung: was der Statuswechsel nach IN_PRODUKTION heute schon tut.
+
+    Diese Tests sind von Anfang an grün. Sie halten fest, worauf der Knopf
+    "Gepackt" im Tagesplan sich verlässt.
+    """
+
+    def test_bestaetigte_bestellung_laesst_sich_packen(self, client):
+        order = _a4_bestellung(client, date.today() + timedelta(days=1))
+        assert _a4_packen(client, order)["status"] == "IN_PRODUKTION"
+
+    def test_entwurf_laesst_sich_nicht_packen(self, client):
+        """ENTWURF → IN_PRODUKTION bleibt verboten; der Knopf erscheint nur bei BESTAETIGT."""
+        order = _a4_bestellung(client, date.today() + timedelta(days=1), bestaetigen=False)
+        r = _a4_status(client, order, "IN_PRODUKTION")
+        assert r.status_code == 400, r.text
+
+    def test_packen_bucht_keinen_bestand(self, client):
+        """Bestand wird erst bei GELIEFERT gebucht, nicht beim Packen."""
+        from app.models.order import Order
+        order = _a4_bestellung(client, date.today() + timedelta(days=1))
+        _a4_packen(client, order)
+        with TestingSessionLocal() as db:
+            o = db.get(Order, uuid.UUID(order["id"]))
+            assert o.inventory_deducted_at is None
+            assert o.actual_delivery_date is None
+
+    def test_packen_steht_im_audit_log(self, client):
+        order = _a4_bestellung(client, date.today() + timedelta(days=1))
+        _a4_packen(client, order)
+        log = client.get(f"/api/v1/sales/orders/{order['id']}/audit-log").json()
+        eintrag = [e for e in log if e["action"] == "STATUS_CHANGE"]
+        assert eintrag and eintrag[0]["new_values"] == {"status": "IN_PRODUKTION"}
+        assert eintrag[0]["reason"] == "Im Tagesplan als gepackt markiert"
+
+    def test_gepackte_bestellung_bleibt_offen(self, client):
+        """Der Sammelfilter OFFEN zählt IN_PRODUKTION weiter mit — richtig, gepackt
+        ist nicht geliefert. (Das Kreditlimit, sales.py:840-842, nutzt dieselbe
+        Statusliste; am Code geprüft, hier nicht getestet.)"""
+        order = _a4_bestellung(client, date.today() + timedelta(days=1))
+        _a4_packen(client, order)
+        r = client.get("/api/v1/sales/orders", params={"status": "OFFEN"})
+        assert r.status_code == 200, r.text
+        assert [o["order_number"] for o in r.json()["items"]] == [order["order_number"]]
+
+    def test_halle_darf_packen(self, client):
+        """Der Knopf sitzt auf dem Hallen-Tablet: production_staff muss durchkommen."""
+        from tests.test_rollen import _als, ALLE_ROLLEN
+        order = _a4_bestellung(client, date.today() + timedelta(days=1))
+        _als(["production_staff"])
+        try:
+            r = _a4_status(client, order, "IN_PRODUKTION")
+        finally:
+            _als(ALLE_ROLLEN)
+        assert r.status_code == 200, r.text
+
+    def test_gepackte_bestellung_laesst_sich_stornieren(self, client):
+        """Vertragstest zu P1 (Übergangstabelle): gepackt, aber nicht geliefert → stornierbar.
+
+        Grün, sobald P1 IN_PRODUKTION → STORNIERT erlaubt. Rot heißt: P1 fehlt.
+        Die Oberfläche (EditOrderModal) prüft Step 0 und die Abnahme, nicht dieser Test.
+        """
+        morgen = date.today() + timedelta(days=1)
+        order = _a4_bestellung(client, morgen)
+        _a4_packen(client, order)
+        r = _a4_status(client, order, "STORNIERT", "Kunde hat abgesagt")
+        assert r.status_code == 200, r.text
+        assert _a4_tagesplan(client, morgen)["ausliefern"] == []
