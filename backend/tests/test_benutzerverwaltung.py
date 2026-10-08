@@ -1116,3 +1116,10 @@ class TestAuditDauerhaft:
         assert zeilen[1].getMessage() == (
             "[benutzer-audit] PASSWORT_ZURUECKGESETZT nicht in benutzer_audit gespeichert (OperationalError)")
         assert kc.passwords[uid]["value"] not in caplog.text
+
+
+def test_routen_vollstaendig_ohne_loeschen():
+    pfade = app.openapi()["paths"]
+    assert set(pfade["/api/v1/users"]) == {"get", "post"}
+    assert set(pfade["/api/v1/users/{user_id}"]) == {"get", "patch"}
+    assert set(pfade["/api/v1/users/{user_id}/reset-password"]) == {"post"}
