@@ -1398,3 +1398,49 @@ class TestS3StornoAusgeglichen:
         r = _s3_storniere(client, entwurf, create_credit_note=False)
         assert r.status_code == 200, r.text
         assert r.json()["credit_note"] is None
+
+
+class TestS3StornoWarnungenUndGrund:
+    def test_storno_einer_teilbezahlten_rechnung_warnt(self, client, sample_customer):
+        original = _s3_altrechnung(client, sample_customer)
+        r = client.post(f"/api/v1/invoices/{original['id']}/payments", json={
+            "invoice_id": original["id"], "payment_date": date.today().isoformat(),
+            "amount": "5.00",
+        })
+        assert r.status_code == 201, r.text
+
+        antwort = _s3_storniere(client, original).json()
+
+        assert len(antwort["warnungen"]) == 1
+        assert "5,00 €" in antwort["warnungen"][0]
+        assert original["invoice_number"] in antwort["warnungen"][0]
+        detail = client.get(f"/api/v1/invoices/{original['id']}").json()
+        assert "bereits gezahlt: 5,00 €" in detail["internal_notes"]
+        assert _s3_betrag(detail["paid_amount"]) == Decimal("5.00")
+
+    def test_storno_ohne_zahlung_ohne_warnung(self, client, sample_customer):
+        original = _s3_altrechnung(client, sample_customer)
+        assert _s3_storniere(client, original).json()["warnungen"] == []
+
+    def test_kopie_in_lexoffice_wird_gemeldet(self, client, sample_customer):
+        from app.models.invoice import Invoice
+        original = _s3_altrechnung(client, sample_customer)
+        with TestingSessionLocal() as db:
+            db.get(Invoice, uuid.UUID(original["id"])).lexoffice_id = "lex-123"
+            db.commit()
+
+        warnungen = _s3_storniere(client, original).json()["warnungen"]
+
+        assert any("lexoffice" in w for w in warnungen)
+
+    def test_stornogrund_falscher_steuersatz(self, client, sample_customer):
+        original = _s3_altrechnung(client, sample_customer)
+
+        r = _s3_storniere(client, original, reason_code="FALSCHER_STEUERSATZ",
+                          reason="Pfand mit 7 % statt 19 % berechnet")
+        assert r.status_code == 200, r.text
+
+        orig = client.get(f"/api/v1/invoices/{original['id']}").json()
+        sto = client.get(f"/api/v1/invoices/{r.json()['credit_note']['id']}").json()
+        assert "[FALSCHER_STEUERSATZ]" in orig["internal_notes"]
+        assert "[FALSCHER_STEUERSATZ]" in sto["internal_notes"]

@@ -312,7 +312,11 @@ def cancel_invoice(
     data: InvoiceCancelRequest,
     db: DBSession,
 ):
-    """Storniert eine Rechnung und erstellt optional eine Gutschrift."""
+    """Storniert eine Rechnung und erstellt optional eine Stornorechnung.
+
+    `warnungen` nennt, was der Storno nicht selbst lösen kann (bereits
+    gezahltes Geld, Kopie in lexoffice) — die Oberfläche zeigt sie an.
+    """
     service = InvoiceService(db)
     try:
         # Auswahlgrund + Freitext zusammen — beides gehört in die Akte (R1.4)
@@ -326,6 +330,7 @@ def cancel_invoice(
         return {
             "invoice": InvoiceResponse.model_validate(invoice),
             "credit_note": InvoiceResponse.model_validate(credit_note) if credit_note else None,
+            "warnungen": service.storno_warnungen(invoice),
         }
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

@@ -22,6 +22,11 @@ from app.models.product import Product
 from app.services.steuersatz import produkt_der_position, steuersatz_der_position
 
 
+def _euro(betrag: Decimal) -> str:
+    """Betrag mit deutschem Dezimalkomma: Decimal("5") -> "5,00 €"."""
+    return f"{Decimal(betrag):.2f} €".replace(".", ",")
+
+
 class InvoiceService:
     """Service für Rechnungs-Operationen"""
 
@@ -355,6 +360,15 @@ class InvoiceService:
         invoice.status = InvoiceStatus.STORNIERT
         invoice.internal_notes = f"{invoice.internal_notes or ''}\n\nStorniert: {reason}".strip()
 
+        # Bereits eingegangenes Geld bleibt am stornierten Beleg stehen — es
+        # gehört auf die Neuausstellung oder zurück an den Kunden. Das muss in
+        # die Akte; die API meldet es zusätzlich (storno_warnungen).
+        if invoice.paid_amount and invoice.paid_amount > 0:
+            invoice.internal_notes += (
+                f"\nBei Storno bereits gezahlt: {_euro(invoice.paid_amount)} — "
+                "auf die Neuausstellung umbuchen oder erstatten."
+            )
+
         # R1.6: zugeordnete Lieferscheine wieder abrechenbar machen — sie
         # gehören in die nächste, korrigierte (Sammel-)Rechnung.
         from app.models.documents import DeliveryNote
@@ -415,6 +429,23 @@ class InvoiceService:
             credit_note.sent_at = datetime.now(timezone.utc)
 
         return invoice, credit_note
+
+    @staticmethod
+    def storno_warnungen(invoice: Invoice) -> list[str]:
+        """Was der Storno nicht selbst lösen kann — die Oberfläche zeigt es an."""
+        warnungen = []
+        if invoice.paid_amount and invoice.paid_amount > 0:
+            warnungen.append(
+                f"Auf {invoice.invoice_number} sind bereits {_euro(invoice.paid_amount)} gezahlt. "
+                "Die Zahlung bleibt am stornierten Beleg stehen — bei der Neuausstellung "
+                "als Zahlung erfassen oder dem Kunden erstatten."
+            )
+        if invoice.lexoffice_id:
+            warnungen.append(
+                f"{invoice.invoice_number} wurde an lexoffice übertragen. Dort von Hand "
+                "stornieren bzw. den Entwurf löschen — die Stornorechnung wird nicht übertragen."
+            )
+        return warnungen
 
     #: Rechnung ist überfällig, wenn sie raus ist und noch Geld offen steht.
     #: ENTWURF (nie versendet), BEZAHLT und STORNIERT gehören nicht dazu.

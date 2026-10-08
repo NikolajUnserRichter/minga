@@ -250,7 +250,7 @@ class InvoiceCancelRequest(BaseModel):
     reason: str = Field(..., min_length=1, description="Stornogrund (Freitext)")
     reason_code: Optional[Literal[
         "FALSCHER_EMPFAENGER", "FALSCHE_MENGE", "PREISFEHLER",
-        "LIEFERUNG_NICHT_ERFOLGT", "SONSTIGES",
+        "FALSCHER_STEUERSATZ", "LIEFERUNG_NICHT_ERFOLGT", "SONSTIGES",
     ]] = Field(None, description="Stornogrund aus der Auswahlliste")
     create_credit_note: bool = Field(default=True, description="Stornorechnung erstellen?")
 
