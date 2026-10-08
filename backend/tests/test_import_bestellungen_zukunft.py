@@ -517,3 +517,111 @@ class TestP5Positionen:
 
         assert response.status_code == 200, response.text
         assert _bestellung(client, "P5-TRAY-ALT")["status"] == "GELIEFERT"
+
+
+def _p5_kunde_mit_adresse(client, name="RATIONAL AG"):
+    """Kunde mit Standardadresse samt Adresszusatz (Muster test_gernot_260821.py)."""
+    kunde = _kunde(client, name=name)
+    response = client.post(f"/api/v1/sales/customers/{kunde['id']}/addresses", json={
+        "address_type": "BOTH",
+        "strasse": "Siegfried-Meister-Strasse", "hausnummer": "1",
+        "adresszusatz": "Werk 2 - Tor 210",
+        "plz": "86899", "ort": "Landsberg", "is_default": True,
+    })
+    assert response.status_code == 201, response.text
+    return kunde
+
+
+class TestP5AnlageWieImFormular:
+    """Adress-Schnappschuss und Packtag wie create_order."""
+
+    def test_adressen_wie_bei_create_order(self, client):
+        heute = _heute_berlin()
+        lieferdatum = heute + timedelta(days=2)
+        kunde = _p5_kunde_mit_adresse(client)
+        produkt = _produkt()
+
+        response = _import_bestellungen(client, [
+            _p5_zeile("P5-ADRESSE", kunde, produkt, heute, lieferdatum),
+        ])
+        assert response.status_code == 200, response.text
+        importiert = _bestellung(client, "P5-ADRESSE")
+
+        formular = client.post("/api/v1/sales/orders", json={
+            "customer_id": kunde["id"],
+            "requested_delivery_date": lieferdatum.isoformat(),
+            "lines": [{"product_id": produkt["id"], "product_name": produkt["name"],
+                       "quantity": 1, "unit": "STK", "unit_price": "3.90"}],
+        })
+        assert formular.status_code == 201, formular.text
+
+        assert importiert["delivery_address"]["adresszusatz"] == "Werk 2 - Tor 210"
+        assert importiert["delivery_address"] == formular.json()["delivery_address"]
+        assert importiert["billing_address"] == formular.json()["billing_address"]
+
+    def test_lieferschein_zeigt_die_lieferadresse(self, client):
+        from tests.test_documents_preise import _pdf_text
+
+        heute = _heute_berlin()
+        kunde = _p5_kunde_mit_adresse(client)
+        produkt = _produkt()
+        response = _import_bestellungen(client, [
+            _p5_zeile("P5-LS", kunde, produkt, heute, heute + timedelta(days=2)),
+        ])
+        assert response.status_code == 200, response.text
+        order = _bestellung(client, "P5-LS")
+
+        note = client.post(f"/api/v1/sales/orders/{order['id']}/delivery-notes", json={})
+        assert note.status_code == 201, note.text
+        pdf = client.get(f"/api/v1/sales/delivery-notes/{note.json()['id']}/pdf")
+        assert pdf.status_code == 200, pdf.text
+        assert b"Tor 210" in _pdf_text(pdf.content)
+
+    def test_kunde_ohne_adresse_bleibt_ohne_schnappschuss(self, client):
+        """Charakterisierung, schon grün: wie create_order kein Schnappschuss ohne Kundenadresse."""
+        heute = _heute_berlin()
+        kunde = _kunde(client)
+        produkt = _produkt()
+
+        response = _import_bestellungen(client, [
+            _p5_zeile("P5-OHNE-ADRESSE", kunde, produkt, heute, heute + timedelta(days=2)),
+        ])
+
+        assert response.status_code == 200, response.text
+        order = _bestellung(client, "P5-OHNE-ADRESSE")
+        assert order["delivery_address"] is None
+        assert order["billing_address"] is None
+
+    def test_lieferdatum_heute_steht_unter_verpacken(self, client):
+        """T1 Repro 2: Same-Day-Import stand nur unter „Ausliefern“."""
+        heute = _heute_berlin()
+        kunde = _kunde(client)
+        produkt = _produkt()
+
+        response = _import_bestellungen(client, [
+            _p5_zeile("P5-HEUTE", kunde, produkt, heute, heute),
+        ])
+        assert response.status_code == 200, response.text
+        order = _bestellung(client, "P5-HEUTE")
+        assert order["packing_date"] == heute.isoformat()
+
+        plan = client.get("/api/v1/production/day-plan", params={"target_date": heute.isoformat()})
+        assert plan.status_code == 200, plan.text
+        assert order["id"] in [o["order_id"] for o in plan.json()["verpacken"]]
+        assert order["id"] in [o["order_id"] for o in plan.json()["ausliefern"]]
+
+    def test_kuenftige_lieferung_behaelt_den_standard_packtag(self, client):
+        """Charakterisierung, schon grün: Packtag bleibt leer = Vortag der Lieferung."""
+        heute = _heute_berlin()
+        lieferdatum = heute + timedelta(days=3)
+        kunde = _kunde(client)
+        produkt = _produkt()
+
+        response = _import_bestellungen(client, [
+            _p5_zeile("P5-SPAETER", kunde, produkt, heute, lieferdatum),
+        ])
+
+        assert response.status_code == 200, response.text
+        order = _bestellung(client, "P5-SPAETER")
+        assert order["packing_date"] is None
+        assert order["effective_packing_date"] == (lieferdatum - timedelta(days=1)).isoformat()

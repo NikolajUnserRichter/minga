@@ -676,16 +676,27 @@ def _pruefe_bestellung(
     }, []
 
 
-def _lege_bestellung_an(db, plan: dict, used_numbers: set[str]) -> Order:
+def _lege_bestellung_an(db, plan: dict, used_numbers: set[str], heute: date) -> Order:
     """Legt eine geprüfte Bestellung samt Positionen an (ohne Commit)."""
+    from app.services.bestell_adressen import adressen_vom_kunden
+
     status = plan["status"]
     lieferdatum = plan["lieferdatum"]
+    rechnungsadresse, lieferadresse = adressen_vom_kunden(plan["kunde"])
     order = Order(
         order_number=_generate_historic_order_number(db, plan["bestelldatum"], used_numbers),
         customer_id=plan["kunde"].id,
         customer_reference=plan["ext_nr"],
+        # Schnappschuss wie create_order — ohne ihn fehlt die Lieferadresse
+        # auf Lieferschein und Auftragsbestätigung (pdf_service.py).
+        billing_address=rechnungsadresse,
+        delivery_address=lieferadresse,
         order_date=datetime.combine(plan["bestelldatum"], datetime.min.time()),
         requested_delivery_date=lieferdatum,
+        # Wie Order.resolve_packing_date, aber mit dem Berliner Datum der
+        # Statusregel: Liegt der Vortag schon zurück (Lieferung heute), wird
+        # am Liefertag gepackt — sonst fehlte die Bestellung unter „Verpacken".
+        packing_date=lieferdatum if status in _OFFEN and lieferdatum <= heute else None,
         confirmed_delivery_date=(
             lieferdatum
             if status in (OrderStatus.BESTAETIGT, OrderStatus.IN_PRODUKTION)
@@ -784,7 +795,7 @@ def _import_order_history(db, rows: list[dict], *, parse_errors: Sequence[str] =
 
     used_numbers: set[str] = set()
     for plan in geplant:
-        _lege_bestellung_an(db, plan, used_numbers)
+        _lege_bestellung_an(db, plan, used_numbers, heute)
     db.commit()
     return {"created": len(geplant), "updated": skipped, "errors": []}
 
