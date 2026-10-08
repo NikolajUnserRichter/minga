@@ -619,3 +619,156 @@ def create_user_for_tenant(
             raise
         benutzer = _als_benutzer(rep.json(), [role])
     return {**benutzer, "temporary_password": pw}
+
+
+#: Realm-Rollen, die Keycloak jedem Benutzer gibt; sie machen kein Supportkonto.
+#: Dazu kommt die Standardrolle "default-roles-<realm>" (Name aus dem Realm).
+_STANDARD_REALM_ROLLEN = ("offline_access", "uma_authorization")
+#: Client-Rollen der Account-Konsole betreffen nur das eigene Konto.
+_STANDARD_CLIENT = "account"
+
+
+def _pruefe_verwaltbar(kc: _Benutzerzugang, user_id: str) -> None:
+    """Schreiben nur auf gewöhnliche Mandanten-Konten.
+
+    Ein Konto mit passendem tenant_slug kann mehr Rechte haben, als _app_rollen
+    zeigt: Client-Rollen (realm-management: realm-admin, manage-users …),
+    Gruppen, fremde oder zusammengesetzte Realm-Rollen. Wer so ein Konto per
+    Passwort-Reset übernimmt, verwaltet danach den ganzen Realm — alle Mandanten.
+    """
+    r = kc.call("GET", f"/users/{user_id}/role-mappings")
+    if r.status_code != 200:
+        raise KeycloakAdminError(f"Rollen konnten nicht gelesen werden (HTTP {r.status_code}).")
+    zuordnung = r.json() or {}
+    erlaubt = {*MANDANTEN_ROLLEN, *_STANDARD_REALM_ROLLEN}
+    standard = f"default-roles-{kc.c['realm'].lower()}"
+    for rolle in zuordnung.get("realmMappings") or []:
+        if rolle.get("name") == standard:
+            continue
+        if rolle.get("name") not in erlaubt or rolle.get("composite"):
+            raise BenutzerVomSupportVerwaltet()
+    for client, eintrag in (zuordnung.get("clientMappings") or {}).items():
+        if client != _STANDARD_CLIENT and (eintrag or {}).get("mappings"):
+            raise BenutzerVomSupportVerwaltet()
+    g = kc.call("GET", f"/users/{user_id}/groups", params={"briefRepresentation": "true"})
+    if g.status_code != 200:
+        raise KeycloakAdminError(f"Gruppen konnten nicht gelesen werden (HTTP {g.status_code}).")
+    if g.json():
+        raise BenutzerVomSupportVerwaltet()
+
+
+def _sitzungen_beenden(kc: _Benutzerzugang, user_id: str) -> None:
+    """Refresh-Tokens ungültig machen. Ein schon ausgestelltes Access-Token gilt
+    bis zu seinem Ablauf weiter (die App prüft Tokens lokal, security.py:62-82).
+    Ein Fehlschlag wird nur geloggt: die eigentliche Änderung ist schon geschehen,
+    beim Reset ginge sonst das neue Einmalpasswort verloren."""
+    try:
+        out = kc.call("POST", f"/users/{user_id}/logout")
+        if out.status_code < 400:
+            return
+        grund = f"HTTP {out.status_code}"
+    except KeycloakNichtErreichbar as e:
+        grund = str(e)
+    logger.warning("[keycloak] Sitzungen von %s nicht beendet (%s)", user_id, grund)
+
+
+def _aktive_admins(kc: _Benutzerzugang, tenant_slug: str, ohne: str) -> int:
+    return sum(
+        1
+        for u in _mandanten_reps(kc, tenant_slug)
+        if u["id"] != ohne and u.get("enabled") and "admin" in _app_rollen(kc, u["id"])
+    )
+
+
+def _setze_rolle(kc: _Benutzerzugang, user_id: str, neu: dict, rollen_alt: list[str],
+                 erledigt: dict) -> None:
+    """Genau eine App-Rolle. Erst alte entfernen, dann neue zuweisen: scheitert
+    der zweite Schritt, hat der Benutzer weniger Rechte, nicht mehr. ``erledigt``
+    hält fest, was schon geschrieben ist (für das Audit bei Fehlschlag)."""
+    alt = [m for m in _rollen_mappings(kc, user_id)
+           if m.get("name") in MANDANTEN_ROLLEN and m.get("name") != neu["name"]]
+    if alt:
+        r = kc.call("DELETE", f"/users/{user_id}/role-mappings/realm", json=alt)
+        if r.status_code >= 400:
+            raise KeycloakAdminError(f"Alte Rolle konnte nicht entfernt werden (HTTP {r.status_code}).")
+        erledigt["roles"] = [rollen_alt, [n for n in rollen_alt if n == neu["name"]]]
+    r = kc.call("POST", f"/users/{user_id}/role-mappings/realm", json=[neu])
+    if r.status_code >= 400:
+        raise KeycloakAdminError(
+            f"Rolle '{neu['name']}' konnte nicht zugewiesen werden (HTTP {r.status_code}); "
+            "der Benutzer hat jetzt keine App-Rolle."
+        )
+    erledigt["roles"] = [rollen_alt, [neu["name"]]]
+
+
+def update_tenant_user(
+    *,
+    tenant_slug: str,
+    user_id: str,
+    acting_user_id: str,
+    first_name: Optional[str] = None,
+    last_name: Optional[str] = None,
+    enabled: Optional[bool] = None,
+    role: Optional[str] = None,
+) -> tuple[dict, dict]:
+    """Ändert Name, Aktiv-Status und/oder Rolle. Rückgabe: (Benutzer, Änderungen {feld: [alt, neu]}).
+
+    Alles, was scheitern kann, ohne dass etwas geschrieben ist (Mandant, Supportkonto,
+    Schutzregeln, Rolle im Realm), wird VOR dem ersten Schreiben geprüft. Scheitert
+    danach ein Schreibschritt, trägt die Ausnahme ``teil_aenderungen``.
+    """
+    tenant_slug = _require_safe_slug(tenant_slug)
+    user_id = _require_user_id(user_id)
+    if role is not None and role not in MANDANTEN_ROLLEN:
+        raise RolleNichtErlaubt(f"Rolle '{role}' ist nicht erlaubt.")
+    with _Benutzerzugang() as kc:
+        rep = _lade_mandanten_user(kc, user_id, tenant_slug)
+        _pruefe_verwaltbar(kc, user_id)
+        rollen_alt = _app_rollen(kc, user_id)
+
+        ist_selbst = user_id == acting_user_id
+        if ist_selbst and enabled is False:
+            raise BenutzerSchutzregel("Das eigene Konto kann nicht deaktiviert werden.")
+        if ist_selbst and role is not None and role != "admin":
+            raise BenutzerSchutzregel("Die eigene Admin-Rolle kann nur ein anderer Admin ändern.")
+        verliert_admin = "admin" in rollen_alt and (
+            (role is not None and role != "admin") or enabled is False
+        )
+        if verliert_admin and rep.get("enabled") and _aktive_admins(kc, tenant_slug, ohne=user_id) == 0:
+            raise BenutzerSchutzregel(
+                "Der letzte aktive Admin des Mandanten kann nicht deaktiviert oder herabgestuft werden."
+            )
+        neue_rolle = _rolle_rep(kc, role) if role is not None and rollen_alt != [role] else None
+
+        put_aenderungen: dict = {}
+        neu = dict(rep)
+        for feld, kc_feld, wert in (
+            ("first_name", "firstName", first_name),
+            ("last_name", "lastName", last_name),
+            ("enabled", "enabled", enabled),
+        ):
+            if wert is not None and rep.get(kc_feld) != wert:
+                put_aenderungen[feld] = [rep.get(kc_feld), wert]
+                neu[kc_feld] = wert
+
+        aenderungen: dict = {}
+        try:
+            if put_aenderungen:
+                # Ganze Darstellung zurückschreiben, Attribute unverändert: je nach
+                # Keycloak-Version löscht ein PUT ohne "attributes" sonst tenant_slug.
+                neu["attributes"] = rep.get("attributes")
+                r = kc.call("PUT", f"/users/{user_id}", json=neu)
+                if r.status_code not in (200, 204):
+                    raise KeycloakAdminError(f"Änderung abgelehnt (HTTP {r.status_code}).")
+                aenderungen.update(put_aenderungen)
+            if neue_rolle is not None:
+                _setze_rolle(kc, user_id, neue_rolle, rollen_alt, aenderungen)
+        except KeycloakAdminError as e:
+            e.teil_aenderungen = dict(aenderungen)
+            raise
+        if "roles" in aenderungen or aenderungen.get("enabled") == [True, False]:
+            # Deaktiviert oder Rechte geändert: laufende Sitzungen beenden.
+            _sitzungen_beenden(kc, user_id)
+
+        rep_neu = _lade_mandanten_user(kc, user_id, tenant_slug)
+        return _als_benutzer(rep_neu, _app_rollen(kc, user_id)), aenderungen

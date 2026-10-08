@@ -167,3 +167,23 @@ def create_user(body: BenutzerCreate, mandant: MandantSchreiben, user: CurrentUs
     response.headers["Cache-Control"] = "no-store"
     pw = b.pop("temporary_password")
     return BenutzerAngelegtResponse(**_antwort(b, user).model_dump(), temporary_password=pw)
+
+
+@router.patch("/{user_id}", response_model=BenutzerResponse)
+def update_user(user_id: UUID, body: BenutzerUpdate, mandant: MandantSchreiben, user: CurrentUser):
+    try:
+        b, aenderungen = kc.update_tenant_user(
+            tenant_slug=mandant, user_id=str(user_id), acting_user_id=str(user.get("id")),
+            first_name=body.first_name, last_name=body.last_name,
+            enabled=body.enabled, role=body.role,
+        )
+    except kc.KeycloakAdminError as e:
+        teil = getattr(e, "teil_aenderungen", None)
+        if teil:
+            _audit("BENUTZER_TEILWEISE_GEAENDERT", mandant, user, ziel_id=str(user_id),
+                   aenderungen=teil, fehler=str(e))
+        raise _fehler(e, mandant, user, str(user_id))
+    if aenderungen:
+        _audit("BENUTZER_GEAENDERT", mandant, user, ziel_id=b["id"], ziel_email=b["email"],
+               aenderungen=aenderungen)
+    return _antwort(b, user)

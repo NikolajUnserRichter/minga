@@ -629,3 +629,198 @@ class TestAnlegen:
             keycloak_admin.create_user_for_tenant(tenant_slug=MANDANT, email="a@beispielfirma.de",
                                                   first_name="A", last_name="B", role="realm-admin")
         assert kc.calls == []
+
+
+def _supportkonto(kc, art):
+    """Konto mit tenant_slug dieses Mandanten, aber mehr Rechten, als die App-Rollen zeigen."""
+    if art == "client_rolle":
+        return kc.add_user("betrieb@novaerp.de", MANDANT, roles={"admin"},
+                           client_roles={"realm-management": ["realm-admin"]})
+    if art == "gruppe":
+        return kc.add_user("betrieb@novaerp.de", MANDANT, roles={"admin"}, groups=["support"])
+    if art == "fremde_realmrolle":
+        return kc.add_user("betrieb@novaerp.de", MANDANT, roles={"admin", "realm-admin"})
+    kc.roles["sales"]["composite"] = True
+    return kc.add_user("betrieb@novaerp.de", MANDANT, roles={"sales"})
+
+
+SUPPORTKONTEN = ["client_rolle", "gruppe", "fremde_realmrolle", "zusammengesetzt"]
+
+
+class TestAendern:
+    def test_name_aendern_behaelt_mandant(self, admin, kc):
+        uid = kc.add_user("lena@beispielfirma.de", MANDANT, roles={"production_staff"})
+        r = admin.patch(f"/api/v1/users/{uid}", json={"first_name": "Helena"})
+        assert r.status_code == 200, r.text
+        assert r.json()["first_name"] == "Helena"
+        assert kc.users[uid]["attributes"] == {"tenant_slug": [MANDANT]}
+
+    def test_rolle_wechseln_genau_eine_approlle(self, admin, kc):
+        uid = kc.add_user("lena@beispielfirma.de", MANDANT,
+                          roles={"production_staff", "sales", "offline_access"})
+        r = admin.patch(f"/api/v1/users/{uid}", json={"role": "accounting"})
+        assert r.status_code == 200, r.text
+        assert kc.mappings[uid] == {"accounting", "offline_access"}
+        assert r.json()["roles"] == ["accounting"]
+
+    def test_rollenwechsel_beendet_sitzungen(self, admin, kc):
+        b = kc.add_user("b@beispielfirma.de", MANDANT, roles={"admin"})
+        assert admin.patch(f"/api/v1/users/{b}", json={"role": "sales"}).status_code == 200
+        assert ("POST", f"/admin/realms/{REALM}/users/{b}/logout") in [c[:2] for c in kc.calls]
+
+    def test_standardkonto_ist_aenderbar(self, admin, kc):
+        """Keycloak-Standardrollen und die Account-Konsole machen kein Supportkonto."""
+        uid = kc.add_user("lena@beispielfirma.de", MANDANT,
+                          roles={"production_staff", STANDARDROLLE, "offline_access", "uma_authorization"},
+                          client_roles={"account": ["manage-account", "view-profile"]})
+        assert admin.patch(f"/api/v1/users/{uid}", json={"enabled": False}).status_code == 200
+
+    def test_deaktivieren_statt_loeschen(self, admin, kc):
+        uid = kc.add_user("lena@beispielfirma.de", MANDANT, roles={"production_staff"})
+        r = admin.patch(f"/api/v1/users/{uid}", json={"enabled": False})
+        assert r.status_code == 200, r.text
+        assert kc.users[uid]["enabled"] is False
+        assert ("POST", f"/admin/realms/{REALM}/users/{uid}/logout") in [c[:2] for c in kc.calls]
+        assert not [c for c in kc.calls if c[0] == "DELETE" and c[1].endswith(f"/users/{uid}")]
+
+    def test_reaktivieren(self, admin, kc):
+        uid = kc.add_user("lena@beispielfirma.de", MANDANT, roles={"production_staff"}, enabled=False)
+        assert admin.patch(f"/api/v1/users/{uid}", json={"enabled": True}).json()["enabled"] is True
+
+    def test_leerer_patch(self, admin, kc):
+        uid = kc.add_user("lena@beispielfirma.de", MANDANT, roles={"production_staff"})
+        assert admin.patch(f"/api/v1/users/{uid}", json={}).status_code == 422
+
+    def test_email_aendern_nicht_vorgesehen(self, admin, kc):
+        uid = kc.add_user("lena@beispielfirma.de", MANDANT, roles={"production_staff"})
+        assert admin.patch(f"/api/v1/users/{uid}", json={"email": "neu@beispielfirma.de"}).status_code == 422
+
+    def test_rolle_ausserhalb_allowlist(self, admin, kc):
+        uid = kc.add_user("lena@beispielfirma.de", MANDANT, roles={"production_staff"})
+        assert admin.patch(f"/api/v1/users/{uid}", json={"role": "realm-admin"}).status_code == 422
+        assert kc.schreibende_calls(uid) == []
+
+    def test_fehlende_rolle_nichts_geschrieben(self, admin, kc):
+        """Rolle wird VOR dem ersten Schreiben gelesen — kein halb geänderter Benutzer."""
+        uid = kc.add_user("lena@beispielfirma.de", MANDANT, roles={"production_staff"}, first="Lena")
+        del kc.roles["accounting"]
+        r = admin.patch(f"/api/v1/users/{uid}",
+                        json={"enabled": False, "first_name": "Helena", "role": "accounting"})
+        assert r.status_code == 503, r.text
+        assert kc.schreibende_calls(uid) == []
+        assert kc.users[uid]["enabled"] is True and kc.users[uid]["firstName"] == "Lena"
+
+    def test_teilweise_geaendert_im_audit(self, admin, kc, caplog):
+        caplog.set_level("WARNING", logger="app.audit.benutzer")
+        uid = kc.add_user("lena@beispielfirma.de", MANDANT, roles={"production_staff"}, first="Lena")
+        kc.fehler_bei = ("POST", f"/users/{uid}/role-mappings/realm")
+        r = admin.patch(f"/api/v1/users/{uid}", json={"first_name": "Helena", "role": "sales"})
+        assert r.status_code == 503, r.text
+        z = _audit_zeilen(caplog)
+        assert (z[-1]["aktion"], z[-1]["ziel_id"]) == ("BENUTZER_TEILWEISE_GEAENDERT", uid)
+        assert z[-1]["aenderungen"] == {"first_name": ["Lena", "Helena"], "roles": [["production_staff"], []]}
+
+    @pytest.mark.parametrize("rolle", ["sales", "production_planner", "production_staff", "accounting"])
+    def test_nur_admin_aendert(self, admin, kc, rolle):
+        uid = kc.add_user("lena@beispielfirma.de", MANDANT, roles={"production_staff"})
+        _als(rollen=(rolle,))
+        assert admin.patch(f"/api/v1/users/{uid}", json={"enabled": False}).status_code == 403
+        assert kc.calls == []
+
+    def test_demo_gesperrt(self, admin, kc, monkeypatch):
+        from app.api.v1 import users
+        monkeypatch.setattr(users, "DEMO_MANDANT", MANDANT)
+        assert admin.patch(f"/api/v1/users/{ADMIN_ID}", json={"last_name": "X"}).status_code == 403
+        assert kc.schreibende_calls() == []
+
+    def test_nicht_erreichbar(self, admin, kc):
+        kc.down = True
+        assert admin.patch(f"/api/v1/users/{ADMIN_ID}", json={"last_name": "X"}).status_code == 503
+
+    def test_audit_mit_aenderungen(self, admin, kc, caplog):
+        caplog.set_level("WARNING", logger="app.audit.benutzer")
+        uid = kc.add_user("lena@beispielfirma.de", MANDANT, roles={"production_staff"}, first="Lena")
+        admin.patch(f"/api/v1/users/{uid}", json={"first_name": "Helena", "role": "sales"})
+        z = _audit_zeilen(caplog)
+        assert z[-1]["aktion"] == "BENUTZER_GEAENDERT" and z[-1]["ziel_id"] == uid
+        assert z[-1]["aenderungen"] == {"first_name": ["Lena", "Helena"],
+                                        "roles": [["production_staff"], ["sales"]]}
+
+    def test_dienst_prueft_rolle_selbst(self, kc):
+        with pytest.raises(keycloak_admin.RolleNichtErlaubt):
+            keycloak_admin.update_tenant_user(tenant_slug=MANDANT, user_id=ADMIN_ID,
+                                              acting_user_id="x", role="realm-admin")
+        assert kc.calls == []
+
+
+class TestFremderMandantAendern:
+    @pytest.mark.parametrize("body", [
+        {"enabled": False}, {"role": "admin"}, {"first_name": "Gehackt"},
+    ])
+    def test_404_und_kein_schreibzugriff(self, admin, kc, body):
+        fremd = kc.add_user("x@fremdfirma.de", FREMD, roles={"production_staff"})
+        r = admin.patch(f"/api/v1/users/{fremd}", json=body)
+        unbekannt = admin.patch(f"/api/v1/users/{uuid.uuid4()}", json=body)
+        assert r.status_code == 404, r.text
+        assert r.json() == unbekannt.json() == {"detail": "Benutzer nicht gefunden."}
+        assert kc.schreibende_calls(fremd) == []
+        assert kc.users[fremd]["enabled"] is True and kc.users[fremd]["firstName"] == "Vor"
+        assert kc.mappings[fremd] == {"production_staff"}
+
+    def test_benutzer_ohne_attribut(self, admin, kc):
+        uid = kc.add_user("svc@intern.de", None)
+        assert admin.patch(f"/api/v1/users/{uid}", json={"enabled": False}).status_code == 404
+        assert kc.schreibende_calls(uid) == []
+
+
+class TestSupportkontenAendern:
+    @pytest.mark.parametrize("art", SUPPORTKONTEN)
+    @pytest.mark.parametrize("body", [{"enabled": False}, {"role": "production_staff"}, {"first_name": "X"}])
+    def test_abgewiesen_ohne_schreibzugriff(self, admin, kc, caplog, art, body):
+        caplog.set_level("WARNING", logger="app.audit.benutzer")
+        uid = _supportkonto(kc, art)
+        r = admin.patch(f"/api/v1/users/{uid}", json=body)
+        assert r.status_code == 409, r.text
+        assert r.json()["detail"] == "Dieser Benutzer wird vom Support verwaltet und kann hier nicht geändert werden."
+        assert kc.schreibende_calls(uid) == []
+        assert kc.users[uid]["enabled"] is True and kc.users[uid]["firstName"] == "Vor"
+        assert (_audit_zeilen(caplog)[-1]["aktion"], _audit_zeilen(caplog)[-1]["ziel_id"]) == (
+            "SUPPORTKONTO_ABGEWIESEN", uid)
+
+
+class TestSchutzregeln:
+    def test_selbst_deaktivieren(self, admin, kc):
+        kc.add_user("zweite@beispielfirma.de", MANDANT, roles={"admin"})
+        r = admin.patch(f"/api/v1/users/{ADMIN_ID}", json={"enabled": False})
+        assert r.status_code == 409
+        assert kc.users[ADMIN_ID]["enabled"] is True
+
+    def test_ohne_sub_kein_selbstdeaktivieren(self, admin, kc):
+        """Token ohne sub: acting_user_id wäre 'None', der Selbstschutz griffe nicht."""
+        kc.add_user("zweite@beispielfirma.de", MANDANT, roles={"admin"})
+        _als(uid=None)
+        assert admin.patch(f"/api/v1/users/{ADMIN_ID}", json={"enabled": False}).status_code == 403
+        assert kc.users[ADMIN_ID]["enabled"] is True
+        assert kc.schreibende_calls() == []
+
+    def test_selbst_herabstufen(self, admin, kc):
+        kc.add_user("zweite@beispielfirma.de", MANDANT, roles={"admin"})
+        r = admin.patch(f"/api/v1/users/{ADMIN_ID}", json={"role": "sales"})
+        assert r.status_code == 409
+        assert kc.mappings[ADMIN_ID] == {"admin", STANDARDROLLE}
+
+    def test_eigenen_namen_aendern_erlaubt(self, admin, kc):
+        assert admin.patch(f"/api/v1/users/{ADMIN_ID}", json={"last_name": "Neu"}).status_code == 200
+
+    def test_letzter_aktiver_admin(self, admin, kc):
+        """Der Aufrufer hat admin nur im Token (z. B. über eine Gruppe); in
+        Keycloak ist B der einzige direkte, aktive Admin des Mandanten."""
+        kc.mappings[ADMIN_ID] = set()
+        b = kc.add_user("b@beispielfirma.de", MANDANT, roles={"admin"})
+        kc.add_user("fremdadmin@fremdfirma.de", FREMD, roles={"admin"})
+        kc.add_user("inaktiv@beispielfirma.de", MANDANT, roles={"admin"}, enabled=False)
+        assert admin.patch(f"/api/v1/users/{b}", json={"role": "sales"}).status_code == 409
+        assert admin.patch(f"/api/v1/users/{b}", json={"enabled": False}).status_code == 409
+        assert kc.mappings[b] == {"admin"} and kc.users[b]["enabled"] is True
+        kc.add_user("c@beispielfirma.de", MANDANT, roles={"admin"})
+        assert admin.patch(f"/api/v1/users/{b}", json={"role": "sales"}).status_code == 200
