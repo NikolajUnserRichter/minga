@@ -187,3 +187,16 @@ def update_user(user_id: UUID, body: BenutzerUpdate, mandant: MandantSchreiben, 
         _audit("BENUTZER_GEAENDERT", mandant, user, ziel_id=b["id"], ziel_email=b["email"],
                aenderungen=aenderungen)
     return _antwort(b, user)
+
+
+@router.post("/{user_id}/reset-password", response_model=PasswortZurueckgesetztResponse)
+def reset_password(user_id: UUID, mandant: MandantSchreiben, user: CurrentUser, response: Response):
+    try:
+        r = kc.reset_tenant_user_password(tenant_slug=mandant, user_id=str(user_id))
+    except kc.KeycloakAdminError as e:
+        raise _fehler(e, mandant, user, str(user_id))
+    _audit("PASSWORT_ZURUECKGESETZT", mandant, user, ziel_id=r["user"]["id"], ziel_email=r["user"]["email"])
+    response.headers["Cache-Control"] = "no-store"
+    return PasswortZurueckgesetztResponse(
+        user=_antwort(r["user"], user), temporary_password=r["temporary_password"],
+    )

@@ -772,3 +772,22 @@ def update_tenant_user(
 
         rep_neu = _lade_mandanten_user(kc, user_id, tenant_slug)
         return _als_benutzer(rep_neu, _app_rollen(kc, user_id)), aenderungen
+
+
+def reset_tenant_user_password(*, tenant_slug: str, user_id: str) -> dict:
+    """Setzt ein neues temporäres Passwort (wie beim Onboarding) und beendet die
+    Sitzungen. Keycloak verlangt beim nächsten Login ein eigenes Passwort.
+    Rückgabe enthält es genau einmal."""
+    tenant_slug = _require_safe_slug(tenant_slug)
+    user_id = _require_user_id(user_id)
+    with _Benutzerzugang() as kc:
+        rep = _lade_mandanten_user(kc, user_id, tenant_slug)
+        _pruefe_verwaltbar(kc, user_id)
+        pw = _gen_password()
+        r = kc.call("PUT", f"/users/{user_id}/reset-password",
+                    json={"type": "password", "value": pw, "temporary": True})
+        if r.status_code not in (200, 204):
+            raise KeycloakAdminError(f"Passwort konnte nicht gesetzt werden (HTTP {r.status_code}).")
+        _sitzungen_beenden(kc, user_id)
+        benutzer = _als_benutzer(rep, _app_rollen(kc, user_id))
+    return {"user": benutzer, "temporary_password": pw}

@@ -824,3 +824,77 @@ class TestSchutzregeln:
         assert kc.mappings[b] == {"admin"} and kc.users[b]["enabled"] is True
         kc.add_user("c@beispielfirma.de", MANDANT, roles={"admin"})
         assert admin.patch(f"/api/v1/users/{b}", json={"role": "sales"}).status_code == 200
+
+
+class TestPasswort:
+    def test_reset_liefert_einmalpasswort(self, admin, kc):
+        uid = kc.add_user("lena@beispielfirma.de", MANDANT, roles={"production_staff"})
+        r = admin.post(f"/api/v1/users/{uid}/reset-password")
+        assert r.status_code == 200, r.text
+        assert r.headers["cache-control"] == "no-store"
+        assert r.json()["user"]["id"] == uid
+        assert kc.passwords[uid] == {"type": "password", "value": r.json()["temporary_password"], "temporary": True}
+
+    def test_reset_beendet_sitzungen(self, admin, kc):
+        """Nach einem kompromittierten Konto bliebe der Angreifer sonst per Refresh-Token drin."""
+        uid = kc.add_user("lena@beispielfirma.de", MANDANT, roles={"production_staff"})
+        assert admin.post(f"/api/v1/users/{uid}/reset-password").status_code == 200
+        schreibend = [c[:2] for c in kc.schreibende_calls(uid)]
+        assert schreibend == [("PUT", f"/admin/realms/{REALM}/users/{uid}/reset-password"),
+                              ("POST", f"/admin/realms/{REALM}/users/{uid}/logout")]
+
+    def test_logout_scheitert_passwort_trotzdem_geliefert(self, admin, kc):
+        uid = kc.add_user("lena@beispielfirma.de", MANDANT, roles={"production_staff"})
+        kc.fehler_bei = ("POST", f"/users/{uid}/logout")
+        r = admin.post(f"/api/v1/users/{uid}/reset-password")
+        assert r.status_code == 200, r.text
+        assert kc.passwords[uid]["value"] == r.json()["temporary_password"]
+
+    def test_fremd_404_und_kein_schreibzugriff(self, admin, kc):
+        fremd = kc.add_user("x@fremdfirma.de", FREMD, roles={"production_staff"})
+        r = admin.post(f"/api/v1/users/{fremd}/reset-password")
+        unbekannt = admin.post(f"/api/v1/users/{uuid.uuid4()}/reset-password")
+        assert r.status_code == 404
+        assert r.json() == unbekannt.json()
+        assert kc.schreibende_calls(fremd) == [] and fremd not in kc.passwords
+
+    @pytest.mark.parametrize("art", SUPPORTKONTEN)
+    def test_supportkonto_nicht_uebernehmbar(self, admin, kc, caplog, art):
+        """Angriff: Mandanten-Admin setzt das Passwort eines Betreiberkontos mit
+        tenant_slug seines Mandanten zurück und verwaltet danach den ganzen Realm."""
+        caplog.set_level("WARNING", logger="app.audit.benutzer")
+        uid = _supportkonto(kc, art)
+        r = admin.post(f"/api/v1/users/{uid}/reset-password")
+        assert r.status_code == 409, r.text
+        assert "temporary_password" not in r.text
+        assert kc.schreibende_calls(uid) == [] and uid not in kc.passwords
+        assert _audit_zeilen(caplog)[-1]["aktion"] == "SUPPORTKONTO_ABGEWIESEN"
+
+    @pytest.mark.parametrize("rolle", ["sales", "production_planner", "production_staff", "accounting"])
+    def test_nur_admin(self, admin, kc, rolle):
+        _als(rollen=(rolle,))
+        assert admin.post(f"/api/v1/users/{ADMIN_ID}/reset-password").status_code == 403
+        assert kc.calls == []
+
+    def test_demo_gesperrt(self, admin, kc, monkeypatch):
+        from app.api.v1 import users
+        monkeypatch.setattr(users, "DEMO_MANDANT", MANDANT)
+        assert admin.post(f"/api/v1/users/{ADMIN_ID}/reset-password").status_code == 403
+        assert kc.schreibende_calls() == []
+
+    def test_audit_ohne_passwort(self, admin, kc, caplog):
+        caplog.set_level("WARNING", logger="app.audit.benutzer")
+        uid = kc.add_user("lena@beispielfirma.de", MANDANT, roles={"production_staff"})
+        pw = admin.post(f"/api/v1/users/{uid}/reset-password").json()["temporary_password"]
+        z = _audit_zeilen(caplog)
+        assert (z[-1]["aktion"], z[-1]["ziel_id"]) == ("PASSWORT_ZURUECKGESETZT", uid)
+        assert pw not in caplog.text
+
+    def test_dienst_prueft_id_selbst(self, kc):
+        """T5 R4 will die Dienstfunktionen auch hinter Plattform-Endpunkten nutzen."""
+        with pytest.raises(keycloak_admin.KeycloakNichtGefunden):
+            keycloak_admin.reset_tenant_user_password(tenant_slug=MANDANT, user_id="../roles/admin")
+        with pytest.raises(keycloak_admin.KeycloakNichtGefunden):
+            keycloak_admin.update_tenant_user(tenant_slug=MANDANT, user_id="../roles/admin",
+                                              acting_user_id=ADMIN_ID, enabled=False)
+        assert kc.calls == []
