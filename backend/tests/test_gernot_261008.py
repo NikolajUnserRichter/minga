@@ -2159,3 +2159,42 @@ class TestS6ZweiterLieferschein:
         ls2 = _s6_lieferschein(client, bestellung, zusaetzlich=True)
 
         assert ls2["delivery_note_number"] != ls1["delivery_note_number"]
+
+
+class TestS6RechnungenJeBestellung:
+    """(e) GET /invoices?order_id= — Grundlage des Belege-Dialogs."""
+
+    def test_filter_findet_die_rechnung_jenseits_der_ersten_seite(self, client):
+        """Der Dialog filterte die 20 neuesten Rechnungen — ab Rechnung 21 fehlte sie."""
+        kunde = _s6_kunde(client)
+        ziel = _s6_bestellung(client, kunde)
+        rechnung = _s6_aus_bestellung(client, ziel).json()
+        for _ in range(21):
+            _s6_rechnung_ohne_bestellung(client, kunde)
+
+        r = client.get("/api/v1/invoices", params={"order_id": ziel["id"]})
+
+        assert r.status_code == 200, r.text
+        assert [i["id"] for i in r.json()] == [rechnung["id"]]
+
+    def test_filter_findet_die_sammelrechnung_ueber_den_lieferschein(self, client):
+        bestellung = _s6_bestellung(client, _s6_kunde(client))
+        _s6_lieferschein(client, bestellung)
+        sammel = _s6_lauf(client, S6_COMMIT)["rechnungen"][0]
+        _s6_rechnung_ohne_bestellung(client, _s6_kunde(client, name="Großer Kern"))
+
+        r = client.get("/api/v1/invoices", params={"order_id": bestellung["id"]})
+
+        assert [i["id"] for i in r.json()] == [sammel["id"]]
+
+    def test_stornierte_und_neue_rechnung_erscheinen_beide(self, client):
+        bestellung = _s6_bestellung(client, _s6_kunde(client))
+        erste = _s6_finalisieren(client, _s6_aus_bestellung(client, bestellung).json())
+        _s6_storno(client, erste)
+        neu = _s6_aus_bestellung(client, bestellung).json()
+        _s6_rechnung_ohne_bestellung(client, _s6_kunde(client, name="Großer Kern"))
+
+        r = client.get("/api/v1/invoices", params={"order_id": bestellung["id"]})
+
+        rechnungen = {(i["id"], i["status"]) for i in r.json() if i["invoice_type"] == "RECHNUNG"}
+        assert rechnungen == {(erste["id"], "STORNIERT"), (neu["id"], "ENTWURF")}

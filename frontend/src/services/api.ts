@@ -708,7 +708,7 @@ export const priceListsApi = {
 
 // Invoices API
 export const invoicesApi = {
-  list: (params?: { status?: InvoiceStatus; customer_id?: string; invoice_type?: InvoiceType; from_date?: string; to_date?: string }) =>
+  list: (params?: { status?: InvoiceStatus; customer_id?: string; invoice_type?: InvoiceType; from_date?: string; to_date?: string; order_id?: string }) =>
     api.get<Invoice[]>('/invoices', { params }).then(r => r.data),
 
   get: (id: string) =>

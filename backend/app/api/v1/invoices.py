@@ -7,13 +7,14 @@ from decimal import Decimal
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import select
+from sqlalchemy import select, or_
 
 from app.api.deps import DBSession, Pagination
 from app.models.invoice import (
     Invoice, InvoiceLine, Payment,
     InvoiceStatus, InvoiceType, PaymentMethod
 )
+from app.models.documents import DeliveryNote
 from app.schemas.invoice import (
     InvoiceCreate, InvoiceUpdate, InvoiceResponse, InvoiceDetailResponse,
     InvoiceLineCreate, InvoiceLineUpdate, InvoiceLineResponse,
@@ -42,6 +43,7 @@ def list_invoices(
     invoice_type: Optional[InvoiceType] = None,
     from_date: Optional[date] = None,
     to_date: Optional[date] = None,
+    order_id: Optional[UUID] = None,
 ):
     """Listet alle Rechnungen mit optionaler Filterung."""
     query = select(Invoice).options(joinedload(Invoice.lines))
@@ -54,6 +56,20 @@ def list_invoices(
 
     if invoice_type:
         query = query.where(Invoice.invoice_type == invoice_type)
+
+    if order_id:
+        # Beide Wege zur Rechnung einer Bestellung — dieselben wie in
+        # InvoiceService.aktive_rechnung_zur_bestellung: Rechnung aus
+        # Bestellung (order_id) und Sammelrechnung (über den Lieferschein).
+        query = query.where(or_(
+            Invoice.order_id == order_id,
+            Invoice.id.in_(
+                select(DeliveryNote.invoice_id).where(
+                    DeliveryNote.order_id == order_id,
+                    DeliveryNote.invoice_id.is_not(None),
+                )
+            ),
+        ))
 
     if from_date:
         query = query.where(Invoice.invoice_date >= from_date)

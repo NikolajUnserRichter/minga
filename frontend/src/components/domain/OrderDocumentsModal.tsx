@@ -40,9 +40,13 @@ export function OrderDocumentsModal({ open, onClose, order }: Props) {
     enabled: open && !!orderId,
   });
 
+  // Serverseitig gefiltert: Rechnung aus Bestellung (order_id) und
+  // Sammelrechnung (über den Lieferschein). Früher wurden die 20 neuesten
+  // Rechnungen clientseitig gefiltert — ab Rechnung 21 stand hier "keine
+  // Rechnung", und der Knopf erzeugte eine Doppelrechnung.
   const invoicesQuery = useQuery({
     queryKey: ['order-invoices', orderId],
-    queryFn: () => invoicesApi.list({}).then((rows) => rows.filter((i: Invoice) => i.order_id === orderId)),
+    queryFn: () => invoicesApi.list({ order_id: orderId! }),
     enabled: open && !!orderId,
   });
 
@@ -148,6 +152,15 @@ export function OrderDocumentsModal({ open, onClose, order }: Props) {
   const confirmations = confirmationsQuery.data || [];
   const deliveryNotes = deliveryNotesQuery.data || [];
   const invoices = invoicesQuery.data || [];
+  // Rechnungen gehören zur Geldseite (main.py: _deps_geld = sales, accounting,
+  // admin). Planung und Halle öffnen den Dialog wegen der Lieferscheine auch,
+  // GET /invoices antwortet ihnen mit 403 — das ist kein Ladefehler.
+  const ohneRechnungsrecht = (invoicesQuery.error as any)?.response?.status === 403;
+  // Gleiche Regel wie das Backend (InvoiceService.aktive_rechnung_zur_bestellung):
+  // eine nicht stornierte Rechnung vom Typ RECHNUNG sperrt die nächste.
+  const aktiveRechnung = invoices.find((i: Invoice) => i.invoice_type === 'RECHNUNG' && i.status !== 'STORNIERT');
+  // Ohne frisch geladene Liste kein Knopf: lieber einmal zu wenig anbieten als doppelt berechnen.
+  const rechnungMoeglich = invoicesQuery.isSuccess && !invoicesQuery.isFetching && !aktiveRechnung;
 
   return (
     <Modal
@@ -299,16 +312,26 @@ export function OrderDocumentsModal({ open, onClose, order }: Props) {
               <Receipt className="w-4 h-4" />
               Rechnungen
             </h3>
-            <Button
-              size="sm"
-              icon={<Plus className="w-3 h-3" />}
-              loading={createInvoice.isPending}
-              onClick={() => createInvoice.mutate()}
-            >
-              Rechnung aus Bestellung
-            </Button>
+            {rechnungMoeglich && (
+              <Button
+                size="sm"
+                icon={<Plus className="w-3 h-3" />}
+                loading={createInvoice.isPending}
+                onClick={() => createInvoice.mutate()}
+              >
+                Rechnung aus Bestellung
+              </Button>
+            )}
           </div>
-          {invoices.length === 0 ? (
+          {ohneRechnungsrecht ? (
+            <p className="text-sm text-gray-500 dark:text-gray-400 italic">
+              Rechnungen sehen nur Vertrieb und Buchhaltung.
+            </p>
+          ) : invoicesQuery.isError ? (
+            <p className="text-sm text-red-700 dark:text-red-300">
+              Rechnungen zu dieser Bestellung konnten nicht geladen werden. Bitte den Dialog neu öffnen.
+            </p>
+          ) : invoices.length === 0 ? (
             <p className="text-sm text-gray-500 dark:text-gray-400 italic">Noch keine Rechnung zu dieser Bestellung.</p>
           ) : (
             <ul className="space-y-2">

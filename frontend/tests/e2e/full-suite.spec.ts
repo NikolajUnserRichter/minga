@@ -159,16 +159,31 @@ test.describe('Orders', () => {
 
   test('open belege-modal + generate AB + LS + Rechnung', async ({ page }) => {
     await gotoApp(page, '/orders');
-    // erster Order-Card-Klick → Belege-Modal
-    const firstCard = page.locator('[class*=card]').first();
+    // erster Order-Card-Klick → Belege-Modal. Die erste .card der Seite ist
+    // der Filterkasten, deshalb die erste Karte mit Bestellnummer.
+    const firstCard = page.locator('[class*=card]').filter({ hasText: /BE-/ }).first();
     await firstCard.click();
-    await page.getByRole('button', { name: /Neue AB/ }).click();
-    await page.getByRole('button', { name: /Neuer LS/ }).click();
-    await page.getByRole('button', { name: /Rechnung aus Bestellung/ }).click();
-    // Erwarte mindestens je einen Beleg in der Liste
-    await expect(page.locator('text=AB-')).toBeVisible({ timeout: 5000 });
-    await expect(page.locator('text=LS-')).toBeVisible();
-    await expect(page.locator('text=RE-')).toBeVisible();
+    const belege = page.getByRole('dialog');
+    // Rechnung zuerst, solange keine andere Abfrage neu lädt. "Rechnung aus
+    // Bestellung" erscheint nur bei geladener Liste ohne aktive Rechnung
+    // (Task 24); bei wiederholtem Lauf auf derselben Bestellung fehlt der Knopf,
+    // die Rechnung steht dann schon in der Liste.
+    const rechnungKnopf = belege.getByRole('button', { name: /Rechnung aus Bestellung/ });
+    await expect(rechnungKnopf.or(belege.locator('text=RE-')).first()).toBeVisible({ timeout: 5000 });
+    if (await rechnungKnopf.isVisible()) {
+      await rechnungKnopf.click();
+      await expect(rechnungKnopf).toBeHidden({ timeout: 5000 });
+    }
+    await belege.getByRole('button', { name: /Neue AB/ }).click();
+    // Hat die Bestellung schon einen Lieferschein, fragt der Dialog per
+    // window.confirm nach (Task 23). Playwright lehnt Dialoge ohne Handler ab:
+    // Es entsteht kein zweiter Lieferschein, der vorhandene genügt.
+    await belege.getByRole('button', { name: /Neuer LS/ }).click();
+    // Erwarte mindestens je einen Beleg in der Liste (.first(): bei
+    // wiederholtem Lauf gibt es mehrere ABs)
+    await expect(belege.locator('text=AB-').first()).toBeVisible({ timeout: 5000 });
+    await expect(belege.locator('text=LS-').first()).toBeVisible();
+    await expect(belege.locator('text=RE-').first()).toBeVisible();
   });
 });
 
