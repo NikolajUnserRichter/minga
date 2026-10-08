@@ -197,7 +197,7 @@ export default function Orders() {
           <div className="flex items-center gap-2">
             <ExcelImport
               entity="order_history"
-              label="Historie importieren"
+              label="Bestellungen importieren"
               secondaryLabel="übersprungen"
               onImported={() => queryClient.invalidateQueries({ queryKey: ['orders'] })}
             />

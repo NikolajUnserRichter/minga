@@ -14,6 +14,7 @@ from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any, Optional, Sequence
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
@@ -36,6 +37,10 @@ router = APIRouter(prefix="/imports", tags=["Excel-Import"])
 # Blattnamen im Template: Daten wird importiert, Beispiel nie.
 DATA_SHEET = "Daten"
 EXAMPLE_SHEET = "Beispiel"
+
+
+def _today_berlin() -> date:
+    return datetime.now(ZoneInfo("Europe/Berlin")).date()
 
 
 # ---- Spalten-Definitionen je Entity ---------------------------------------
@@ -193,7 +198,7 @@ def _coerce(value: Any, type_hint: str) -> Any:
 def _examples(entity: str) -> list[list[Any]]:
     from datetime import timedelta
 
-    heute = date.today()
+    heute = _today_berlin()
     d = lambda tage: (heute - timedelta(days=tage)).strftime("%d.%m.%Y")  # noqa: E731
 
     if entity == "customers":
@@ -237,7 +242,7 @@ def _examples(entity: str) -> list[list[Any]]:
             # Zwei Zeilen mit gleicher externer Nummer = EINE Bestellung mit 2 Positionen
             ["EXT-1001", "Gasthaus Sonne", d(21), d(20), "MG-RUC-100", 12, "STK", "3.90", "GELIEFERT", ""],
             ["EXT-1001", "Gasthaus Sonne", d(21), d(20), "MG-ERB-200", 5, "STK", "4.50", "GELIEFERT", ""],
-            ["EXT-1002", "BioMarkt Isartal", d(14), d(13), "MG-RUC-100", 30, "STK", "3.50", "GELIEFERT", ""],
+            ["EXT-1002", "BioMarkt Isartal", d(0), d(-3), "MG-RUC-100", 30, "STK", "3.50", "", ""],
         ]
     if entity == "grow_batches":
         return [
@@ -250,7 +255,9 @@ def _examples(entity: str) -> list[list[Any]]:
 HINWEISE = {
     "order_history": (
         "Mehrere Zeilen mit derselben 'bestell_nr_extern' ergeben EINE Bestellung "
-        "mit mehreren Positionen. Kunde und produkt_sku müssen bereits angelegt sein."
+        "mit mehreren Positionen. Kunde und produkt_sku müssen bereits angelegt sein. "
+        "Status leer lassen: Lieferdatum in der Vergangenheit = GELIEFERT, heute oder "
+        "später = BESTAETIGT (erscheint im Tagesplan)."
     ),
     "grow_batches": "Die Sorte muss vorher als Saatgut angelegt sein.",
     "products": (
@@ -544,11 +551,29 @@ def _import_order_history(db, rows: list[dict]) -> tuple[int, int]:
                 detail=f"Bestellung '{ext_nr}': Kunde '{head['kunde']}' nicht gefunden — bitte zuerst Stammdaten importieren",
             )
 
-        status_str = head.get("status") or "GELIEFERT"
-        try:
-            order_status = OrderStatus(status_str)
-        except ValueError:
-            order_status = OrderStatus.GELIEFERT
+        lieferdatum = head["lieferdatum"]
+        status_str = head.get("status")
+        if not status_str:
+            order_status = (
+                OrderStatus.GELIEFERT
+                if lieferdatum < _today_berlin()
+                else OrderStatus.BESTAETIGT
+            )
+        else:
+            try:
+                order_status = OrderStatus(status_str)
+            except ValueError:
+                order_status = OrderStatus.GELIEFERT
+
+        if order_status in (OrderStatus.GELIEFERT, OrderStatus.FAKTURIERT) and lieferdatum > _today_berlin():
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Bestellung '{ext_nr}': Status {order_status.value}, aber Lieferdatum "
+                    f"{lieferdatum.strftime('%d.%m.%Y')} liegt in der Zukunft — "
+                    "Status-Spalte leer lassen oder BESTAETIGT eintragen"
+                ),
+            )
 
         order_number = _generate_historic_order_number(db, head["bestelldatum"], used_numbers)
 
@@ -557,8 +582,17 @@ def _import_order_history(db, rows: list[dict]) -> tuple[int, int]:
             customer_id=customer.id,
             customer_reference=ext_nr,
             order_date=datetime.combine(head["bestelldatum"], datetime.min.time()),
-            requested_delivery_date=head["lieferdatum"],
-            actual_delivery_date=head["lieferdatum"] if order_status == OrderStatus.GELIEFERT else None,
+            requested_delivery_date=lieferdatum,
+            confirmed_delivery_date=(
+                lieferdatum
+                if order_status in (OrderStatus.BESTAETIGT, OrderStatus.IN_PRODUKTION)
+                else None
+            ),
+            actual_delivery_date=(
+                lieferdatum
+                if order_status in (OrderStatus.GELIEFERT, OrderStatus.FAKTURIERT)
+                else None
+            ),
             status=order_status,
             currency="EUR",
             total_net=Decimal("0"),
@@ -754,6 +788,7 @@ async def import_entity(entity: str, db: DBSession, file: UploadFile = File(...)
     try:
         created, updated = IMPORTERS[entity](db, rows)
     except HTTPException:
+        db.rollback()
         raise
     except Exception as e:
         db.rollback()
