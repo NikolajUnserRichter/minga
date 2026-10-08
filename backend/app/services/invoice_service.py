@@ -320,19 +320,36 @@ class InvoiceService:
         create_credit_note: bool = True
     ) -> tuple[Invoice, Optional[Invoice]]:
         """
-        Storniert eine Rechnung und erstellt optional eine Gutschrift.
+        Storniert eine Rechnung und erstellt optional eine Stornorechnung.
+
+        Die Stornorechnung ist das exakte Spiegelbild des Originals: gleiche
+        Positionen mit negativer Menge, gleiche Steuersätze, Konten,
+        Pfandkennzeichen und derselbe Rechnungsrabatt. Original und
+        Stornorechnung gleichen sich aus und stehen danach beide auf
+        STORNIERT — damit fallen sie aus Überfälligkeit, Mahnlauf, offenen
+        Posten und Umsatzauswertungen heraus.
         """
         invoice = self.db.get(Invoice, invoice_id)
         if not invoice:
             raise ValueError("Rechnung nicht gefunden")
 
+        # R1.7 vor der Statusprüfung: auch die Stornorechnung steht auf
+        # STORNIERT, die Meldung soll trotzdem den eigentlichen Grund nennen.
+        # Der Storno eines Stornos würde die Beträge wieder aufleben lassen —
+        # der Weg ist eine neue, korrigierte Rechnung.
+        if invoice.invoice_type == InvoiceType.GUTSCHRIFT:
+            raise ValueError("Eine Stornorechnung kann nicht storniert werden")
+
         if invoice.status == InvoiceStatus.STORNIERT:
             raise ValueError("Rechnung ist bereits storniert")
 
-        # R1.7: Der Storno eines Stornos würde die Beträge wieder aufleben
-        # lassen — der Weg ist eine neue, korrigierte Rechnung.
-        if invoice.invoice_type == InvoiceType.GUTSCHRIFT:
-            raise ValueError("Eine Stornorechnung kann nicht storniert werden")
+        # Ein Entwurf ging nie an den Kunden — eine Stornorechnung dazu wäre
+        # ein Beleg über nichts. Verwerfen geht nur ohne Stornorechnung.
+        if invoice.status == InvoiceStatus.ENTWURF and create_credit_note:
+            raise ValueError(
+                "Ein Entwurf wurde nie ausgestellt und bekommt keine Stornorechnung — "
+                "Entwurf korrigieren und finalisieren oder ohne Stornorechnung verwerfen"
+            )
 
         # Original stornieren
         invoice.status = InvoiceStatus.STORNIERT
@@ -353,6 +370,8 @@ class InvoiceService:
                 invoice_type=InvoiceType.GUTSCHRIFT,
                 original_invoice_id=invoice_id,
                 delivery_date=invoice.delivery_date,
+                # Nichts zu zahlen: fällig am Ausstellungstag.
+                due_date=date.today(),
                 buchungskonto=invoice.buchungskonto,
                 header_text=(
                     f"Stornorechnung zur Rechnung Nr. {invoice.invoice_number} "
@@ -387,8 +406,12 @@ class InvoiceService:
                 ))
             self.recalculate_totals(credit_note)
 
-            # Status regelt Task 13
-            credit_note.status = InvoiceStatus.OFFEN
+            # Ausgeglichen: STORNIERT ist der einzige bestehende Status, den
+            # Überfälligkeit, Mahnlauf, offene Posten, Umsatzauswertungen,
+            # Zahlungserfassung und lexoffice-Übertragung gleichermaßen
+            # auslassen. PDF und Versand per API bleiben möglich
+            # (invoices.py /pdf und /send).
+            credit_note.status = InvoiceStatus.STORNIERT
             credit_note.sent_at = datetime.now(timezone.utc)
 
         return invoice, credit_note
@@ -418,7 +441,10 @@ class InvoiceService:
             select(Invoice)
             .where(
                 Invoice.status.in_(self.OVERDUE_STATES),
-                Invoice.due_date < today
+                Invoice.due_date < today,
+                # Eine Gutschrift/Stornorechnung ist nie überfällig — auch
+                # kein Altbestand, den der frühere Storno auf OFFEN setzte.
+                Invoice.invoice_type != InvoiceType.GUTSCHRIFT,
             )
         ).scalars().all()
 

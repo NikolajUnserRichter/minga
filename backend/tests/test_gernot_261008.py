@@ -635,6 +635,8 @@ class TestS1Datenkorrektur:
         pfand = _s1_pfandkiste(client)
         order = _s1_altbestellung(client, _s1_kunde(client), pfand)
         rechnung = _s1_rechnung_aus(client, order)
+        r = client.post(f"/api/v1/invoices/{rechnung['id']}/finalize")
+        assert r.status_code == 200, r.text
         r = client.post(f"/api/v1/invoices/{rechnung['id']}/cancel", json={"reason": "Steuersatz Pfand"})
         assert r.status_code == 200, r.text
 
@@ -1265,3 +1267,134 @@ class TestS3StornoMehrzeilig:
         assert _s3_betrag(storno["discount_percent"]) == Decimal("10")
         assert _s3_betrag(storno["total"]) == -_s3_betrag(original["total"])
         assert storno["delivery_date"] == "2026-10-07"
+
+
+class TestS3StornoAusgeglichen:
+    """Stornorechnung und Original gleichen sich aus und fallen aus
+    Überfälligkeit, Mahnlauf, offenen Posten und Umsatz heraus."""
+
+    def test_beide_belege_stehen_auf_storniert(self, client, sample_customer):
+        original = _s3_altrechnung(client, sample_customer)
+        antwort = _s3_storniere(client, original).json()
+
+        assert antwort["invoice"]["status"] == "STORNIERT"
+        storno = antwort["credit_note"]
+        assert storno["status"] == "STORNIERT"
+        assert storno["due_date"] == storno["invoice_date"]
+
+    def _faelligkeit_in_der_vergangenheit(self, *ids):
+        from app.models.invoice import Invoice
+        with TestingSessionLocal() as db:
+            for i in ids:
+                db.get(Invoice, uuid.UUID(i)).due_date = date.today() - timedelta(days=30)
+            db.commit()
+
+    def _als_altbestand_offen(self, storno_id):
+        """Stornorechnung so, wie der alte Code sie hinterließ: OFFEN, fällig."""
+        from app.models.invoice import Invoice, InvoiceStatus
+        with TestingSessionLocal() as db:
+            alt = db.get(Invoice, uuid.UUID(storno_id))
+            alt.status = InvoiceStatus.OFFEN
+            alt.due_date = date.today() - timedelta(days=30)
+            db.commit()
+
+    def test_storno_ist_nie_ueberfaellig(self, client, sample_customer):
+        original = _s3_altrechnung(client, sample_customer)
+        storno = _s3_storniere(client, original).json()["credit_note"]
+        self._faelligkeit_in_der_vergangenheit(original["id"], storno["id"])
+
+        r = client.get("/api/v1/invoices/overdue")
+        assert r.status_code == 200, r.text
+        ids = {i["id"] for i in r.json()}
+        assert original["id"] not in ids
+        assert storno["id"] not in ids
+        assert client.get(f"/api/v1/invoices/{storno['id']}").json()["status"] == "STORNIERT"
+
+    def test_ueberfaellig_liste_ignoriert_alten_storno_auf_offen(self, client, sample_customer):
+        """Altbestand über die API: GET /invoices/overdue ruft
+        InvoiceService.check_overdue_invoices und schreibt UEBERFAELLIG."""
+        original = _s3_altrechnung(client, sample_customer)
+        storno = _s3_storniere(client, original).json()["credit_note"]
+        self._als_altbestand_offen(storno["id"])
+
+        r = client.get("/api/v1/invoices/overdue")
+        assert r.status_code == 200, r.text
+        assert storno["id"] not in {i["id"] for i in r.json()}
+        assert client.get(f"/api/v1/invoices/{storno['id']}").json()["status"] == "OFFEN"
+
+    def test_geplante_jobs_ignorieren_negative_belege(self, client, sample_customer):
+        """Altbestand: eine Stornorechnung, die der alte Code auf OFFEN gesetzt hat,
+        wird weder überfällig noch gemahnt."""
+        from app.models.invoice import Invoice, InvoiceStatus
+        from app.tasks.invoice_tasks import check_overdue_invoices, send_payment_reminders
+
+        original = _s3_altrechnung(client, sample_customer)
+        storno = _s3_storniere(client, original).json()["credit_note"]
+        self._als_altbestand_offen(storno["id"])
+
+        with patch("app.tasks.invoice_tasks.SessionLocal", return_value=TestingSessionLocal()):
+            assert check_overdue_invoices()["newly_overdue"] == 0
+        assert client.get(f"/api/v1/invoices/{storno['id']}").json()["status"] == "OFFEN"
+
+        with TestingSessionLocal() as db:
+            db.get(Invoice, uuid.UUID(storno["id"])).status = InvoiceStatus.UEBERFAELLIG
+            db.commit()
+        mail = MagicMock()
+        mail.send_email.return_value = True
+        with patch("app.tasks.invoice_tasks.email_service", mail), \
+             patch("app.tasks.invoice_tasks.SessionLocal", return_value=TestingSessionLocal()):
+            assert send_payment_reminders()["reminders_sent"] == 0
+        mail.send_email.assert_not_called()
+
+    def test_weder_offener_posten_noch_umsatz(self, client, sample_customer):
+        original = _s3_altrechnung(client, sample_customer)
+        storno = _s3_storniere(client, original).json()["credit_note"]
+
+        offen = {i["id"] for i in client.get("/api/v1/invoices", params={"status": "OFFEN"}).json()}
+        assert storno["id"] not in offen and original["id"] not in offen
+
+        heute = date.today().isoformat()
+        summe = client.get("/api/v1/invoices/revenue-summary",
+                           params={"from_date": heute, "to_date": heute}).json()
+        # Paar hebt sich auf: kein Umsatz, nichts offen — vorher −17,84 Umsatz
+        assert _s3_betrag(summe["total_revenue"]) == Decimal("0")
+        assert _s3_betrag(summe["open_amount"]) == Decimal("0")
+
+    def test_stornorechnung_kann_versendet_werden(self, client, sample_customer):
+        original = _s3_altrechnung(client, sample_customer)
+        storno = _s3_storniere(client, original).json()["credit_note"]
+
+        gesendet = {}
+        def _fake_send_email(**kwargs):
+            gesendet.update(kwargs)
+        with patch("app.api.v1.invoices.send_email", _fake_send_email):
+            r = client.post(f"/api/v1/invoices/{storno['id']}/send",
+                            params={"to_email": "kunde@example.com"})
+            assert r.status_code == 200, r.text
+            assert "Stornorechnung" in gesendet["subject"]
+            assert original["invoice_number"] in gesendet["body"]
+            assert "Fällig" not in gesendet["body"]
+            assert gesendet["attachment_bytes"].startswith(b"%PDF")
+
+            # das stornierte Original bleibt gesperrt
+            r = client.post(f"/api/v1/invoices/{original['id']}/send",
+                            params={"to_email": "kunde@example.com"})
+            assert r.status_code == 400, r.text
+
+        assert client.get(f"/api/v1/invoices/{storno['id']}").json()["status"] == "STORNIERT"
+
+    def test_entwurf_bekommt_keine_stornorechnung(self, client, sample_customer):
+        r = client.post("/api/v1/invoices", json={
+            "customer_id": sample_customer["id"],
+            "invoice_date": date.today().isoformat(),
+            "lines": _S3_ZEILEN,
+        })
+        entwurf = r.json()
+
+        r = _s3_storniere(client, entwurf)
+        assert r.status_code == 400, r.text
+        assert "Entwurf" in r.json()["detail"]
+
+        r = _s3_storniere(client, entwurf, create_credit_note=False)
+        assert r.status_code == 200, r.text
+        assert r.json()["credit_note"] is None

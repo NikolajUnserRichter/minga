@@ -241,7 +241,13 @@ def send_invoice_email(
     ).unique().scalar_one_or_none()
     if not invoice:
         raise HTTPException(status_code=404, detail="Rechnung nicht gefunden")
-    if invoice.status == InvoiceStatus.STORNIERT:
+    # Die Stornorechnung steht als ausgeglichener Beleg auf STORNIERT, muss
+    # aber zum Kunden. Gesperrt ist nur das stornierte Original.
+    ist_storno = (
+        invoice.invoice_type == InvoiceType.GUTSCHRIFT
+        and invoice.original_invoice_id is not None
+    )
+    if invoice.status == InvoiceStatus.STORNIERT and not ist_storno:
         raise HTTPException(status_code=400, detail="Stornierte Rechnungen können nicht versendet werden")
     if not invoice.lines:
         raise HTTPException(status_code=400, detail="Rechnung hat keine Positionen")
@@ -259,17 +265,31 @@ def send_invoice_email(
 
     try:
         pdf = PDFService.generate_invoice_pdf(invoice, settings=load_company_settings(db), db=db)
-        send_email(
-            db=db,
-            to=to_email,
-            subject=f"Rechnung {invoice.invoice_number} — Minga Greens",
-            body=(
+        # Mailtext erst hier: ein Entwurf ist oben bereits neu berechnet (Task 11)
+        if ist_storno:
+            original = invoice.original_invoice
+            betreff = f"Stornorechnung {invoice.invoice_number} — Minga Greens"
+            text = (
+                f"Sehr geehrte Damen und Herren bei {invoice.customer.name},\n\n"
+                f"anbei finden Sie die Stornorechnung {invoice.invoice_number} zur Rechnung "
+                f"{original.invoice_number if original else '—'}.\n"
+                f"Die Rechnung ist damit vollständig aufgehoben.\n\n"
+                f"Mit freundlichen Grüßen\nIhr Minga-Greens-Team"
+            )
+        else:
+            betreff = f"Rechnung {invoice.invoice_number} — Minga Greens"
+            text = (
                 f"Sehr geehrte Damen und Herren bei {invoice.customer.name},\n\n"
                 f"anbei finden Sie die Rechnung {invoice.invoice_number} über\n"
                 f"{invoice.total:.2f} {invoice.currency}.\n\n"
                 f"Fällig am: {invoice.due_date.strftime('%d.%m.%Y') if invoice.due_date else '—'}\n\n"
                 f"Mit freundlichen Grüßen\nIhr Minga-Greens-Team"
-            ),
+            )
+        send_email(
+            db=db,
+            to=to_email,
+            subject=betreff,
+            body=text,
             attachment_bytes=pdf,
             attachment_filename=f"{invoice.invoice_number}.pdf",
         )
