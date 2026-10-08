@@ -583,12 +583,24 @@ async def update_subscription(sub_id: UUID, sub_data: SubscriptionUpdate, db: DB
     return response
 
 @router.post("/subscriptions/process-today", status_code=status.HTTP_200_OK)
-async def process_today_subscriptions():
+async def process_today_subscriptions(db: DBSession):
     """Löst manuell den Subscription-Run für heute aus."""
-    from app.tasks.subscription_tasks import process_daily_subscriptions
-    # Synchron ausführen um Ergebnis zu sehen
-    result = process_daily_subscriptions()
-    return {"message": "Subscription run completed", "details": result}
+    # Session der Anfrage = Mandant der Subdomain. Der Scheduler-Task öffnet
+    # SessionLocal(), und das fällt ohne Scheduler-Kontext auf
+    # DEFAULT_TENANT_SLUG zurück: Bis Oktober 2026 lief der Knopf im
+    # Default-Mandanten statt im Mandanten der Anfrage.
+    from app.tasks.subscription_tasks import abo_lauf, liefertag_heute
+    result = abo_lauf(db, liefertag_heute())
+    # Die Oberfläche zeigt `message` im Toast (Abonnements.tsx, processMutation).
+    erstellt = result["erstellt"]
+    teile = [f"{erstellt} Abo-Bestellung{'en' if erstellt != 1 else ''} angelegt."]
+    if result["bereits_vorhanden"]:
+        teile.append(f"{result['bereits_vorhanden']} schon vorhanden.")
+    if result["uebersprungen"]:
+        anzahl = len(result["uebersprungen"])
+        gruende = ", ".join(f"{u['kunde']} ({u['grund']})" for u in result["uebersprungen"])
+        teile.append(f"{anzahl} Abo{'s' if anzahl != 1 else ''} übersprungen: {gruende}")
+    return {"message": " ".join(teile), "details": result}
 
 # ============== Order Endpoints (Header-Line Architecture) ==============
 

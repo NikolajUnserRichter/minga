@@ -12,6 +12,7 @@ from app.models.order import Order, OrderLine, OrderStatus, TaxRate
 from app.models.product import Product, ProductVariant
 from app.models.unit import UnitOfMeasure
 from app.services.pricing_service import resolve_unit_price
+from app.services.order_status_service import heute_berlin
 from app.api.v1.sales import router
 from typing import List
 
@@ -188,34 +189,92 @@ def abo_position(db, sub, heute: date) -> OrderLine:
     return line
 
 
+def liefertag_heute() -> date:
+    """Heutiger Kalendertag in München.
+
+    Der Container läuft in UTC. Zwischen 00:00 und 02:00 Uhr Berliner Zeit
+    wäre date.today() noch der Vortag, und ein Klick auf "Heute verarbeiten"
+    legte die Bestellungen des Vortags an. Dieselbe Rechnung wie das
+    Lieferdatum beim Statuswechsel: order_status_service.heute_berlin().
+    """
+    return heute_berlin()
+
+
+def _abo_bestellung_vorhanden(db, sub, heute: date) -> bool:
+    """Gibt es zu diesem Abo und Liefertag schon eine Bestellung?
+
+    Zählt in jedem Status, auch STORNIERT: Wer die Abo-Bestellung eines Tages
+    storniert, will sie nicht beim nächsten Klick auf "Heute verarbeiten"
+    zurückhaben. Erkennungsmerkmal ist der Text, den
+    _create_order_from_subscription in Order.notes schreibt, dazu Kunde und
+    Liefertag. Ohne eigene Spalte ist das nicht fest: Notiz und Liefertag
+    sind in der Oberfläche änderbar (EditOrderModal, OrderUpdate), Entwürfe
+    lassen sich löschen (DELETE /sales/orders/{id}). Wer eins davon tut,
+    bekommt die Abo-Bestellung beim nächsten Lauf desselben Tages zurück.
+    """
+    return db.execute(
+        select(Order.id).where(
+            Order.customer_id == sub.kunde_id,
+            Order.requested_delivery_date == heute,
+            Order.notes.contains(f"Abo {sub.id}"),
+        ).limit(1)
+    ).first() is not None
+
+
+def abo_lauf(db, heute: date) -> dict:
+    """Legt in der Mandanten-DB von `db` die an `heute` fälligen Abo-Bestellungen an.
+
+    Zwei Aufrufer, jeder mit der Session des richtigen Mandanten:
+    process_daily_subscriptions (Scheduler 05:00, SessionLocal unter der
+    ContextVar des Mandanten) und der Knopf "Heute verarbeiten"
+    (sales.process_today_subscriptions, Session der Anfrage). Committet.
+    """
+    # Aktive Abos laden
+    subs = db.execute(
+        select(Subscription).where(Subscription.aktiv == True)
+    ).scalars().all()
+
+    erstellt = 0
+    bereits_vorhanden = 0
+    uebersprungen = []
+    for sub in subs:
+        if not ist_faellig(sub, heute):
+            continue
+        # 05:00-Lauf und Knopf "Heute verarbeiten" treffen denselben Tag.
+        if _abo_bestellung_vorhanden(db, sub, heute):
+            bereits_vorhanden += 1
+            continue
+        try:
+            _create_order_from_subscription(db, sub, heute)
+            erstellt += 1
+        except AboUebersprungen as grund:
+            kunde = sub.kunde.name if sub.kunde else str(sub.kunde_id)
+            logger.warning("[abo] Abo %s (%s) übersprungen: %s", sub.id, kunde, grund)
+            uebersprungen.append({"abo_id": str(sub.id), "kunde": kunde, "grund": str(grund)})
+
+    db.commit()
+    # Dict statt Text: _safe_wrap (scheduler_service.py) liest "status",
+    # der Knopf "Heute verarbeiten" die Zahlen.
+    return {
+        "status": "ok",
+        "erstellt": erstellt,
+        "bereits_vorhanden": bereits_vorhanden,
+        "uebersprungen": uebersprungen,
+    }
+
+
 @shared_task
 def process_daily_subscriptions(heute: Optional[date] = None):
-    """Täglicher Task: Erstellt Entwurfs-Bestellungen aus aktiven Abos."""
-    heute = heute or date.today()
+    """Täglicher Task (Scheduler 05:00): Entwurfs-Bestellungen aus aktiven Abos.
+
+    SessionLocal() löst über die ContextVar auf, die scheduler_service._safe_wrap
+    je Mandant setzt. Ohne sie, etwa aus einer Anfrage heraus, fiele es auf
+    DEFAULT_TENANT_SLUG zurück. Darum ruft der Knopf "Heute verarbeiten"
+    abo_lauf mit der Session der Anfrage und nicht diesen Task.
+    """
     db = SessionLocal()
     try:
-        # Aktive Abos laden
-        subs = db.execute(
-            select(Subscription).where(Subscription.aktiv == True)
-        ).scalars().all()
-
-        erstellt = 0
-        uebersprungen = []
-        for sub in subs:
-            if not ist_faellig(sub, heute):
-                continue
-            try:
-                _create_order_from_subscription(db, sub, heute)
-                erstellt += 1
-            except AboUebersprungen as grund:
-                kunde = sub.kunde.name if sub.kunde else str(sub.kunde_id)
-                logger.warning("[abo] Abo %s (%s) übersprungen: %s", sub.id, kunde, grund)
-                uebersprungen.append({"abo_id": str(sub.id), "kunde": kunde, "grund": str(grund)})
-
-        db.commit()
-        # Dict statt Text: _safe_wrap (scheduler_service.py) liest "status",
-        # der Knopf "Heute verarbeiten" die Zahlen.
-        return {"status": "ok", "erstellt": erstellt, "uebersprungen": uebersprungen}
+        return abo_lauf(db, heute or liefertag_heute())
     finally:
         db.close()
 

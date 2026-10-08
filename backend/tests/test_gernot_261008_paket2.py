@@ -1374,3 +1374,87 @@ class TestP4AboPosition:
         with pytest.raises(AboUebersprungen, match="deaktiviert"):
             _p4_anlegen(abo["id"])
         assert _p4_bestellungen() == []
+
+
+class TestP4AboLauf:
+    """A5: Der Knopf "Heute verarbeiten" lief im Default-Mandanten statt im
+    Mandanten der Anfrage. Läuft er richtig, treffen er und der 05:00-Lauf
+    dieselbe DB: je Abo und Liefertag darf es nur eine Bestellung geben."""
+
+    def test_zweiter_lauf_am_selben_tag_legt_nichts_doppelt_an(self, client):
+        kunde = _p4_kunde(client)
+        produkt = _p4_produkt(client, "BIO Snackbox | Amaranth", "P4-SNACK", "4.50")
+        abo = _p4_abo(client, kunde, product_id=produkt["id"], liefertage=[3])
+
+        _p4_lauf(_P4_DO)
+        zweiter = _p4_lauf(_P4_DO)
+
+        assert len(_p4_bestellungen(abo["id"])) == 1
+        assert zweiter["erstellt"] == 0
+        assert zweiter["bereits_vorhanden"] == 1
+
+    def test_stornierte_abo_bestellung_kommt_nicht_wieder(self, client):
+        kunde = _p4_kunde(client)
+        produkt = _p4_produkt(client, "BIO Snackbox | Amaranth", "P4-SNACK", "4.50")
+        abo = _p4_abo(client, kunde, product_id=produkt["id"], liefertage=[3])
+        _p4_lauf(_P4_DO)
+        from app.models.order import Order, OrderStatus
+        from sqlalchemy import select
+        with TestingSessionLocal() as db:
+            order = db.execute(select(Order)).scalars().one()
+            order.status = OrderStatus.STORNIERT
+            db.commit()
+
+        _p4_lauf(_P4_DO)
+
+        assert [b["status"] for b in _p4_bestellungen(abo["id"])] == ["STORNIERT"]
+
+    def test_knopf_nutzt_den_mandanten_der_anfrage(self, client):
+        """Der Knopf muss die Session der Anfrage nehmen und meldet auf Deutsch.
+
+        SessionLocal() fiele ohne Scheduler-Kontext auf DEFAULT_TENANT_SLUG
+        zurück (database.py, _active_slug). Der Patch lässt jeden Zugriff
+        scheitern, statt in TENANTS_DIR/dev.db zu schreiben. Diesen Test nie
+        ohne ihn laufen lassen: backend/data/tenants/dev.db ist eine echte
+        lokale Dev-DB.
+        """
+        from app.models.customer import Subscription, SubscriptionInterval
+        kunde = _p4_kunde(client)
+        produkt = _p4_produkt(client, "BIO Snackbox | Amaranth", "P4-SNACK", "4.50")
+        # Täglich ab gestern: fällig, auch wenn der Berliner Kalendertag dem
+        # des Testrechners schon voraus ist.
+        gestern = date.today() - timedelta(days=1)
+        abo = _p4_abo(client, kunde, product_id=produkt["id"], intervall="TAEGLICH",
+                      liefertage=None, gueltig_von=gestern)
+        with TestingSessionLocal() as db:
+            db.add(Subscription(
+                kunde_id=uuid.UUID(kunde["id"]), menge=Decimal("2"), einheit="STUECK",
+                intervall=SubscriptionInterval.TAEGLICH, gueltig_von=gestern,
+            ))
+            db.commit()
+
+        with patch("app.tasks.subscription_tasks.SessionLocal",
+                   side_effect=AssertionError("Knopf nutzt SessionLocal (Default-Mandant)")):
+            r = client.post("/api/v1/sales/subscriptions/process-today")
+
+        assert r.status_code == 200, r.text
+        assert len(_p4_bestellungen(abo["id"])) == 1
+        assert r.json()["message"] == (
+            "1 Abo-Bestellung angelegt. 1 Abo übersprungen: "
+            "LfA Förderbank Bayern (Abo hat weder Produkt noch Sorte)"
+        )
+
+    def test_liefertag_ist_der_berliner_kalendertag(self):
+        """Der Container läuft in UTC: 22:30 UTC am 07.10. ist in München schon der 08.10."""
+        from datetime import datetime, timezone
+        from app.services import order_status_service
+        from app.tasks.subscription_tasks import liefertag_heute
+
+        class _Uhr(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return datetime(2026, 10, 7, 22, 30, tzinfo=timezone.utc).astimezone(tz)
+
+        # liefertag_heute ruft order_status_service.heute_berlin (eine Regel)
+        with patch.object(order_status_service, "datetime", _Uhr):
+            assert liefertag_heute() == date(2026, 10, 8)
