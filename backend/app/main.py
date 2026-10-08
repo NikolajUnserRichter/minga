@@ -32,6 +32,7 @@ from app.api.v1 import print_jobs
 from app.api.v1 import reports
 from app.api.v1 import ratgeber as ratgeber_admin
 from app.api.v1 import seo_dashboard
+from app.api.v1 import users as benutzer
 from app.api import ratgeber_public, seo_public
 from app.api.deps import get_current_user
 from app.core.security import verify_token
@@ -831,6 +832,13 @@ app.include_router(
 
 app.include_router(
     admin.router,
+    prefix="/api/v1",
+    dependencies=_deps_admin,
+)
+
+# Benutzerverwaltung je Mandant: nur der Mandanten-Admin (Paket 4, B8)
+app.include_router(
+    benutzer.router,
     prefix="/api/v1",
     dependencies=_deps_admin,
 )

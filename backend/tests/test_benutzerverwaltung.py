@@ -297,3 +297,158 @@ class TestDienstLesen:
         with pytest.raises(keycloak_admin.KeycloakNichtErreichbar, match="nicht eingerichtet"):
             keycloak_admin.list_tenant_users(MANDANT)
         assert kc.calls == []
+
+
+def _als(rollen=("admin",), tenant=MANDANT, uid=ADMIN_ID,
+         username="chefin@beispielfirma.de", email="chefin@beispielfirma.de"):
+    async def override():
+        u = {"id": uid, "username": username, "email": email, "roles": list(rollen)}
+        if tenant is not None:
+            u["tenant_slug"] = tenant
+        return u
+    app.dependency_overrides[get_current_user] = override
+
+
+@pytest.fixture
+def admin(client, kc):
+    vorher = app.dependency_overrides.get(get_current_user)
+    _als()
+    yield client
+    app.dependency_overrides[get_current_user] = vorher
+
+
+def _audit_zeilen(caplog):
+    return [json.loads(r.getMessage().split(" ", 1)[1])
+            for r in caplog.records if r.name == "app.audit.benutzer"]
+
+
+class TestZugriff:
+    @pytest.mark.parametrize("rolle", ["sales", "production_planner", "production_staff", "accounting"])
+    def test_nur_admin_liest(self, admin, kc, rolle):
+        _als(rollen=(rolle,))
+        assert admin.get("/api/v1/users").status_code == 403
+        assert admin.get(f"/api/v1/users/{ADMIN_ID}").status_code == 403
+        assert kc.calls == []
+
+    def test_ohne_mandant_im_token(self, admin, kc):
+        """Basic-Auth und AUTH_DISABLED liefern keinen tenant_slug (deps.py:38-57)."""
+        _als(tenant=None)
+        assert admin.get("/api/v1/users").status_code == 403
+        assert kc.calls == []
+
+    def test_ohne_sub_im_token(self, admin, kc):
+        """Ohne Benutzer-ID griffe der Selbstschutz ins Leere (acting_user_id 'None')."""
+        _als(uid=None)
+        assert admin.get("/api/v1/users").status_code == 403
+        assert kc.calls == []
+
+    def test_token_anderer_mandant(self, admin, kc):
+        _als(tenant=FREMD)
+        assert admin.get("/api/v1/users").status_code == 403
+        assert kc.calls == []
+
+    def test_kein_loeschen(self, admin, kc):
+        uid = kc.add_user("lena@beispielfirma.de", MANDANT, roles={"production_staff"})
+        assert admin.delete(f"/api/v1/users/{uid}").status_code == 405
+        assert uid in kc.users
+
+
+class TestListe:
+    def test_nur_eigener_mandant(self, admin, kc):
+        eigen = kc.add_user("lena@beispielfirma.de", MANDANT, roles={"production_staff"})
+        kc.add_user("x@fremdfirma.de", FREMD, roles={"admin"})
+        kc.add_user("y@aehnlich.de", f"{MANDANT}x", roles={"admin"})
+        r = admin.get("/api/v1/users")
+        assert r.status_code == 200, r.text
+        assert sorted(b["id"] for b in r.json()["items"]) == sorted([ADMIN_ID, eigen])
+        assert r.json()["total"] == 2
+
+    def test_felder_und_eigener_eintrag(self, admin, kc):
+        kc.add_user("ben@beispielfirma.de", MANDANT, roles={"sales"}, first="Ben", last="Verkauf")
+        items = {b["email"]: b for b in admin.get("/api/v1/users").json()["items"]}
+        assert items["chefin@beispielfirma.de"]["is_self"] is True
+        ben = items["ben@beispielfirma.de"]
+        assert ben["is_self"] is False
+        assert (ben["first_name"], ben["last_name"], ben["role"], ben["enabled"]) == ("Ben", "Verkauf", "sales", True)
+        assert ben["created_at"].startswith("2025-10-08")
+
+
+class TestDemoListe:
+    """E-M6: Im Mandanten demo sieht jeder Besucher die Liste — dort nur die
+    öffentlichen Demo-Konten, und die Oberfläche erfährt, dass nichts änderbar ist."""
+
+    def test_nur_demo_logins_schreibgeschuetzt(self, admin, kc, monkeypatch):
+        from app.api.v1 import users
+        monkeypatch.setattr(users, "DEMO_MANDANT", MANDANT)
+        anna = kc.add_user("anna@demo.novaerp.de", MANDANT, roles={"admin"})
+        ben = kc.add_user("ben@demo.novaerp.de", MANDANT, roles={"sales"})
+        mia = kc.add_user("mia@beispielfirma.de", MANDANT, roles={"production_staff"})
+        r = admin.get("/api/v1/users")
+        assert r.status_code == 200, r.text
+        assert sorted(b["id"] for b in r.json()["items"]) == sorted([anna, ben])
+        assert (r.json()["total"], r.json()["schreibgeschuetzt"]) == (2, True)
+        versteckt = admin.get(f"/api/v1/users/{mia}")
+        assert (versteckt.status_code, versteckt.json()) == (404, {"detail": "Benutzer nicht gefunden."})
+        assert admin.get(f"/api/v1/users/{anna}").status_code == 200
+
+    def test_sonst_vollstaendig_und_schreibbar(self, admin, kc):
+        mia = kc.add_user("mia@beispielfirma.de", MANDANT, roles={"production_staff"})
+        r = admin.get("/api/v1/users")
+        assert r.status_code == 200, r.text
+        assert sorted(b["id"] for b in r.json()["items"]) == sorted([ADMIN_ID, mia])
+        assert r.json()["schreibgeschuetzt"] is False
+
+
+class TestFremderMandantLesen:
+    def test_fremd_wie_unbekannt(self, admin, kc):
+        fremd = kc.add_user("x@fremdfirma.de", FREMD)
+        r = admin.get(f"/api/v1/users/{fremd}")
+        unbekannt = admin.get(f"/api/v1/users/{uuid.uuid4()}")
+        assert r.status_code == unbekannt.status_code == 404
+        assert r.json() == unbekannt.json() == {"detail": "Benutzer nicht gefunden."}
+
+    def test_benutzer_ohne_attribut_ist_fremd(self, admin, kc):
+        uid = kc.add_user("svc@intern.de", None)
+        assert admin.get(f"/api/v1/users/{uid}").status_code == 404
+        assert ("GET", f"/admin/realms/{REALM}/users/{uid}") in [c[:2] for c in kc.calls]
+
+    def test_aehnlicher_slug_ist_fremd(self, admin, kc):
+        uid = kc.add_user("y@aehnlich.de", f"{MANDANT}x", roles={"admin"})
+        assert admin.get(f"/api/v1/users/{uid}").status_code == 404
+        assert ("GET", f"/admin/realms/{REALM}/users/{uid}") in [c[:2] for c in kc.calls]
+
+    def test_ungueltige_id(self, admin, kc):
+        assert admin.get("/api/v1/users/kein-uuid").status_code == 422
+        assert admin.get("/api/v1/users/..%2F..%2Froles").status_code in (404, 422)
+        assert kc.calls == []
+
+    def test_fremdzugriff_im_audit(self, admin, kc, caplog):
+        caplog.set_level("WARNING", logger="app.audit.benutzer")
+        fremd = kc.add_user("x@fremdfirma.de", FREMD)
+        admin.get(f"/api/v1/users/{fremd}")
+        z = _audit_zeilen(caplog)
+        assert z[-1]["aktion"] == "FREMDZUGRIFF_ABGEWIESEN"
+        assert (z[-1]["ziel_id"], z[-1]["mandant"], z[-1]["von_id"]) == (fremd, MANDANT, ADMIN_ID)
+
+
+class TestAusfallLesen:
+    def test_nicht_erreichbar(self, admin, kc):
+        kc.down = True
+        r = admin.get("/api/v1/users")
+        assert r.status_code == 503
+        assert r.json()["detail"] == "Benutzerverwaltung derzeit nicht verfügbar: Keycloak ist nicht erreichbar."
+
+    @pytest.mark.parametrize("variable", ["KEYCLOAK_URL", "KEYCLOAK_USERS_CLIENT_ID"])
+    def test_nicht_eingerichtet(self, admin, kc, monkeypatch, variable):
+        monkeypatch.delenv(variable)
+        r = admin.get("/api/v1/users")
+        assert r.status_code == 503
+        assert "nicht eingerichtet" in r.json()["detail"]
+        assert kc.calls == []
+
+
+def test_rollenlisten_stimmen_ueberein():
+    from app.main import ALLE_ROLLEN
+    from app.schemas.user import Rolle
+    assert set(get_args(Rolle)) == set(keycloak_admin.MANDANTEN_ROLLEN) == set(ALLE_ROLLEN)
+    assert keycloak_admin.MANDANTEN_ROLLEN == APP_ROLLEN
