@@ -181,9 +181,11 @@ class Order(Base):
         Abo-Lauf —, wird der Packtag auf den Liefertag festgeschrieben, sonst
         fiele die Packarbeit aus jedem Tagesplan heraus.
         """
+        from app.services.order_status_service import heute_berlin
+
         if explicit:
             return explicit
-        if requested_delivery_date <= date.today():
+        if requested_delivery_date <= heute_berlin():
             return requested_delivery_date
         return None
 

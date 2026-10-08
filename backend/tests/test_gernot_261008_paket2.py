@@ -1527,3 +1527,54 @@ class TestNacharbeitStornosperre:
                 setze_status(db, gespeichert, OrderStatus.STORNIERT, user=None)
             assert gespeichert.status == OrderStatus.BESTAETIGT
             assert not db.new
+
+
+class TestNacharbeitPacktagBerlin:
+    @pytest.fixture(params=[("2026-10-07T22:30:00+00:00", date(2026, 10, 8)),
+                            ("2026-01-07T23:30:00+00:00", date(2026, 1, 8))])
+    def berliner_mitternacht(self, request, monkeypatch):
+        from datetime import datetime
+        from app.models import order as order_model
+        from app.services import order_status_service
+
+        zeitpunkt, heute = request.param
+        instant = datetime.fromisoformat(zeitpunkt)
+
+        class BerlinerUhr(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return instant.astimezone(tz)
+
+        class ServerDatum(date):
+            @classmethod
+            def today(cls):
+                return instant.date()
+
+        monkeypatch.setattr(order_status_service, "datetime", BerlinerUhr)
+        monkeypatch.setattr(order_model, "date", ServerDatum)
+        return heute
+
+    def test_packtag_verwendet_berliner_tag(self, berliner_mitternacht):
+        from app.models.order import Order
+
+        heute = berliner_mitternacht
+        assert Order.resolve_packing_date(heute, None) == heute
+        assert Order.resolve_packing_date(heute + timedelta(days=1), None) is None
+        assert Order.resolve_packing_date(heute, heute - timedelta(days=2)) == heute - timedelta(days=2)
+
+    def test_heute_verarbeiten_setzt_packtag(self, client, berliner_mitternacht):
+        from app.models.order import Order
+
+        heute = berliner_mitternacht
+        kunde = _p4_kunde(client)
+        produkt = _p4_produkt(client, "Erbse", "BERLIN-ABO", "3.50")
+        _p4_abo(client, kunde, gueltig_von=heute, product_id=produkt["id"],
+                intervall="TAEGLICH", liefertage=[])
+        response = client.post("/api/v1/sales/subscriptions/process-today")
+        assert response.status_code == 200, response.text
+        assert response.json()["details"]["erstellt"] == 1
+        with TestingSessionLocal() as db:
+            order = db.query(Order).one()
+            assert order.requested_delivery_date == heute
+            assert order.packing_date == heute
+            assert order.effective_packing_date == heute
