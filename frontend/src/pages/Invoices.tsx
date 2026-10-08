@@ -834,7 +834,8 @@ function PaymentForm({ invoice, onSubmit, onCancel }: PaymentFormProps) {
     { value: 'UEBERWEISUNG', label: 'Überweisung' },
     { value: 'LASTSCHRIFT', label: 'Lastschrift' },
     { value: 'BAR', label: 'Bar' },
-    { value: 'KARTE', label: 'Karte' },
+    { value: 'EC', label: 'EC-Karte' },
+    { value: 'KREDITKARTE', label: 'Kreditkarte' },
     { value: 'PAYPAL', label: 'PayPal' },
   ];
 
