@@ -305,8 +305,9 @@ class InvoiceService:
           der Bestellposition — den setzte das Bestellformular bis 08.10.2026
           fest auf 7 % (A3). Freitextpositionen behalten ihren Satz.
         - Positionsrabatt wird übernommen (fehlte bisher still).
-        - Leistungsdatum: das tatsächliche Lieferdatum, ersatzweise das
-          Wunschlieferdatum — dieselbe Regel wie die Sammelrechnung.
+        - Leistungsdatum: das tatsächliche Lieferdatum des Lieferscheins,
+          ersatzweise das tatsächliche oder das Wunschlieferdatum der
+          Bestellung — dieselbe Regel wie die Sammelrechnung.
         """
         order = self.db.get(Order, order_id)
         if not order:
@@ -322,11 +323,23 @@ class InvoiceService:
                 "über IFCO-Clearing ab — es gibt nichts zu fakturieren."
             )
 
+        offene = self.db.execute(
+            select(DeliveryNote).where(
+                DeliveryNote.order_id == order_id,
+                DeliveryNote.invoice_id.is_(None),
+            )
+        ).scalars().all()
+        vertreter = waehle_vertreter(offene)
+        leistungsdatum = (
+            (vertreter.actual_delivery_date if vertreter is not None else None)
+            or order.actual_delivery_date or order.requested_delivery_date
+        )
+
         # Rechnung erstellen
         invoice = self.create_invoice(
             customer_id=order.customer_id,
             order_id=order_id,
-            delivery_date=order.actual_delivery_date or order.requested_delivery_date,
+            delivery_date=leistungsdatum,
         )
 
         # Positionen aus Bestellung übernehmen
@@ -365,13 +378,6 @@ class InvoiceService:
         # Abrechnungsstatus am Lieferschein (R2.5). Ohne diese Zuordnung sah
         # der Sammellauf die Bestellung als offen. Nur ein noch nicht
         # zugeordneter Lieferschein, genau einer je Bestellung.
-        offene = self.db.execute(
-            select(DeliveryNote).where(
-                DeliveryNote.order_id == order_id,
-                DeliveryNote.invoice_id.is_(None),
-            )
-        ).scalars().all()
-        vertreter = waehle_vertreter(offene)
         if vertreter is not None:
             vertreter.invoice_id = invoice.id
             self.db.flush()

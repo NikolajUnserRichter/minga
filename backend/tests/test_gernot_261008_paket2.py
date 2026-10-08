@@ -1578,3 +1578,65 @@ class TestNacharbeitPacktagBerlin:
             assert order.requested_delivery_date == heute
             assert order.packing_date == heute
             assert order.effective_packing_date == heute
+
+
+class TestNacharbeitLeistungsdatum:
+    def _lieferung(self, client, ist_tag, ls_tag, mit_lieferschein=True):
+        from app.models.documents import DeliveryNote
+
+        order = _bestaetigt(client, _kunde(client), liefertag=date(2026, 3, 5))
+        note = _lieferschein(client, order) if mit_lieferschein else None
+        if ist_tag:
+            response = _status(client, order, "GELIEFERT", actual_delivery_date=ist_tag)
+            assert response.status_code == 200, response.text
+        if ls_tag:
+            with TestingSessionLocal() as db:
+                db.get(DeliveryNote, uuid.UUID(note["id"])).actual_delivery_date = date.fromisoformat(ls_tag)
+                db.commit()
+        return order, note
+
+    @pytest.mark.parametrize("mit_lieferschein,ist_tag,ls_tag,erwartet", [
+        (True, "2026-03-06", None, "2026-03-06"),
+        (True, "2026-03-06", "2026-03-07", "2026-03-07"),
+        (True, None, None, "2026-03-05"),
+        (False, "2026-03-06", None, "2026-03-06"),
+        (False, None, None, "2026-03-05"),
+    ])
+    def test_rechnung_aus_bestellung_nutzt_leistungsdatum(
+        self, client, mit_lieferschein, ist_tag, ls_tag, erwartet
+    ):
+        order, note = self._lieferung(client, ist_tag, ls_tag, mit_lieferschein)
+        response = client.post(f"/api/v1/invoices/from-order/{order['id']}")
+        assert response.status_code == 201, response.text
+        rechnung = response.json()
+        assert rechnung["delivery_date"] == erwartet
+        if note:
+            response = client.get(f"/api/v1/invoices/{rechnung['id']}/delivery-notes")
+            assert response.status_code == 200, response.text
+            assert response.json()[0]["lieferdatum"] == erwartet
+
+    @pytest.mark.parametrize("ist_tag,ls_tag,erwartet", [
+        ("2026-03-06", None, "2026-03-06"),
+        ("2026-03-06", "2026-03-07", "2026-03-07"),
+        (None, None, "2026-03-05"),
+    ])
+    def test_sammelrechnung_filtert_und_zeigt_leistungsdatum(self, client, ist_tag, ls_tag, erwartet):
+        self._lieferung(client, ist_tag, ls_tag)
+        anfrage = {"period_from": erwartet, "period_to": erwartet}
+        response = client.post("/api/v1/invoices/batch-run/preview", json=anfrage)
+        assert response.status_code == 200, response.text
+        assert len(response.json()["kunden"]) == 1
+        if erwartet != "2026-03-05":
+            response = client.post("/api/v1/invoices/batch-run/preview", json={
+                "period_from": "2026-03-05", "period_to": "2026-03-05",
+            })
+            assert response.status_code == 200, response.text
+            assert response.json()["kunden"] == []
+        response = client.post("/api/v1/invoices/batch-run/commit", json=anfrage)
+        assert response.status_code == 201, response.text
+        rechnung = response.json()["rechnungen"][0]
+        assert rechnung["service_period_start"] == erwartet
+        assert rechnung["service_period_end"] == erwartet
+        response = client.get(f"/api/v1/invoices/{rechnung['id']}/delivery-notes")
+        assert response.status_code == 200, response.text
+        assert response.json()[0]["lieferdatum"] == erwartet

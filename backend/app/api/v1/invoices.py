@@ -613,7 +613,7 @@ def _abrechenbare_lieferscheine(db, anfrage: BatchRunRequest):
     Vorschau und Festschreiben rufen beide diese Funktion — eine Regel.
 
     Leistungsdatum: das tatsächliche Lieferdatum des Vertreters, ersatzweise
-    das Wunschlieferdatum der Bestellung. Stornierte und fakturierte
+    das tatsächliche oder das Wunschlieferdatum der Bestellung. Stornierte und fakturierte
     Bestellungen bleiben draußen — FAKTURIERT gilt als abgerechnet, auch ohne
     Rechnung im System (Spec-Nachtrag 08.10.2026).
     """
@@ -639,7 +639,10 @@ def _abrechenbare_lieferscheine(db, anfrage: BatchRunRequest):
     ergebnis = []
     for kandidaten in je_bestellung.values():
         note = waehle_vertreter(kandidaten)
-        leistungsdatum = note.actual_delivery_date or note.order.requested_delivery_date
+        leistungsdatum = (
+            note.actual_delivery_date or note.order.actual_delivery_date
+            or note.order.requested_delivery_date
+        )
         if not (anfrage.period_from <= leistungsdatum <= anfrage.period_to):
             continue
         if anfrage.customer_ids and note.order.customer_id not in anfrage.customer_ids:
@@ -794,6 +797,8 @@ def invoice_delivery_notes(invoice_id: UUID, db: DBSession):
     return [{
         "id": str(n.id),
         "delivery_note_number": n.delivery_note_number,
-        "lieferdatum": (n.actual_delivery_date or n.order.requested_delivery_date).isoformat(),
+        "lieferdatum": (
+            n.actual_delivery_date or n.order.actual_delivery_date or n.order.requested_delivery_date
+        ).isoformat(),
         "betrag_netto": betraege[n.id],
     } for n in notes]
