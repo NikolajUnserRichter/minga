@@ -193,3 +193,40 @@ class TestStornierteBestellung:
         from app.models.documents import DeliveryNote
         with TestingSessionLocal() as db:
             assert db.get(DeliveryNote, uuid.UUID(note["id"])).invoice_id is None
+
+
+class TestLoeschsperre:
+    @pytest.mark.parametrize("status", ["ENTWURF", "OFFEN", "BEZAHLT", "TEILBEZAHLT", "UEBERFAELLIG", "MAHNVERFAHREN"])
+    @pytest.mark.parametrize("bezug", ["bestellung", "lieferschein"])
+    def test_bestellung_mit_aktiver_rechnung_nicht_loeschbar(self, client, status, bezug):
+        order = _bestellung(client, _kunde(client))
+        invoice = _altrechnung(order, "RE-2026-00002", status)
+        if bezug == "lieferschein":
+            from app.models.documents import DeliveryNote
+            note = _s6_lieferschein(client, order)
+            with TestingSessionLocal() as db:
+                db.get(Invoice, uuid.UUID(invoice["id"])).order_id = None
+                db.get(DeliveryNote, uuid.UUID(note["id"])).invoice_id = uuid.UUID(invoice["id"])
+                db.commit()
+        response = client.delete(f"/api/v1/sales/orders/{order['id']}")
+        assert response.status_code == 409, response.text
+        assert response.json()["detail"] == _berechnet_hinweis(invoice)
+        response = client.get(f"/api/v1/sales/orders/{order['id']}")
+        assert response.status_code == 200, response.text
+        assert response.json()["lines"] == order["lines"]
+        with TestingSessionLocal() as db:
+            gespeichert = db.get(Invoice, uuid.UUID(invoice["id"]))
+            assert gespeichert.status.value == status
+            if bezug == "bestellung":
+                assert str(gespeichert.order_id) == order["id"]
+            else:
+                assert db.get(DeliveryNote, uuid.UUID(note["id"])).invoice_id == gespeichert.id
+
+    @pytest.mark.parametrize("rechnung_status", [None, "STORNIERT"])
+    def test_ohne_aktive_rechnung_loeschbar(self, client, rechnung_status):
+        order = _bestellung(client, _kunde(client))
+        if rechnung_status:
+            _altrechnung(order, "RE-2026-00002", rechnung_status)
+        response = client.delete(f"/api/v1/sales/orders/{order['id']}")
+        assert response.status_code == 204, response.text
+        assert client.get(f"/api/v1/sales/orders/{order['id']}").status_code == 404

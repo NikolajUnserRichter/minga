@@ -1259,6 +1259,8 @@ async def delete_order(order_id: UUID, db: DBSession, user: CurrentUser):
     if not order:
         raise HTTPException(status_code=404, detail="Bestellung nicht gefunden")
 
+    _pruefe_bestellung_nicht_berechnet(order, db)
+
     if order.status != OrderStatus.ENTWURF:
         raise HTTPException(
             status_code=400,
