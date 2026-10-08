@@ -463,6 +463,7 @@ def export_datev(
         from_date=data.from_date,
         to_date=data.to_date,
         include_payments=data.include_payments,
+        erneut_exportieren=data.erneut_exportieren,
     )
     db.commit()
 
@@ -486,6 +487,7 @@ def download_datev_export(
         from_date=data.from_date,
         to_date=data.to_date,
         include_payments=data.include_payments,
+        erneut_exportieren=data.erneut_exportieren,
     )
     db.commit()
 

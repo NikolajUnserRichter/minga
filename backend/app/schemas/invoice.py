@@ -260,6 +260,11 @@ class DatevExportRequest(BaseModel):
     from_date: date = Field(..., description="Von Datum")
     to_date: date = Field(..., description="Bis Datum")
     include_payments: bool = Field(default=True, description="Zahlungen einschließen?")
+    erneut_exportieren: bool = Field(
+        default=False,
+        description="Bereits exportierte Rechnungen/Zahlungen im Zeitraum erneut aufnehmen "
+                    "(nur wenn die vorige Datei NICHT in DATEV importiert wurde)",
+    )
 
 
 class DatevExportResponse(BaseModel):

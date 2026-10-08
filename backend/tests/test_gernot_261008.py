@@ -1782,3 +1782,65 @@ class TestDatevBelegauswahl:
         assert r.status_code == 400, r.text
         assert "DATEV" in r.json()["detail"]
         assert client.get(f"/api/v1/invoices/{rechnung['id']}").json()["status"] == "OFFEN"
+
+
+class TestDatevWiederholungsexport:
+
+    def _exportiert(self, rechnung_id):
+        from app.models.invoice import Invoice
+        with TestingSessionLocal() as db:
+            inv = db.get(Invoice, uuid.UUID(rechnung_id))
+            return inv.datev_exported, inv.datev_export_date
+
+    def test_export_markiert_genau_die_exportierten(self, client):
+        kunde = _datev_kunde(client)
+        rechnung = _datev_rechnung(client, kunde, DATEV_GEMISCHT)
+        entwurf = _datev_rechnung(client, kunde, DATEV_GEMISCHT, finalisieren=False)
+
+        _datev_export(client)
+
+        markiert, wann = self._exportiert(rechnung["id"])
+        assert markiert is True and wann is not None
+        assert self._exportiert(entwurf["id"]) == (False, None)
+
+    def test_zweiter_lauf_ohne_wiederholung_ist_leer(self, client):
+        kunde = _datev_kunde(client)
+        _datev_rechnung(client, kunde, DATEV_GEMISCHT)
+        _datev_export(client)
+
+        daten, kopf, zeilen = _datev_export(client)
+
+        assert kopf == DATEV_KOPF
+        assert zeilen == []
+        assert daten["record_count"] == 0
+
+    def test_wiederholung_liefert_dieselben_zeilen_und_neue_dazu(self, client):
+        kunde = _datev_kunde(client)
+        _datev_rechnung(client, kunde, DATEV_GEMISCHT)
+        _, _, erster_lauf = _datev_export(client)
+        neu = _datev_rechnung(client, kunde, [("Kresse", 1, "10.00", "REDUZIERT")])
+
+        _, _, nur_neu = _datev_export(client)
+        _, _, alles = _datev_export(client, erneut=True)
+
+        assert [z[9] for z in nur_neu] == [neu["invoice_number"]]
+        assert alles == erster_lauf + nur_neu
+
+    def test_zahlungen_werden_mit_wiederholt(self, client):
+        kunde = _datev_kunde(client)
+        rechnung = _datev_rechnung(client, kunde, DATEV_GEMISCHT)
+        r = client.post(f"/api/v1/invoices/{rechnung['id']}/payments", json={
+            "invoice_id": rechnung["id"], "amount": "33.89",
+            "payment_date": date.today().isoformat(),
+        })
+        assert r.status_code == 201, r.text
+        nr = rechnung["invoice_number"]
+        zahlung = _datev_zeile("33,89", "S", "1200", "10008", nr, "Zahlung Ökoring Testkunde")
+
+        _, _, erster = _datev_export(client, zahlungen=True)
+        _, _, zweiter = _datev_export(client, zahlungen=True)
+        _, _, wiederholt = _datev_export(client, zahlungen=True, erneut=True)
+
+        assert erster[-1] == zahlung
+        assert zweiter == []
+        assert wiederholt == erster

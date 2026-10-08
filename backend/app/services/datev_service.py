@@ -203,14 +203,20 @@ class DatevService:
         self,
         from_date: date,
         to_date: date,
-        include_payments: bool = True
+        include_payments: bool = True,
+        erneut_exportieren: bool = False,
     ) -> tuple[str, int, Decimal]:
         """
         Exportiert Rechnungen und optional Zahlungen im DATEV-Format (CSV Buchungsstapel).
         Gibt CSV-Content, Anzahl Records und den Saldo der Rechnungszeilen
         (S positiv, H negativ, brutto) zurück.
+
+        Markiert genau die exportierten Rechnungen/Zahlungen (datev_exported,
+        datev_export_date) in derselben Transaktion. erneut_exportieren=True
+        nimmt bereits exportierte im Zeitraum wieder auf — für eine verlorene
+        oder vom Steuerberater zurückgewiesene Datei.
         """
-        invoices = self._rechnungen(from_date, to_date)
+        invoices = self._rechnungen(from_date, to_date, erneut_exportieren)
 
         output = StringIO()
         writer = csv.writer(output, delimiter=';', quoting=csv.QUOTE_MINIMAL)
@@ -255,40 +261,40 @@ class DatevService:
 
         # Payments Export
         if include_payments:
-            payments = self.db.execute(
+            query = (
                 select(Payment)
                 .join(Invoice)
-                .where(
-                    Payment.payment_date.between(from_date, to_date),
-                    Payment.datev_exported == False
-                )
-            ).scalars().all()
+                .where(Payment.payment_date.between(from_date, to_date))
+                .order_by(Payment.payment_date, Invoice.invoice_number)
+            )
+            if not erneut_exportieren:
+                query = query.where(Payment.datev_exported == False)  # noqa: E712
+            payments = self.db.execute(query).scalars().all()
 
             for payment in payments:
                 invoice = payment.invoice
                 customer = self.db.get(Customer, invoice.customer_id)
-                customer_account = customer.datev_account or "10000"
 
                 bank_account = STANDARD_ACCOUNTS.get("bank", "1200")
                 if payment.payment_method == PaymentMethod.BAR:
                     bank_account = STANDARD_ACCOUNTS.get("kasse", "1000")
 
-                # Booking: Bank (1200) S an Debitor (10001) H
+                # Booking: Bank (1200) S an Debitor H
                 row_payment = [
-                    str(payment.amount).replace('.', ','),
-                    "S", # Bank is S
+                    _betrag(payment.amount),
+                    "S",
                     "EUR", "", "",
-                    bank_account, # Konto (Bank)
-                    customer_account, # Gegenkonto (Debitor)
+                    bank_account,
+                    _debitor(customer),
                     "",
                     payment.payment_date.strftime("%d%m"),
                     invoice.invoice_number,
                     payment.reference or "",
-                    f"Zahlung {customer.name}"[:60]
+                    f"Zahlung {customer.name}"[:60],
                 ]
                 writer.writerow(row_payment)
                 record_count += 1
-                
+
                 payment.datev_exported = True
 
         return output.getvalue(), record_count, total_amount
