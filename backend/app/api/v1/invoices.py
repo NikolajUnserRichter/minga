@@ -246,6 +246,17 @@ def send_invoice_email(
     if not invoice.lines:
         raise HTTPException(status_code=400, detail="Rechnung hat keine Positionen")
 
+    # Mit dem Versand wird ein Entwurf ausgestellt (ENTWURF -> OFFEN, unten),
+    # genau wie bei /finalize. Deshalb die Summen vorher final berechnen, wie
+    # InvoiceService.finalize_invoice. Sonst ginge ein Entwurf, dessen Summen
+    # noch mit der früheren Rundung gespeichert sind, mit der pauschalen
+    # Zeile "USt:" statt mit Steuer je Satz hinaus (§ 14 Abs. 4 Nr. 8 UStG).
+    # Festgeschriebene Rechnungen (jeder andere Status) werden NIE neu
+    # berechnet (GoBD). Scheitert der Versand, wird nicht committet und die
+    # Neuberechnung verfällt mit der Session.
+    if invoice.status == InvoiceStatus.ENTWURF:
+        invoice.calculate_totals()
+
     try:
         pdf = PDFService.generate_invoice_pdf(invoice, settings=load_company_settings(db), db=db)
         send_email(

@@ -1018,3 +1018,68 @@ class TestS2RechnungsPdf:
 
         assert "Enthaltene Lieferscheine" in texte
         assert any(t.startswith("USt 7 % auf 25.00 ") for t in texte), texte
+
+
+# --- S2 Task 4 -------------------------------------------------------------
+
+def _s2_texte(pdf_bytes) -> list[str]:
+    """Wie _s2_pdf_texte, aber für PDF-Bytes, die nicht über GET /pdf kommen."""
+    return re.findall(r"\((.*?)\) Tj", _pdf_text(pdf_bytes).decode("latin-1", errors="ignore"))
+
+
+def _s2_alte_summen_setzen(invoice_id):
+    """Summen mit der früheren Rundung (1,03 / 8,03) nachstellen.
+    Nur im Test — in echten Daten werden Rechnungen nie direkt geändert."""
+    from app.models.invoice import Invoice
+    with TestingSessionLocal() as db:
+        inv = db.get(Invoice, uuid.UUID(invoice_id))
+        inv.tax_amount = Decimal("1.03")
+        inv.total = Decimal("8.03")
+        db.commit()
+
+
+def _s2_mailen(client, monkeypatch, invoice_id) -> dict:
+    """POST /invoices/{id}/send mit abgefangenem Versand; liefert die Mail-Argumente."""
+    versendet = {}
+    monkeypatch.setattr("app.api.v1.invoices.send_email", lambda **kw: versendet.update(kw))
+    r = client.post(f"/api/v1/invoices/{invoice_id}/send",
+                    params={"to_email": "einkauf@oekoring.example"})
+    assert r.status_code == 200, r.text
+    return versendet
+
+
+class TestS2Mailversand:
+
+    def test_mailen_eines_altentwurfs_rechnet_vorher_neu(self, client, monkeypatch):
+        """'Mailen' stellt einen Entwurf aus (ENTWURF -> OFFEN), genau wie
+        /finalize. Ein Entwurf mit Summen aus der alten Rundung ging bisher mit
+        1,03 € und der pauschalen Zeile 'USt:' hinaus."""
+        rechnung = _s2_rechnung_in_einem_aufruf(client)
+        _s2_alte_summen_setzen(rechnung["id"])
+
+        mail = _s2_mailen(client, monkeypatch, rechnung["id"])
+
+        detail = client.get(f"/api/v1/invoices/{rechnung['id']}").json()
+        assert detail["status"] == "OFFEN"
+        assert Decimal(str(detail["tax_amount"])) == Decimal("1.04")
+        assert Decimal(str(detail["total"])) == Decimal("8.04")
+        texte = _s2_texte(mail["attachment_bytes"])
+        assert any(t.startswith("USt 7 % auf 2.50 ") for t in texte), texte
+        assert any(t.startswith("USt 19 % auf 4.50 ") for t in texte), texte
+        assert "USt:" not in texte
+        assert "8.04 EUR" in mail["body"]
+
+    def test_mailen_einer_versendeten_rechnung_rechnet_nicht_neu(self, client, monkeypatch):
+        """GoBD: erneutes Mailen einer festgeschriebenen Rechnung ändert keine Beträge."""
+        rechnung = _s2_rechnung_in_einem_aufruf(client)
+        assert client.post(f"/api/v1/invoices/{rechnung['id']}/finalize").status_code == 200
+        _s2_alte_summen_setzen(rechnung["id"])
+
+        mail = _s2_mailen(client, monkeypatch, rechnung["id"])
+
+        _, _, steuer, brutto = _s2_steuerblock(rechnung["id"])
+        assert (steuer, brutto) == (Decimal("1.03"), Decimal("8.03"))
+        texte = _s2_texte(mail["attachment_bytes"])
+        assert "USt:" in texte
+        assert any(t.startswith("1.03 ") for t in texte)
+        assert "8.03 EUR" in mail["body"]
