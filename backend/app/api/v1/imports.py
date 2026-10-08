@@ -119,7 +119,10 @@ COLUMNS = {
         ("menge", "menge", True, "decimal"),
         ("einheit", "einheit", False, "str"),
         ("einzelpreis", "einzelpreis", True, "decimal"),
-        ("status", "status", False, "enum:ENTWURF|BESTAETIGT|IN_PRODUKTION|GELIEFERT|FAKTURIERT|STORNIERT"),
+        # Roh lesen ("str" statt "enum:"): Ein ungültiger Wert wird sonst still
+        # zu None und damit wie eine leere Zelle behandelt. Gültige Werte prüft
+        # _import_order_history, sie stehen im Hinweis der Vorlage.
+        ("status", "status", False, "str"),
         # JSON-Array für Variable-Bundle-Sorten:
         # z.B. [{"sku": "MG-SONNE", "quantity": 1}, {"sku": "MG-ERBSE", "quantity": 1}]
         # SKUs werden gegen die Produkt-Tabelle aufgelöst.
@@ -257,7 +260,12 @@ HINWEISE = {
         "Mehrere Zeilen mit derselben 'bestell_nr_extern' ergeben EINE Bestellung "
         "mit mehreren Positionen. Kunde und produkt_sku müssen bereits angelegt sein. "
         "Status leer lassen: Lieferdatum in der Vergangenheit = GELIEFERT, heute oder "
-        "später = BESTAETIGT (erscheint im Tagesplan)."
+        "später = BESTAETIGT (erscheint im Tagesplan). Gültige Status-Werte: "
+        "ENTWURF, BESTAETIGT, IN_PRODUKTION, GELIEFERT, FAKTURIERT, STORNIERT "
+        "(auch 'Bestätigt', 'In Produktion', 'Gepackt'). GELIEFERT heißt: ohne "
+        "Lieferschein und ohne Lagerabzug, der Sammellauf erfasst die Bestellung nicht. "
+        "Bestelldatum: nicht in der Zukunft und nicht nach dem Lieferdatum. "
+        "Hat eine Zeile einen Fehler, wird keine Bestellung der Datei angelegt."
     ),
     "grow_batches": "Die Sorte muss vorher als Saatgut angelegt sein.",
     "products": (
@@ -512,6 +520,29 @@ def _import_abbruch(fehler: list[str]) -> HTTPException:
     )
 
 
+# Status-Spalte: Enum-Werte und die Bezeichnungen der Oberfläche (auch mit
+# Umlaut). Schlüssel nach _status_schluessel normalisiert.
+_STATUS_AUS_DATEI = {
+    "ENTWURF": OrderStatus.ENTWURF,
+    "BESTAETIGT": OrderStatus.BESTAETIGT,
+    "BESTÄTIGT": OrderStatus.BESTAETIGT,
+    "IN PRODUKTION": OrderStatus.IN_PRODUKTION,
+    "GEPACKT": OrderStatus.IN_PRODUKTION,
+    "GELIEFERT": OrderStatus.GELIEFERT,
+    "FAKTURIERT": OrderStatus.FAKTURIERT,
+    "STORNIERT": OrderStatus.STORNIERT,
+}
+_GUELTIGE_STATUS = "ENTWURF, BESTAETIGT, IN_PRODUKTION, GELIEFERT, FAKTURIERT, STORNIERT"
+
+
+def _status_schluessel(roh: Any) -> str:
+    """'in_produktion ' → 'IN PRODUKTION'; NFC, weil Excel am Mac 'ä' zerlegt speichern kann."""
+    import unicodedata
+
+    text = unicodedata.normalize("NFC", str(roh))
+    return " ".join(text.replace("_", " ").split()).upper()
+
+
 def _bundle_auswahl(ext_nr: str, roh: Any, get_product) -> tuple[Optional[list], list[str]]:
     """Spalte bundle_selections (JSON) → [{product_id, quantity}], dazu Fehler."""
     import json
@@ -556,15 +587,36 @@ def _pruefe_bestellung(
             f"Bestellung '{ext_nr}': Kunde '{head['kunde']}' nicht gefunden — bitte zuerst Stammdaten importieren"
         )
 
+    elif not kunde.aktiv:
+        fehler.append(f"Bestellung '{ext_nr}': Kunde '{kunde.name}' ist deaktiviert")
+
     lieferdatum = head["lieferdatum"]
-    status_str = head.get("status")
-    if not status_str:
+    bestelldatum = head["bestelldatum"]
+    roh_status = head.get("status")
+    if roh_status is None:
         status = OrderStatus.GELIEFERT if lieferdatum < heute else OrderStatus.BESTAETIGT
     else:
-        try:
-            status = OrderStatus(status_str)
-        except ValueError:
-            status = OrderStatus.GELIEFERT
+        status = _STATUS_AUS_DATEI.get(_status_schluessel(roh_status))
+        if status is None:
+            fehler.append(
+                f"Bestellung '{ext_nr}': Status '{roh_status}' ist unbekannt — "
+                f"erlaubt sind {_GUELTIGE_STATUS} oder eine leere Zelle"
+            )
+
+    if status == OrderStatus.IN_PRODUKTION and lieferdatum >= heute:
+        fehler.append(
+            f"Bestellung '{ext_nr}': Status IN_PRODUKTION (gepackt) für eine ausstehende Lieferung — "
+            "gepackt wird im Tagesplan; Status-Spalte leer lassen oder BESTAETIGT eintragen"
+        )
+    if bestelldatum > lieferdatum:
+        fehler.append(
+            f"Bestellung '{ext_nr}': Bestelldatum {bestelldatum.strftime('%d.%m.%Y')} liegt nach "
+            f"dem Lieferdatum {lieferdatum.strftime('%d.%m.%Y')}"
+        )
+    if bestelldatum > heute:
+        fehler.append(
+            f"Bestellung '{ext_nr}': Bestelldatum {bestelldatum.strftime('%d.%m.%Y')} liegt in der Zukunft"
+        )
 
     if status in (OrderStatus.GELIEFERT, OrderStatus.FAKTURIERT) and lieferdatum > heute:
         fehler.append(
@@ -589,7 +641,7 @@ def _pruefe_bestellung(
         "ext_nr": ext_nr,
         "kunde": kunde,
         "status": status,
-        "bestelldatum": head["bestelldatum"],
+        "bestelldatum": bestelldatum,
         "lieferdatum": lieferdatum,
         "positionen": positionen,
     }, []

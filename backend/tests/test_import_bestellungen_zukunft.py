@@ -3,6 +3,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
+import pytest
 from openpyxl import load_workbook
 
 from tests.conftest import TestingSessionLocal
@@ -296,3 +297,111 @@ class TestP5AllesOderNichts:
         assert "GIBT-ES-NICHT" in detail
         assert "Unbekannte GmbH" in detail
         assert _p5_referenzen(client) == set()
+
+
+class TestP5Kopfdaten:
+    """Status, Bestelldatum und Kunde werden geprüft statt still übernommen."""
+
+    @pytest.mark.parametrize("eingabe, erwartet", [
+        ("Bestätigt", "BESTAETIGT"),        # heute: still GELIEFERT
+        ("in produktion", "IN_PRODUKTION"),  # heute: still GELIEFERT
+        ("Geliefert", "GELIEFERT"),          # Charakterisierung, schon grün
+        ("STORNIERT", "STORNIERT"),          # Charakterisierung, schon grün
+    ])
+    def test_bezeichnungen_der_oberflaeche_werden_erkannt(self, client, eingabe, erwartet):
+        vergangen = _heute_berlin() - timedelta(days=3)
+        kunde = _kunde(client)
+        produkt = _produkt()
+
+        response = _import_bestellungen(client, [
+            _p5_zeile("P5-STATUS", kunde, produkt, vergangen, vergangen, status=eingabe),
+        ])
+
+        assert response.status_code == 200, response.text
+        assert _bestellung(client, "P5-STATUS")["status"] == erwartet
+
+    def test_unbekannter_status_ist_ein_fehler(self, client):
+        heute = _heute_berlin()
+        kunde = _kunde(client)
+        produkt = _produkt()
+
+        response = _import_bestellungen(client, [
+            _p5_zeile("P5-OFFEN", kunde, produkt, heute, heute + timedelta(days=2), status="offen"),
+        ])
+
+        assert response.status_code == 400, response.text
+        assert "Status 'offen'" in response.json()["detail"]
+        assert _p5_referenzen(client) == set()
+
+    def test_gepackt_fuer_ausstehende_lieferung_wird_abgelehnt(self, client):
+        """IN_PRODUKTION heißt nach P2 „gepackt“ — das passiert im Tagesplan,
+        nicht im Import (P2, Entscheidung M2)."""
+        heute = _heute_berlin()
+        kunde = _kunde(client)
+        produkt = _produkt()
+
+        response = _import_bestellungen(client, [
+            _p5_zeile("P5-GEPACKT", kunde, produkt, heute, heute + timedelta(days=2), status="IN_PRODUKTION"),
+        ])
+
+        assert response.status_code == 400, response.text
+        assert "P5-GEPACKT" in response.json()["detail"]
+        assert "IN_PRODUKTION" in response.json()["detail"]
+
+    def test_bestelldatum_nach_lieferdatum(self, client):
+        heute = _heute_berlin()
+        kunde = _kunde(client)
+        produkt = _produkt()
+        bestelldatum = heute - timedelta(days=1)
+        lieferdatum = heute - timedelta(days=3)
+
+        response = _import_bestellungen(client, [
+            _p5_zeile("P5-SPAET-BESTELLT", kunde, produkt, bestelldatum, lieferdatum),
+        ])
+
+        assert response.status_code == 400, response.text
+        detail = response.json()["detail"]
+        assert "P5-SPAET-BESTELLT" in detail
+        assert f"Bestelldatum {bestelldatum.strftime('%d.%m.%Y')} liegt nach dem Lieferdatum" in detail
+
+    def test_bestelldatum_in_der_zukunft(self, client):
+        """Produktionsfall BE-20261011-0001: Bestelldatum 11.10., importiert am 08.10."""
+        heute = _heute_berlin()
+        kunde = _kunde(client)
+        produkt = _produkt()
+        bestelldatum = heute + timedelta(days=1)
+
+        response = _import_bestellungen(client, [
+            _p5_zeile("P5-ZUKUNFT-BESTELLT", kunde, produkt, bestelldatum, heute + timedelta(days=3)),
+        ])
+
+        assert response.status_code == 400, response.text
+        assert f"Bestelldatum {bestelldatum.strftime('%d.%m.%Y')} liegt in der Zukunft" in response.json()["detail"]
+
+    def test_deaktivierter_kunde(self, client):
+        """Wie create_order (sales.py: 'Kunde ist deaktiviert')."""
+        import uuid
+        from app.models.customer import Customer
+
+        heute = _heute_berlin()
+        kunde = _kunde(client, name="Ehemals GmbH")
+        produkt = _produkt()
+        with TestingSessionLocal() as db:
+            db.get(Customer, uuid.UUID(kunde["id"])).aktiv = False
+            db.commit()
+
+        response = _import_bestellungen(client, [
+            _p5_zeile("P5-INAKTIV", kunde, produkt, heute, heute + timedelta(days=2)),
+        ])
+
+        assert response.status_code == 400, response.text
+        assert "Ehemals GmbH" in response.json()["detail"]
+        assert "deaktiviert" in response.json()["detail"]
+
+    def test_vorlage_nennt_die_gueltigen_status(self, client):
+        response = client.get("/api/v1/imports/template/order_history")
+        workbook = load_workbook(io.BytesIO(response.content), data_only=True)
+        texte = " ".join(
+            str(zelle) for zeile in workbook["Beispiel"].iter_rows(values_only=True) for zelle in zeile if zelle
+        )
+        assert "ENTWURF, BESTAETIGT, IN_PRODUKTION, GELIEFERT, FAKTURIERT, STORNIERT" in texte
