@@ -22,6 +22,7 @@ from app.models.product import Product
 from app.models.documents import DeliveryNote
 from app.models.enums import DeliveryNoteStatus
 from app.services.steuersatz import produkt_der_position, steuersatz_der_position
+from app.services.datev_service import erloeskonto_fuer
 
 
 def _euro(betrag: Decimal) -> str:
@@ -191,13 +192,10 @@ class InvoiceService:
             .where(InvoiceLine.invoice_id == invoice_id)
         ).scalar() or 0
 
-        # Buchungskonto basierend auf Steuersatz
+        # Buchungskonto basierend auf Steuersatz — dieselbe Regel wie der
+        # DATEV-Export (datev_service.erloeskonto_fuer)
         if not buchungskonto:
-            buchungskonto = {
-                TaxRate.REDUZIERT: STANDARD_ACCOUNTS["erloes_7"],
-                TaxRate.STANDARD: STANDARD_ACCOUNTS["erloes_19"],
-                TaxRate.STEUERFREI: STANDARD_ACCOUNTS["erloes_steuerfrei"],
-            }.get(tax_rate, STANDARD_ACCOUNTS["erloes_7"])
+            buchungskonto = erloeskonto_fuer(tax_rate)
 
         line = InvoiceLine(
             invoice_id=invoice_id,

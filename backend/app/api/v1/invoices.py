@@ -23,7 +23,7 @@ from app.schemas.invoice import (
     DatevExportRequest, DatevExportResponse,
 )
 from app.services.invoice_service import InvoiceService, BereitsAbgerechnet, waehle_vertreter
-from app.services.datev_service import DatevService
+from app.services.datev_service import DatevService, erloeskonto_fuer, ist_standard_erloeskonto
 from app.services.email_service import send_email, EmailNotConfiguredError
 from app.services.pdf_service import load_company_settings
 
@@ -400,12 +400,19 @@ def update_invoice_line(
         raise HTTPException(status_code=404, detail="Position nicht gefunden")
 
     update_data = data.model_dump(exclude_unset=True)
+    satz_vorher = line.tax_rate
     for field, value in update_data.items():
         setattr(line, field, value)
 
+    # Das Erlöskonto hängt am Steuersatz (8300/8400/8100). Ohne Nachziehen
+    # buchte der DATEV-Export eine auf 19 % korrigierte Zeile weiter auf 8300.
+    # Ein Sonderkonto bleibt — dieselbe Regel wie der DATEV-Export (S4).
+    if line.tax_rate != satz_vorher and ist_standard_erloeskonto(line.buchungskonto):
+        line.buchungskonto = erloeskonto_fuer(line.tax_rate)
+
     # Zeile und Rechnung neu berechnen
     line.calculate_line_total()
-    invoice.calculate_totals()
+    InvoiceService(db).recalculate_totals(invoice)
 
     db.commit()
     db.refresh(line)
@@ -431,7 +438,9 @@ def delete_invoice_line(
         raise HTTPException(status_code=404, detail="Position nicht gefunden")
 
     db.delete(line)
-    invoice.calculate_totals()
+    # Erst löschen, dann die Positionen neu laden, dann rechnen — sonst zählt
+    # die gelöschte Zeile in Summe, USt und Pfand weiter mit (B4).
+    InvoiceService(db).recalculate_totals(invoice)
     db.commit()
 
 

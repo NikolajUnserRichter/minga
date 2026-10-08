@@ -2198,3 +2198,195 @@ class TestS6RechnungenJeBestellung:
 
         rechnungen = {(i["id"], i["status"]) for i in r.json() if i["invoice_type"] == "RECHNUNG"}
         assert rechnungen == {(erste["id"], "STORNIERT"), (neu["id"], "ENTWURF")}
+
+
+# ---------------------------------------------------------------------------
+# S5 — Rechnungsentwurf prüfen, Pfand über IFCO-Clearing, Rechnungsliste
+# ---------------------------------------------------------------------------
+
+
+def _d(wert) -> Decimal:
+    return Decimal(str(wert))
+
+
+def _s5_kunde(client, name="Ökoring Handels GmbH", **extra):
+    r = client.post("/api/v1/sales/customers", json={"name": name, "typ": "HANDEL", **extra})
+    assert r.status_code in (200, 201), r.text
+    return r.json()
+
+
+def _s5_produkt(client, name, sku, preis, **extra):
+    """Wie _produkt in test_gernot_260917.py: die Produktanlage braucht base_unit_id."""
+    from app.models.unit import UnitOfMeasure, UnitCategory
+
+    with TestingSessionLocal() as db:
+        unit = db.query(UnitOfMeasure).filter_by(code="STK").first()
+        if unit is None:
+            unit = UnitOfMeasure(code="STK", name="Stück", category=UnitCategory.COUNT)
+            db.add(unit)
+            db.commit()
+        unit_id = str(unit.id)
+
+    r = client.post("/api/v1/products", json={
+        "name": name, "sku": sku, "base_price": str(preis),
+        "category": "MICROGREEN", "base_unit_id": unit_id, **extra,
+    })
+    assert r.status_code in (200, 201), r.text
+    return r.json()
+
+
+def _s5_ifco_kiste(client):
+    """Pfandartikel wie in Produktion: Kategorie PFAND setzt is_deposit."""
+    kiste = _s5_produkt(client, "IFCO-Kiste", "PFAND-IFCO", "3.00", category="PFAND")
+    assert kiste["is_deposit"] is True
+    return kiste
+
+
+def _s5_entwurf(client, kunde):
+    r = client.post("/api/v1/invoices", json={
+        "customer_id": kunde["id"], "invoice_date": date.today().isoformat(),
+    })
+    assert r.status_code == 201, r.text
+    return r.json()
+
+
+def _s5_zeile(client, rechnung, **daten):
+    """Freitextzeile 10 × 2,50 € zu 7 % — mit **daten überschreibbar."""
+    body = {"description": "Erbsen-Schale", "quantity": 10, "unit": "STK",
+            "unit_price": "2.50", "tax_rate": "REDUZIERT"}
+    body.update(daten)
+    r = client.post(f"/api/v1/invoices/{rechnung['id']}/lines", json=body)
+    assert r.status_code == 201, r.text
+    return r.json()
+
+
+def _s5_detail(client, rechnung):
+    r = client.get(f"/api/v1/invoices/{rechnung['id']}")
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+class TestS5EntwurfLoeschen:
+    """B4: eine Position im Entwurf löschen — die Summen müssen folgen."""
+
+    def test_summen_nach_loeschen(self, client):
+        rechnung = _s5_entwurf(client, _s5_kunde(client))
+        _s5_zeile(client, rechnung)
+        weg = _s5_zeile(client, rechnung, description="Kiste", quantity=2,
+                        unit_price="3.00", tax_rate="STANDARD")
+
+        r = client.delete(f"/api/v1/invoices/{rechnung['id']}/lines/{weg['id']}")
+
+        assert r.status_code == 204, r.text
+        d = _s5_detail(client, rechnung)
+        assert len(d["lines"]) == 1
+        # 25,00 netto + 1,75 USt — vorher blieben 31,00 / 2,89 / 33,89 stehen
+        assert _d(d["subtotal"]) == Decimal("25.00")
+        assert _d(d["tax_amount"]) == Decimal("1.75")
+        assert _d(d["total"]) == Decimal("26.75")
+
+    def test_pfandsumme_nach_loeschen_der_pfandzeile(self, client):
+        kiste = _s5_ifco_kiste(client)
+        rechnung = _s5_entwurf(client, _s5_kunde(client))
+        _s5_zeile(client, rechnung)
+        pfand = _s5_zeile(client, rechnung, description="IFCO-Kiste", quantity=2,
+                          unit_price="3.00", tax_rate="STANDARD", product_id=kiste["id"])
+        # 2 × 3,00 € netto + 19 % = 7,14 € brutto (Bestandsverhalten, test_pfand_rabatt)
+        assert _d(_s5_detail(client, rechnung)["total_deposit"]) == Decimal("7.14")
+
+        client.delete(f"/api/v1/invoices/{rechnung['id']}/lines/{pfand['id']}")
+
+        assert _d(_s5_detail(client, rechnung)["total_deposit"]) == Decimal("0.00")
+
+    def test_finalisierte_rechnung_bleibt_unveraenderlich(self, client):
+        """GoBD: nach dem Finalisieren nur noch Storno und Neuausstellung."""
+        rechnung = _s5_entwurf(client, _s5_kunde(client))
+        zeile = _s5_zeile(client, rechnung)
+        assert client.post(f"/api/v1/invoices/{rechnung['id']}/finalize").status_code == 200
+        url = f"/api/v1/invoices/{rechnung['id']}/lines/{zeile['id']}"
+
+        assert client.delete(url).status_code == 400
+        assert client.patch(url, json={"quantity": 1}).status_code == 400
+        assert _d(_s5_detail(client, rechnung)["subtotal"]) == Decimal("25.00")
+
+
+class TestS5EntwurfAendern:
+    """B4: PATCH einer Entwurfsposition prüft die Eingabe und zieht das Konto nach."""
+
+    @pytest.mark.parametrize("aenderung", [
+        {"quantity": 0}, {"quantity": -1}, {"quantity": None},
+        {"unit_price": -5}, {"unit_price": None},
+        {"discount_percent": 150}, {"discount_percent": -1},
+        {"description": ""}, {"description": None},
+        {"unit": ""}, {"tax_rate": None},
+    ])
+    def test_ungueltige_aenderung_wird_abgelehnt(self, client, aenderung):
+        rechnung = _s5_entwurf(client, _s5_kunde(client))
+        zeile = _s5_zeile(client, rechnung)
+
+        r = client.patch(f"/api/v1/invoices/{rechnung['id']}/lines/{zeile['id']}", json=aenderung)
+
+        assert r.status_code == 422, r.text
+        d = _s5_detail(client, rechnung)
+        assert _d(d["lines"][0]["quantity"]) == Decimal("10")
+        assert _d(d["lines"][0]["unit_price"]) == Decimal("2.50")
+        assert _d(d["subtotal"]) == Decimal("25.00")
+
+    def test_gueltige_aenderung_rechnet_neu(self, client):
+        rechnung = _s5_entwurf(client, _s5_kunde(client))
+        zeile = _s5_zeile(client, rechnung)
+
+        r = client.patch(f"/api/v1/invoices/{rechnung['id']}/lines/{zeile['id']}",
+                         json={"quantity": 4})
+
+        assert r.status_code == 200, r.text
+        assert _d(r.json()["line_total"]) == Decimal("10.00")
+        d = _s5_detail(client, rechnung)
+        assert _d(d["subtotal"]) == Decimal("10.00")
+        assert _d(d["total"]) == Decimal("10.70")
+
+    def test_satzwechsel_zieht_erloeskonto_und_steuer_nach(self, client):
+        rechnung = _s5_entwurf(client, _s5_kunde(client))
+        zeile = _s5_zeile(client, rechnung)
+        assert zeile["buchungskonto"] == "8300"
+        url = f"/api/v1/invoices/{rechnung['id']}/lines/{zeile['id']}"
+
+        r = client.patch(url, json={"tax_rate": "STANDARD"})
+
+        assert r.status_code == 200, r.text
+        assert r.json()["buchungskonto"] == "8400"
+        d = _s5_detail(client, rechnung)
+        assert _d(d["tax_amount"]) == Decimal("4.75")
+        assert _d(d["total"]) == Decimal("29.75")
+        assert client.patch(url, json={"tax_rate": "STEUERFREI"}).json()["buchungskonto"] == "8100"
+        assert client.patch(url, json={"tax_rate": "REDUZIERT"}).json()["buchungskonto"] == "8300"
+
+    def test_sonderkonto_bleibt(self, client):
+        """Nur die Standardkonten folgen dem Satz. Ein Sonderkonto bleibt bei
+        Mengen- und bei Satzwechsel — dieselbe Regel wie der DATEV-Export (S4)."""
+        rechnung = _s5_entwurf(client, _s5_kunde(client))
+        zeile = _s5_zeile(client, rechnung, buchungskonto="8338")
+        url = f"/api/v1/invoices/{rechnung['id']}/lines/{zeile['id']}"
+        assert client.patch(url, json={"quantity": 3}).json()["buchungskonto"] == "8338"
+
+        r = client.patch(url, json={"tax_rate": "STANDARD"})
+
+        assert r.status_code == 200, r.text
+        assert r.json()["buchungskonto"] == "8338"
+        assert _d(r.json()["tax_amount"]) == Decimal("1.43")
+
+
+class TestS5Pfandkennzeichen:
+    """Die Oberfläche muss Pfandzeilen erkennen können."""
+
+    def test_zeilen_tragen_is_deposit(self, client):
+        kiste = _s5_ifco_kiste(client)
+        rechnung = _s5_entwurf(client, _s5_kunde(client))
+        ware = _s5_zeile(client, rechnung)
+        pfand = _s5_zeile(client, rechnung, description="IFCO-Kiste", quantity=2,
+                          unit_price="3.00", tax_rate="STANDARD", product_id=kiste["id"])
+
+        assert ware["is_deposit"] is False
+        assert pfand["is_deposit"] is True
+        zeilen = {l["id"]: l["is_deposit"] for l in _s5_detail(client, rechnung)["lines"]}
+        assert zeilen == {ware["id"]: False, pfand["id"]: True}
