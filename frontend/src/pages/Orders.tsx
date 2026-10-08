@@ -12,6 +12,7 @@ import { CreateOrderModal } from '../components/domain/CreateOrderModal';
 import { OrderDocumentsModal } from '../components/domain/OrderDocumentsModal';
 import { EditOrderModal } from '../components/domain/EditOrderModal';
 import { ExcelImport } from '../components/common/ExcelImport';
+import { useAuth } from '../context/AuthContext';
 import { ListPageSkeleton } from '../components/ui/Skeleton';
 import {
   Button,
@@ -49,6 +50,12 @@ const nummer = (o: Order) => o.order_number ?? o.id.slice(0, 8);
 export default function Orders() {
   const toast = useToast();
   const queryClient = useQueryClient();
+  // Import nur für Rollen, die /imports schreiben dürfen (main.py: _deps_vertrieb).
+  // Die Halle sieht die Bestellseite auch, bekäme beim Import aber 403.
+  const { user } = useAuth();
+  const darfImportieren = ['admin', 'sales', 'production_planner', 'accounting'].some((rolle) =>
+    user?.roles?.includes(rolle)
+  );
 
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [search, setSearch] = useState('');
@@ -226,12 +233,14 @@ export default function Orders() {
         subtitle={`${orders.length} Bestellungen`}
         actions={
           <div className="flex items-center gap-2">
-            <ExcelImport
-              entity="order_history"
-              label="Bestellungen importieren"
-              secondaryLabel="übersprungen"
-              onImported={() => queryClient.invalidateQueries({ queryKey: ['orders'] })}
-            />
+            {darfImportieren && (
+              <ExcelImport
+                entity="order_history"
+                label="Bestellungen importieren"
+                secondaryLabel="übersprungen"
+                onImported={() => queryClient.invalidateQueries({ queryKey: ['orders'] })}
+              />
+            )}
             <Button icon={<Plus className="w-4 h-4" />} onClick={() => setIsCreateModalOpen(true)}>
               Neue Bestellung
             </Button>

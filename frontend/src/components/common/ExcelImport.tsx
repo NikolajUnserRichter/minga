@@ -50,15 +50,29 @@ export function ExcelImport({ entity, label = 'Excel-Import', secondaryLabel = '
         const res = await api.post(`/imports/${entity}`, form);
         data = res.data;
       } catch (err: any) {
-        toast.error(getErrorMessage(err, 'Import fehlgeschlagen'));
+        // Der Bestell-Import lehnt eine fehlerhafte Datei als Ganzes ab und nennt
+        // alle Fehler zeilenweise — die Liste muss lesbar und lange genug stehen.
+        toast.error(
+          <span className="whitespace-pre-line">{getErrorMessage(err, 'Import fehlgeschlagen')}</span>,
+          20000
+        );
         return;
       }
       const created = data.created || 0;
       const updated = data.updated || 0;
       const errors: string[] = data.errors || [];
+      // Bestell-Import: was als Geliefert, was als Bestätigt angelegt wurde
+      const hinweis: string | undefined = data.hinweis || undefined;
       const summary = `${created} angelegt · ${updated} ${secondaryLabel}${errors.length ? ` · ${errors.length} Fehler` : ''}`;
       if (errors.length) {
-        toast.error(`${summary}\n${errors.slice(0, 3).join('\n')}${errors.length > 3 ? '\n…' : ''}`);
+        toast.error(
+          <span className="whitespace-pre-line">
+            {`${summary}\n${errors.slice(0, 3).join('\n')}${errors.length > 3 ? '\n…' : ''}`}
+          </span>,
+          20000
+        );
+      } else if (hinweis) {
+        toast.success(<span className="whitespace-pre-line">{`${summary}\n${hinweis}`}</span>, 15000);
       } else {
         toast.success(summary);
       }
