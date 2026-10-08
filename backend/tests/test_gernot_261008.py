@@ -1998,3 +1998,54 @@ class TestS6KeineZweiteRechnungZurBestellung:
                          json={"signed_by": "Fahrer"})
         assert r.status_code == 200, r.text
         assert client.get(f"/api/v1/sales/orders/{bestellung['id']}").json()["status"] == "GELIEFERT"
+
+
+class TestS6LieferscheinHaengtAnDerRechnung:
+    """(b) from-order verknüpft den Lieferschein; Storno löst, Neuausstellung verknüpft neu."""
+
+    def test_rechnung_aus_bestellung_verknuepft_den_lieferschein(self, client):
+        bestellung = _s6_bestellung(client, _s6_kunde(client))
+        ls = _s6_lieferschein(client, bestellung)
+
+        rechnung = _s6_aus_bestellung(client, bestellung).json()
+
+        assert _s6_ls_an_rechnung(client, rechnung) == [ls["delivery_note_number"]]
+
+    def test_storno_loest_und_neuausstellung_verknuepft_neu(self, client):
+        bestellung = _s6_bestellung(client, _s6_kunde(client))
+        ls = _s6_lieferschein(client, bestellung)
+        erste = _s6_finalisieren(client, _s6_aus_bestellung(client, bestellung).json())
+
+        _s6_storno(client, erste)
+        assert _s6_ls_an_rechnung(client, erste) == []
+
+        neu = _s6_aus_bestellung(client, bestellung).json()
+        assert _s6_ls_an_rechnung(client, neu) == [ls["delivery_note_number"]]
+
+    def test_bei_zwei_lieferscheinen_haengt_genau_einer_an(self, client):
+        """Die PDF-Tabelle 'Enthaltene Lieferscheine' zeigt je Lieferschein die
+        volle Bestellsumme — zwei Einträge würden sie doppelt ausweisen."""
+        bestellung = _s6_bestellung(client, _s6_kunde(client))
+        ls1 = _s6_lieferschein(client, bestellung)
+        _s6_lieferschein(client, bestellung, zusaetzlich=True)
+
+        rechnung = _s6_aus_bestellung(client, bestellung).json()
+
+        assert _s6_ls_an_rechnung(client, rechnung) == [ls1["delivery_note_number"]]
+
+    def test_pdf_mit_bestellbezug_bekommt_keine_lieferscheinanlage(self, client):
+        """GoBD: die Anlage liest DeliveryNote.invoice_id, und die löst ein
+        Storno wieder. Bei Rechnungen mit Bestellbezug würde sich das PDF
+        nachträglich ändern — deshalb dort keine Anlage."""
+        bestellung = _s6_bestellung(client, _s6_kunde(client))
+        _s6_lieferschein(client, bestellung)
+        rechnung = _s6_aus_bestellung(client, bestellung).json()
+
+        assert b"Enthaltene Lieferscheine" not in _s6_pdf_text(client, rechnung)
+
+    def test_sammelrechnung_behaelt_die_lieferscheinanlage(self, client):
+        bestellung = _s6_bestellung(client, _s6_kunde(client))
+        _s6_lieferschein(client, bestellung)
+        sammel = _s6_lauf(client, S6_COMMIT)["rechnungen"][0]
+
+        assert b"Enthaltene Lieferscheine" in _s6_pdf_text(client, sammel)

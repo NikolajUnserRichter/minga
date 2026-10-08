@@ -384,7 +384,11 @@ class PDFService:
 
         # Sammelrechnung: Anhangstabelle "Enthaltene Lieferscheine" (R2.3) —
         # der Kunde muss nachvollziehen können, welche Lieferungen drinstecken.
-        if db is not None:
+        # Nur ohne Bestellbezug (= Sammelrechnung): die Tabelle liest
+        # DeliveryNote.invoice_id, und die setzt "Rechnung aus Bestellung"
+        # und löst ein Storno. Bei Rechnungen mit Bestellbezug würde sich das
+        # PDF sonst nachträglich ändern (GoBD).
+        if db is not None and invoice.order_id is None:
             from sqlalchemy import select as _select
             from app.models.documents import DeliveryNote as _DN
             enthaltene = db.execute(

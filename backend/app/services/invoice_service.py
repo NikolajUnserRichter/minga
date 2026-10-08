@@ -20,6 +20,7 @@ from app.models.customer import Customer, AddressType
 from app.models.order import Order, OrderLine
 from app.models.product import Product
 from app.models.documents import DeliveryNote
+from app.models.enums import DeliveryNoteStatus
 from app.services.steuersatz import produkt_der_position, steuersatz_der_position
 
 
@@ -34,6 +35,25 @@ class BereitsAbgerechnet(ValueError):
     Unterklasse von ValueError: bestehende Aufrufer, die ValueError fangen,
     funktionieren weiter. Die API macht daraus 409 statt 400.
     """
+
+
+def waehle_vertreter(lieferscheine):
+    """Der Lieferschein, der eine Bestellung in der Abrechnung vertritt.
+
+    Der älteste quittierte (Liefernachweis, tatsächliches Lieferdatum), sonst
+    der älteste überhaupt. Die Nummer LS-JJJJMMTT-NNNN sortiert chronologisch
+    und ist — anders als created_at — nie mal naiv, mal mit Zeitzone.
+
+    Genau EIN Vertreter je Bestellung: die PDF-Tabelle "Enthaltene
+    Lieferscheine" (pdf_service) zeigt je Lieferschein die volle
+    Bestellsumme; zwei Einträge würden sie doppelt ausweisen.
+    """
+    if not lieferscheine:
+        return None
+    return min(
+        lieferscheine,
+        key=lambda n: (n.status != DeliveryNoteStatus.GELIEFERT, n.delivery_note_number),
+    )
 
 
 class InvoiceService:
@@ -275,6 +295,20 @@ class InvoiceService:
         # ist nach jedem flush stale — der letzte Aufruf hätte nur eine Line gesehen)
         self.db.refresh(invoice, ["lines"])
         invoice.calculate_totals()
+
+        # Abrechnungsstatus am Lieferschein (R2.5). Ohne diese Zuordnung sah
+        # der Sammellauf die Bestellung als offen. Nur ein noch nicht
+        # zugeordneter Lieferschein, genau einer je Bestellung.
+        offene = self.db.execute(
+            select(DeliveryNote).where(
+                DeliveryNote.order_id == order_id,
+                DeliveryNote.invoice_id.is_(None),
+            )
+        ).scalars().all()
+        vertreter = waehle_vertreter(offene)
+        if vertreter is not None:
+            vertreter.invoice_id = invoice.id
+            self.db.flush()
 
         return invoice
 
