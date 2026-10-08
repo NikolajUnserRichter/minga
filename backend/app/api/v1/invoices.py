@@ -7,22 +7,23 @@ from decimal import Decimal
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import select
+from sqlalchemy import select, or_
 
 from app.api.deps import DBSession, Pagination
 from app.models.invoice import (
     Invoice, InvoiceLine, Payment,
     InvoiceStatus, InvoiceType, PaymentMethod
 )
+from app.models.documents import DeliveryNote
 from app.schemas.invoice import (
     InvoiceCreate, InvoiceUpdate, InvoiceResponse, InvoiceDetailResponse,
     InvoiceLineCreate, InvoiceLineUpdate, InvoiceLineResponse,
-    PaymentCreate, PaymentResponse,
+    PaymentBase, PaymentResponse,
     InvoiceSendRequest, InvoiceCancelRequest,
     DatevExportRequest, DatevExportResponse,
 )
-from app.services.invoice_service import InvoiceService
-from app.services.datev_service import DatevService
+from app.services.invoice_service import InvoiceService, BereitsAbgerechnet, waehle_vertreter, ist_clearing_pfand, netto_je_lieferschein
+from app.services.datev_service import DatevService, erloeskonto_fuer, ist_standard_erloeskonto
 from app.services.email_service import send_email, EmailNotConfiguredError
 from app.services.pdf_service import load_company_settings
 
@@ -42,6 +43,7 @@ def list_invoices(
     invoice_type: Optional[InvoiceType] = None,
     from_date: Optional[date] = None,
     to_date: Optional[date] = None,
+    order_id: Optional[UUID] = None,
 ):
     """Listet alle Rechnungen mit optionaler Filterung."""
     # Kunde mitladen: customer_name/customer_number lesen invoice.customer —
@@ -57,13 +59,30 @@ def list_invoices(
     if invoice_type:
         query = query.where(Invoice.invoice_type == invoice_type)
 
+    if order_id:
+        # Beide Wege zur Rechnung einer Bestellung — dieselben wie in
+        # InvoiceService.aktive_rechnung_zur_bestellung: Rechnung aus
+        # Bestellung (order_id) und Sammelrechnung (über den Lieferschein).
+        query = query.where(or_(
+            Invoice.order_id == order_id,
+            Invoice.id.in_(
+                select(DeliveryNote.invoice_id).where(
+                    DeliveryNote.order_id == order_id,
+                    DeliveryNote.invoice_id.is_not(None),
+                )
+            ),
+        ))
+
     if from_date:
         query = query.where(Invoice.invoice_date >= from_date)
 
     if to_date:
         query = query.where(Invoice.invoice_date <= to_date)
 
-    query = query.order_by(Invoice.invoice_date.desc())
+    # Neueste zuerst, stabil: am selben Tag entscheidet die Nummer. Nur nach
+    # Datum sortiert lieferte SQLite gleiche Tage in Einfügereihenfolge, und
+    # die neueste Rechnung des Tages stand hinten oder fiel aus der Seite.
+    query = query.order_by(Invoice.invoice_date.desc(), Invoice.invoice_number.desc())
     query = query.offset(pagination.offset).limit(pagination.page_size)
 
     invoices = db.execute(query).scalars().unique().all()
@@ -133,6 +152,8 @@ def create_invoice(data: InvoiceCreate, db: DBSession):
         db.commit()
         db.refresh(invoice)
         return invoice
+    except BereitsAbgerechnet as e:
+        raise HTTPException(status_code=409, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -146,6 +167,8 @@ def create_invoice_from_order(order_id: UUID, db: DBSession):
         db.commit()
         db.refresh(invoice)
         return invoice
+    except BereitsAbgerechnet as e:
+        raise HTTPException(status_code=409, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -251,24 +274,55 @@ def send_invoice_email(
     ).unique().scalar_one_or_none()
     if not invoice:
         raise HTTPException(status_code=404, detail="Rechnung nicht gefunden")
-    if invoice.status == InvoiceStatus.STORNIERT:
+    # Die Stornorechnung steht als ausgeglichener Beleg auf STORNIERT, muss
+    # aber zum Kunden. Gesperrt ist nur das stornierte Original.
+    ist_storno = (
+        invoice.invoice_type == InvoiceType.GUTSCHRIFT
+        and invoice.original_invoice_id is not None
+    )
+    if invoice.status == InvoiceStatus.STORNIERT and not ist_storno:
         raise HTTPException(status_code=400, detail="Stornierte Rechnungen können nicht versendet werden")
     if not invoice.lines:
         raise HTTPException(status_code=400, detail="Rechnung hat keine Positionen")
 
+    # Mit dem Versand wird ein Entwurf ausgestellt (ENTWURF -> OFFEN, unten),
+    # genau wie bei /finalize. Deshalb die Summen vorher final berechnen, wie
+    # InvoiceService.finalize_invoice. Sonst ginge ein Entwurf, dessen Summen
+    # noch mit der früheren Rundung gespeichert sind, mit der pauschalen
+    # Zeile "USt:" statt mit Steuer je Satz hinaus (§ 14 Abs. 4 Nr. 8 UStG).
+    # Festgeschriebene Rechnungen (jeder andere Status) werden NIE neu
+    # berechnet (GoBD). Scheitert der Versand, wird nicht committet und die
+    # Neuberechnung verfällt mit der Session.
+    if invoice.status == InvoiceStatus.ENTWURF:
+        invoice.calculate_totals()
+
     try:
         pdf = PDFService.generate_invoice_pdf(invoice, settings=load_company_settings(db), db=db)
-        send_email(
-            db=db,
-            to=to_email,
-            subject=f"Rechnung {invoice.invoice_number} — Minga Greens",
-            body=(
+        # Mailtext erst hier: ein Entwurf ist oben bereits neu berechnet (Task 11)
+        if ist_storno:
+            original = invoice.original_invoice
+            betreff = f"Stornorechnung {invoice.invoice_number} — Minga Greens"
+            text = (
+                f"Sehr geehrte Damen und Herren bei {invoice.customer.name},\n\n"
+                f"anbei finden Sie die Stornorechnung {invoice.invoice_number} zur Rechnung "
+                f"{original.invoice_number if original else '—'}.\n"
+                f"Die Rechnung ist damit vollständig aufgehoben.\n\n"
+                f"Mit freundlichen Grüßen\nIhr Minga-Greens-Team"
+            )
+        else:
+            betreff = f"Rechnung {invoice.invoice_number} — Minga Greens"
+            text = (
                 f"Sehr geehrte Damen und Herren bei {invoice.customer.name},\n\n"
                 f"anbei finden Sie die Rechnung {invoice.invoice_number} über\n"
                 f"{invoice.total:.2f} {invoice.currency}.\n\n"
                 f"Fällig am: {invoice.due_date.strftime('%d.%m.%Y') if invoice.due_date else '—'}\n\n"
                 f"Mit freundlichen Grüßen\nIhr Minga-Greens-Team"
-            ),
+            )
+        send_email(
+            db=db,
+            to=to_email,
+            subject=betreff,
+            body=text,
             attachment_bytes=pdf,
             attachment_filename=f"{invoice.invoice_number}.pdf",
         )
@@ -291,7 +345,11 @@ def cancel_invoice(
     data: InvoiceCancelRequest,
     db: DBSession,
 ):
-    """Storniert eine Rechnung und erstellt optional eine Gutschrift."""
+    """Storniert eine Rechnung und erstellt optional eine Stornorechnung.
+
+    `warnungen` nennt, was der Storno nicht selbst lösen kann (bereits
+    gezahltes Geld, Kopie in lexoffice) — die Oberfläche zeigt sie an.
+    """
     service = InvoiceService(db)
     try:
         # Auswahlgrund + Freitext zusammen — beides gehört in die Akte (R1.4)
@@ -305,6 +363,7 @@ def cancel_invoice(
         return {
             "invoice": InvoiceResponse.model_validate(invoice),
             "credit_note": InvoiceResponse.model_validate(credit_note) if credit_note else None,
+            "warnungen": service.storno_warnungen(invoice),
         }
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -354,12 +413,19 @@ def update_invoice_line(
         raise HTTPException(status_code=404, detail="Position nicht gefunden")
 
     update_data = data.model_dump(exclude_unset=True)
+    satz_vorher = line.tax_rate
     for field, value in update_data.items():
         setattr(line, field, value)
 
+    # Das Erlöskonto hängt am Steuersatz (8300/8400/8100). Ohne Nachziehen
+    # buchte der DATEV-Export eine auf 19 % korrigierte Zeile weiter auf 8300.
+    # Ein Sonderkonto bleibt — dieselbe Regel wie der DATEV-Export (S4).
+    if line.tax_rate != satz_vorher and ist_standard_erloeskonto(line.buchungskonto):
+        line.buchungskonto = erloeskonto_fuer(line.tax_rate)
+
     # Zeile und Rechnung neu berechnen
     line.calculate_line_total()
-    invoice.calculate_totals()
+    InvoiceService(db).recalculate_totals(invoice)
 
     db.commit()
     db.refresh(line)
@@ -385,7 +451,9 @@ def delete_invoice_line(
         raise HTTPException(status_code=404, detail="Position nicht gefunden")
 
     db.delete(line)
-    invoice.calculate_totals()
+    # Erst löschen, dann die Positionen neu laden, dann rechnen — sonst zählt
+    # die gelöschte Zeile in Summe, USt und Pfand weiter mit (B4).
+    InvoiceService(db).recalculate_totals(invoice)
     db.commit()
 
 
@@ -405,7 +473,7 @@ def list_invoice_payments(invoice_id: UUID, db: DBSession):
 @router.post("/{invoice_id}/payments", response_model=PaymentResponse, status_code=201)
 def record_payment(
     invoice_id: UUID,
-    data: PaymentCreate,
+    data: PaymentBase,
     db: DBSession,
 ):
     """Erfasst eine Zahlung für eine Rechnung."""
@@ -413,7 +481,7 @@ def record_payment(
     try:
         payment = service.record_payment(
             invoice_id=invoice_id,
-            **data.model_dump(exclude={"invoice_id"}),
+            **data.model_dump(),
         )
         db.commit()
         db.refresh(payment)
@@ -437,6 +505,7 @@ def export_datev(
         from_date=data.from_date,
         to_date=data.to_date,
         include_payments=data.include_payments,
+        erneut_exportieren=data.erneut_exportieren,
     )
     db.commit()
 
@@ -460,6 +529,7 @@ def download_datev_export(
         from_date=data.from_date,
         to_date=data.to_date,
         include_payments=data.include_payments,
+        erneut_exportieren=data.erneut_exportieren,
     )
     db.commit()
 
@@ -519,6 +589,7 @@ from app.models.documents import DeliveryNote
 from app.models.enums import OrderStatus
 from app.models.invoice import InvoiceLineSource
 from app.models.order import Order, OrderLine
+from app.services.steuersatz import produkt_der_position, steuersatz_der_position
 
 
 class BatchRunRequest(_BaseModel):
@@ -529,23 +600,45 @@ class BatchRunRequest(_BaseModel):
 
 
 def _abrechenbare_lieferscheine(db, anfrage: BatchRunRequest):
-    """Lieferscheine des Zeitraums, die noch in keiner Rechnung stecken.
+    """Je noch nicht abgerechneter Bestellung genau EIN Lieferschein des Zeitraums.
 
-    Leistungsdatum je Lieferschein: das tatsächliche Lieferdatum, ersatzweise
-    das Wunschlieferdatum der Bestellung. Stornierte Bestellungen bleiben
-    draußen.
+    Abgerechnet wird die Bestellung, nicht der Lieferschein: _aggregiere
+    zählt order.lines je zurückgegebenem Lieferschein. Deshalb
+    - fällt jede Bestellung heraus, die schon in einer nicht stornierten
+      Rechnung steckt — über Invoice.order_id (Rechnung aus Bestellung, auch
+      Altbestand ohne Lieferschein-Zuordnung) oder über einen bereits
+      zugeordneten Lieferschein (Sammelrechnung);
+    - steht jede Bestellung höchstens einmal in der Liste, auch wenn sie
+      mehrere Lieferscheine hat (Vertreter: waehle_vertreter).
+    Vorschau und Festschreiben rufen beide diese Funktion — eine Regel.
+
+    Leistungsdatum: das tatsächliche Lieferdatum des Vertreters, ersatzweise
+    das Wunschlieferdatum der Bestellung. Stornierte und fakturierte
+    Bestellungen bleiben draußen — FAKTURIERT gilt als abgerechnet, auch ohne
+    Rechnung im System (Spec-Nachtrag 08.10.2026).
     """
+    abgerechnet = InvoiceService(db).abgerechnete_bestellungen()
     notes = db.execute(
         select(DeliveryNote)
         .join(Order, DeliveryNote.order_id == Order.id)
         .where(
             DeliveryNote.invoice_id.is_(None),
-            Order.status != OrderStatus.STORNIERT,
+            # STORNIERT nie. FAKTURIERT heißt: schon abgerechnet, auch wenn die
+            # Rechnung nicht im System steht (Spec-Nachtrag 08.10.2026,
+            # Sofort-Fix der Doppelabrechnungssperre).
+            Order.status.notin_([OrderStatus.STORNIERT, OrderStatus.FAKTURIERT]),
         )
     ).scalars().all()
 
-    ergebnis = []
+    je_bestellung: dict = {}
     for note in notes:
+        if note.order_id in abgerechnet:
+            continue
+        je_bestellung.setdefault(note.order_id, []).append(note)
+
+    ergebnis = []
+    for kandidaten in je_bestellung.values():
+        note = waehle_vertreter(kandidaten)
         leistungsdatum = note.actual_delivery_date or note.order.requested_delivery_date
         if not (anfrage.period_from <= leistungsdatum <= anfrage.period_to):
             continue
@@ -555,11 +648,18 @@ def _abrechenbare_lieferscheine(db, anfrage: BatchRunRequest):
     return ergebnis
 
 
-def _aggregiere(notes) -> dict:
-    """Je Kunde: Positionen aggregiert nach (Artikel, Einheit, Preis, Steuersatz).
+def _aggregiere(db, notes) -> dict:
+    """Je Kunde: Positionen aggregiert nach (Artikel, Einheit, Preis,
+    Steuersatz, Produkt, Positionsrabatt).
 
     Merkt sich je Position, welcher Lieferschein wie viel beigetragen hat —
     daraus entstehen beim Festschreiben die invoice_line_sources (R2.3).
+
+    Produkt und Rabatt gehören in den Schlüssel (A3, 08.10.2026): ohne
+    product_id fehlte der Rechnungszeile das Pfandkennzeichen, ohne Rabatt
+    fiel der Positionsrabatt still weg. Der Steuersatz kommt aus
+    steuersatz_der_position — dieselbe Funktion wie bei der Bestellung und
+    der Rechnung aus der Bestellung (InvoiceService.create_invoice_from_order).
     """
     kunden: dict = {}
     for note, leistungsdatum in notes:
@@ -572,18 +672,31 @@ def _aggregiere(notes) -> dict:
         })
         k["lieferscheine"].append(note)
         for line in order.lines:
+            # Pfand über IFCO-Clearing steht auf dem Lieferschein, nicht auf
+            # der Rechnung — dieselbe Regel wie bei der Rechnung aus Bestellung.
+            if ist_clearing_pfand(db, order.customer, line):
+                continue
+            produkt = produkt_der_position(db, line.product_id, line.product_variant_id)
+            satz = steuersatz_der_position(
+                db, line.product_id, line.product_variant_id, line.tax_rate
+            )
             key = (line.beschreibung or "Position", line.unit,
-                   line.unit_price, line.tax_rate)
+                   line.unit_price,
+                   satz,
+                   produkt.id if produkt else None,
+                   line.discount_percent or Decimal("0"))
             pos = k["positionen"].setdefault(key, {"menge": Decimal("0"), "quellen": []})
             pos["menge"] += line.quantity
             pos["quellen"].append((note.id, line.quantity))
-    return kunden
+    # Wer im Zeitraum nur Clearing-Pfand geliefert bekam, bekommt keine leere
+    # Rechnung — und taucht auch in der Vorschau nicht auf.
+    return {kid: k for kid, k in kunden.items() if k["positionen"]}
 
 
 @router.post("/batch-run/preview")
 def batch_run_preview(anfrage: BatchRunRequest, db: DBSession):
     """Vorschau des Sammelrechnungslaufs — rechnet, schreibt nichts (R2.6)."""
-    kunden = _aggregiere(_abrechenbare_lieferscheine(db, anfrage))
+    kunden = _aggregiere(db, _abrechenbare_lieferscheine(db, anfrage))
     return {
         "period_from": anfrage.period_from.isoformat(),
         "period_to": anfrage.period_to.isoformat(),
@@ -594,9 +707,11 @@ def batch_run_preview(anfrage: BatchRunRequest, db: DBSession):
             "positionen": [{
                 "description": key[0], "unit": key[1],
                 "unit_price": key[2], "tax_rate": key[3].value,
+                "discount_percent": key[5],
                 "quantity": pos["menge"],
             } for key, pos in sorted(k["positionen"].items(), key=lambda e: (e[0][0], e[0][2]))],
-            "summe_netto": sum((pos["menge"] * key[2] for key, pos in k["positionen"].items()),
+            "summe_netto": sum((pos["menge"] * key[2] * (1 - key[5] / 100)
+                                for key, pos in k["positionen"].items()),
                                Decimal("0")),
         } for k in kunden.values()],
     }
@@ -606,7 +721,7 @@ def batch_run_preview(anfrage: BatchRunRequest, db: DBSession):
 def batch_run_commit(anfrage: BatchRunRequest, db: DBSession):
     """Schreibt den Lauf fest: eine Rechnung je Kunde, Nummern aus dem
     regulären Kreis, Lieferscheine fest zugeordnet (R2.1–R2.5)."""
-    kunden = _aggregiere(_abrechenbare_lieferscheine(db, anfrage))
+    kunden = _aggregiere(db, _abrechenbare_lieferscheine(db, anfrage))
     service = InvoiceService(db)
     rechnungen = []
 
@@ -622,7 +737,7 @@ def batch_run_commit(anfrage: BatchRunRequest, db: DBSession):
         invoice.service_period_start = anfrage.period_from
         invoice.service_period_end = anfrage.period_to
 
-        for (beschreibung, unit, preis, steuersatz), pos in sorted(
+        for (beschreibung, unit, preis, steuersatz, produkt_id, rabatt), pos in sorted(
             k["positionen"].items(), key=lambda e: (e[0][0], e[0][2])
         ):
             line = service.add_line(
@@ -631,6 +746,8 @@ def batch_run_commit(anfrage: BatchRunRequest, db: DBSession):
                 quantity=pos["menge"],
                 unit=unit,
                 unit_price=preis,
+                product_id=produkt_id,
+                discount_percent=rabatt,
                 tax_rate=steuersatz,
             )
             db.flush()
@@ -671,9 +788,12 @@ def invoice_delivery_notes(invoice_id: UUID, db: DBSession):
     notes = db.execute(
         select(DeliveryNote).where(DeliveryNote.invoice_id == invoice_id)
     ).scalars().all()
+    # Betrag aus den Positionen dieser Rechnung, nicht aus der Bestellung —
+    # sonst zählte Clearing-Pfand mit (dieselbe Regel wie die PDF-Anlage).
+    betraege = netto_je_lieferschein(db, invoice, notes)
     return [{
         "id": str(n.id),
         "delivery_note_number": n.delivery_note_number,
         "lieferdatum": (n.actual_delivery_date or n.order.requested_delivery_date).isoformat(),
-        "betrag_netto": sum((l.quantity * l.unit_price for l in n.order.lines), Decimal("0")),
+        "betrag_netto": betraege[n.id],
     } for n in notes]

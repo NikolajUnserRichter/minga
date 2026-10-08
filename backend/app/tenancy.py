@@ -302,6 +302,8 @@ def _auto_migrate(engine: Engine) -> None:
         _add_col_if_missing("harvests", "entleerte_kisten", "INTEGER")
         # Preise auf Lieferschein (pro Kunde)
         _add_col_if_missing("customers", "show_prices_on_delivery_note", "BOOLEAN", "0")
+        # Pfandabrechnung je Kunde (Spec 08.10.2026): Bestandskunden JE_LIEFERUNG
+        _add_col_if_missing("customers", "pfand_abrechnung", "VARCHAR(20)", "'JE_LIEFERUNG'")
         # Substrattyp + Winterzyklus (pro Sorte), Chargen-Abweichung (pro Saatgut-Charge)
         _add_col_if_missing("seeds", "substrat",          "VARCHAR(100)")
         _add_col_if_missing("seeds", "winter_extra_tage", "INTEGER", "0")
@@ -356,6 +358,20 @@ def _auto_migrate(engine: Engine) -> None:
                 ))
     except Exception as e:
         logger.error(f"[auto-migrate] failed: {e}")
+
+    # Einmalige Datenkorrektur (A3, 08.10.2026): Steuersatz offener
+    # Bestellpositionen an den Produktstamm angleichen. Eigener try-Block —
+    # scheitert sie, laufen die Schema-Migrationen trotzdem, und ohne Marker
+    # wird sie beim nächsten Start erneut versucht.
+    try:
+        from sqlalchemy.orm import Session as _Session
+        from app.services.steuersatz_korrektur import korrektur_einmalig_ausfuehren
+        if inspector.has_table("order_lines") and inspector.has_table("app_settings"):
+            with _Session(engine) as session:
+                korrektur_einmalig_ausfuehren(session)
+                session.commit()
+    except Exception as e:
+        logger.error(f"[auto-migrate] Steuersatz-Korrektur fehlgeschlagen: {e}")
 
 
 def _seed_minimal(SessionFactory: sessionmaker) -> None:

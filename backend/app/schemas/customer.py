@@ -6,9 +6,9 @@ Mit Adressen, Payment Terms und Steuer-IDs
 from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID
-from pydantic import BaseModel, Field, ConfigDict, EmailStr
+from pydantic import BaseModel, Field, ConfigDict, EmailStr, field_validator
 
-from app.models.customer import CustomerType, SubscriptionInterval, PaymentTerms, AddressType
+from app.models.customer import CustomerType, SubscriptionInterval, PaymentTerms, AddressType, PfandAbrechnung
 
 
 # ============================================================
@@ -114,6 +114,12 @@ class CustomerCreate(CustomerBase):
     # Preise auf Lieferschein andrucken
     show_prices_on_delivery_note: bool = Field(default=False, description="Preise auf Lieferschein andrucken")
 
+    # Pfandabrechnung: JE_LIEFERUNG (auf jeder Rechnung) oder KEINE (IFCO-Clearing)
+    pfand_abrechnung: PfandAbrechnung = Field(
+        default=PfandAbrechnung.JE_LIEFERUNG,
+        description="JE_LIEFERUNG: Pfand auf jeder Rechnung; KEINE: über IFCO-Clearing, nicht auf der Rechnung",
+    )
+
     # DATEV
     datev_account: Optional[str] = Field(None, max_length=10, description="DATEV-Kontonummer")
 
@@ -162,6 +168,19 @@ class CustomerUpdate(BaseModel):
     # Preise auf Lieferschein andrucken
     show_prices_on_delivery_note: Optional[bool] = None
 
+    # Pfandabrechnung (weglassen = unverändert; null wird abgewiesen)
+    pfand_abrechnung: Optional[PfandAbrechnung] = None
+
+    @field_validator("pfand_abrechnung")
+    @classmethod
+    def _pfand_abrechnung_nicht_leer(cls, v):
+        # Die Spalte ist NOT NULL. Ein ausdrückliches null ergäbe beim Commit
+        # einen Datenbankfehler (500); ein weggelassenes Feld erreicht den
+        # Validator nicht.
+        if v is None:
+            raise ValueError("pfand_abrechnung darf nicht leer sein")
+        return v
+
     # DATEV
     datev_account: Optional[str] = None
 
@@ -192,6 +211,7 @@ class CustomerResponse(CustomerBase):
     packaging_fee_amount: Decimal = Decimal("0")
     packaging_fee_percent: Decimal = Decimal("0")
     show_prices_on_delivery_note: bool = False
+    pfand_abrechnung: PfandAbrechnung = PfandAbrechnung.JE_LIEFERUNG
     datev_account: Optional[str]
     notizen: Optional[str]
     aktiv: bool

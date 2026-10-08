@@ -724,7 +724,7 @@ export const priceListsApi = {
 
 // Invoices API
 export const invoicesApi = {
-  list: (params?: { status?: InvoiceStatus; customer_id?: string; invoice_type?: InvoiceType; from_date?: string; to_date?: string }) =>
+  list: (params?: { status?: InvoiceStatus; customer_id?: string; invoice_type?: InvoiceType; from_date?: string; to_date?: string; order_id?: string; page_size?: number }) =>
     api.get<Invoice[]>('/invoices', { params }).then(r => r.data),
 
   get: (id: string) =>
@@ -754,8 +754,10 @@ export const invoicesApi = {
   finalize: (id: string) =>
     api.post<Invoice>(`/invoices/${id}/finalize`).then(r => r.data),
 
-  cancel: (id: string, data: { reason: string; create_credit_note?: boolean }) =>
-    api.post(`/invoices/${id}/cancel`, data).then(r => r.data),
+  cancel: (id: string, data: { reason: string; reason_code?: string; create_credit_note?: boolean }) =>
+    api.post<{ invoice: Invoice; credit_note: Invoice | null; warnungen: string[] }>(
+      `/invoices/${id}/cancel`, data,
+    ).then(r => r.data),
 
   getOverdue: () =>
     api.get<Invoice[]>('/invoices/overdue').then(r => r.data),
@@ -787,10 +789,10 @@ export const invoicesApi = {
     api.post<Payment>(`/invoices/${invoiceId}/payments`, data).then(r => r.data),
 
   // DATEV
-  exportDatev: (data: { from_date: string; to_date: string; include_payments?: boolean }) =>
+  exportDatev: (data: { from_date: string; to_date: string; include_payments?: boolean; erneut_exportieren?: boolean }) =>
     api.post('/invoices/datev-export', data).then(r => r.data),
 
-  downloadDatev: (data: { from_date: string; to_date: string; include_payments?: boolean }) =>
+  downloadDatev: (data: { from_date: string; to_date: string; include_payments?: boolean; erneut_exportieren?: boolean }) =>
     api.post('/invoices/datev-export/download', data, { responseType: 'blob' }),
 
   downloadPdf: (id: string) =>
@@ -1398,8 +1400,12 @@ export const documentsApi = {
   listDeliveryNotes: (orderId: string) =>
     api.get<DeliveryNote[]>(`/sales/orders/${orderId}/delivery-notes`).then(r => r.data),
 
-  createDeliveryNote: (orderId: string, data: { notes?: string; total_weight_g?: number; total_packages?: number; packing_items?: Partial<PackingListItem>[] }) =>
-    api.post<DeliveryNote>(`/sales/orders/${orderId}/delivery-notes`, data).then(r => r.data),
+  // zusaetzlich: weiterer Lieferschein zu einer Bestellung, die schon einen
+  // hat — ohne das Flag antwortet das Backend mit 409.
+  createDeliveryNote: (orderId: string, data: { notes?: string; total_weight_g?: number; total_packages?: number; packing_items?: Partial<PackingListItem>[] }, opts?: { zusaetzlich?: boolean }) =>
+    api.post<DeliveryNote>(`/sales/orders/${orderId}/delivery-notes`, data, {
+      params: opts?.zusaetzlich ? { zusaetzlich: true } : undefined,
+    }).then(r => r.data),
 
   markDelivered: (noteId: string, data: { signed_by?: string; actual_delivery_date?: string }) =>
     api.patch<DeliveryNote>(`/sales/delivery-notes/${noteId}/mark-delivered`, data).then(r => r.data),

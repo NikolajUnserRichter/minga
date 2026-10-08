@@ -9,7 +9,7 @@ from sqlalchemy import select, func
 
 from app.celery_app import celery_app
 from app.database import SessionLocal
-from app.models.invoice import Invoice, InvoiceStatus
+from app.models.invoice import Invoice, InvoiceStatus, InvoiceType
 from app.models.customer import Customer
 from app.core.email import email_service, PAYMENT_REMINDER_TEMPLATE
 
@@ -41,7 +41,10 @@ def check_overdue_invoices():
             select(Invoice)
             .where(
                 Invoice.status.in_([InvoiceStatus.OFFEN, InvoiceStatus.TEILBEZAHLT]),
-                Invoice.due_date < today
+                Invoice.due_date < today,
+                # Eine Gutschrift/Stornorechnung ist nie überfällig — auch
+                # kein Altbestand, den der frühere Storno auf OFFEN setzte.
+                Invoice.invoice_type != InvoiceType.GUTSCHRIFT,
             )
         ).scalars().all()
 
@@ -108,6 +111,8 @@ def send_payment_reminders():
             .where(
                 Invoice.status.in_([InvoiceStatus.UEBERFAELLIG, InvoiceStatus.MAHNVERFAHREN]),
                 Invoice.reminder_level < 3,
+                # Nie eine Mahnung über null oder einen negativen Betrag.
+                Invoice.total > Invoice.paid_amount,
                 # Nächste Mahnung fällig ODER noch nie gemahnt
                 (Invoice.next_reminder_date <= today) | (Invoice.next_reminder_date == None),
             )

@@ -31,6 +31,7 @@ from app.models.inventory import InventoryLocation, LocationType
 from app.models.unit import UnitOfMeasure
 from app.models.enums import TaxRate
 from app.models.order import Order, OrderLine, OrderStatus
+from app.services.steuersatz import pfand_vorgaben
 
 router = APIRouter(prefix="/imports", tags=["Excel-Import"])
 
@@ -437,17 +438,26 @@ def _import_products(db, rows: list[dict]) -> tuple[int, int]:
         raise HTTPException(status_code=500, detail="Basiseinheit 'G' fehlt — bitte Stammdaten initialisieren")
     created = updated = 0
     for r in rows:
-        category = ProductCategory(r["category"]) if r.get("category") else ProductCategory.MICROGREEN
-        tax_rate = TaxRate(r["tax_rate"]) if r.get("tax_rate") else TaxRate.REDUZIERT
         existing = db.execute(select(Product).where(Product.sku == r["sku"])).scalar_one_or_none()
-        payload = {**r, "category": category, "tax_rate": tax_rate}
+        # Nur eine befüllte Zelle ist eine Angabe. Eine leere Zelle oder
+        # fehlende Spalte darf einen bestehenden Wert nie überschreiben — der
+        # frühere Default tax_rate=REDUZIERT setzte jeden Pfandartikel bei
+        # jedem Re-Import auf 7 % zurück (A3, 08.10.2026). category ist eine
+        # Pflichtspalte; Zeilen ohne sie verwirft schon _parse_rows.
+        angaben = {k: v for k, v in r.items() if v is not None}
+        if "category" in angaben:
+            angaben["category"] = ProductCategory(angaben["category"])
+        if "tax_rate" in angaben:
+            angaben["tax_rate"] = TaxRate(angaben["tax_rate"])
+        # Dieselbe Pfandregel wie Anlegen und PATCH in der Produktmaske.
+        angaben = pfand_vorgaben(angaben, set(angaben), bisher=existing)
         if existing:
-            for k, v in payload.items():
-                if v is not None:
-                    setattr(existing, k, v)
+            for k, v in angaben.items():
+                setattr(existing, k, v)
             updated += 1
         else:
-            db.add(Product(**{**payload, "base_unit_id": default_unit.id}))
+            angaben.setdefault("tax_rate", TaxRate.REDUZIERT)
+            db.add(Product(**{**angaben, "base_unit_id": default_unit.id}))
             created += 1
     db.commit()
     return created, updated

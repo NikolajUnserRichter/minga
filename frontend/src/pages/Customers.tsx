@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tansta
 import { Plus, Search, Trash, Tag } from 'lucide-react';
 import { CustomerPricesModal } from '../components/domain/CustomerPricesModal';
 import { salesApi } from '../services/api';
-import { Customer, CustomerType, Contact, CustomerAddress, AddressType } from '../types';
+import { Customer, CustomerType, Contact, CustomerAddress, AddressType, PfandAbrechnung } from '../types';
 import { getErrorMessage } from '../services/errors';
 import { ExcelImport } from '../components/common/ExcelImport';
 import { useDebounce } from '../hooks/useDebounce';
@@ -243,6 +243,7 @@ function CustomerForm({ customer, onSubmit, onCancel }: CustomerFormProps) {
     packaging_fee_amount: customer?.packaging_fee_amount != null ? String(customer.packaging_fee_amount) : '0',
     packaging_fee_percent: customer?.packaging_fee_percent != null ? String(customer.packaging_fee_percent) : '0',
     show_prices_on_delivery_note: customer?.show_prices_on_delivery_note ?? false,
+    pfand_abrechnung: customer?.pfand_abrechnung ?? ('JE_LIEFERUNG' as PfandAbrechnung),
     aktiv: customer?.aktiv ?? true,
   });
 
@@ -260,6 +261,12 @@ function CustomerForm({ customer, onSubmit, onCancel }: CustomerFormProps) {
     { value: 'HANDEL', label: 'Handel' },
     { value: 'GEWERBE', label: 'Gewerbe' },
     { value: 'PRIVAT', label: 'Privat' },
+  ];
+
+  // Pfandabrechnung je Kunde (Spec 08.10.2026). MONATLICH (Leergutkonto) folgt mit Paket 3.
+  const pfandAbrechnungOptions: SelectOption[] = [
+    { value: 'JE_LIEFERUNG', label: 'Pfand auf jeder Rechnung' },
+    { value: 'KEINE', label: 'Pfand nicht auf der Rechnung (IFCO-Clearing)' },
   ];
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -412,6 +419,17 @@ function CustomerForm({ customer, onSubmit, onCancel }: CustomerFormProps) {
           />
           <span className="text-sm text-gray-700 dark:text-gray-300">Preise auf Lieferschein andrucken</span>
         </label>
+        <div className="mt-4">
+          <Select
+            label="Pfandabrechnung"
+            options={pfandAbrechnungOptions}
+            value={formData.pfand_abrechnung}
+            onChange={(e) => setFormData({ ...formData, pfand_abrechnung: e.target.value as PfandAbrechnung })}
+          />
+          <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+            Bei „IFCO-Clearing“ stehen Pfandkisten auf Bestellung und Lieferschein, aber nicht auf neu erzeugten Rechnungen.
+          </p>
+        </div>
       </div>
 
       <label className="flex items-center gap-2">

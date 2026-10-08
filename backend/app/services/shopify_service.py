@@ -160,6 +160,24 @@ def _next_order_number(db) -> str:
     return f"{prefix}-{n + 1:04d}"
 
 
+def _satz_aus_tax_lines(line_item: dict):
+    """Steuersatz aus den tax_lines einer Shopify-Position (rate 0.07 → 7 %).
+
+    None, wenn Shopify keinen oder einen unbekannten Satz liefert.
+    """
+    from app.models.enums import TaxRate
+
+    for tl in line_item.get("tax_lines") or []:
+        try:
+            rate = Decimal(str(tl.get("rate")))
+        except Exception:
+            continue
+        for satz in TaxRate:
+            if satz.rate == rate:
+                return satz
+    return None
+
+
 def import_shopify_order(db, order_json: dict) -> dict:
     """Eine Shopify-Bestellung ins ERP übernehmen: Kunde finden/anlegen +
     Order (Status ENTWURF). Idempotent über Order.customer_reference."""
@@ -214,7 +232,10 @@ def import_shopify_order(db, order_json: dict) -> dict:
             unit="STK",
             unit_price=Decimal(str(li.get("price", "0"))),
             discount_percent=Decimal("0"),
-            tax_rate=TaxRate.STANDARD,
+            # Bekannter Artikel: Satz aus dem Produktstamm (Microgreens 7 %,
+            # Pfand 19 %). Unbekannter: der Satz, den Shopify berechnet hat;
+            # ohne Angabe wie bisher 19 % (A3, 08.10.2026).
+            tax_rate=product.tax_rate if product else (_satz_aus_tax_lines(li) or TaxRate.STANDARD),
         )
         line.calculate_line_totals()
         order.lines.append(line)

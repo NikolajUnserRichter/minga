@@ -57,7 +57,11 @@ def snapshot_demo_seed(slug: str = DEFAULT_DEMO_SLUG) -> dict:
 
 def reset_demo_from_seed(slug: str = DEFAULT_DEMO_SLUG) -> dict:
     """Live-DB durch den Golden-Seed ersetzen. Ohne Seed: no-op (skip)."""
-    from app.tenancy import registry
+    from app import tenancy
+    from app.database import Base
+    import app.models  # noqa: F401
+
+    registry = tenancy.registry
 
     db_path = registry.path_for(slug)
     seed = _seed_path(db_path)
@@ -69,4 +73,14 @@ def reset_demo_from_seed(slug: str = DEFAULT_DEMO_SLUG) -> dict:
     _remove_sidecars(db_path)
     shutil.copy2(seed, db_path)
     logger.info(f"[demo-reset] '{slug}' auf Golden-Seed zurückgesetzt")
-    return {"status": "reset", "slug": slug}
+
+    try:
+        engine = registry.get_engine(slug)
+        Base.metadata.create_all(bind=engine)
+        tenancy._auto_migrate(engine)
+        migriert = True
+    except Exception as e:  # noqa: BLE001 — Reset-Ergebnis muss den Fehler melden
+        logger.error(f"[demo-reset] Migration für '{slug}' fehlgeschlagen: {e}")
+        migriert = False
+
+    return {"status": "reset", "slug": slug, "migriert": migriert}

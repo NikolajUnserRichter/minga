@@ -168,12 +168,17 @@ export interface Customer {
   packaging_fee_amount?: number | string
   packaging_fee_percent?: number | string
   show_prices_on_delivery_note?: boolean
+  /** Pfandabrechnung: JE_LIEFERUNG = Pfand auf jeder Rechnung, KEINE = IFCO-Clearing (nicht auf der Rechnung) */
+  pfand_abrechnung?: PfandAbrechnung
   aktiv: boolean
   created_at: string
   updated_at: string
 }
 
 export type CustomerType = 'GASTRO' | 'HANDEL' | 'GEWERBE' | 'PRIVAT'
+
+/** Pfandabrechnung je Kunde (Backend: PfandAbrechnung). MONATLICH folgt mit Paket 3. */
+export type PfandAbrechnung = 'JE_LIEFERUNG' | 'KEINE'
 
 export interface Order {
   id: string
@@ -591,7 +596,7 @@ export interface PriceListItem {
 // Invoices
 export type InvoiceStatus = 'ENTWURF' | 'OFFEN' | 'TEILBEZAHLT' | 'BEZAHLT' | 'UEBERFAELLIG' | 'STORNIERT'
 export type InvoiceType = 'RECHNUNG' | 'GUTSCHRIFT' | 'PROFORMA'
-export type PaymentMethod = 'UEBERWEISUNG' | 'LASTSCHRIFT' | 'BAR' | 'KARTE' | 'PAYPAL'
+export type PaymentMethod = 'UEBERWEISUNG' | 'LASTSCHRIFT' | 'BAR' | 'EC' | 'KREDITKARTE' | 'PAYPAL'
 
 export interface Invoice {
   id: string
@@ -599,6 +604,8 @@ export interface Invoice {
   invoice_type: InvoiceType
   customer_id: string
   order_id: string | null
+  /** Gesetzt bei einer Stornorechnung: die stornierte Originalrechnung */
+  original_invoice_id?: string | null
   invoice_date: string
   delivery_date: string | null
   due_date: string
@@ -646,6 +653,8 @@ export interface InvoiceLine {
   line_total: number
   tax_amount: number
   buchungskonto?: string | null
+  /** Pfandposition (Produkt mit is_deposit) */
+  is_deposit?: boolean
 }
 
 export interface Payment {

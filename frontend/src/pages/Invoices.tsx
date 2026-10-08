@@ -15,6 +15,7 @@ import {
   SelectOption,
   Tabs,
   Pagination,
+  Alert,
 } from '../components/ui';
 import { ListPageSkeleton } from '../components/ui/Skeleton';
 import { getErrorMessage } from '../services/errors';
@@ -38,6 +39,10 @@ const STATUS_COLORS: Record<InvoiceStatus, 'gray' | 'info' | 'warning' | 'succes
   UEBERFAELLIG: 'danger',
   STORNIERT: 'purple',
 };
+
+// Die Rechnungsliste lädt bis zu 100 Rechnungen (Obergrenze des Backends).
+// Kommen genau 100 zurück, ist sie womöglich gekürzt — das muss sichtbar sein.
+const LISTENGRENZE = 100;
 
 const TYPE_LABELS: Record<InvoiceType, string> = {
   RECHNUNG: 'Rechnung',
@@ -79,6 +84,7 @@ export default function Invoices() {
       invoicesApi.list({
         status: filterStatus === 'all' ? undefined : filterStatus as InvoiceStatus,
         invoice_type: filterType === 'all' ? undefined : filterType as InvoiceType,
+        page_size: LISTENGRENZE,
       }),
   });
 
@@ -135,12 +141,14 @@ export default function Invoices() {
     mutationFn: () => invoicesApi.cancel(stornoFuer!.id, {
       reason: stornoGrund,
       reason_code: stornoGrundCode,
-    } as any),
-    onSuccess: (res: any) => {
+    }),
+    onSuccess: (res) => {
       queryClient.invalidateQueries({ queryKey: ['invoices'] });
       setStornoFuer(null);
       setStornoGrund('');
-      toast.success(`Stornorechnung ${res?.credit_note?.invoice_number ?? ''} erstellt — Lieferscheine sind wieder abrechenbar`);
+      toast.success(`Stornorechnung ${res.credit_note?.invoice_number ?? ''} erstellt — Lieferscheine sind wieder abrechenbar`);
+      // Was der Storno nicht selbst löst (gezahltes Geld, lexoffice) — lange stehen lassen
+      if (res.warnungen?.length) toast.warning(res.warnungen.join(' '), 15000);
     },
     onError: (e: any) => toast.error(getErrorMessage(e, 'Storno fehlgeschlagen')),
   });
@@ -225,7 +233,7 @@ export default function Invoices() {
     <div>
       <PageHeader
         title="Rechnungswesen"
-        subtitle={`${invoices.length} Rechnungen`}
+        subtitle={`${invoices.length === LISTENGRENZE ? `${LISTENGRENZE}+` : invoices.length} Rechnungen`}
         actions={
           <div className="flex gap-2">
             <Button variant="secondary" icon={<Download className="w-4 h-4" />} onClick={() => setShowDatevExport(true)}>
@@ -304,6 +312,12 @@ export default function Invoices() {
         <Select options={typeOptions} value={filterType} onChange={(e) => setFilterType(e.target.value)} />
       </FilterBar>
 
+      {invoices.length === LISTENGRENZE && (
+        <p className="mb-2 text-sm text-amber-700 dark:text-amber-300">
+          Es werden die neuesten {LISTENGRENZE} Rechnungen angezeigt. Ältere Rechnungen über den Status- oder Typfilter eingrenzen.
+        </p>
+      )}
+
       {displayInvoices.length === 0 ? (
         <EmptyState
           title="Keine Rechnungen gefunden"
@@ -339,7 +353,11 @@ export default function Invoices() {
                 <tr key={invoice.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/50">
                   <td className="px-6 py-4 whitespace-nowrap">
                     <div className="text-sm font-medium text-gray-900 dark:text-white">{invoice.invoice_number}</div>
-                    <div className="text-xs text-gray-500 dark:text-gray-400">{TYPE_LABELS[invoice.invoice_type]}</div>
+                    <div className="text-xs text-gray-500 dark:text-gray-400">
+                      {invoice.invoice_type === 'GUTSCHRIFT' && invoice.original_invoice_id
+                        ? 'Stornorechnung'
+                        : TYPE_LABELS[invoice.invoice_type]}
+                    </div>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white">
                     {invoice.customer_name || '-'}
@@ -370,7 +388,7 @@ export default function Invoices() {
                         Finalisieren
                       </Button>
                     )}
-                    {['OFFEN', 'TEILBEZAHLT', 'UEBERFAELLIG', 'BEZAHLT'].includes(invoice.status) && (
+                    {['OFFEN', 'TEILBEZAHLT', 'UEBERFAELLIG', 'BEZAHLT', 'STORNIERT'].includes(invoice.status) && (
                       <Button
                         variant="ghost"
                         size="sm"
@@ -472,7 +490,7 @@ export default function Invoices() {
                       </Button>
                     )}
                     <Button variant="ghost" size="sm" onClick={() => setSelectedInvoice(invoice)}>
-                      Details
+                      {invoice.status === 'ENTWURF' ? 'Bearbeiten' : 'Details'}
                     </Button>
                   </td>
                 </tr>
@@ -548,14 +566,23 @@ export default function Invoices() {
           <p className="text-sm text-gray-600 dark:text-gray-300">
             Es wird eine <b>Stornorechnung mit eigener Nummer</b> erzeugt; das Original
             bleibt erhalten und wird schreibgeschützt. Zugeordnete Lieferscheine werden
-            wieder abrechenbar.
+            wieder abrechenbar. Original und Stornorechnung gleichen sich aus und stehen
+            danach beide auf „Storniert“.
           </p>
+          {stornoFuer && Number(stornoFuer.paid_amount) > 0 && (
+            <Alert variant="warning" title="Auf diese Rechnung wurde schon gezahlt">
+              {Number(stornoFuer.paid_amount).toFixed(2).replace('.', ',')} € sind bereits verbucht.
+              Die Zahlung bleibt am stornierten Beleg stehen — bei der Neuausstellung als
+              Zahlung erfassen oder dem Kunden erstatten.
+            </Alert>
+          )}
           <Select label="Grund" value={stornoGrundCode}
                   onChange={(e) => setStornoGrundCode(e.target.value)}
                   options={[
                     { value: 'FALSCHER_EMPFAENGER', label: 'Falscher Empfänger' },
                     { value: 'FALSCHE_MENGE', label: 'Falsche Menge' },
                     { value: 'PREISFEHLER', label: 'Preisfehler' },
+                    { value: 'FALSCHER_STEUERSATZ', label: 'Falscher Steuersatz' },
                     { value: 'LIEFERUNG_NICHT_ERFOLGT', label: 'Lieferung nicht erfolgt' },
                     { value: 'SONSTIGES', label: 'Sonstiges' },
                   ]} />
@@ -666,7 +693,6 @@ function InvoiceCreateForm({ customers, onSubmit, onCancel }: InvoiceCreateFormP
     header_text: '',
     footer_text: '',
     internal_notes: '',
-    buchungskonto: '',
   });
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -682,7 +708,6 @@ function InvoiceCreateForm({ customers, onSubmit, onCancel }: InvoiceCreateFormP
         ...formData,
         delivery_date: formData.delivery_date || undefined,
         due_date: formData.due_date || undefined,
-        buchungskonto: formData.buchungskonto || undefined,
         internal_notes: formData.internal_notes || undefined,
       });
       onSubmit();
@@ -745,12 +770,6 @@ function InvoiceCreateForm({ customers, onSubmit, onCancel }: InvoiceCreateFormP
         />
       </div>
 
-      <Input
-        label="Buchungskonto"
-        placeholder="Standard (z.B. 8400)..."
-        value={formData.buchungskonto}
-        onChange={(e) => setFormData({ ...formData, buchungskonto: e.target.value })}
-      />
 
       <Input
         label="Kopftext"
@@ -816,7 +835,8 @@ function PaymentForm({ invoice, onSubmit, onCancel }: PaymentFormProps) {
     { value: 'UEBERWEISUNG', label: 'Überweisung' },
     { value: 'LASTSCHRIFT', label: 'Lastschrift' },
     { value: 'BAR', label: 'Bar' },
-    { value: 'KARTE', label: 'Karte' },
+    { value: 'EC', label: 'EC-Karte' },
+    { value: 'KREDITKARTE', label: 'Kreditkarte' },
     { value: 'PAYPAL', label: 'PayPal' },
   ];
 
@@ -891,12 +911,19 @@ function DatevExportForm({ onClose }: { onClose: () => void }) {
     from_date: new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0],
     to_date: new Date().toISOString().split('T')[0],
     include_payments: true,
+    erneut_exportieren: false,
   });
 
   const handleExport = async () => {
     setLoading(true);
     try {
       const result = await invoicesApi.exportDatev(formData);
+      if (result.record_count === 0) {
+        // Bereits exportierte Belege kommen nur mit "erneut exportieren" wieder —
+        // eine leere Datei herunterzuladen hilft niemandem.
+        toast.info('Keine neuen Buchungen im Zeitraum. Bereits exportierte nur über „Erneut exportieren".');
+        return;
+      }
       toast.success(`Export erfolgreich: ${result.record_count} Datensätze`);
 
       // Download CSV
@@ -943,6 +970,23 @@ function DatevExportForm({ onClose }: { onClose: () => void }) {
         <span className="text-sm text-gray-700 dark:text-gray-300">Zahlungen einschließen</span>
       </label>
 
+      <label className="flex items-start gap-2">
+        <input
+          type="checkbox"
+          checked={formData.erneut_exportieren}
+          onChange={(e) => setFormData({ ...formData, erneut_exportieren: e.target.checked })}
+          className="mt-0.5 w-4 h-4 rounded border-gray-300 dark:border-gray-600 text-minga-600 dark:text-minga-400 focus:ring-minga-500"
+        />
+        <span className="text-sm text-gray-700 dark:text-gray-300">
+          Bereits exportierte erneut exportieren
+          {formData.erneut_exportieren && (
+            <span className="block text-amber-700 dark:text-amber-300">
+              Nur verwenden, wenn die vorige Datei nicht in DATEV importiert wurde — sonst wird doppelt gebucht.
+            </span>
+          )}
+        </span>
+      </label>
+
       <div className="flex gap-3 pt-4 border-t">
         <Button type="button" variant="secondary" onClick={onClose}>
           Abbrechen
@@ -955,16 +999,21 @@ function DatevExportForm({ onClose }: { onClose: () => void }) {
   );
 }
 
-// Invoice Detail
-function InvoiceDetail({ invoice: initial }: { invoice: Invoice }) {
+// Invoice Detail — auch im Belege-Dialog der Bestellung (OrderDocumentsModal)
+export function InvoiceDetail({ invoice: initial }: { invoice: Invoice }) {
   const queryClient = useQueryClient();
   const toast = useToast();
 
   // Refetch invoice details after every mutation so the lines list stays in sync.
-  const { data: refreshed } = useQuery({
+  const { data: refreshed, isError: detailFehler } = useQuery({
     queryKey: ['invoice', initial.id],
     queryFn: () => invoicesApi.get(initial.id),
     initialData: initial,
+    // initialData ist der Listeneintrag. GET /invoices liefert ihn ohne
+    // Positionen (InvoiceResponse, kein lines). Mit staleTime 60 s aus
+    // main.tsx gälte er als frisch und würde beim Öffnen nicht nachgeladen —
+    // der Dialog zeigte "Keine Positionen" und keinen Löschknopf (B4).
+    refetchOnMount: 'always',
   });
   const invoice = refreshed || initial;
   const isDraft = invoice.status === 'ENTWURF';
@@ -1055,6 +1104,7 @@ function InvoiceDetail({ invoice: initial }: { invoice: Invoice }) {
       invalidate();
       toast.success('Position entfernt');
     },
+    onError: (e: any) => toast.error(getErrorMessage(e, 'Position konnte nicht entfernt werden')),
   });
 
   const handleProductSelect = (productId: string) => {
@@ -1187,7 +1237,12 @@ function InvoiceDetail({ invoice: initial }: { invoice: Invoice }) {
             <tbody>
               {invoice.lines.map((line) => (
                 <tr key={line.id} className="border-b">
-                  <td className="py-2">{line.description}</td>
+                  <td className="py-2">
+                    {line.description}
+                    {line.is_deposit && (
+                      <Badge variant="info" size="sm" className="ml-2">Pfand</Badge>
+                    )}
+                  </td>
                   <td className="text-right py-2">
                     {line.quantity} {line.unit}
                   </td>
@@ -1198,7 +1253,11 @@ function InvoiceDetail({ invoice: initial }: { invoice: Invoice }) {
                       <button
                         type="button"
                         title="Position entfernen"
-                        onClick={() => deleteLineMutation.mutate(line.id)}
+                        disabled={deleteLineMutation.isPending}
+                        onClick={() => {
+                          if (!confirm(`Position „${line.description}" aus dem Entwurf entfernen?`)) return;
+                          deleteLineMutation.mutate(line.id);
+                        }}
                         className="text-red-600 hover:text-red-800 dark:text-red-400"
                       >
                         ×
@@ -1210,7 +1269,13 @@ function InvoiceDetail({ invoice: initial }: { invoice: Invoice }) {
             </tbody>
           </table>
         ) : (
-          <p className="text-gray-500 dark:text-gray-400 text-sm">Keine Positionen</p>
+          <p className="text-gray-500 dark:text-gray-400 text-sm">
+            {invoice.lines
+              ? 'Keine Positionen'
+              : detailFehler
+                ? 'Positionen konnten nicht geladen werden.'
+                : 'Positionen werden geladen …'}
+          </p>
         )}
 
         {isDraft && (

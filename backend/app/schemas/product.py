@@ -5,7 +5,7 @@ Pydantic Schemas für Produkte, GrowPlans und Preislisten
 from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, field_validator
 
 from app.models.product import ProductCategory
 from app.models.enums import TaxRate
@@ -280,6 +280,9 @@ class ProductCreate(ProductBase):
 class ProductUpdate(BaseModel):
     """Schema zum Aktualisieren eines Produkts"""
     name: Optional[str] = Field(None, min_length=1, max_length=200)
+    # Die Maske schickt die Kategorie bei jedem Speichern mit; ohne das Feld
+    # verwarf der PATCH sie still.
+    category: Optional[ProductCategory] = None
     gtin: Optional[str] = Field(None, max_length=14)
     old_article_number: Optional[str] = Field(None, max_length=50)
     certification: Optional[str] = Field(None, max_length=30)
@@ -304,6 +307,16 @@ class ProductUpdate(BaseModel):
     variable_bundle_max_slots: Optional[int] = None
     is_active: Optional[bool] = None
     is_sellable: Optional[bool] = None
+
+    @field_validator("category")
+    @classmethod
+    def _kategorie_nicht_leer(cls, v):
+        # products.category ist NOT NULL. Ohne die Prüfung schriebe ein PATCH
+        # mit "category": null NULL in die Spalte, und der Commit endete in
+        # einem 500. Ein weggelassenes Feld erreicht den Validator nicht.
+        if v is None:
+            raise ValueError("Kategorie darf nicht leer sein")
+        return v
 
 
 class ProductResponse(ProductBase):

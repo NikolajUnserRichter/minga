@@ -32,7 +32,13 @@ class OrderLineBase(BaseModel):
     quantity: Decimal = Field(..., gt=0, description="Menge")
     unit: str = Field(..., description="Einheit (G, KG, STK, SCHALE)")
     unit_price: Decimal = Field(..., ge=0, description="Einzelpreis")
-    tax_rate: TaxRate = Field(default=TaxRate.REDUZIERT, description="Steuersatz")
+    # Kein Default mehr: der alte Default REDUZIERT überdeckte den Produktsatz
+    # (A3, 08.10.2026). Bei Positionen mit Produkt zählt der Produktstamm,
+    # siehe app/services/steuersatz.py; hier nur für Freitextpositionen.
+    tax_rate: Optional[TaxRate] = Field(
+        default=None,
+        description="Steuersatz — nur für Freitextpositionen; bei Produkten gilt der Produktsatz",
+    )
     discount_percent: Decimal = Field(default=Decimal("0"), ge=0, le=100, description="Rabatt %")
 
 

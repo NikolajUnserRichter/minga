@@ -60,6 +60,19 @@ class SubscriptionInterval(str, Enum):
     MONATLICH = "MONATLICH"
 
 
+class PfandAbrechnung(str, Enum):
+    """Wie das Pfand (Produkt mit is_deposit) eines Kunden abgerechnet wird.
+
+    JE_LIEFERUNG: Pfandpositionen stehen auf jeder Rechnung (z. B. Knuspr).
+    KEINE: Pfand läuft über das IFCO-Clearing — Pfandpositionen stehen auf
+        Bestellung und Lieferschein, aber nicht auf der Rechnung (z. B. Ökoring).
+    MONATLICH (Leergutkonto: ausgegeben minus Retouren, einmal im Monat)
+    folgt mit Paket 3 (Spec, Nachtrag 08.10.2026).
+    """
+    JE_LIEFERUNG = "JE_LIEFERUNG"
+    KEINE = "KEINE"
+
+
 class CustomerAddress(Base):
     """
     Kundenadresse - Separate Rechnungs- und Lieferadressen
@@ -180,6 +193,13 @@ class Customer(Base):
 
     # Preise auf Lieferschein andrucken (Kundenwunsch, z.B. für Weiterberechnung)
     show_prices_on_delivery_note: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+
+    # Pfandabrechnung (Spec 08.10.2026, Variante C): JE_LIEFERUNG oder KEINE
+    # (IFCO-Clearing). Wirkt nur auf neu erzeugte Rechnungen.
+    pfand_abrechnung: Mapped[PfandAbrechnung] = mapped_column(
+        SQLEnum(PfandAbrechnung, length=20), nullable=False,
+        default=PfandAbrechnung.JE_LIEFERUNG, server_default=PfandAbrechnung.JE_LIEFERUNG.value,
+    )
 
     # DATEV-Kontonummer (Debitor)
     datev_account: Mapped[Optional[str]] = mapped_column(String(10))  # z.B. 10001

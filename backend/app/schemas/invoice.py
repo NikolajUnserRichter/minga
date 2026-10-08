@@ -6,7 +6,7 @@ Mit deutscher MwSt-Berechnung und DATEV-Export
 from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, field_validator
 
 from app.models.invoice import InvoiceStatus, InvoiceType, TaxRate, PaymentMethod
 
@@ -42,13 +42,28 @@ class InvoiceLineCreate(InvoiceLineBase):
 
 
 class InvoiceLineUpdate(BaseModel):
-    """Schema zum Aktualisieren einer Rechnungsposition"""
-    description: Optional[str] = None
-    quantity: Optional[Decimal] = None
-    unit: Optional[str] = None
-    unit_price: Optional[Decimal] = None
-    discount_percent: Optional[Decimal] = None
+    """Schema zum Aktualisieren einer Rechnungsposition (nur Entwürfe).
+
+    Grenzen wie beim Anlegen (InvoiceLineCreate): Menge > 0, Preis >= 0,
+    Rabatt 0-100, Beschreibung nicht leer. Zusätzlich darf die Einheit nicht
+    leer sein (InvoiceLineBase prüft das beim Anlegen nicht). Ein
+    ausdrückliches null heißt nicht "unverändert" — es schrieb die Zeile
+    kaputt (Menge None -> 500, Beschreibung None -> NOT NULL). Wer ein Feld
+    nicht ändern will, lässt es weg.
+    """
+    description: Optional[str] = Field(None, min_length=1)
+    quantity: Optional[Decimal] = Field(None, gt=0)
+    unit: Optional[str] = Field(None, min_length=1)
+    unit_price: Optional[Decimal] = Field(None, ge=0)
+    discount_percent: Optional[Decimal] = Field(None, ge=0, le=100)
     tax_rate: Optional[TaxRate] = None
+
+    @field_validator("description", "quantity", "unit", "unit_price", "discount_percent", "tax_rate")
+    @classmethod
+    def _kein_null(cls, wert):
+        if wert is None:
+            raise ValueError("darf nicht leer sein — Feld weglassen, um es nicht zu ändern")
+        return wert
 
 
 class InvoiceLineResponse(InvoiceLineBase):
@@ -63,6 +78,9 @@ class InvoiceLineResponse(InvoiceLineBase):
     order_item_id: Optional[UUID]
     harvest_batch_ids: Optional[list[UUID]]
     buchungskonto: Optional[str]
+    #: Pfandposition (aus dem Produktstamm beim Anlegen) — die Oberfläche
+    #: kennzeichnet sie, der Rechnungskopf summiert sie in total_deposit.
+    is_deposit: bool = False
 
     # Berechnete Felder
     tax_amount: Optional[Decimal] = None
@@ -250,7 +268,7 @@ class InvoiceCancelRequest(BaseModel):
     reason: str = Field(..., min_length=1, description="Stornogrund (Freitext)")
     reason_code: Optional[Literal[
         "FALSCHER_EMPFAENGER", "FALSCHE_MENGE", "PREISFEHLER",
-        "LIEFERUNG_NICHT_ERFOLGT", "SONSTIGES",
+        "FALSCHER_STEUERSATZ", "LIEFERUNG_NICHT_ERFOLGT", "SONSTIGES",
     ]] = Field(None, description="Stornogrund aus der Auswahlliste")
     create_credit_note: bool = Field(default=True, description="Stornorechnung erstellen?")
 
@@ -260,6 +278,11 @@ class DatevExportRequest(BaseModel):
     from_date: date = Field(..., description="Von Datum")
     to_date: date = Field(..., description="Bis Datum")
     include_payments: bool = Field(default=True, description="Zahlungen einschließen?")
+    erneut_exportieren: bool = Field(
+        default=False,
+        description="Bereits exportierte Rechnungen/Zahlungen im Zeitraum erneut aufnehmen "
+                    "(nur wenn die vorige Datei NICHT in DATEV importiert wurde)",
+    )
 
 
 class DatevExportResponse(BaseModel):

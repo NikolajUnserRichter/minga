@@ -89,7 +89,8 @@ export default function Dashboard() {
   const showSalesSection = ['ADMIN', 'SALES', 'ACCOUNTING'].includes(role);
   const { data: invoicesData } = useQuery({
     queryKey: ['invoices', 'open'],
-    queryFn: () => invoicesApi.list({ status: 'OFFEN' }),
+    // page_size: ohne Angabe kürzt das Backend still auf 20
+    queryFn: () => invoicesApi.list({ status: 'OFFEN', page_size: 100 }),
     enabled: showSalesSection,
     retry: 0,
   });
@@ -343,7 +344,7 @@ export default function Dashboard() {
                 <Receipt className="w-8 h-8 text-blue-600 dark:text-blue-400" />
                 <div>
                   <p className="text-xl font-bold text-gray-900 dark:text-white">
-                    {invoicesData?.length || 0}
+                    {invoicesData?.length === 100 ? '100+' : invoicesData?.length || 0}
                   </p>
                   <p className="text-sm text-gray-500 dark:text-gray-400">Offene Rechnungen</p>
                 </div>

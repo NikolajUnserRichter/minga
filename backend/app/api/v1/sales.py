@@ -34,6 +34,7 @@ from app.services.datev_service import DatevService
 from app.services.order_status_service import (
     BestandsbuchungFehler, StatuswechselFehler, bezeichnung, pruefe_uebergang, setze_status,
 )
+from app.services.steuersatz import steuersatz_der_position
 
 import logging
 
@@ -864,7 +865,11 @@ async def create_order(order_data: OrderCreate, db: DBSession, user: CurrentUser
             line_net = ld.quantity * ld.unit_price
             if ld.discount_percent:
                 line_net = line_net * (1 - ld.discount_percent / 100)
-            tax_rate = (ld.tax_rate or TaxRate.REDUZIERT).rate
+            # Derselbe Satz wie in der Position selbst — mit dem alten festen
+            # 7 % schätzte die Prüfung jede Pfandkiste zu niedrig.
+            tax_rate = steuersatz_der_position(
+                db, ld.product_id, ld.product_variant_id, ld.tax_rate
+            ).rate
             estimated_total += line_net + (line_net * tax_rate)
 
         if open_order_total + estimated_total > customer.credit_limit:
@@ -1040,7 +1045,11 @@ async def create_order(order_data: OrderCreate, db: DBSession, user: CurrentUser
             unit=line_unit,
             unit_price=line_price,
             discount_percent=line_data.discount_percent,
-            tax_rate=line_data.tax_rate or TaxRate.REDUZIERT,  # Lebensmittel: 7%
+            # Produktsatz verbindlich; nur Freitextpositionen nehmen den
+            # Satz vom Client (ohne Angabe 7 %).
+            tax_rate=steuersatz_der_position(
+                db, line_data.product_id, line_data.product_variant_id, line_data.tax_rate
+            ),
             requested_delivery_date=line_data.requested_delivery_date,
             variable_bundle_selections=selections,
         )
@@ -1301,16 +1310,28 @@ async def add_order_line(
             raise HTTPException(status_code=404, detail=f"Produkt {line_data.product_id} nicht gefunden")
         product_name = product.name
 
+    # Variante prüfen wie in create_order. Ohne Prüfung schlüge eine
+    # unbekannte ID erst beim Commit am Fremdschlüssel fehl (500).
+    if line_data.product_variant_id:
+        variante = db.get(ProductVariant, line_data.product_variant_id)
+        if not variante:
+            raise HTTPException(status_code=404, detail="Verpackungs-Variante nicht gefunden")
+        if line_data.product_id and variante.parent_product_id != line_data.product_id:
+            raise HTTPException(status_code=400, detail="Variante gehört nicht zum gewählten Produkt")
+
     line = OrderLine(
         order_id=order.id,
         position=max_pos + 1,
         product_id=line_data.product_id,
+        product_variant_id=line_data.product_variant_id,
         beschreibung=product_name,
         quantity=line_data.quantity,
         unit=line_data.unit,
         unit_price=line_data.unit_price,
         discount_percent=line_data.discount_percent,
-        tax_rate=line_data.tax_rate or TaxRate.REDUZIERT,
+        tax_rate=steuersatz_der_position(
+            db, line_data.product_id, line_data.product_variant_id, line_data.tax_rate
+        ),
         requested_delivery_date=line_data.requested_delivery_date
     )
     _calculate_line_amounts(line)
@@ -1387,15 +1408,23 @@ async def update_order_line(
     if not line:
         raise HTTPException(status_code=404, detail="Position nicht gefunden")
 
-    # Alte Werte für Audit
+    # Alte Werte für Audit — der Steuersatz gehört dazu, er ändert den Betrag.
     old_values = {
         "quantity": str(line.quantity),
-        "unit_price": str(line.unit_price)
+        "unit_price": str(line.unit_price),
+        "tax_rate": line.tax_rate.value,
     }
 
     update_data = line_data.model_dump(exclude_unset=True)
     for field, value in update_data.items():
         setattr(line, field, value)
+
+    # Bei Positionen mit Produkt gilt der Produktsatz — auch wenn der Client
+    # einen anderen schickt oder die Position noch den alten festen 7 %
+    # trägt (A3, 08.10.2026).
+    line.tax_rate = steuersatz_der_position(
+        db, line.product_id, line.product_variant_id, line.tax_rate
+    )
 
     _calculate_line_amounts(line)
     _calculate_order_totals(order)
@@ -1411,7 +1440,8 @@ async def update_order_line(
             old_values=old_values,
             new_values={
                 "quantity": str(line.quantity),
-                "unit_price": str(line.unit_price)
+                "unit_price": str(line.unit_price),
+                "tax_rate": line.tax_rate.value,
             }
         )
 

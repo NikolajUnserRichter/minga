@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { FileText, Truck, Package, Send, Download, Plus, CheckCheck, Receipt, Mail } from 'lucide-react';
+import { FileText, Truck, Package, Send, Download, Plus, CheckCheck, Receipt, Mail, Pencil } from 'lucide-react';
 import { Modal } from '../ui/Modal';
 import { Button, Input, useToast } from '../ui';
 import { documentsApi, invoicesApi, OrderConfirmation, DeliveryNote } from '../../services/api';
@@ -8,6 +8,7 @@ import { Order, Invoice } from '../../types';
 import { getErrorMessage } from '../../services/errors';
 import { belegStatusLabel } from '../ui/statusLabels';
 import { invalidateOrderViews } from '../../services/orderQueries';
+import { InvoiceDetail } from '../../pages/Invoices';
 
 interface Props {
   open: boolean;
@@ -42,16 +43,22 @@ export function OrderDocumentsModal({ open, onClose, order }: Props) {
     enabled: open && !!orderId,
   });
 
+  // Serverseitig gefiltert: Rechnung aus Bestellung (order_id) und
+  // Sammelrechnung (über den Lieferschein). Früher wurden die 20 neuesten
+  // Rechnungen clientseitig gefiltert — ab Rechnung 21 stand hier "keine
+  // Rechnung", und der Knopf erzeugte eine Doppelrechnung.
+  // page_size 100: ohne Angabe kürzt das Backend still auf 20.
+  // Schlüssel unter 'invoices', damit Änderungen im Entwurf (InvoiceDetail
+  // invalidiert ['invoices']) auch diese Liste neu laden.
   const invoicesQuery = useQuery({
-    queryKey: ['order-invoices', orderId],
-    queryFn: () => invoicesApi.list({}).then((rows) => rows.filter((i: Invoice) => i.order_id === orderId)),
+    queryKey: ['invoices', 'order', orderId],
+    queryFn: () => invoicesApi.list({ order_id: orderId!, page_size: 100 }),
     enabled: open && !!orderId,
   });
 
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ['confirmations', orderId] });
     queryClient.invalidateQueries({ queryKey: ['delivery-notes', orderId] });
-    queryClient.invalidateQueries({ queryKey: ['order-invoices', orderId] });
     queryClient.invalidateQueries({ queryKey: ['invoices'] });
     // Quittieren setzt die Bestellung auf Geliefert — Tagesplan mit neu laden
     void invalidateOrderViews(queryClient);
@@ -118,10 +125,24 @@ export function OrderDocumentsModal({ open, onClose, order }: Props) {
     );
 
   const createDeliveryNote = useMutation({
-    mutationFn: () => documentsApi.createDeliveryNote(orderId!, {}),
+    mutationFn: (zusaetzlich: boolean) => documentsApi.createDeliveryNote(orderId!, {}, { zusaetzlich }),
     onSuccess: (n) => { toast.success(`Lieferschein ${n.delivery_note_number} erstellt`); invalidate(); },
-    onError: (e: any) => toast.error(getErrorMessage(e, 'Fehler beim Erstellen des Lieferscheins')),
+    onError: (e: any) => {
+      // 409 = es gibt schon einen Lieferschein; das fragt neuerLieferschein() nach.
+      if (e?.response?.status === 409) return;
+      toast.error(getErrorMessage(e, 'Fehler beim Erstellen des Lieferscheins'));
+    },
   });
+
+  const neuerLieferschein = async () => {
+    try {
+      await createDeliveryNote.mutateAsync(false);
+    } catch (e: any) {
+      if (e?.response?.status !== 409) return; // Fehlermeldung kam schon aus onError
+      if (!window.confirm(`${getErrorMessage(e)}\n\nTrotzdem einen weiteren Lieferschein anlegen?`)) return;
+      await createDeliveryNote.mutateAsync(true).catch(() => undefined);
+    }
+  };
 
   const markDeliveredMutation = useMutation({
     mutationFn: ({ noteId, signed_by, actual_delivery_date }: { noteId: string; signed_by: string; actual_delivery_date: string }) =>
@@ -131,6 +152,8 @@ export function OrderDocumentsModal({ open, onClose, order }: Props) {
   });
 
   const [signedByInput, setSignedByInput] = useState<Record<string, string>>({});
+  // Aufgeklappte Rechnung: Positionen prüfen und im Entwurf bearbeiten
+  const [offeneRechnung, setOffeneRechnung] = useState<string | null>(null);
 
   // Tatsächlicher Liefertag je Lieferschein (Eingabe des Anwenders).
   const [lieferdatumInput, setLieferdatumInput] = useState<Record<string, string>>({});
@@ -151,6 +174,15 @@ export function OrderDocumentsModal({ open, onClose, order }: Props) {
   const confirmations = confirmationsQuery.data || [];
   const deliveryNotes = deliveryNotesQuery.data || [];
   const invoices = invoicesQuery.data || [];
+  // Rechnungen gehören zur Geldseite (main.py: _deps_geld = sales, accounting,
+  // admin). Planung und Halle öffnen den Dialog wegen der Lieferscheine auch,
+  // GET /invoices antwortet ihnen mit 403 — das ist kein Ladefehler.
+  const ohneRechnungsrecht = (invoicesQuery.error as any)?.response?.status === 403;
+  // Gleiche Regel wie das Backend (InvoiceService.aktive_rechnung_zur_bestellung):
+  // eine nicht stornierte Rechnung vom Typ RECHNUNG sperrt die nächste.
+  const aktiveRechnung = invoices.find((i: Invoice) => i.invoice_type === 'RECHNUNG' && i.status !== 'STORNIERT');
+  // Ohne frisch geladene Liste kein Knopf: lieber einmal zu wenig anbieten als doppelt berechnen.
+  const rechnungMoeglich = invoicesQuery.isSuccess && !invoicesQuery.isFetching && !aktiveRechnung;
 
   return (
     <Modal
@@ -229,7 +261,7 @@ export function OrderDocumentsModal({ open, onClose, order }: Props) {
               size="sm"
               icon={<Plus className="w-3 h-3" />}
               loading={createDeliveryNote.isPending}
-              onClick={() => createDeliveryNote.mutate()}
+              onClick={neuerLieferschein}
             >
               Neuer LS
             </Button>
@@ -318,27 +350,46 @@ export function OrderDocumentsModal({ open, onClose, order }: Props) {
               <Receipt className="w-4 h-4" />
               Rechnungen
             </h3>
-            <Button
-              size="sm"
-              icon={<Plus className="w-3 h-3" />}
-              loading={createInvoice.isPending}
-              onClick={() => createInvoice.mutate()}
-            >
-              Rechnung aus Bestellung
-            </Button>
+            {rechnungMoeglich && (
+              <Button
+                size="sm"
+                icon={<Plus className="w-3 h-3" />}
+                loading={createInvoice.isPending}
+                onClick={() => createInvoice.mutate()}
+              >
+                Rechnung aus Bestellung
+              </Button>
+            )}
           </div>
-          {invoices.length === 0 ? (
+          {ohneRechnungsrecht ? (
+            <p className="text-sm text-gray-500 dark:text-gray-400 italic">
+              Rechnungen sehen nur Vertrieb und Buchhaltung.
+            </p>
+          ) : invoicesQuery.isError ? (
+            <p className="text-sm text-red-700 dark:text-red-300">
+              Rechnungen zu dieser Bestellung konnten nicht geladen werden. Bitte den Dialog neu öffnen.
+            </p>
+          ) : invoices.length === 0 ? (
             <p className="text-sm text-gray-500 dark:text-gray-400 italic">Noch keine Rechnung zu dieser Bestellung.</p>
           ) : (
             <ul className="space-y-2">
               {invoices.map((inv: Invoice) => (
-                <li key={inv.id} className="flex items-center justify-between border rounded p-2 dark:border-gray-700">
+                <li key={inv.id} className="border rounded p-2 dark:border-gray-700">
+                  <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
                     <span className="font-mono text-sm">{inv.invoice_number}</span>
                     <span className={`text-xs px-2 py-0.5 rounded ${statusBadge(inv.status)}`}>{belegStatusLabel(inv.status)}</span>
                     <span className="text-xs text-gray-500">€ {Number(inv.total || 0).toFixed(2)}</span>
                   </div>
                   <div className="flex gap-1">
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      icon={<Pencil className="w-3 h-3" />}
+                      onClick={() => setOffeneRechnung(offeneRechnung === inv.id ? null : inv.id)}
+                    >
+                      {inv.status === 'ENTWURF' ? 'Bearbeiten' : 'Positionen'}
+                    </Button>
                     <Button
                       size="sm"
                       variant="secondary"
@@ -373,6 +424,12 @@ export function OrderDocumentsModal({ open, onClose, order }: Props) {
                       </Button>
                     )}
                   </div>
+                  </div>
+                  {offeneRechnung === inv.id && (
+                    <div className="mt-3 border-t pt-3 dark:border-gray-700">
+                      <InvoiceDetail invoice={inv} />
+                    </div>
+                  )}
                 </li>
               ))}
             </ul>
