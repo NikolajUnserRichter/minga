@@ -404,7 +404,7 @@ class PDFService:
                 ls_daten = [["Lieferschein", "Lieferdatum", "Betrag (netto)"]]
                 for n in enthaltene:
                     datum = n.actual_delivery_date or (
-                        n.order.requested_delivery_date if n.order else None
+                        (n.order.actual_delivery_date or n.order.requested_delivery_date) if n.order else None
                     )
                     ls_daten.append([
                         n.delivery_note_number,

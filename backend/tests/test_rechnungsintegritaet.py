@@ -8,14 +8,13 @@ from app.models.invoice import Invoice, InvoiceLine, InvoiceStatus
 from tests.conftest import TestingSessionLocal
 from tests.test_gernot_261008_paket2 import _bestellung, _kunde
 from tests.test_gernot_261008 import _s6_lieferschein, _s6_lauf, S6_PREVIEW, S6_COMMIT
+from tests.test_documents_preise import _pdf_text
 
 
 @pytest.fixture(autouse=True)
 def ohne_externe_dienste(monkeypatch):
     monkeypatch.setattr("app.api.v1.sales._trigger_forecast_update", lambda *args, **kwargs: None)
     monkeypatch.setattr("app.api.v1.invoices.send_email", lambda **kwargs: None)
-    monkeypatch.setattr("app.services.pdf_service.PDFService.generate_invoice_pdf",
-                        lambda *args, **kwargs: b"PDF")
 
 
 def _altrechnung(order, nummer, status):
@@ -230,3 +229,48 @@ class TestLoeschsperre:
         response = client.delete(f"/api/v1/sales/orders/{order['id']}")
         assert response.status_code == 204, response.text
         assert client.get(f"/api/v1/sales/orders/{order['id']}").status_code == 404
+
+
+class TestPdfLeistungsdatum:
+    @pytest.mark.parametrize("bestelldatum,scheindatum,erwartet", [
+        ("2026-03-07", None, "07.03.2026"),
+        ("2026-03-07", "2026-03-09", "09.03.2026"),
+        (None, None, "05.03.2026"),
+    ])
+    def test_anlage_verwendet_tatsaechliches_leistungsdatum(
+        self, client, tmp_path, bestelldatum, scheindatum, erwartet,
+    ):
+        from app.models.documents import DeliveryNote
+        order = _bestellung(client, _kunde(client), liefertag=date(2026, 3, 5))
+        note = _s6_lieferschein(client, order)
+        if bestelldatum:
+            response = client.post(f"/api/v1/sales/orders/{order['id']}/confirm")
+            assert response.status_code == 200, response.text
+            response = client.post(f"/api/v1/sales/orders/{order['id']}/status", json={
+                "status": "GELIEFERT", "actual_delivery_date": bestelldatum,
+            })
+            assert response.status_code == 200, response.text
+            assert response.json()["actual_delivery_date"] == bestelldatum
+        with TestingSessionLocal() as db:
+            lieferschein = db.get(DeliveryNote, uuid.UUID(note["id"]))
+            assert lieferschein.actual_delivery_date is None
+            if scheindatum:
+                lieferschein.actual_delivery_date = date.fromisoformat(scheindatum)
+                db.commit()
+        vorschau = _s6_lauf(client, S6_PREVIEW)["kunden"]
+        assert vorschau[0]["anzahl_lieferscheine"] == 1
+        invoice = _s6_lauf(client, S6_COMMIT)["rechnungen"][0]
+        url = f"/api/v1/invoices/{invoice['id']}"
+        anlage = client.get(f"{url}/delivery-notes")
+        assert anlage.status_code == 200, anlage.text
+        assert anlage.json()[0]["lieferdatum"] == (scheindatum or bestelldatum or "2026-03-05")
+        response = client.get(f"{url}/pdf")
+        assert response.status_code == 200, response.text
+        (tmp_path / "anlage.pdf").write_bytes(response.content)
+        text = _pdf_text(response.content)
+        assert b"Enthaltene Lieferscheine" in text
+        anlagetext = text.split(b"Enthaltene Lieferscheine", 1)[1]
+        assert note["delivery_note_number"].encode() in anlagetext
+        assert erwartet.encode() in anlagetext
+        if bestelldatum:
+            assert b"05.03.2026" not in anlagetext
