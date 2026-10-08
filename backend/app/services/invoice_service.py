@@ -168,12 +168,25 @@ class InvoiceService:
         line.calculate_line_total()
 
         self.db.add(line)
-        self.db.flush()
-
-        # Rechnungssummen neu berechnen
-        invoice.calculate_totals()
+        # Summen über ALLE Positionen — invoice.lines trägt nach dem ersten
+        # Zugriff sonst den alten Stand (siehe recalculate_totals).
+        self.recalculate_totals(invoice)
 
         return line
+
+    def recalculate_totals(self, invoice: Invoice) -> Invoice:
+        """Summen einer Rechnung aus dem aktuellen Stand ihrer Positionen.
+
+        Pflicht nach jedem Anlegen oder Löschen einer Position. Die Session
+        läuft mit autoflush=False, und invoice.lines bleibt nach dem ersten
+        Zugriff geladen: Positionen, die danach über invoice_id angelegt oder
+        per db.delete entfernt werden, sähe calculate_totals sonst nicht.
+        Deshalb erst schreiben, dann die Positionen neu laden, dann rechnen.
+        """
+        self.db.flush()
+        self.db.refresh(invoice, ["lines"])
+        invoice.calculate_totals()
+        return invoice
 
     def create_invoice_from_order(self, order_id: UUID) -> Invoice:
         """

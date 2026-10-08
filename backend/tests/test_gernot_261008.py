@@ -895,3 +895,46 @@ class TestS2KeinAbrufSchreibt:
                 (7, Decimal("2.40")),
                 (19, Decimal("4.50")),
             ]
+
+
+# --- S2: POST /invoices mit Positionen, recalculate_totals (Task 9) --------
+
+def _s2_rechnung_in_einem_aufruf(client, zeilen=S2_ZEILEN, **kopf):
+    """POST /invoices mit Positionen — der Weg, der bisher nur Zeile 1 zählte."""
+    r = client.post("/api/v1/invoices", json={
+        "customer_id": _s2_kunde(client)["id"],
+        "invoice_date": date.today().isoformat(),
+        "lines": zeilen,
+        **kopf,
+    })
+    assert r.status_code == 201, r.text
+    return r.json()
+
+
+class TestS2AnlageMitPositionen:
+
+    def test_anlage_mit_positionen_zaehlt_alle_zeilen(self, client):
+        """Bisher 2,50 / 0,18 / 2,68 — nur die erste Position."""
+        rechnung = _s2_rechnung_in_einem_aufruf(client)
+
+        assert Decimal(str(rechnung["subtotal"])) == Decimal("7.00")
+        assert Decimal(str(rechnung["tax_amount"])) == Decimal("1.04")
+        assert Decimal(str(rechnung["total"])) == Decimal("8.04")
+        detail = client.get(f"/api/v1/invoices/{rechnung['id']}").json()
+        assert len(detail["lines"]) == 2
+
+    def test_hilfsfunktion_rechnet_ohne_geloeschte_position(self, client):
+        """recalculate_totals sieht auch eine gelöschte Position nicht mehr —
+        Task 25 nutzt das beim Löschen einer Entwurfsposition."""
+        from app.models.invoice import Invoice
+        from app.services.invoice_service import InvoiceService
+
+        rechnung = _s2_rechnung_in_einem_aufruf(client)
+        with TestingSessionLocal() as db:
+            inv = db.get(Invoice, uuid.UUID(rechnung["id"]))
+            assert len(inv.lines) == 2  # Collection ist jetzt geladen
+            db.delete(inv.lines[1])
+            InvoiceService(db).recalculate_totals(inv)
+            assert len(inv.lines) == 1
+            # übrig: 2,50 € zu 7 % = 2,50 netto + 0,18 USt
+            assert inv.total == Decimal("2.68")
