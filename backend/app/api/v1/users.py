@@ -13,6 +13,9 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import threading
+import time
+from collections import defaultdict, deque
 from datetime import datetime, timezone
 from typing import Annotated
 from uuid import UUID
@@ -142,6 +145,33 @@ def _mandant_schreiben(mandant: Mandant, user: CurrentUser) -> str:
 
 MandantSchreiben = Annotated[str, Depends(_mandant_schreiben)]
 
+#: Schreibbremse je Mandant für Anlegen, Ändern und Passwort-Reset. Die globale
+#: Grenze in main.py (Limiter(default_limits=...)) wirkt nicht, weil keine
+#: SlowAPIMiddleware eingebunden ist. Zähler im Prozess, also je Worker — wie
+#: slowapi ohne storage_uri. Bremst das Abklopfen fremder E-Mail-Adressen (409)
+#: und Lastspitzen gegen Keycloak (jede Anlage und jede Änderung ruft es mehrfach).
+SCHREIBEN_JE_MINUTE = 30
+_schreibzeiten: defaultdict[str, deque] = defaultdict(deque)
+_schreib_sperre = threading.Lock()
+
+
+def _schreibbremse(mandant: MandantSchreiben) -> str:
+    jetzt = time.monotonic()
+    with _schreib_sperre:
+        zeiten = _schreibzeiten[mandant]
+        while zeiten and jetzt - zeiten[0] >= 60:
+            zeiten.popleft()
+        if len(zeiten) >= SCHREIBEN_JE_MINUTE:
+            raise HTTPException(
+                status_code=429,
+                detail="Zu viele Änderungen in kurzer Zeit. Bitte in einer Minute erneut versuchen.",
+            )
+        zeiten.append(jetzt)
+    return mandant
+
+
+MandantSchreibenGebremst = Annotated[str, Depends(_schreibbremse)]
+
 
 def _email_hash(email: str) -> str:
     """SHA-256 der klein geschriebenen Adresse (E-M7): wiederholtes Abklopfen bleibt
@@ -150,7 +180,7 @@ def _email_hash(email: str) -> str:
 
 
 @router.post("", response_model=BenutzerAngelegtResponse, status_code=201)
-def create_user(body: BenutzerCreate, mandant: MandantSchreiben, user: CurrentUser, response: Response):
+def create_user(body: BenutzerCreate, mandant: MandantSchreibenGebremst, user: CurrentUser, response: Response):
     try:
         b = kc.create_user_for_tenant(
             tenant_slug=mandant, email=body.email, first_name=body.first_name,
@@ -170,7 +200,7 @@ def create_user(body: BenutzerCreate, mandant: MandantSchreiben, user: CurrentUs
 
 
 @router.patch("/{user_id}", response_model=BenutzerResponse)
-def update_user(user_id: UUID, body: BenutzerUpdate, mandant: MandantSchreiben, user: CurrentUser):
+def update_user(user_id: UUID, body: BenutzerUpdate, mandant: MandantSchreibenGebremst, user: CurrentUser):
     try:
         b, aenderungen = kc.update_tenant_user(
             tenant_slug=mandant, user_id=str(user_id), acting_user_id=str(user.get("id")),
@@ -190,7 +220,7 @@ def update_user(user_id: UUID, body: BenutzerUpdate, mandant: MandantSchreiben, 
 
 
 @router.post("/{user_id}/reset-password", response_model=PasswortZurueckgesetztResponse)
-def reset_password(user_id: UUID, mandant: MandantSchreiben, user: CurrentUser, response: Response):
+def reset_password(user_id: UUID, mandant: MandantSchreibenGebremst, user: CurrentUser, response: Response):
     try:
         r = kc.reset_tenant_user_password(tenant_slug=mandant, user_id=str(user_id))
     except kc.KeycloakAdminError as e:

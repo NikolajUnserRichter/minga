@@ -311,6 +311,8 @@ def _als(rollen=("admin",), tenant=MANDANT, uid=ADMIN_ID,
 
 @pytest.fixture
 def admin(client, kc):
+    from app.api.v1 import users as benutzer_api
+    benutzer_api._schreibzeiten.clear()  # Schreibbremse je Test frisch
     vorher = app.dependency_overrides.get(get_current_user)
     _als()
     yield client
@@ -898,3 +900,25 @@ class TestPasswort:
             keycloak_admin.update_tenant_user(tenant_slug=MANDANT, user_id="../roles/admin",
                                               acting_user_id=ADMIN_ID, enabled=False)
         assert kc.calls == []
+
+
+class TestSchreibbremse:
+    """Die globale slowapi-Grenze wirkt nicht (keine SlowAPIMiddleware): ohne eigene
+    Bremse könnte ein Mandanten-Admin Keycloak mit Schreibaufrufen fluten und
+    fremde E-Mail-Adressen per 409 in Serie abklopfen."""
+
+    def test_schreibbremse_je_mandant(self, admin, kc, monkeypatch):
+        from app.api.v1 import users as benutzer_api
+        monkeypatch.setattr(benutzer_api, "SCHREIBEN_JE_MINUTE", 3)
+        uid = kc.add_user("lena@beispielfirma.de", MANDANT, roles={"production_staff"})
+        for _ in range(3):
+            assert admin.post(f"/api/v1/users/{uid}/reset-password").status_code == 200
+        passwort, schreibend = kc.passwords[uid], len(kc.schreibende_calls())
+        r = admin.post(f"/api/v1/users/{uid}/reset-password")
+        assert r.status_code == 429
+        assert r.json()["detail"] == "Zu viele Änderungen in kurzer Zeit. Bitte in einer Minute erneut versuchen."
+        assert _neu(admin, email="neu@beispielfirma.de").status_code == 429
+        assert admin.patch(f"/api/v1/users/{uid}", json={"first_name": "X"}).status_code == 429
+        assert (kc.passwords[uid], len(kc.schreibende_calls())) == (passwort, schreibend)
+        assert admin.get("/api/v1/users").status_code == 200  # Lesen bleibt frei
+        assert benutzer_api._schreibbremse(FREMD) == FREMD  # anderer Mandant, eigener Zähler
