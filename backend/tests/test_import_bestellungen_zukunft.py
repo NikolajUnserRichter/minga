@@ -625,3 +625,91 @@ class TestP5AnlageWieImFormular:
         order = _bestellung(client, "P5-SPAETER")
         assert order["packing_date"] is None
         assert order["effective_packing_date"] == (lieferdatum - timedelta(days=1)).isoformat()
+
+
+TEST_USER_ID = "123e4567-e89b-12d3-a456-426614174000"  # conftest.client
+
+
+class TestP5Nachvollziehbar:
+    """Wer hat importiert, was ist dabei entstanden?"""
+
+    def test_created_by_und_audit_eintrag(self, client):
+        heute = _heute_berlin()
+        kunde = _kunde(client)
+        produkt = _produkt()
+
+        response = _import_bestellungen(client, [
+            _p5_zeile("P5-AUDIT", kunde, produkt, heute, heute + timedelta(days=2)),
+        ])
+        assert response.status_code == 200, response.text
+        order = _bestellung(client, "P5-AUDIT")
+
+        assert order["created_by"] == TEST_USER_ID
+        audit = client.get(f"/api/v1/sales/orders/{order['id']}/audit-log")
+        assert audit.status_code == 200, audit.text
+        assert [(e["action"], e["user_id"]) for e in audit.json()] == [("IMPORT", TEST_USER_ID)]
+        eintrag = audit.json()[0]
+        assert eintrag["user_name"] == "testuser"
+        assert eintrag["new_values"] == {
+            "status": "BESTAETIGT", "bestell_nr_extern": "P5-AUDIT", "datei": "bestellungen.xlsx",
+        }
+
+    def test_antwort_nennt_die_aufteilung_nach_status(self, client):
+        heute = _heute_berlin()
+        vergangen = heute - timedelta(days=4)
+        kunde = _kunde(client)
+        produkt = _produkt()
+
+        response = _import_bestellungen(client, [
+            _p5_zeile("P5-ALT-1", kunde, produkt, vergangen, vergangen),
+            _p5_zeile("P5-ALT-2", kunde, produkt, vergangen, vergangen),
+            _p5_zeile("P5-NEU", kunde, produkt, heute, heute + timedelta(days=2)),
+        ])
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["created"] == 3
+        assert body["errors"] == []
+        assert body["status_counts"] == {"GELIEFERT": 2, "BESTAETIGT": 1}
+        assert "2 Geliefert" in body["hinweis"]
+        assert "1 Bestätigt" in body["hinweis"]
+        assert "Sammellauf" in body["hinweis"]
+
+    def test_basic_auth_kennung_bricht_den_import_nicht(self, client):
+        """Basic-Auth-Logins haben keine UUID als ID (deps.py: 'basic-auth:<name>')."""
+        from app.api.deps import get_current_user
+        from app.main import app
+
+        async def basic_auth_user():
+            return {"id": "basic-auth:gernot", "username": "gernot", "roles": ["admin"]}
+
+        app.dependency_overrides[get_current_user] = basic_auth_user
+        heute = _heute_berlin()
+        kunde = _kunde(client)
+        produkt = _produkt()
+
+        response = _import_bestellungen(client, [
+            _p5_zeile("P5-BASIC", kunde, produkt, heute, heute + timedelta(days=2)),
+        ])
+
+        assert response.status_code == 200, response.text
+        order = _bestellung(client, "P5-BASIC")
+        assert order["created_by"] is None
+        audit = client.get(f"/api/v1/sales/orders/{order['id']}/audit-log").json()
+        assert [(e["action"], e["user_name"]) for e in audit] == [("IMPORT", "gernot")]
+
+    def test_halle_darf_nicht_importieren(self, client):
+        """Charakterisierung, schon grün: Import-Router = _deps_vertrieb (main.py).
+        Grundlage dafür, den Knopf für die Halle auszublenden (Task P5.6)."""
+        from app.api.deps import get_current_user
+        from app.main import app
+
+        async def halle():
+            return {"id": TEST_USER_ID, "username": "halle", "roles": ["production_staff"]}
+
+        app.dependency_overrides[get_current_user] = halle
+        response = client.post(
+            "/api/v1/imports/order_history",
+            files={"file": ("bestellungen.xlsx", b"egal", XLSX_MIME)},
+        )
+        assert response.status_code == 403, response.text

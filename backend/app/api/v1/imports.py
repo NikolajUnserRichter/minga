@@ -22,7 +22,7 @@ from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, PatternFill
 from sqlalchemy import func, select
 
-from app.api.deps import DBSession
+from app.api.deps import CurrentUser, DBSession
 from app.models.customer import Customer, CustomerType
 from app.services.customer_service import next_customer_number
 from app.models.seed import Seed, Supplier
@@ -537,6 +537,41 @@ _STATUS_AUS_DATEI = {
 _GUELTIGE_STATUS = "ENTWURF, BESTAETIGT, IN_PRODUKTION, GELIEFERT, FAKTURIERT, STORNIERT"
 # Status, die noch gepackt und geliefert werden (wie day-plan, production.py)
 _OFFEN = (OrderStatus.ENTWURF, OrderStatus.BESTAETIGT, OrderStatus.IN_PRODUKTION)
+# Bezeichnungen für die Rückmeldung an die Oberfläche (IN_PRODUKTION = „Gepackt", A4)
+_STATUS_TEXT = {
+    OrderStatus.ENTWURF: "Entwurf",
+    OrderStatus.BESTAETIGT: "Bestätigt",
+    OrderStatus.IN_PRODUKTION: "Gepackt",
+    OrderStatus.GELIEFERT: "Geliefert",
+    OrderStatus.FAKTURIERT: "Fakturiert",
+    OrderStatus.STORNIERT: "Storniert",
+}
+
+
+def _benutzer_id(user: Optional[dict]) -> Optional[UUID]:
+    """User-ID als UUID — Basic-Auth-Kennungen ('basic-auth:<name>') sind keine,
+    dann None (wie print_jobs._benutzer_id). UUID(user["id"]) wie in sales.py
+    bräche den Import mit 400 "Import fehlgeschlagen: …" ab (import_entity)."""
+    try:
+        return UUID(user["id"])
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def _import_hinweis(status_counts: dict[str, int]) -> Optional[str]:
+    """Kurztext für den Toast: was ist als was angelegt worden."""
+    if not status_counts:
+        return None
+    teile = [
+        f"{status_counts[s.value]} {_STATUS_TEXT[s]}" for s in OrderStatus if s.value in status_counts
+    ]
+    text = "Angelegt: " + ", ".join(teile) + "."
+    if status_counts.get(OrderStatus.GELIEFERT.value):
+        text += (
+            " Geliefert heißt: ohne Lieferschein und ohne Lagerabzug,"
+            " der Sammellauf rechnet diese Bestellungen nicht ab."
+        )
+    return text
 
 
 def _status_schluessel(roh: Any) -> str:
@@ -676,10 +711,15 @@ def _pruefe_bestellung(
     }, []
 
 
-def _lege_bestellung_an(db, plan: dict, used_numbers: set[str], heute: date) -> Order:
-    """Legt eine geprüfte Bestellung samt Positionen an (ohne Commit)."""
+def _lege_bestellung_an(
+    db, plan: dict, used_numbers: set[str], heute: date, *,
+    user: Optional[dict] = None, dateiname: Optional[str] = None,
+) -> Order:
+    """Legt eine geprüfte Bestellung samt Positionen und Audit-Eintrag an (ohne Commit)."""
+    from app.models.order import OrderAuditLog
     from app.services.bestell_adressen import adressen_vom_kunden
 
+    benutzer_id = _benutzer_id(user)
     status = plan["status"]
     lieferdatum = plan["lieferdatum"]
     rechnungsadresse, lieferadresse = adressen_vom_kunden(plan["kunde"])
@@ -708,6 +748,7 @@ def _lege_bestellung_an(db, plan: dict, used_numbers: set[str], heute: date) -> 
             else None
         ),
         status=status,
+        created_by=benutzer_id,
         currency="EUR",
         total_net=Decimal("0"),
         total_vat=Decimal("0"),
@@ -742,10 +783,25 @@ def _lege_bestellung_an(db, plan: dict, used_numbers: set[str], heute: date) -> 
         order.lines.append(line)
 
     order.calculate_totals()
+
+    # Ein Eintrag je Bestellung: wer, aus welcher Datei, mit welchem Status.
+    # Eigene Aktion IMPORT (bisher: UPDATE, CONFIRM, STATUS_CHANGE, …_LINE),
+    # damit Importe von Hand angelegten Bestellungen unterscheidbar bleiben.
+    db.add(OrderAuditLog(
+        order_id=order.id,
+        user_id=benutzer_id,
+        user_name=(user or {}).get("username"),
+        action="IMPORT",
+        new_values={"status": status.value, "bestell_nr_extern": plan["ext_nr"], "datei": dateiname},
+        reason="Bestell-Import",
+    ))
     return order
 
 
-def _import_order_history(db, rows: list[dict], *, parse_errors: Sequence[str] = ()) -> dict:
+def _import_order_history(
+    db, rows: list[dict], *, parse_errors: Sequence[str] = (),
+    user: Optional[dict] = None, dateiname: Optional[str] = None,
+) -> dict:
     """Importiert Bestellungen aus der Vorlage order_history (Altsystem, Go-Live).
 
     Mehrere Zeilen mit derselben `bestell_nr_extern` ergeben eine Bestellung.
@@ -794,10 +850,18 @@ def _import_order_history(db, rows: list[dict], *, parse_errors: Sequence[str] =
         raise _import_abbruch(fehler)
 
     used_numbers: set[str] = set()
+    status_counts: dict[str, int] = {}
     for plan in geplant:
-        _lege_bestellung_an(db, plan, used_numbers, heute)
+        _lege_bestellung_an(db, plan, used_numbers, heute, user=user, dateiname=dateiname)
+        status_counts[plan["status"].value] = status_counts.get(plan["status"].value, 0) + 1
     db.commit()
-    return {"created": len(geplant), "updated": skipped, "errors": []}
+    return {
+        "created": len(geplant),
+        "updated": skipped,
+        "errors": [],
+        "status_counts": status_counts,
+        "hinweis": _import_hinweis(status_counts),
+    }
 
 
 def _import_grow_batches(db, rows: list[dict]) -> tuple[int, int]:
@@ -914,7 +978,7 @@ IMPORTERS = {
 
 
 @router.post("/{entity}")
-async def import_entity(entity: str, db: DBSession, file: UploadFile = File(...)):
+async def import_entity(entity: str, db: DBSession, user: CurrentUser, file: UploadFile = File(...)):
     if entity not in IMPORTERS:
         raise HTTPException(status_code=404, detail=f"Unbekannte Entität: {entity}")
     if not file.filename.lower().endswith((".xlsx", ".xlsm")):
@@ -924,7 +988,9 @@ async def import_entity(entity: str, db: DBSession, file: UploadFile = File(...)
         # Bestellungen: alles oder nichts. Lesefehler gehen in die Prüfung ein,
         # statt die Zeile still wegzulassen (A6-Rest).
         try:
-            return _import_order_history(db, rows, parse_errors=parse_errors)
+            return _import_order_history(
+                db, rows, parse_errors=parse_errors, user=user, dateiname=file.filename
+            )
         except HTTPException:
             db.rollback()
             raise
