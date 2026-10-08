@@ -138,3 +138,31 @@ def setze_status(
             deduct_inventory_for_order(db, order, commit=False)
         except Exception as e:  # noqa: BLE001 — jeder Fehler muss zum Rollback führen
             raise BestandsbuchungFehler(str(e)) from e
+
+
+
+
+def trage_lieferdatum_nach(
+    db: Session,
+    order: Order,
+    tag: date,
+    *,
+    user: Optional[dict],
+    reason: Optional[str] = None,
+) -> bool:
+    """Lieferdatum einer schon gelieferten Bestellung nachtragen — nur wenn es
+    fehlt (Altfälle: Status-Endpunkt setzte es vor Oktober 2026 nicht).
+    Ein vorhandenes Datum wird nie überschrieben. Committet NICHT."""
+    if order.actual_delivery_date:
+        return False
+    order.actual_delivery_date = tag
+    db.add(OrderAuditLog(
+        order_id=order.id,
+        user_id=user_uuid(user),
+        user_name=(user or {}).get("username"),
+        action="LIEFERDATUM_NACHGETRAGEN",
+        old_values={"actual_delivery_date": None},
+        new_values={"actual_delivery_date": tag.isoformat()},
+        reason=reason,
+    ))
+    return True

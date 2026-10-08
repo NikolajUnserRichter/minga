@@ -256,3 +256,112 @@ class TestStatusregel:
         assert _bestand(lager) == Decimal("1000")
         assert _status(client, o, "STORNIERT", reason="Kunde hat abgesagt").status_code == 200
         assert _bestand(lager) == Decimal("1000")
+
+
+# ------------------------- Task 2: Lieferschein quittieren, gleiche Regel
+
+class TestLieferscheinQuittieren:
+    """A1/LÜCKEN 4: Quittieren umging Übergangsregel und Audit-Log; das
+    Lieferdatum war immer 'heute', auch beim Nachtragen."""
+
+    def test_quittieren_liefert_mit_audit_log(self, client):
+        o = _bestaetigt(client, _kunde(client))
+        ls = _lieferschein(client, o)
+        r = _quittieren(client, ls, signed_by="Fr. Huber")
+        assert r.status_code == 200, r.text
+        assert r.json()["status"] == "GELIEFERT"
+
+        bestellung = _lesen(client, o)
+        assert bestellung["status"] == "GELIEFERT"
+        assert bestellung["actual_delivery_date"] == _heute().isoformat()
+        eintrag = _audit(client, o)[0]
+        assert eintrag["action"] == "LIEFERSCHEIN_QUITTIERT"
+        assert eintrag["new_values"]["status"] == "GELIEFERT"
+        assert ls["delivery_note_number"] in eintrag["reason"]
+        assert eintrag["user_id"] == TEST_USER_ID
+
+    def test_entwurf_kann_nicht_quittiert_werden(self, client):
+        o = _bestellung(client, _kunde(client))
+        ls = _lieferschein(client, o)
+        r = _quittieren(client, ls, signed_by="X")
+        assert r.status_code == 400
+        assert "Entwurf → Geliefert" in r.json()["detail"]
+        assert _lesen(client, o)["status"] == "ENTWURF"
+        noten = client.get(f"/api/v1/sales/orders/{o['id']}/delivery-notes").json()
+        assert noten[0]["status"] == "ENTWURF"
+
+    def test_stornierte_bestellung_kann_nicht_quittiert_werden(self, client):
+        o = _bestaetigt(client, _kunde(client))
+        ls = _lieferschein(client, o)
+        assert _status(client, o, "STORNIERT").status_code == 200
+        assert _quittieren(client, ls).status_code == 400
+
+    def test_lieferdatum_waehlbar(self, client):
+        gestern = date.today() - timedelta(days=1)
+        o = _bestaetigt(client, _kunde(client), liefertag=gestern)
+        ls = _lieferschein(client, o)
+        r = _quittieren(client, ls, actual_delivery_date=gestern.isoformat())
+        assert r.status_code == 200, r.text
+        assert r.json()["actual_delivery_date"] == gestern.isoformat()
+        assert _lesen(client, o)["actual_delivery_date"] == gestern.isoformat()
+
+    def test_lieferdatum_in_der_zukunft_abgelehnt(self, client):
+        o = _bestaetigt(client, _kunde(client))
+        ls = _lieferschein(client, o)
+        r = _quittieren(client, ls, actual_delivery_date=(date.today() + timedelta(days=2)).isoformat())
+        assert r.status_code == 400
+        assert _lesen(client, o)["status"] == "BESTAETIGT"
+
+    def test_quittieren_bucht_bestand(self, client):
+        produkt = _produkt(client)
+        lager = _fertigware(produkt, 1000)
+        o = _bestaetigt(client, _kunde(client), lines=_grammzeile(produkt, 100))
+        assert _quittieren(client, _lieferschein(client, o)).status_code == 200
+        assert _bestand(lager) == Decimal("900")
+
+    def test_altfall_lieferdatum_nachtragen_ohne_zweite_buchung(self, client):
+        """Gernots fünf Bestellungen: per Status-Endpunkt geliefert, ohne Lieferdatum,
+        Lieferschein noch offen. Nachträgliches Quittieren trägt das echte Datum nach."""
+        from app.models.order import Order
+        produkt = _produkt(client)
+        lager = _fertigware(produkt, 1000)
+        gestern = date.today() - timedelta(days=1)
+        o = _bestaetigt(client, _kunde(client), liefertag=gestern, lines=_grammzeile(produkt, 100))
+        ls = _lieferschein(client, o)
+        assert _status(client, o, "GELIEFERT").status_code == 200
+        with TestingSessionLocal() as db:  # Zustand vor dem Fix nachstellen
+            db.get(Order, uuid.UUID(o["id"])).actual_delivery_date = None
+            db.commit()
+
+        r = _quittieren(client, ls, signed_by="Fahrer", actual_delivery_date=gestern.isoformat())
+        assert r.status_code == 200, r.text
+        bestellung = _lesen(client, o)
+        assert bestellung["status"] == "GELIEFERT"
+        assert bestellung["actual_delivery_date"] == gestern.isoformat()
+        assert _bestand(lager) == Decimal("900"), "Bestand darf nicht zweimal gebucht werden"
+        assert _audit(client, o)[0]["action"] == "LIEFERDATUM_NACHGETRAGEN"
+
+    def test_vorhandenes_lieferdatum_wird_nicht_ueberschrieben(self, client):
+        o = _bestaetigt(client, _kunde(client))
+        ls = _lieferschein(client, o)
+        assert _status(client, o, "GELIEFERT").status_code == 200
+        gestern = date.today() - timedelta(days=1)
+        assert _quittieren(client, ls, actual_delivery_date=gestern.isoformat()).status_code == 200
+        assert _lesen(client, o)["actual_delivery_date"] == _heute().isoformat()
+
+    def test_bestandsfehler_laesst_lieferschein_offen(self, client, monkeypatch):
+        """Gegenstück zu test_bestandsfehler_rollt_alles_zurueck: scheitert der
+        Bestandsabzug, bleiben Lieferschein und Bestellung unverändert."""
+        def kaputt(*a, **k):
+            raise RuntimeError("Lager gesperrt")
+        monkeypatch.setattr("app.services.order_status_service.deduct_inventory_for_order", kaputt)
+        o = _bestaetigt(client, _kunde(client))
+        ls = _lieferschein(client, o)
+        r = _quittieren(client, ls, signed_by="Fahrer")
+        assert r.status_code == 500
+        assert "Lager gesperrt" in r.json()["detail"]
+        assert _lesen(client, o)["status"] == "BESTAETIGT"
+        assert _lesen(client, o)["actual_delivery_date"] is None
+        noten = client.get(f"/api/v1/sales/orders/{o['id']}/delivery-notes").json()
+        assert (noten[0]["status"], noten[0]["signed_by"]) == ("ENTWURF", None)
+        assert _audit(client, o)[0]["action"] == "CONFIRM"

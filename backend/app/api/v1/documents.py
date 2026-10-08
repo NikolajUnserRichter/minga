@@ -24,7 +24,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import joinedload
 
-from app.api.deps import DBSession
+from app.api.deps import DBSession, CurrentUser
 from app.models.order import Order, OrderStatus
 from app.models.documents import (
     OrderConfirmation, DeliveryNote, PackingList, PackingListItem,
@@ -37,6 +37,9 @@ from app.schemas.documents import (
 )
 from app.services.pdf_service import PDFService, load_company_settings
 from app.services.email_service import send_email, EmailNotConfiguredError
+from app.services.order_status_service import (
+    BestandsbuchungFehler, StatuswechselFehler, heute_berlin, setze_status, trage_lieferdatum_nach,
+)
 
 router = APIRouter()
 
@@ -275,9 +278,15 @@ def list_delivery_notes(order_id: UUID, db: DBSession):
     "/delivery-notes/{note_id}/mark-delivered",
     response_model=DeliveryNoteResponse,
 )
-def mark_delivered(note_id: UUID, data: DeliveryNoteMarkDelivered, db: DBSession):
-    """Lieferschein als geliefert markieren. Setzt auch order.actual_delivery_date
-    und überführt Order-Status nach GELIEFERT, falls noch in früherem Status."""
+def mark_delivered(note_id: UUID, data: DeliveryNoteMarkDelivered, db: DBSession, user: CurrentUser):
+    """Lieferschein quittieren.
+
+    Steht die Bestellung noch vor GELIEFERT, wechselt sie über dieselbe Regel
+    wie der Status-Endpunkt (order_status_service.setze_status): Übergang
+    geprüft, Lieferdatum, Bestandsabzug, Audit-Log. Ist sie schon geliefert
+    und fehlt ihr das Lieferdatum (Altfälle vor Oktober 2026), wird es aus
+    dem Lieferschein nachgetragen.
+    """
     note = db.execute(
         select(DeliveryNote)
         .options(joinedload(DeliveryNote.order))
@@ -288,36 +297,42 @@ def mark_delivered(note_id: UUID, data: DeliveryNoteMarkDelivered, db: DBSession
     if note.is_locked():
         raise HTTPException(status_code=400, detail="Lieferschein ist bereits quittiert")
 
+    lieferdatum = data.actual_delivery_date or heute_berlin()
+    if lieferdatum > heute_berlin():
+        raise HTTPException(
+            status_code=400,
+            detail=f"Lieferdatum {lieferdatum:%d.%m.%Y} liegt in der Zukunft",
+        )
+
     note.status = DeliveryNoteStatus.GELIEFERT
     note.delivered_at = datetime.now(timezone.utc)
     note.signed_by = data.signed_by
-    note.actual_delivery_date = data.actual_delivery_date or date.today()
+    note.actual_delivery_date = lieferdatum
 
-    # Order-Sync
-    transitioned_to_delivered = False
-    if note.order and not note.order.actual_delivery_date:
-        note.order.actual_delivery_date = note.actual_delivery_date
-        if note.order.status in (OrderStatus.ENTWURF, OrderStatus.BESTAETIGT, OrderStatus.IN_PRODUKTION):
-            note.order.status = OrderStatus.GELIEFERT
-            transitioned_to_delivered = True
-
-    # Inventory-Deduction IN DERSELBEN TRANSACTION wie Status-Change.
-    # Wenn Abzug crasht → kompletter Rollback, Quittierung wird nicht persistiert
-    # und der User kann erneut versuchen, ohne dass die Order/LS-State inkonsistent
-    # mit dem Inventory wird.
-    if transitioned_to_delivered and note.order:
-        from app.services.order_fulfillment_service import deduct_inventory_for_order
-        order_with_lines = _load_order_with_lines(db, note.order_id)
+    order = note.order
+    grund = f"Lieferschein {note.delivery_note_number} quittiert"
+    if order and order.status in (OrderStatus.GELIEFERT, OrderStatus.FAKTURIERT):
+        trage_lieferdatum_nach(db, order, lieferdatum, user=user, reason=grund)
+    elif order:
         try:
-            deduct_inventory_for_order(db, order_with_lines, commit=False)
-        except Exception as e:
+            setze_status(
+                db, order, OrderStatus.GELIEFERT,
+                user=user,
+                action="LIEFERSCHEIN_QUITTIERT",
+                reason=grund,
+                lieferdatum=lieferdatum,
+            )
+        except StatuswechselFehler as e:
+            db.rollback()
+            raise HTTPException(status_code=400, detail=f"Lieferschein nicht quittiert — {e}")
+        except BestandsbuchungFehler as e:
             db.rollback()
             import logging; logging.getLogger(__name__).exception(
-                "Inventory-Deduction nach LS-Quittierung fehlgeschlagen: %s", e
+                "Bestandsabzug nach LS-Quittierung fehlgeschlagen: %s", e
             )
             raise HTTPException(
                 status_code=500,
-                detail=f"Quittierung abgebrochen — Inventory-Abzug fehlgeschlagen: {e}",
+                detail=f"Quittierung abgebrochen — Bestandsabzug fehlgeschlagen: {e}",
             )
 
     db.commit()
