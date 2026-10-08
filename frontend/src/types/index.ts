@@ -620,7 +620,9 @@ export interface Invoice {
   datev_exported: boolean
   lexoffice_id?: string | null
   lexoffice_synced_at?: string | null
-  customer_name?: string
+  // Aus den Kundenstammdaten; null, falls der Kunde fehlt
+  customer_name?: string | null
+  customer_number?: string | null
   reminder_level?: number
   last_reminder_sent_at?: string | null
   lines?: InvoiceLine[]

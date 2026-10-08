@@ -1154,7 +1154,7 @@ function InvoiceDetail({ invoice: initial }: { invoice: Invoice }) {
         <div className="grid grid-cols-2 gap-4">
           <div>
             <p className="text-sm text-gray-500 dark:text-gray-400">Kunde</p>
-            <p className="font-medium">{invoice.customer_name}</p>
+            <p className="font-medium">{invoice.customer_name || '–'}</p>
           </div>
           <div>
             <p className="text-sm text-gray-500 dark:text-gray-400">Status</p>
