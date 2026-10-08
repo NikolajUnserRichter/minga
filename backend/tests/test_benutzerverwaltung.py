@@ -922,3 +922,197 @@ class TestSchreibbremse:
         assert (kc.passwords[uid], len(kc.schreibende_calls())) == (passwort, schreibend)
         assert admin.get("/api/v1/users").status_code == 200  # Lesen bleibt frei
         assert benutzer_api._schreibbremse(FREMD) == FREMD  # anderer Mandant, eigener Zähler
+
+
+def _audit_saetze(db):
+    """Alle Datensätze aus benutzer_audit, ältester zuerst. ``db`` ist die Fixture aus
+    conftest.py: dieselbe In-Memory-DB, die die Fixture ``client`` den Routen gibt."""
+    from app.models import BenutzerAudit
+    return db.query(BenutzerAudit).order_by(BenutzerAudit.zeitpunkt).all()
+
+
+class TestAuditDauerhaft:
+    """E-M1: Jede Audit-Zeile steht zusätzlich in der Tabelle benutzer_audit der
+    Mandanten-DB — das Container-Log überlebt keinen Redeploy."""
+
+    def test_modell_in_app_models_registriert(self):
+        """Nur was app.models importiert, legt create_all in den Mandanten-DBs an."""
+        import app.models
+        assert "BenutzerAudit" in app.models.__all__
+        assert app.models.BenutzerAudit.__tablename__ == "benutzer_audit"
+
+    def test_neue_mandanten_db_hat_die_tabelle(self, tmp_path, monkeypatch):
+        from sqlalchemy import inspect
+        from app import tenancy
+        monkeypatch.setattr(tenancy, "TENANTS_DIR", tmp_path)
+        try:
+            tenancy.provision_tenant("b8-audit", seed_defaults=False)
+            spalten = {s["name"]: str(s["type"]) for s in
+                       inspect(tenancy.registry.get_engine("b8-audit")).get_columns("benutzer_audit")}
+        finally:
+            tenancy.registry.dispose_tenant("b8-audit")
+        assert set(spalten) == {"id", "zeitpunkt", "aktion", "ziel_user_id", "ziel_email",
+                                "ziel_email_sha256", "ausgefuehrt_von", "details"}
+        assert spalten["id"] == "CHAR(32)"
+
+    def test_demo_reset_legt_tabelle_an(self, tmp_path, monkeypatch):
+        """Ein Golden-Seed von vor Task 6b hat die Tabelle nicht. Der Reset legt sie
+        seit d8e1db2 per create_all an (Muster: test_demo_reset_migration.py)."""
+        import sqlite3
+        from sqlalchemy import inspect
+        from app import tenancy
+        from app.services.demo_reset_service import reset_demo_from_seed, snapshot_demo_seed
+        monkeypatch.setattr(tenancy, "TENANTS_DIR", tmp_path)
+        tenancy.registry.dispose_all()
+        try:
+            tenancy.provision_tenant("demo", seed_defaults=False)
+            seed = snapshot_demo_seed("demo")["seed"]
+            with sqlite3.connect(seed) as verbindung:
+                verbindung.execute("DROP TABLE benutzer_audit")
+                verbindung.commit()
+                verbindung.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            assert reset_demo_from_seed("demo")["migriert"] is True
+            tabellen = inspect(tenancy.registry.get_engine("demo")).get_table_names()
+        finally:
+            tenancy.registry.dispose_all()
+        assert "benutzer_audit" in tabellen
+
+    def test_anlegen(self, admin, kc, db):
+        r = _neu(admin)
+        assert r.status_code == 201, r.text
+        (s,) = _audit_saetze(db)
+        assert (s.aktion, s.ziel_user_id, s.ziel_email, s.ziel_email_sha256, s.ausgefuehrt_von) == (
+            "BENUTZER_ANGELEGT", r.json()["id"], "lena@beispielfirma.de", None, ADMIN_ID)
+        assert s.details == {"rolle": "production_staff", "von_name": "chefin@beispielfirma.de"}
+        assert s.zeitpunkt is not None
+        assert r.json()["temporary_password"] not in json.dumps(s.details)
+
+    def test_konflikt_nur_als_hash(self, admin, kc, db):
+        """E-M7: Die Adresse gehört womöglich einem anderen Mandanten."""
+        kc.add_user("lena@beispielfirma.de", FREMD)
+        assert _neu(admin).status_code == 409
+        (s,) = _audit_saetze(db)
+        assert (s.aktion, s.ziel_user_id, s.ziel_email, s.ausgefuehrt_von) == (
+            "ANLAGE_KONFLIKT", None, None, ADMIN_ID)
+        assert s.ziel_email_sha256 == hashlib.sha256(b"lena@beispielfirma.de").hexdigest()
+        assert s.details == {"grund": "E-Mail vergeben", "von_name": "chefin@beispielfirma.de"}
+
+    def test_anlage_teilweise(self, admin, kc, db, monkeypatch):
+        """Keycloak legt an, die Rollenzuweisung scheitert: Das Konto existiert
+        (gesperrt, ohne Rolle) und gehört in die Spur, obwohl die Antwort 503 ist."""
+        orig = kc.handler
+
+        def handler(request):
+            if request.method == "POST" and request.url.path.endswith("/role-mappings/realm"):
+                return httpx.Response(503, json={"error": "kurz weg"})
+            return orig(request)
+
+        monkeypatch.setattr(keycloak_admin, "_http_client",
+                            lambda: httpx.Client(transport=httpx.MockTransport(handler)))
+        r = _neu(admin)
+        assert r.status_code == 503, r.text
+        neu = next(u for u in kc.users.values() if u["username"] == "lena@beispielfirma.de")
+        assert neu["enabled"] is False
+        (s,) = _audit_saetze(db)
+        assert (s.aktion, s.ziel_user_id, s.ziel_email, s.ziel_email_sha256, s.ausgefuehrt_von) == (
+            "ANLAGE_TEILWEISE", neu["id"], "lena@beispielfirma.de", None, ADMIN_ID)
+        assert (s.details["rolle"], s.details["deaktiviert"]) == ("production_staff", True)
+        assert "deaktiviert" in s.details["fehler"]
+
+    def test_aendern_deaktivieren_aktivieren(self, admin, kc, db):
+        uid = kc.add_user("lena@beispielfirma.de", MANDANT, roles={"production_staff"}, first="Lena")
+        for body in ({"first_name": "Helena"}, {"enabled": False}, {"enabled": True}):
+            assert admin.patch(f"/api/v1/users/{uid}", json=body).status_code == 200
+        saetze = _audit_saetze(db)
+        assert [s.aktion for s in saetze] == ["BENUTZER_GEAENDERT"] * 3
+        assert [s.details["aenderungen"] for s in saetze] == [
+            {"first_name": ["Lena", "Helena"]}, {"enabled": [True, False]}, {"enabled": [False, True]}]
+        assert {(s.ziel_user_id, s.ziel_email, s.ausgefuehrt_von) for s in saetze} == {
+            (uid, "lena@beispielfirma.de", ADMIN_ID)}
+
+    def test_teilweise_geaendert(self, admin, kc, db):
+        uid = kc.add_user("lena@beispielfirma.de", MANDANT, roles={"production_staff"}, first="Lena")
+        kc.fehler_bei = ("POST", f"/users/{uid}/role-mappings/realm")
+        r = admin.patch(f"/api/v1/users/{uid}", json={"first_name": "Helena", "role": "sales"})
+        assert r.status_code == 503, r.text
+        (s,) = _audit_saetze(db)
+        assert (s.aktion, s.ziel_user_id) == ("BENUTZER_TEILWEISE_GEAENDERT", uid)
+        assert s.details["aenderungen"] == {"first_name": ["Lena", "Helena"], "roles": [["production_staff"], []]}
+        assert s.details["fehler"]
+
+    def test_zuruecklesen_scheitert_teilweise_geaendert(self, admin, kc, db, monkeypatch):
+        """Keycloak schreibt und fällt beim Zurücklesen aus: Die Änderung ist geschehen
+        und gehört als Teiländerung in die Spur."""
+        uid = kc.add_user("lena@beispielfirma.de", MANDANT, roles={"production_staff"})
+        orig = kc.handler
+
+        def handler(request):
+            geschrieben = any(c[0] == "PUT" and c[1].endswith(f"/users/{uid}") for c in kc.calls)
+            if geschrieben and request.method == "GET" and request.url.path.endswith(f"/users/{uid}"):
+                return httpx.Response(503, json={"error": "kurz weg"})
+            return orig(request)
+
+        monkeypatch.setattr(keycloak_admin, "_http_client",
+                            lambda: httpx.Client(transport=httpx.MockTransport(handler)))
+        r = admin.patch(f"/api/v1/users/{uid}", json={"enabled": False})
+        assert r.status_code == 503, r.text
+        assert kc.users[uid]["enabled"] is False
+        (s,) = _audit_saetze(db)
+        assert (s.aktion, s.ziel_user_id, s.ausgefuehrt_von) == ("BENUTZER_TEILWEISE_GEAENDERT", uid, ADMIN_ID)
+        assert s.details["aenderungen"] == {"enabled": [True, False]}
+        assert s.details["fehler"]
+
+    def test_passwort_reset_ohne_passwort(self, admin, kc, db):
+        uid = kc.add_user("lena@beispielfirma.de", MANDANT, roles={"production_staff"})
+        pw = admin.post(f"/api/v1/users/{uid}/reset-password").json()["temporary_password"]
+        (s,) = _audit_saetze(db)
+        assert (s.aktion, s.ziel_user_id, s.ziel_email, s.ausgefuehrt_von) == (
+            "PASSWORT_ZURUECKGESETZT", uid, "lena@beispielfirma.de", ADMIN_ID)
+        assert pw not in json.dumps(s.details)
+
+    def test_passwort_reset_liest_vor_dem_schreiben(self, admin, kc, db):
+        """Nach dem PUT darf nichts mehr scheitern, sonst wäre das Passwort gesetzt,
+        aber weder geliefert noch protokolliert. Fällt Keycloak beim Lesen der Rollen
+        aus, ist noch nichts geschrieben — und nichts zu protokollieren."""
+        uid = kc.add_user("lena@beispielfirma.de", MANDANT, roles={"production_staff"})
+        kc.fehler_bei = ("GET", f"/users/{uid}/role-mappings/realm")
+        r = admin.post(f"/api/v1/users/{uid}/reset-password")
+        assert r.status_code == 503, r.text
+        assert uid not in kc.passwords and kc.schreibende_calls(uid) == []
+        assert _audit_saetze(db) == []
+
+    def test_abgewiesene_zugriffe(self, admin, kc, db):
+        fremd = kc.add_user("x@fremdfirma.de", FREMD)
+        support = _supportkonto(kc, "gruppe")
+        assert admin.get(f"/api/v1/users/{fremd}").status_code == 404
+        assert admin.post(f"/api/v1/users/{support}/reset-password").status_code == 409
+        assert [(s.aktion, s.ziel_user_id) for s in _audit_saetze(db)] == [
+            ("FREMDZUGRIFF_ABGEWIESEN", fremd), ("SUPPORTKONTO_ABGEWIESEN", support)]
+
+    def test_lesen_und_leerer_patch_ohne_eintrag(self, admin, kc, db):
+        uid = kc.add_user("lena@beispielfirma.de", MANDANT, roles={"production_staff"})
+        assert admin.get("/api/v1/users").status_code == 200
+        assert admin.get(f"/api/v1/users/{uid}").status_code == 200
+        assert admin.patch(f"/api/v1/users/{uid}", json={"first_name": "Vor"}).status_code == 200
+        assert _audit_saetze(db) == []
+
+    def test_speichern_scheitert_500(self, admin, kc, db, caplog):
+        """Entscheidung zu E-M1: Audit-Fehler → 500 statt Erfolg. Keycloak und
+        Mandanten-DB haben keine gemeinsame Transaktion: Das Passwort ist in
+        Keycloak schon gesetzt, die Antwort enthält es nicht, die Logzeile steht."""
+        from app.api.v1 import users as benutzer_api
+        from app.models import BenutzerAudit
+        caplog.set_level("WARNING", logger="app.audit.benutzer")
+        uid = kc.add_user("lena@beispielfirma.de", MANDANT, roles={"production_staff"})
+        BenutzerAudit.__table__.drop(bind=db.get_bind())
+        r = admin.post(f"/api/v1/users/{uid}/reset-password")
+        assert r.status_code == 500
+        assert r.json() == {"detail": benutzer_api.AUDIT_NICHT_GESPEICHERT}
+        assert uid in kc.passwords
+        assert kc.passwords[uid]["value"] not in r.text
+        zeilen = [z for z in caplog.records if z.name == "app.audit.benutzer"]
+        assert [z.levelname for z in zeilen] == ["WARNING", "ERROR"]
+        assert "PASSWORT_ZURUECKGESETZT" in zeilen[0].getMessage()
+        assert zeilen[1].getMessage() == (
+            "[benutzer-audit] PASSWORT_ZURUECKGESETZT nicht in benutzer_audit gespeichert (OperationalError)")
+        assert kc.passwords[uid]["value"] not in caplog.text

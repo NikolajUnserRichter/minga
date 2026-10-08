@@ -21,9 +21,11 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from sqlalchemy.orm import Session
 
-from app.api.deps import CurrentUser
+from app.api.deps import CurrentUser, DBSession
 from app.api.v1.platform import DEMO_USERS
+from app.models.benutzer_audit import BenutzerAudit
 from app.schemas.user import (
     BenutzerAngelegtResponse, BenutzerCreate, BenutzerListResponse, BenutzerResponse,
     BenutzerUpdate, PasswortZurueckgesetztResponse,
@@ -66,27 +68,67 @@ def _mandant(request: Request, user: CurrentUser) -> str:
 Mandant = Annotated[str, Depends(_mandant)]
 
 
-def _audit(aktion: str, mandant: str, user: dict, **felder) -> None:
+#: Antwort, wenn die Audit-Zeile nicht in die Mandanten-DB kommt (Task 6b, E-M1).
+AUDIT_NICHT_GESPEICHERT = (
+    "Die Aktion konnte nicht protokolliert werden. Eine Änderung in Keycloak kann trotzdem "
+    "ausgeführt sein — bitte die Liste neu laden und den Support informieren."
+)
+#: Felder der Audit-Zeile mit eigener Spalte in benutzer_audit. Alle übrigen außer
+#: aktion, mandant und zeit landen in details.
+_AUDIT_SPALTEN = {
+    "von_id": "ausgefuehrt_von",
+    "ziel_id": "ziel_user_id",
+    "ziel_email": "ziel_email",
+    "ziel_email_sha256": "ziel_email_sha256",
+}
+
+
+def _audit(db: Session, aktion: str, mandant: str, user: dict, **felder) -> None:
+    """Audit-Zeile als WARNING ins Container-Log (wie bisher) UND dauerhaft in die
+    Tabelle benutzer_audit der Mandanten-DB (E-M1).
+
+    Die Logzeile kommt zuerst; sie steht auch dann im Log, wenn die Datenbank
+    streikt. Scheitert das Speichern, antwortet die API mit 500 statt mit einem
+    Erfolg: Keine Benutzeraktion gilt als erledigt, ohne dass sie dauerhaft
+    protokolliert ist. Keycloak und Mandanten-DB haben keine gemeinsame
+    Transaktion — die Keycloak-Änderung davor ist dann schon geschehen, bei
+    Anlage und Passwort-Reset geht das Einmalpasswort verloren (neuer Reset hilft).
+    """
+    jetzt = datetime.now(timezone.utc)
     zeile = {
         "aktion": aktion,
         "mandant": mandant,
         "von_id": user.get("id"),
         "von_name": user.get("username"),
-        "zeit": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "zeit": jetzt.isoformat(timespec="seconds"),
         **felder,
     }
     audit_logger.warning(
         "[benutzer-audit] %s", json.dumps(zeile, ensure_ascii=False, sort_keys=True, default=str)
     )
+    spalten = {spalte: (None if zeile.get(feld) is None else str(zeile[feld]))
+               for feld, spalte in _AUDIT_SPALTEN.items()}
+    details = {k: v for k, v in zeile.items() if k not in ("aktion", "mandant", "zeit", *_AUDIT_SPALTEN)}
+    try:
+        db.add(BenutzerAudit(zeitpunkt=jetzt, aktion=aktion, details=details or None, **spalten))
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        # Nur die Fehlerklasse: Die Meldung der Datenbank enthielte die Werte des Datensatzes.
+        audit_logger.error(
+            "[benutzer-audit] %s nicht in benutzer_audit gespeichert (%s)", aktion, type(e).__name__
+        )
+        raise HTTPException(status_code=500, detail=AUDIT_NICHT_GESPEICHERT) from None
 
 
-def _fehler(e: kc.KeycloakAdminError, mandant: str, user: dict, ziel_id: str | None = None) -> HTTPException:
+def _fehler(e: kc.KeycloakAdminError, mandant: str, user: dict, db: Session,
+            ziel_id: str | None = None) -> HTTPException:
     if isinstance(e, kc.KeycloakNichtGefunden):
         if e.fremd:
-            _audit("FREMDZUGRIFF_ABGEWIESEN", mandant, user, ziel_id=ziel_id)
+            _audit(db, "FREMDZUGRIFF_ABGEWIESEN", mandant, user, ziel_id=ziel_id)
         return HTTPException(status_code=404, detail="Benutzer nicht gefunden.")
     if isinstance(e, kc.BenutzerVomSupportVerwaltet):
-        _audit("SUPPORTKONTO_ABGEWIESEN", mandant, user, ziel_id=ziel_id)
+        _audit(db, "SUPPORTKONTO_ABGEWIESEN", mandant, user, ziel_id=ziel_id)
         return HTTPException(status_code=409, detail=str(e))
     if isinstance(e, (kc.KeycloakKonflikt, kc.BenutzerSchutzregel)):
         return HTTPException(status_code=409, detail=str(e))
@@ -108,21 +150,21 @@ def _sichtbar(mandant: str, b: dict) -> bool:
 
 
 @router.get("", response_model=BenutzerListResponse)
-def list_users(mandant: Mandant, user: CurrentUser):
+def list_users(mandant: Mandant, user: CurrentUser, db: DBSession):
     try:
         benutzer = kc.list_tenant_users(mandant)
     except kc.KeycloakAdminError as e:
-        raise _fehler(e, mandant, user)
+        raise _fehler(e, mandant, user, db)
     items = [_antwort(b, user) for b in benutzer if _sichtbar(mandant, b)]
     return BenutzerListResponse(items=items, total=len(items), schreibgeschuetzt=mandant == DEMO_MANDANT)
 
 
 @router.get("/{user_id}", response_model=BenutzerResponse)
-def get_user(user_id: UUID, mandant: Mandant, user: CurrentUser):
+def get_user(user_id: UUID, mandant: Mandant, user: CurrentUser, db: DBSession):
     try:
         b = kc.get_tenant_user(mandant, str(user_id))
     except kc.KeycloakAdminError as e:
-        raise _fehler(e, mandant, user, str(user_id))
+        raise _fehler(e, mandant, user, db, str(user_id))
     if not _sichtbar(mandant, b):
         raise HTTPException(status_code=404, detail="Benutzer nicht gefunden.")
     return _antwort(b, user)
@@ -180,7 +222,8 @@ def _email_hash(email: str) -> str:
 
 
 @router.post("", response_model=BenutzerAngelegtResponse, status_code=201)
-def create_user(body: BenutzerCreate, mandant: MandantSchreibenGebremst, user: CurrentUser, response: Response):
+def create_user(body: BenutzerCreate, mandant: MandantSchreibenGebremst, user: CurrentUser,
+                response: Response, db: DBSession):
     try:
         b = kc.create_user_for_tenant(
             tenant_slug=mandant, email=body.email, first_name=body.first_name,
@@ -190,17 +233,22 @@ def create_user(body: BenutzerCreate, mandant: MandantSchreibenGebremst, user: C
         if isinstance(e, kc.KeycloakKonflikt):
             # Die 409 verrät, dass die Adresse irgendwo im Realm existiert, womöglich
             # bei einem anderen Mandanten: festhalten, aber nur als Hash (E-M7).
-            _audit("ANLAGE_KONFLIKT", mandant, user, ziel_email_sha256=_email_hash(body.email),
+            _audit(db, "ANLAGE_KONFLIKT", mandant, user, ziel_email_sha256=_email_hash(body.email),
                    grund="E-Mail vergeben")
-        raise _fehler(e, mandant, user)
-    _audit("BENUTZER_ANGELEGT", mandant, user, ziel_id=b["id"], ziel_email=b["email"], rolle=body.role)
+        elif getattr(e, "angelegt", None):
+            # Das Konto gibt es in Keycloak (eigener Mandant, gesperrt, wenn möglich), die
+            # Anlage ist aber nicht fertig: festhalten, sonst fehlte die Spur (E-M1).
+            _audit(db, "ANLAGE_TEILWEISE", mandant, user, **e.angelegt, rolle=body.role, fehler=str(e))
+        raise _fehler(e, mandant, user, db)
+    _audit(db, "BENUTZER_ANGELEGT", mandant, user, ziel_id=b["id"], ziel_email=b["email"], rolle=body.role)
     response.headers["Cache-Control"] = "no-store"
     pw = b.pop("temporary_password")
     return BenutzerAngelegtResponse(**_antwort(b, user).model_dump(), temporary_password=pw)
 
 
 @router.patch("/{user_id}", response_model=BenutzerResponse)
-def update_user(user_id: UUID, body: BenutzerUpdate, mandant: MandantSchreibenGebremst, user: CurrentUser):
+def update_user(user_id: UUID, body: BenutzerUpdate, mandant: MandantSchreibenGebremst, user: CurrentUser,
+                db: DBSession):
     try:
         b, aenderungen = kc.update_tenant_user(
             tenant_slug=mandant, user_id=str(user_id), acting_user_id=str(user.get("id")),
@@ -210,22 +258,23 @@ def update_user(user_id: UUID, body: BenutzerUpdate, mandant: MandantSchreibenGe
     except kc.KeycloakAdminError as e:
         teil = getattr(e, "teil_aenderungen", None)
         if teil:
-            _audit("BENUTZER_TEILWEISE_GEAENDERT", mandant, user, ziel_id=str(user_id),
+            _audit(db, "BENUTZER_TEILWEISE_GEAENDERT", mandant, user, ziel_id=str(user_id),
                    aenderungen=teil, fehler=str(e))
-        raise _fehler(e, mandant, user, str(user_id))
+        raise _fehler(e, mandant, user, db, str(user_id))
     if aenderungen:
-        _audit("BENUTZER_GEAENDERT", mandant, user, ziel_id=b["id"], ziel_email=b["email"],
+        _audit(db, "BENUTZER_GEAENDERT", mandant, user, ziel_id=b["id"], ziel_email=b["email"],
                aenderungen=aenderungen)
     return _antwort(b, user)
 
 
 @router.post("/{user_id}/reset-password", response_model=PasswortZurueckgesetztResponse)
-def reset_password(user_id: UUID, mandant: MandantSchreibenGebremst, user: CurrentUser, response: Response):
+def reset_password(user_id: UUID, mandant: MandantSchreibenGebremst, user: CurrentUser, response: Response,
+                   db: DBSession):
     try:
         r = kc.reset_tenant_user_password(tenant_slug=mandant, user_id=str(user_id))
     except kc.KeycloakAdminError as e:
-        raise _fehler(e, mandant, user, str(user_id))
-    _audit("PASSWORT_ZURUECKGESETZT", mandant, user, ziel_id=r["user"]["id"], ziel_email=r["user"]["email"])
+        raise _fehler(e, mandant, user, db, str(user_id))
+    _audit(db, "PASSWORT_ZURUECKGESETZT", mandant, user, ziel_id=r["user"]["id"], ziel_email=r["user"]["email"])
     response.headers["Cache-Control"] = "no-store"
     return PasswortZurueckgesetztResponse(
         user=_antwort(r["user"], user), temporary_password=r["temporary_password"],

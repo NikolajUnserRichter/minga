@@ -599,9 +599,12 @@ def create_user_for_tenant(
             raise KeycloakKonflikt("Diese E-Mail-Adresse ist bereits vergeben.")
         if r.status_code not in (201, 204):
             raise KeycloakAdminError(f"Benutzer-Anlage abgelehnt (HTTP {r.status_code}).")
-        user_id = _neue_user_id(kc, r, email)
-
+        # Ab hier gibt es das Konto in Keycloak. Jede Ausnahme trägt deshalb ``angelegt``
+        # (ID, sofern ermittelt, Adresse, ob gesperrt); die Route schreibt daraus
+        # ANLAGE_TEILWEISE ins Audit (E-M1).
+        user_id: Optional[str] = None
         try:
+            user_id = _neue_user_id(kc, r, email)
             rep = kc.call("GET", f"/users/{user_id}")
             if rep.status_code != 200 or not _gehoert_zum_mandanten(rep.json(), tenant_slug):
                 raise KeycloakAdminError(
@@ -612,10 +615,13 @@ def create_user_for_tenant(
             if z.status_code >= 400:
                 raise KeycloakNichtErreichbar(_HALB_ANGELEGT)
         except KeycloakNichtErreichbar as e:
-            gesperrt = _deaktivieren_best_effort(kc, user_id, email)
-            raise KeycloakNichtErreichbar(_HALB_ANGELEGT if gesperrt else _HALB_ANGELEGT_AKTIV) from e
-        except KeycloakAdminError:
-            _deaktivieren_best_effort(kc, user_id, email)
+            gesperrt = user_id is not None and _deaktivieren_best_effort(kc, user_id, email)
+            fehler = KeycloakNichtErreichbar(_HALB_ANGELEGT if gesperrt else _HALB_ANGELEGT_AKTIV)
+            fehler.angelegt = {"ziel_id": user_id, "ziel_email": email, "deaktiviert": gesperrt}
+            raise fehler from e
+        except KeycloakAdminError as e:
+            gesperrt = user_id is not None and _deaktivieren_best_effort(kc, user_id, email)
+            e.angelegt = {"ziel_id": user_id, "ziel_email": email, "deaktiviert": gesperrt}
             raise
         benutzer = _als_benutzer(rep.json(), [role])
     return {**benutzer, "temporary_password": pw}
@@ -763,15 +769,17 @@ def update_tenant_user(
                 aenderungen.update(put_aenderungen)
             if neue_rolle is not None:
                 _setze_rolle(kc, user_id, neue_rolle, rollen_alt, aenderungen)
+            if "roles" in aenderungen or aenderungen.get("enabled") == [True, False]:
+                # Deaktiviert oder Rechte geändert: laufende Sitzungen beenden.
+                _sitzungen_beenden(kc, user_id)
+            # Das Zurücklesen gehört mit in den try-Block: Scheitert es, ist die Änderung
+            # schon geschehen und muss als Teiländerung ins Audit (E-M1).
+            rep_neu = _lade_mandanten_user(kc, user_id, tenant_slug)
+            benutzer = _als_benutzer(rep_neu, _app_rollen(kc, user_id))
         except KeycloakAdminError as e:
             e.teil_aenderungen = dict(aenderungen)
             raise
-        if "roles" in aenderungen or aenderungen.get("enabled") == [True, False]:
-            # Deaktiviert oder Rechte geändert: laufende Sitzungen beenden.
-            _sitzungen_beenden(kc, user_id)
-
-        rep_neu = _lade_mandanten_user(kc, user_id, tenant_slug)
-        return _als_benutzer(rep_neu, _app_rollen(kc, user_id)), aenderungen
+        return benutzer, aenderungen
 
 
 def reset_tenant_user_password(*, tenant_slug: str, user_id: str) -> dict:
@@ -783,11 +791,13 @@ def reset_tenant_user_password(*, tenant_slug: str, user_id: str) -> dict:
     with _Benutzerzugang() as kc:
         rep = _lade_mandanten_user(kc, user_id, tenant_slug)
         _pruefe_verwaltbar(kc, user_id)
+        # Alles Lesende VOR dem Schreiben: Nach dem PUT darf nichts mehr scheitern, sonst
+        # wäre das Passwort gesetzt, aber weder geliefert noch protokolliert (E-M1).
+        benutzer = _als_benutzer(rep, _app_rollen(kc, user_id))
         pw = _gen_password()
         r = kc.call("PUT", f"/users/{user_id}/reset-password",
                     json={"type": "password", "value": pw, "temporary": True})
         if r.status_code not in (200, 204):
             raise KeycloakAdminError(f"Passwort konnte nicht gesetzt werden (HTTP {r.status_code}).")
         _sitzungen_beenden(kc, user_id)
-        benutzer = _als_benutzer(rep, _app_rollen(kc, user_id))
     return {"user": benutzer, "temporary_password": pw}

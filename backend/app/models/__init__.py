@@ -123,6 +123,9 @@ from app.models.growth_event import (
     GROWTH_EVENT_LABELS,
 )
 
+# Benutzerverwaltung: dauerhafte Audit-Spur (Paket 4, B8)
+from app.models.benutzer_audit import BenutzerAudit
+
 __all__ = [
     # Seed & Production
     "Seed",
@@ -216,4 +219,6 @@ __all__ = [
     # Dienstplan
     "StaffShift",
     "StaffTask",
+    # Benutzer-Audit
+    "BenutzerAudit",
 ]
