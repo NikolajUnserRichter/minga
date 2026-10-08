@@ -487,182 +487,222 @@ def _generate_historic_order_number(db, order_date: date, used_numbers: set[str]
     return number
 
 
-def _import_order_history(db, rows: list[dict]) -> tuple[int, int]:
-    """Importiert historische Bestellungen für Forecast-Training.
+# ---- Bestell-Import (order_history) ---------------------------------------
+#
+# Alles oder nichts (A6-Rest, 08.10.2026): Zuerst werden alle neuen
+# Bestellungen der Datei geprüft, angelegt wird erst, wenn keine einzige Zeile
+# einen Fehler hat. Bis dahin fiel eine Zeile mit Lesefehler still heraus, die
+# Bestellung entstand ohne sie, und ein erneuter Upload übersprang sie wegen
+# customer_reference für immer.
 
-    Gruppiert Zeilen nach `bestell_nr_extern` → eine Bestellung pro Gruppe.
-    Idempotent über customer_reference (re-runs überspringen vorhandene)."""
-    if not rows:
-        return 0, 0
+_MAX_FEHLER_IM_TEXT = 10
 
-    # 1) Gruppieren
+
+def _import_abbruch(fehler: list[str]) -> HTTPException:
+    """400 mit allen Fehlern der Datei — Gernot korrigiert sie in einem Rutsch."""
+    zeilen = fehler[:_MAX_FEHLER_IM_TEXT]
+    if len(fehler) > _MAX_FEHLER_IM_TEXT:
+        zeilen.append(f"… und {len(fehler) - _MAX_FEHLER_IM_TEXT} weitere")
+    return HTTPException(
+        status_code=400,
+        detail=(
+            f"Import abgebrochen, keine Bestellung angelegt. {len(fehler)} Fehler:\n"
+            + "\n".join(zeilen)
+        ),
+    )
+
+
+def _bundle_auswahl(ext_nr: str, roh: Any, get_product) -> tuple[Optional[list], list[str]]:
+    """Spalte bundle_selections (JSON) → [{product_id, quantity}], dazu Fehler."""
+    import json
+
+    if not roh:
+        return None, []
+    try:
+        parsed = json.loads(roh) if isinstance(roh, str) else roh
+    except json.JSONDecodeError as e:
+        return None, [f"Bestellung '{ext_nr}': bundle_selections ist kein gültiges JSON: {e}"]
+    if not isinstance(parsed, list):
+        return None, [f"Bestellung '{ext_nr}': bundle_selections muss eine Liste sein"]
+    auswahl: list[dict] = []
+    fehler: list[str] = []
+    for sel in parsed:
+        if not isinstance(sel, dict):
+            fehler.append(f"Bestellung '{ext_nr}': bundle_selections-Eintrag {sel!r} ist kein Objekt")
+            continue
+        sku = sel.get("sku") or sel.get("product_sku")
+        if not sku:
+            continue
+        sorte = get_product(sku)
+        if not sorte:
+            fehler.append(f"Bestellung '{ext_nr}': Bundle-Sorte '{sku}' nicht in Produkten gefunden")
+            continue
+        auswahl.append({"product_id": str(sorte.id), "quantity": int(sel.get("quantity", 1) or 1)})
+    return (auswahl or None), fehler
+
+
+def _pruefe_bestellung(
+    ext_nr: str, zeilen: list[dict], kunde: Optional[Customer], get_product, heute: date
+) -> tuple[Optional[dict], list[str]]:
+    """Prüft eine Bestellung der Datei, ohne etwas anzulegen.
+
+    Liefert (Plan, Fehler). Den Plan legt _lege_bestellung_an an; bei Fehlern
+    ist er None.
+    """
+    fehler: list[str] = []
+    head = zeilen[0]
+    if not kunde:
+        fehler.append(
+            f"Bestellung '{ext_nr}': Kunde '{head['kunde']}' nicht gefunden — bitte zuerst Stammdaten importieren"
+        )
+
+    lieferdatum = head["lieferdatum"]
+    status_str = head.get("status")
+    if not status_str:
+        status = OrderStatus.GELIEFERT if lieferdatum < heute else OrderStatus.BESTAETIGT
+    else:
+        try:
+            status = OrderStatus(status_str)
+        except ValueError:
+            status = OrderStatus.GELIEFERT
+
+    if status in (OrderStatus.GELIEFERT, OrderStatus.FAKTURIERT) and lieferdatum > heute:
+        fehler.append(
+            f"Bestellung '{ext_nr}': Status {status.value}, aber Lieferdatum "
+            f"{lieferdatum.strftime('%d.%m.%Y')} liegt in der Zukunft — "
+            "Status-Spalte leer lassen oder BESTAETIGT eintragen"
+        )
+
+    positionen: list[dict] = []
+    for zeile in zeilen:
+        product = get_product(zeile["produkt_sku"])
+        if not product:
+            fehler.append(f"Bestellung '{ext_nr}': SKU '{zeile['produkt_sku']}' nicht gefunden")
+            continue
+        auswahl, auswahl_fehler = _bundle_auswahl(ext_nr, zeile.get("bundle_selections"), get_product)
+        fehler.extend(auswahl_fehler)
+        positionen.append({"produkt": product, "zeile": zeile, "auswahl": auswahl})
+
+    if fehler:
+        return None, fehler
+    return {
+        "ext_nr": ext_nr,
+        "kunde": kunde,
+        "status": status,
+        "bestelldatum": head["bestelldatum"],
+        "lieferdatum": lieferdatum,
+        "positionen": positionen,
+    }, []
+
+
+def _lege_bestellung_an(db, plan: dict, used_numbers: set[str]) -> Order:
+    """Legt eine geprüfte Bestellung samt Positionen an (ohne Commit)."""
+    status = plan["status"]
+    lieferdatum = plan["lieferdatum"]
+    order = Order(
+        order_number=_generate_historic_order_number(db, plan["bestelldatum"], used_numbers),
+        customer_id=plan["kunde"].id,
+        customer_reference=plan["ext_nr"],
+        order_date=datetime.combine(plan["bestelldatum"], datetime.min.time()),
+        requested_delivery_date=lieferdatum,
+        confirmed_delivery_date=(
+            lieferdatum
+            if status in (OrderStatus.BESTAETIGT, OrderStatus.IN_PRODUKTION)
+            else None
+        ),
+        actual_delivery_date=(
+            lieferdatum
+            if status in (OrderStatus.GELIEFERT, OrderStatus.FAKTURIERT)
+            else None
+        ),
+        status=status,
+        currency="EUR",
+        total_net=Decimal("0"),
+        total_vat=Decimal("0"),
+        total_gross=Decimal("0"),
+        discount_percent=Decimal("0"),
+        discount_amount=Decimal("0"),
+    )
+    db.add(order)
+    db.flush()  # order.id verfügbar machen
+
+    for position, pos in enumerate(plan["positionen"], start=1):
+        product = pos["produkt"]
+        zeile = pos["zeile"]
+        line = OrderLine(
+            order_id=order.id,
+            position=position,
+            product_id=product.id,
+            product_sku=product.sku,
+            beschreibung=product.name,  # Snapshot des Produktnamens
+            quantity=zeile["menge"],
+            unit=zeile.get("einheit") or "g",
+            unit_price=zeile["einzelpreis"],
+            discount_percent=Decimal("0"),
+            tax_rate=product.tax_rate or TaxRate.REDUZIERT,
+            variable_bundle_selections=pos["auswahl"],
+        )
+        line.calculate_line_totals()
+        db.add(line)
+        order.lines.append(line)
+
+    order.calculate_totals()
+    return order
+
+
+def _import_order_history(db, rows: list[dict], *, parse_errors: Sequence[str] = ()) -> dict:
+    """Importiert Bestellungen aus der Vorlage order_history (Altsystem, Go-Live).
+
+    Mehrere Zeilen mit derselben `bestell_nr_extern` ergeben eine Bestellung.
+    Idempotent über customer_reference: vorhandene werden übersprungen.
+    Alles oder nichts: Hat eine Zeile einen Fehler — auch einen Lesefehler aus
+    _parse_rows —, wird keine Bestellung angelegt (400 mit allen Fehlern).
+    """
+    import unicodedata
+
+    def _normalize_name(s: str) -> str:
+        # SQLite's func.lower() macht kein Unicode-Casefolding ("Ö" bleibt "Ö"),
+        # daher Python-seitig vergleichen.
+        return unicodedata.normalize("NFC", s.strip()).casefold()
+
+    fehler: list[str] = list(parse_errors)
+
     groups: dict[str, list[dict]] = defaultdict(list)
     for r in rows:
         groups[r["bestell_nr_extern"]].append(r)
 
-    # 2) Customer-Cache (case-insensitive + unicode-normalisierter Name-Lookup)
-    # SQLite's func.lower() macht kein Unicode-Casefolding ("Ö" bleibt "Ö"),
-    # daher laden wir einmal alle Kunden und vergleichen Python-seitig.
-    import unicodedata
-
-    def _normalize_name(s: str) -> str:
-        return unicodedata.normalize("NFC", s.strip()).casefold()
-
-    customers_by_name: dict[str, Customer] = {}
-    products_by_sku: dict[str, Product] = {}
-
-    # Alle Kunden einmal laden, normalisiert indexieren
-    _all_customers = db.execute(select(Customer)).scalars().all()
-    customer_index = {_normalize_name(c.name): c for c in _all_customers}
-
-    def _get_customer(name: str) -> Optional[Customer]:
-        key = _normalize_name(name)
-        if key in customers_by_name:
-            return customers_by_name[key]
-        c = customer_index.get(key)
-        if c:
-            customers_by_name[key] = c
-        return c
+    customer_index = {_normalize_name(c.name): c for c in db.execute(select(Customer)).scalars().all()}
+    products_by_sku: dict[str, Optional[Product]] = {}
 
     def _get_product(sku: str) -> Optional[Product]:
-        if sku in products_by_sku:
-            return products_by_sku[sku]
-        p = db.execute(select(Product).where(Product.sku == sku)).scalar_one_or_none()
-        if p:
-            products_by_sku[sku] = p
-        return p
+        if sku not in products_by_sku:
+            products_by_sku[sku] = db.execute(
+                select(Product).where(Product.sku == sku)
+            ).scalar_one_or_none()
+        return products_by_sku[sku]
 
-    created = skipped = 0
-    used_numbers: set[str] = set()
+    heute = _today_berlin()
+    geplant: list[dict] = []
+    skipped = 0
     for ext_nr, group_rows in groups.items():
         # Idempotenz: gleicher customer_reference schon importiert → skip
-        existing = db.execute(
-            select(Order).where(Order.customer_reference == ext_nr).limit(1)
-        ).scalar_one_or_none()
-        if existing:
+        if db.execute(select(Order.id).where(Order.customer_reference == ext_nr).limit(1)).first():
             skipped += 1
             continue
+        kunde = customer_index.get(_normalize_name(group_rows[0]["kunde"]))
+        plan, plan_fehler = _pruefe_bestellung(ext_nr, group_rows, kunde, _get_product, heute)
+        fehler.extend(plan_fehler)
+        if plan:
+            geplant.append(plan)
 
-        head = group_rows[0]
-        customer = _get_customer(head["kunde"])
-        if not customer:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Bestellung '{ext_nr}': Kunde '{head['kunde']}' nicht gefunden — bitte zuerst Stammdaten importieren",
-            )
+    if fehler:
+        raise _import_abbruch(fehler)
 
-        lieferdatum = head["lieferdatum"]
-        status_str = head.get("status")
-        if not status_str:
-            order_status = (
-                OrderStatus.GELIEFERT
-                if lieferdatum < _today_berlin()
-                else OrderStatus.BESTAETIGT
-            )
-        else:
-            try:
-                order_status = OrderStatus(status_str)
-            except ValueError:
-                order_status = OrderStatus.GELIEFERT
-
-        if order_status in (OrderStatus.GELIEFERT, OrderStatus.FAKTURIERT) and lieferdatum > _today_berlin():
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"Bestellung '{ext_nr}': Status {order_status.value}, aber Lieferdatum "
-                    f"{lieferdatum.strftime('%d.%m.%Y')} liegt in der Zukunft — "
-                    "Status-Spalte leer lassen oder BESTAETIGT eintragen"
-                ),
-            )
-
-        order_number = _generate_historic_order_number(db, head["bestelldatum"], used_numbers)
-
-        order = Order(
-            order_number=order_number,
-            customer_id=customer.id,
-            customer_reference=ext_nr,
-            order_date=datetime.combine(head["bestelldatum"], datetime.min.time()),
-            requested_delivery_date=lieferdatum,
-            confirmed_delivery_date=(
-                lieferdatum
-                if order_status in (OrderStatus.BESTAETIGT, OrderStatus.IN_PRODUKTION)
-                else None
-            ),
-            actual_delivery_date=(
-                lieferdatum
-                if order_status in (OrderStatus.GELIEFERT, OrderStatus.FAKTURIERT)
-                else None
-            ),
-            status=order_status,
-            currency="EUR",
-            total_net=Decimal("0"),
-            total_vat=Decimal("0"),
-            total_gross=Decimal("0"),
-            discount_percent=Decimal("0"),
-            discount_amount=Decimal("0"),
-        )
-        db.add(order)
-        db.flush()  # order.id verfügbar machen
-
-        import json
-
-        for position, line_row in enumerate(group_rows, start=1):
-            product = _get_product(line_row["produkt_sku"])
-            if not product:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Bestellung '{ext_nr}': SKU '{line_row['produkt_sku']}' nicht gefunden",
-                )
-
-            # Variable-Bundle-Sorten aus JSON-String (optional) auflösen
-            vb_selections = None
-            raw_sels = line_row.get("bundle_selections")
-            if raw_sels:
-                try:
-                    parsed = json.loads(raw_sels) if isinstance(raw_sels, str) else raw_sels
-                    vb_selections = []
-                    for sel in parsed:
-                        sku = sel.get("sku") or sel.get("product_sku")
-                        qty = int(sel.get("quantity", 1) or 1)
-                        if not sku:
-                            continue
-                        sort_prod = _get_product(sku)
-                        if not sort_prod:
-                            raise HTTPException(
-                                status_code=400,
-                                detail=f"Bestellung '{ext_nr}': Bundle-Sorte '{sku}' nicht in Produkten gefunden",
-                            )
-                        vb_selections.append({"product_id": str(sort_prod.id), "quantity": qty})
-                    if not vb_selections:
-                        vb_selections = None
-                except json.JSONDecodeError as e:
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"Bestellung '{ext_nr}': bundle_selections ist kein gültiges JSON: {e}",
-                    )
-
-            line = OrderLine(
-                order_id=order.id,
-                position=position,
-                product_id=product.id,
-                product_sku=product.sku,
-                beschreibung=product.name,  # Snapshot des Produktnamens
-                quantity=line_row["menge"],
-                unit=line_row.get("einheit") or "g",
-                unit_price=line_row["einzelpreis"],
-                discount_percent=Decimal("0"),
-                tax_rate=product.tax_rate or TaxRate.REDUZIERT,
-                variable_bundle_selections=vb_selections,
-            )
-            line.calculate_line_totals()
-            db.add(line)
-            order.lines.append(line)
-
-        order.calculate_totals()
-        created += 1
-
+    used_numbers: set[str] = set()
+    for plan in geplant:
+        _lege_bestellung_an(db, plan, used_numbers)
     db.commit()
-    return created, skipped
+    return {"created": len(geplant), "updated": skipped, "errors": []}
 
 
 def _import_grow_batches(db, rows: list[dict]) -> tuple[int, int]:
@@ -771,6 +811,8 @@ IMPORTERS = {
     "seeds": _import_seeds,
     "products": _import_products,
     "locations": _import_locations,
+    # Nur für die Prüfung auf bekannte Entitäten: import_entity ruft den
+    # Bestell-Import mit eigener Signatur auf (alles oder nichts).
     "order_history": _import_order_history,
     "grow_batches": _import_grow_batches,
 }
@@ -783,6 +825,17 @@ async def import_entity(entity: str, db: DBSession, file: UploadFile = File(...)
     if not file.filename.lower().endswith((".xlsx", ".xlsm")):
         raise HTTPException(status_code=400, detail="Nur .xlsx/.xlsm Dateien werden unterstützt")
     rows, parse_errors = _parse_rows(file, entity)
+    if entity == "order_history":
+        # Bestellungen: alles oder nichts. Lesefehler gehen in die Prüfung ein,
+        # statt die Zeile still wegzulassen (A6-Rest).
+        try:
+            return _import_order_history(db, rows, parse_errors=parse_errors)
+        except HTTPException:
+            db.rollback()
+            raise
+        except Exception as e:
+            db.rollback()
+            raise HTTPException(status_code=400, detail=f"Import fehlgeschlagen: {e}")
     if not rows and parse_errors:
         return {"created": 0, "updated": 0, "errors": parse_errors}
     try:

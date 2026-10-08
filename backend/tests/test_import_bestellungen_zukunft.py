@@ -219,3 +219,80 @@ def test_vorlage_enthaelt_leeren_status_mit_zukunftsdatum(client):
         and datetime.strptime(row[lieferdatum_index], "%d.%m.%Y").date() > heute
         for row in beispielzeilen
     )
+
+
+# ===========================================================================
+# P5 — Bestell-Import härten (A6-Rest, Gernot 08.10.2026). Helfer: _p5_.
+# ===========================================================================
+
+
+def _p5_zeile(externe_nummer, kunde, produkt, bestelldatum, lieferdatum, *,
+              menge=2, einheit="STK", preis="3.90", status=None, bundle=None):
+    """Eine Importzeile mit frei wählbaren Spalten (Reihenfolge wie COLUMNS)."""
+    return [externe_nummer, kunde["name"], bestelldatum, lieferdatum, produkt["sku"],
+            menge, einheit, preis, status, bundle]
+
+
+def _p5_referenzen(client):
+    response = client.get("/api/v1/sales/orders")
+    assert response.status_code == 200, response.text
+    return {item["customer_reference"] for item in response.json()["items"]}
+
+
+class TestP5AllesOderNichts:
+    """Lücke 10 aus T1: Eine Zeile mit Lesefehler fiel still heraus, die
+    Bestellung entstand ohne sie, und ein erneuter Upload übersprang sie."""
+
+    def _datei(self, kunde, produkt, preis_zweite_position):
+        heute = _heute_berlin()
+        lieferdatum = heute + timedelta(days=2)
+        return [
+            _p5_zeile("P5-NACHBAR", kunde, produkt, heute, lieferdatum),
+            _p5_zeile("P5-ZWEI", kunde, produkt, heute, lieferdatum),
+            _p5_zeile("P5-ZWEI", kunde, produkt, heute, lieferdatum, preis=preis_zweite_position),
+        ]
+
+    def test_zeile_ohne_preis_legt_keine_bestellung_an(self, client):
+        kunde = _kunde(client)
+        produkt = _produkt()
+
+        response = _import_bestellungen(client, self._datei(kunde, produkt, None))
+
+        assert response.status_code == 400, response.text
+        detail = response.json()["detail"]
+        assert "keine Bestellung angelegt" in detail
+        # Datenzeilen beginnen in Zeile 3 (Kopf + Typzeile davor)
+        assert "Zeile 5: 'einzelpreis' fehlt" in detail
+        referenzen = _p5_referenzen(client)
+        assert "P5-ZWEI" not in referenzen
+        assert "P5-NACHBAR" not in referenzen, "alles oder nichts: auch die fehlerfreie Bestellung nicht"
+
+    def test_korrigierte_datei_bringt_beide_positionen(self, client):
+        kunde = _kunde(client)
+        produkt = _produkt()
+        assert _import_bestellungen(client, self._datei(kunde, produkt, None)).status_code == 400
+
+        response = _import_bestellungen(client, self._datei(kunde, produkt, "4.50"))
+
+        assert response.status_code == 200, response.text
+        assert response.json()["created"] == 2
+        assert len(_bestellung(client, "P5-ZWEI")["lines"]) == 2
+
+    def test_alle_fehler_in_einer_antwort(self, client):
+        heute = _heute_berlin()
+        lieferdatum = heute + timedelta(days=2)
+        kunde = _kunde(client)
+        produkt = _produkt()
+
+        response = _import_bestellungen(client, [
+            _p5_zeile("P5-OHNE-MENGE", kunde, produkt, heute, lieferdatum, menge=None),
+            _p5_zeile("P5-FALSCHE-SKU", kunde, {"sku": "GIBT-ES-NICHT"}, heute, lieferdatum),
+            _p5_zeile("P5-FREMDER-KUNDE", {"name": "Unbekannte GmbH"}, produkt, heute, lieferdatum),
+        ])
+
+        assert response.status_code == 400, response.text
+        detail = response.json()["detail"]
+        assert "Zeile 3: 'menge' fehlt" in detail
+        assert "GIBT-ES-NICHT" in detail
+        assert "Unbekannte GmbH" in detail
+        assert _p5_referenzen(client) == set()
