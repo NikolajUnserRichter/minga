@@ -46,6 +46,7 @@ const SAMMEL_ERLAUBT_AB: Record<'IN_PRODUKTION' | 'GELIEFERT', OrderStatus[]> = 
 };
 
 const nummer = (o: Order) => o.order_number ?? o.id.slice(0, 8);
+const LISTENGRENZE = 100;
 
 export default function Orders() {
   const toast = useToast();
@@ -70,6 +71,7 @@ export default function Orders() {
     queryFn: () =>
       salesApi.listOrders({
         status: statusFilter === 'all' ? undefined : (statusFilter as OrderStatus),
+        page_size: LISTENGRENZE,
       }),
     retry: 2,                              // bis zu 2x re-tryen
     retryDelay: (n) => Math.min(2000 * n, 5000),
@@ -263,6 +265,13 @@ export default function Orders() {
           onChange={(e) => setStatusFilter(e.target.value)}
         />
       </FilterBar>
+
+      {(ordersData?.total ?? 0) > orders.length && (
+        <p className="mb-2 text-sm text-amber-700 dark:text-amber-300">
+          Es werden die neuesten {orders.length} von {ordersData?.total} Bestellungen angezeigt.
+          Ältere Bestellungen über den Statusfilter eingrenzen.
+        </p>
+      )}
 
       <Tabs tabs={tabs} defaultTab="today">
         <TabPanel id="today">

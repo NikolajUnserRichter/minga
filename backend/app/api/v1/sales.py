@@ -737,7 +737,7 @@ async def list_orders(
         count_query = count_query.where(Order.status.in_(status_values))
     total = db.execute(count_query).scalar() or 0
 
-    query = query.order_by(Order.requested_delivery_date.desc())
+    query = query.order_by(Order.order_date.desc(), Order.order_number.desc())
     query = query.offset(pagination.offset).limit(pagination.page_size)
     orders = db.execute(query).scalars().unique().all()
 

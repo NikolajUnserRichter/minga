@@ -353,7 +353,7 @@ export const salesApi = {
   deleteCustomer: (id: string) =>
     api.delete(`/sales/customers/${id}`),
 
-  listOrders: (params?: { status?: string; kunde_id?: string }) =>
+  listOrders: (params?: { status?: string; kunde_id?: string; page_size?: number }) =>
     api.get<ListResponse<Order>>('/sales/orders', { params }).then(r => r.data),
 
   getOrder: (id: string) =>

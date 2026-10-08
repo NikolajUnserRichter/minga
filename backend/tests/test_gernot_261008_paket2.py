@@ -1640,3 +1640,49 @@ class TestNacharbeitLeistungsdatum:
         response = client.get(f"/api/v1/invoices/{rechnung['id']}/delivery-notes")
         assert response.status_code == 200, response.text
         assert response.json()[0]["lieferdatum"] == erwartet
+
+
+class TestNacharbeitBestellliste:
+    @pytest.mark.parametrize("page,page_size,erwartete_nummern", [
+        (1, 100, list(range(100, 0, -1))),
+        (2, 100, [0]),
+        (1, 150, list(range(100, 0, -1))),
+    ])
+    def test_hundert_bestellungen_stabil_neueste_zuerst(self, client, page, page_size, erwartete_nummern):
+        from datetime import datetime
+        from app.models.order import Order
+
+        kunde = _kunde(client)
+        with TestingSessionLocal() as db:
+            for nummer in range(100, -1, -1):
+                db.add(Order(
+                    order_number=f"BE-LISTE-{nummer:04d}", customer_id=uuid.UUID(kunde["id"]),
+                    order_date=datetime(2026, 3, 6, 12),
+                    requested_delivery_date=date(2026, 3, 10),
+                ))
+            db.commit()
+        response = client.get("/api/v1/sales/orders", params={"page": page, "page_size": page_size})
+        assert response.status_code == 200, response.text
+        assert response.json()["total"] == 101
+        assert [order["order_number"] for order in response.json()["items"]] == [
+            f"BE-LISTE-{nummer:04d}" for nummer in erwartete_nummern
+        ]
+
+    def test_bestelldatum_hat_vorrang_vor_lieferdatum_und_nummer(self, client):
+        from datetime import datetime
+        from app.models.order import Order
+
+        kunde = _kunde(client)
+        with TestingSessionLocal() as db:
+            db.add_all([
+                Order(order_number="BE-ALT-9999", customer_id=uuid.UUID(kunde["id"]),
+                      order_date=datetime(2026, 3, 5), requested_delivery_date=date(2026, 12, 1)),
+                Order(order_number="BE-NEU-0001", customer_id=uuid.UUID(kunde["id"]),
+                      order_date=datetime(2026, 3, 6), requested_delivery_date=date(2026, 3, 7)),
+            ])
+            db.commit()
+        response = client.get("/api/v1/sales/orders", params={"page_size": 100})
+        assert response.status_code == 200, response.text
+        assert [order["order_number"] for order in response.json()["items"]] == [
+            "BE-NEU-0001", "BE-ALT-9999",
+        ]
