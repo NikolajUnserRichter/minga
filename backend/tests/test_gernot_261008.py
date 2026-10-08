@@ -495,3 +495,39 @@ class TestS1Produktstamm:
         p = client.get(f"/api/v1/products/{pfand['id']}").json()
         assert p["category"] == "PFAND"
         assert p["tax_rate"] == "STANDARD"
+
+
+class TestS1Shopify:
+    """Task 5: Shopify-Import nimmt den Produktsatz statt pauschal 19 %."""
+
+    def _bestellung(self, *positionen):
+        return {
+            "id": 9001, "name": "#9001", "currency": "EUR",
+            "customer": {"first_name": "Eva", "last_name": "Shop", "email": "eva@example.com"},
+            "line_items": list(positionen),
+        }
+
+    def _saetze(self, db):
+        from app.models.order import Order
+        order = db.query(Order).filter_by(customer_reference="#9001").one()
+        return [l.tax_rate.value for l in sorted(order.lines, key=lambda l: l.position)]
+
+    def test_bekannter_artikel_nimmt_den_produktsatz(self, db):
+        from app.models.enums import TaxRate
+        from app.services.shopify_service import import_shopify_order
+        _s1_produkt_orm(db, "MG-ERBSE", "Erbsenkresse", TaxRate.REDUZIERT)
+
+        import_shopify_order(db, self._bestellung(
+            {"title": "Erbsenkresse", "sku": "MG-ERBSE", "quantity": 2, "price": "4.00"}))
+
+        assert self._saetze(db) == ["REDUZIERT"]
+
+    def test_unbekannter_artikel_nimmt_den_satz_aus_shopify(self, db):
+        from app.services.shopify_service import import_shopify_order
+        import_shopify_order(db, self._bestellung(
+            {"title": "Kresse lose", "sku": None, "quantity": 1, "price": "3.00",
+             "tax_lines": [{"rate": 0.07, "price": "0.21", "title": "MwSt"}]},
+            {"title": "Tasse", "sku": None, "quantity": 1, "price": "9.00"}))
+
+        # ohne tax_lines wie bisher 19 %
+        assert self._saetze(db) == ["REDUZIERT", "STANDARD"]
