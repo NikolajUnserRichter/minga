@@ -591,7 +591,11 @@ export default function Layout() {
         </div>
 
         {/* Command Palette */}
-        <CommandPalette open={showCommandPalette} onClose={() => setShowCommandPalette(false)} />
+        <CommandPalette
+          open={showCommandPalette}
+          onClose={() => setShowCommandPalette(false)}
+          istAdmin={user.role === 'ADMIN'}
+        />
       </div>
     </UserContext.Provider>
   );
