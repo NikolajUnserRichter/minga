@@ -5,6 +5,7 @@ import { Modal } from '../ui/Modal';
 import { Button, Combobox, Input, Select, Textarea, useToast } from '../ui';
 import { customerPricesApi, productsApi, salesApi } from '../../services/api';
 import { getErrorMessage } from '../../services/errors';
+import { invalidateOrderViews } from '../../services/orderQueries';
 import { Order } from '../../types';
 
 interface EditableLine {
@@ -148,17 +149,21 @@ export function EditOrderModal({ open, order, onClose }: {
     }, [open, orderId, loadAttempt]);
 
     const istStorniert = currentOrder?.status === 'STORNIERT';
-    const stornierbar = currentOrder?.status === 'ENTWURF' || currentOrder?.status === 'BESTAETIGT';
+    // Positionen ergänzen: nur Entwurf und Bestätigt (sales.py add_order_line).
+    const positionenErweiterbar = currentOrder?.status === 'ENTWURF' || currentOrder?.status === 'BESTAETIGT';
+    // Stornieren zusätzlich bei Gepackt — Bestand wird erst bei Geliefert gebucht.
+    const stornierbar = positionenErweiterbar || currentOrder?.status === 'IN_PRODUKTION';
     const disabled = busy || istStorniert;
     const products = useQuery({
         queryKey: ['products', { is_active: true }],
         queryFn: () => productsApi.list({ is_active: true }),
-        enabled: open && stornierbar,
+        enabled: open && positionenErweiterbar,
     });
 
     const refreshOrder = async () => {
         if (!orderId) return;
-        await queryClient.invalidateQueries({ queryKey: ['orders'] });
+        // Lieferdatum und Positionen stehen auch im Tagesplan
+        await invalidateOrderViews(queryClient);
         const response = await salesApi.getOrder(orderId);
         setCurrentOrder(response as EditableOrder);
     };
@@ -238,7 +243,7 @@ export function EditOrderModal({ open, order, onClose }: {
     };
 
     const addLine = async () => {
-        if (!currentOrder || !stornierbar || priceLoading || priceError) return;
+        if (!currentOrder || !positionenErweiterbar || priceLoading || priceError) return;
         if (!newLine.product_id) return toast.error('Bitte ein Produkt auswählen');
         const quantity = Number(newLine.quantity);
         const unitPrice = Number(newLine.unit_price);
@@ -264,7 +269,7 @@ export function EditOrderModal({ open, order, onClose }: {
         if (!window.confirm('Bestellung wirklich stornieren? Das lässt sich nicht rückgängig machen.')) return;
         await runChange(async () => {
             await salesApi.updateOrderStatus(currentOrder.id, 'STORNIERT', cancelReason.trim());
-            await queryClient.invalidateQueries({ queryKey: ['orders'] });
+            await invalidateOrderViews(queryClient);
             toast.success('Bestellung storniert');
             onClose();
         });
@@ -312,7 +317,7 @@ export function EditOrderModal({ open, order, onClose }: {
                         <span>Netto: {formatAmount(currentOrder.total_net)}</span>
                         <span>Brutto: {formatAmount(currentOrder.total_gross)}</span>
                     </div>
-                    {stornierbar ? <div className="rounded-lg bg-gray-50 dark:bg-gray-800 p-3 space-y-3">
+                    {positionenErweiterbar ? <div className="rounded-lg bg-gray-50 dark:bg-gray-800 p-3 space-y-3">
                         <h4 className="font-medium">Position hinzufügen</h4>
                         {products.isError && <p role="alert" className="text-red-600 text-sm">
                             {getErrorMessage(products.error, 'Produkte konnten nicht geladen werden')}
@@ -357,8 +362,7 @@ export function EditOrderModal({ open, order, onClose }: {
                         <Button variant="danger" onClick={cancelOrder} disabled={busy}>Bestellung stornieren</Button>
                     </> : <p className="text-sm text-gray-500">
                         {istStorniert ? 'Diese Bestellung ist bereits storniert.'
-                            : currentOrder.status === 'IN_PRODUKTION' ? 'Eine Bestellung in Produktion kann nicht mehr storniert werden.'
-                                : 'Eine gelieferte oder fakturierte Bestellung kann nicht mehr storniert werden.'}
+                            : 'Eine gelieferte oder fakturierte Bestellung kann nicht mehr storniert werden.'}
                     </p>}
                 </section>
             </div>}

@@ -1,16 +1,34 @@
+import { useState, type MouseEvent } from 'react';
 import { OrderWithCustomer } from '../../types';
 import { OrderStatusBadge, formatDate, getRelativeDate } from '../ui';
 import { Calendar, Check, ClipboardCheck, Truck } from 'lucide-react';
 
+// Darf ein Promise liefern (z. B. mutateAsync); Fehler meldet der Aufrufer selbst.
+type Aktion = () => unknown;
+
 interface OrderCardProps {
   order: OrderWithCustomer;
-  onConfirm?: () => void;
-  onMarkReady?: () => void;
-  onMarkDelivered?: () => void;
+  onConfirm?: Aktion;
+  onMarkReady?: Aktion;
+  onMarkDelivered?: Aktion;
   onClick?: () => void;
 }
 
 export function OrderCard({ order, onConfirm, onMarkReady, onMarkDelivered, onClick }: OrderCardProps) {
+  // Solange ein Statuswechsel läuft, sind alle Knöpfe der Karte gesperrt.
+  const [busy, setBusy] = useState(false);
+  const run = (aktion: Aktion) => async (e: MouseEvent) => {
+    e.stopPropagation();
+    if (busy) return;
+    setBusy(true);
+    try {
+      await aktion();
+    } catch {
+      // Der Aufrufer zeigt den Fehler als Toast; hier nur die Sperre lösen.
+    } finally {
+      setBusy(false);
+    }
+  };
   // Prefer backend-computed total_gross; fall back to legacy gesamtwert / line-summation
   const totalValue = Number(
     (order as any).total_gross ??
@@ -21,10 +39,15 @@ export function OrderCard({ order, onConfirm, onMarkReady, onMarkDelivered, onCl
 
   // Eine neu erfasste Bestellung steht auf ENTWURF. Ohne diesen Schritt
   // ist die Statuskette aus der Oberfläche nicht begehbar, weil
-  // "In Produktion" erst ab BESTAETIGT erscheint.
+  // "Gepackt" erst ab BESTAETIGT erscheint.
   const canConfirm = order.status === 'ENTWURF';
-  const canMarkReady = order.status === 'BESTAETIGT';
-  const canMarkDelivered = order.status === 'IN_PRODUKTION';
+  // "Gepackt" und "Geliefert" stehen ab Bestätigt nebeneinander und behalten
+  // ihren Platz: nach "Gepackt" bleibt der Knopf ausgegraut stehen. Vorher
+  // rückte "Geliefert" an dieselbe Stelle, ein Doppelklick löste beide
+  // Wechsel aus (Audit-Log 07.10.: BESTAETIGT → IN_PRODUKTION → GELIEFERT
+  // in derselben Sekunde).
+  const showPackDeliver = order.status === 'BESTAETIGT' || order.status === 'IN_PRODUKTION';
+  const isPacked = order.status === 'IN_PRODUKTION';
 
   return (
     <div
@@ -87,43 +110,38 @@ export function OrderCard({ order, onConfirm, onMarkReady, onMarkDelivered, onCl
         </div>
 
         {/* Actions */}
-        {(canConfirm || canMarkReady || canMarkDelivered) && (
+        {((canConfirm && onConfirm) || (showPackDeliver && onMarkReady && onMarkDelivered)) && (
           <div className="mt-4 flex gap-2">
             {canConfirm && onConfirm && (
               <button
                 className="btn btn-primary btn-sm flex-1"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onConfirm();
-                }}
+                disabled={busy}
+                onClick={run(onConfirm)}
               >
                 <ClipboardCheck className="w-4 h-4" />
                 Bestätigen
               </button>
             )}
-            {canMarkReady && onMarkReady && (
-              <button
-                className="btn btn-success btn-sm flex-1"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onMarkReady();
-                }}
-              >
-                <Check className="w-4 h-4" />
-                In Produktion
-              </button>
-            )}
-            {canMarkDelivered && onMarkDelivered && (
-              <button
-                className="btn btn-primary btn-sm flex-1"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onMarkDelivered();
-                }}
-              >
-                <Truck className="w-4 h-4" />
-                Geliefert
-              </button>
+            {showPackDeliver && onMarkReady && onMarkDelivered && (
+              <>
+                <button
+                  className="btn btn-success btn-sm flex-1"
+                  disabled={busy || isPacked}
+                  title={isPacked ? 'Bereits gepackt' : undefined}
+                  onClick={run(onMarkReady)}
+                >
+                  <Check className="w-4 h-4" />
+                  Gepackt
+                </button>
+                <button
+                  className="btn btn-primary btn-sm flex-1"
+                  disabled={busy}
+                  onClick={run(onMarkDelivered)}
+                >
+                  <Truck className="w-4 h-4" />
+                  Geliefert
+                </button>
+              </>
             )}
           </div>
         )}

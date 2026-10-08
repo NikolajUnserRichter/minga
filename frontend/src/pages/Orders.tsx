@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Plus, Search, Calendar, CheckCircle, ClipboardCheck, Truck, Pencil } from 'lucide-react';
 import { salesApi } from '../services/api';
 import { Order, OrderStatus } from '../types';
+import { invalidateOrderViews } from '../services/orderQueries';
 import { PageHeader, FilterBar } from '../components/common/Layout';
 import BulkActionBar from '../components/common/BulkActionBar';
 import { useBulkSelection } from '../hooks/useBulkSelection';
@@ -24,6 +25,7 @@ import {
   formatDate,
   getRelativeDate,
   ORDER_STATUS_LABELS,
+  orderStatusLabel,
 } from '../components/ui';
 import { getErrorMessage } from '../services/errors';
 
@@ -35,6 +37,15 @@ const statusOptions: SelectOption[] = [
   })),
 ];
 
+// Spiegel der Serverregel (order_status_service.ERLAUBTE_UEBERGAENGE) — nur
+// für die Vorauswahl und die Meldung; der Server prüft trotzdem jede Bestellung.
+const SAMMEL_ERLAUBT_AB: Record<'IN_PRODUKTION' | 'GELIEFERT', OrderStatus[]> = {
+  IN_PRODUKTION: ['BESTAETIGT'],
+  GELIEFERT: ['BESTAETIGT', 'IN_PRODUKTION'],
+};
+
+const nummer = (o: Order) => o.order_number ?? o.id.slice(0, 8);
+
 export default function Orders() {
   const toast = useToast();
   const queryClient = useQueryClient();
@@ -44,6 +55,7 @@ export default function Orders() {
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [docsOrder, setDocsOrder] = useState<Order | null>(null);
   const [editOrder, setEditOrder] = useState<Order | null>(null);
+  const [bulkBusy, setBulkBusy] = useState(false);
 
   // Fetch orders
   const { data: ordersData, isLoading, isError, error, refetch, isFetching } = useQuery({
@@ -59,8 +71,13 @@ export default function Orders() {
   const orders = ordersData?.items || [];
 
   // Group orders by delivery date
-  const today = new Date().toISOString().split('T')[0];
-  const tomorrow = new Date(Date.now() + 86400000).toISOString().split('T')[0];
+  // Lokaler Kalendertag wie im Tagesplan (sv-SE = JJJJ-MM-TT). toISOString()
+  // wäre UTC und ordnete zwischen 0 und 2 Uhr die Bestellungen von gestern
+  // unter "Heute" ein.
+  const today = new Date().toLocaleDateString('sv-SE');
+  const morgen = new Date();
+  morgen.setDate(morgen.getDate() + 1);
+  const tomorrow = morgen.toLocaleDateString('sv-SE');
 
   const todayOrders = orders.filter((o) => o.liefer_datum === today);
   const tomorrowOrders = orders.filter((o) => o.liefer_datum === tomorrow);
@@ -77,30 +94,30 @@ export default function Orders() {
   const handleConfirm = async (order: Order) => {
     try {
       await salesApi.confirmOrder(order.id);
-      queryClient.invalidateQueries({ queryKey: ['orders'] });
+      await invalidateOrderViews(queryClient);
       toast.success('Bestellung bestätigt');
-    } catch (e: any) {
-      toast.error(e?.response?.data?.detail ?? 'Bestellung konnte nicht bestätigt werden');
+    } catch (e) {
+      toast.error(getErrorMessage(e, 'Bestellung konnte nicht bestätigt werden'));
     }
   };
 
   const handleMarkReady = async (order: Order) => {
     try {
       await salesApi.updateOrderStatus(order.id, 'IN_PRODUKTION');
-      queryClient.invalidateQueries({ queryKey: ['orders'] });
-      toast.success('Bestellung in Produktion gesetzt');
-    } catch (e: any) {
-      toast.error(e?.response?.data?.detail ?? 'Status konnte nicht geändert werden');
+      await invalidateOrderViews(queryClient);
+      toast.success(`${nummer(order)} gepackt`);
+    } catch (e) {
+      toast.error(getErrorMessage(e, 'Status konnte nicht geändert werden'));
     }
   };
 
   const handleMarkDelivered = async (order: Order) => {
     try {
       await salesApi.updateOrderStatus(order.id, 'GELIEFERT');
-      queryClient.invalidateQueries({ queryKey: ['orders'] });
-      toast.success('Bestellung als geliefert markiert');
-    } catch (e: any) {
-      toast.error(e?.response?.data?.detail ?? 'Status konnte nicht geändert werden');
+      await invalidateOrderViews(queryClient);
+      toast.success(`${nummer(order)} geliefert`);
+    } catch (e) {
+      toast.error(getErrorMessage(e, 'Status konnte nicht geändert werden'));
     }
   };
 
@@ -108,50 +125,65 @@ export default function Orders() {
   const bulk = useBulkSelection(orders);
 
   const handleBulkConfirm = async () => {
+    const auswahl = bulk.selectedItems;
+    const entwuerfe = auswahl.filter((o) => o.status === 'ENTWURF');
+    if (entwuerfe.length === 0) {
+      toast.error('Keine der markierten Bestellungen ist ein Entwurf');
+      return;
+    }
+    setBulkBusy(true);
     try {
-      const entwuerfe = bulk.selectedItems.filter((o) => o.status === 'ENTWURF');
-      if (entwuerfe.length === 0) {
-        toast.error('Keine der markierten Bestellungen ist ein Entwurf');
-        return;
+      // Einzeln bestätigen (der Endpunkt prüft Positionen und setzt das
+      // bestätigte Lieferdatum) — Fehlschläge werden gezählt, nicht verschluckt.
+      const ergebnisse = await Promise.allSettled(entwuerfe.map((o) => salesApi.confirmOrder(o.id)));
+      const fehler = ergebnisse.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
+      await invalidateOrderViews(queryClient);
+      bulk.clearSelection();
+      const ok = entwuerfe.length - fehler.length;
+      if (ok > 0) toast.success(`${ok} von ${auswahl.length} Bestellung(en) bestätigt`);
+      if (fehler.length > 0) {
+        toast.error(`${fehler.length} nicht bestätigt: ${getErrorMessage(fehler[0].reason, 'Fehler')}`);
       }
-      await Promise.all(entwuerfe.map((o) => salesApi.confirmOrder(o.id)));
-      queryClient.invalidateQueries({ queryKey: ['orders'] });
-      bulk.clearSelection();
-      toast.success(`${entwuerfe.length} Bestellung(en) bestätigt`);
-    } catch (e: any) {
-      toast.error(e?.response?.data?.detail ?? 'Bestellungen konnten nicht bestätigt werden');
+    } finally {
+      setBulkBusy(false);
     }
   };
 
-  const handleBulkReady = async () => {
+  // Sammelaktion ehrlich: gesendet werden nur Bestellungen, für die der
+  // Wechsel erlaubt ist; die übrigen werden mit Nummer gemeldet. Der Server
+  // ändert alle oder keine.
+  const runBulkStatus = async (ziel: 'IN_PRODUKTION' | 'GELIEFERT') => {
+    const auswahl = bulk.selectedItems;
+    const passend = auswahl.filter((o) => SAMMEL_ERLAUBT_AB[ziel].includes(o.status));
+    const rest = auswahl.filter((o) => !SAMMEL_ERLAUBT_AB[ziel].includes(o.status));
+    const zielText = orderStatusLabel(ziel);
+    if (passend.length === 0) {
+      toast.error(`Keine der ${auswahl.length} markierten Bestellungen kann auf „${zielText}" gesetzt werden`);
+      return;
+    }
+    setBulkBusy(true);
     try {
-      await Promise.all(
-        bulk.selectedItems
-          .filter((o) => o.status === 'BESTAETIGT')
-          .map((o) => salesApi.updateOrderStatus(o.id, 'IN_PRODUKTION')),
-      );
-      queryClient.invalidateQueries({ queryKey: ['orders'] });
+      await salesApi.bulkUpdateStatus(passend.map((o) => o.id), ziel);
+      await invalidateOrderViews(queryClient);
       bulk.clearSelection();
-      toast.success('Bestellungen in Produktion gesetzt');
-    } catch (e: any) {
-      toast.error(e?.response?.data?.detail ?? 'Status konnte nicht geändert werden');
+      toast.success(`${passend.length} von ${auswahl.length} Bestellung(en) auf „${zielText}" gesetzt`);
+      if (rest.length > 0) {
+        toast.warning(
+          `Nicht geändert: ${rest.map((o) => `${nummer(o)} (${orderStatusLabel(o.status)})`).join(', ')}`,
+        );
+      }
+    } catch (e) {
+      // Server hat abgelehnt (alle oder keine): nichts geändert, aber die
+      // Liste ist offenbar veraltet — neu laden, damit der Status stimmt.
+      await invalidateOrderViews(queryClient);
+      toast.error(getErrorMessage(e, 'Status konnte nicht geändert werden'));
+    } finally {
+      setBulkBusy(false);
     }
   };
 
-  const handleBulkDelivered = async () => {
-    try {
-      await Promise.all(
-        bulk.selectedItems
-          .filter((o) => o.status === 'IN_PRODUKTION')
-          .map((o) => salesApi.updateOrderStatus(o.id, 'GELIEFERT')),
-      );
-      queryClient.invalidateQueries({ queryKey: ['orders'] });
-      bulk.clearSelection();
-      toast.success('Bestellungen als geliefert markiert');
-    } catch (e: any) {
-      toast.error(e?.response?.data?.detail ?? 'Status konnte nicht geändert werden');
-    }
-  };
+  const handleBulkReady = () => runBulkStatus('IN_PRODUKTION');
+  const handleBulkDelivered = () => runBulkStatus('GELIEFERT');
 
   if (isLoading) {
     return <ListPageSkeleton />;
@@ -278,6 +310,7 @@ export default function Orders() {
       <BulkActionBar count={bulk.count} onClear={bulk.clearSelection}>
         <button
           onClick={handleBulkConfirm}
+          disabled={bulkBusy}
           className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors"
         >
           <ClipboardCheck className="w-4 h-4" />
@@ -285,13 +318,15 @@ export default function Orders() {
         </button>
         <button
           onClick={handleBulkReady}
+          disabled={bulkBusy}
           className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium bg-minga-600 hover:bg-minga-700 text-white rounded-lg transition-colors"
         >
           <CheckCircle className="w-4 h-4" />
-          In Produktion
+          Gepackt
         </button>
         <button
           onClick={handleBulkDelivered}
+          disabled={bulkBusy}
           className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors"
         >
           <Truck className="w-4 h-4" />
@@ -322,9 +357,9 @@ export default function Orders() {
 interface OrderListProps {
   orders: Order[];
   title: string;
-  onConfirm: (order: Order) => void;
-  onMarkReady: (order: Order) => void;
-  onMarkDelivered: (order: Order) => void;
+  onConfirm: (order: Order) => Promise<void>;
+  onMarkReady: (order: Order) => Promise<void>;
+  onMarkDelivered: (order: Order) => Promise<void>;
   onOpenDocs: (order: Order) => void;
   onEdit: (order: Order) => void;
   bulk: ReturnType<typeof useBulkSelection<Order>>;
@@ -383,14 +418,8 @@ function OrderList({ orders, onConfirm, onMarkReady, onMarkDelivered, onOpenDocs
                 onConfirm={
                   order.status === 'ENTWURF' ? () => onConfirm(order) : undefined
                 }
-                onMarkReady={
-                  order.status === 'BESTAETIGT'
-                    ? () => onMarkReady(order)
-                    : undefined
-                }
-                onMarkDelivered={
-                  order.status === 'IN_PRODUKTION' ? () => onMarkDelivered(order) : undefined
-                }
+                onMarkReady={() => onMarkReady(order)}
+                onMarkDelivered={() => onMarkDelivered(order)}
               />
                 <Button variant="secondary" size="sm" className="mt-2" icon={<Pencil className="w-4 h-4" />}
                   onClick={() => onEdit(order)}>

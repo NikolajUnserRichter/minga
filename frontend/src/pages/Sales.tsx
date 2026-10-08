@@ -18,6 +18,8 @@ import {
   OrderStatusBadge,
   ORDER_STATUS_LABELS,
 } from '../components/ui';
+import { getErrorMessage } from '../services/errors';
+import { invalidateOrderViews } from '../services/orderQueries';
 import {
   Plus,
   Users,
@@ -55,23 +57,23 @@ export default function Sales() {
 
   const markReadyMutation = useMutation({
     mutationFn: (id: string) => salesApi.updateOrderStatus(id, 'IN_PRODUKTION'),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['orders'] });
-      toast.success('Bestellung in Produktion gesetzt');
+    onSuccess: async () => {
+      await invalidateOrderViews(queryClient);
+      toast.success('Bestellung gepackt');
     },
-    onError: (e: any) => {
-      toast.error(e?.response?.data?.detail ?? 'Status konnte nicht geändert werden');
+    onError: (e) => {
+      toast.error(getErrorMessage(e, 'Status konnte nicht geändert werden'));
     },
   });
 
   const markDeliveredMutation = useMutation({
     mutationFn: (id: string) => salesApi.updateOrderStatus(id, 'GELIEFERT'),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['orders'] });
+    onSuccess: async () => {
+      await invalidateOrderViews(queryClient);
       toast.success('Bestellung als geliefert markiert');
     },
-    onError: (e: any) => {
-      toast.error(e?.response?.data?.detail ?? 'Status konnte nicht geändert werden');
+    onError: (e) => {
+      toast.error(getErrorMessage(e, 'Status konnte nicht geändert werden'));
     },
   });
 
@@ -241,8 +243,8 @@ export default function Sales() {
                 key={order.id}
                 order={order}
                 onClick={() => setSelectedOrder(order)}
-                onMarkReady={() => markReadyMutation.mutate(order.id)}
-                onMarkDelivered={() => markDeliveredMutation.mutate(order.id)}
+                onMarkReady={() => markReadyMutation.mutateAsync(order.id)}
+                onMarkDelivered={() => markDeliveredMutation.mutateAsync(order.id)}
               />
             ))}
           </div>
@@ -371,10 +373,10 @@ export default function Sales() {
                     setSelectedOrder(null);
                   }}
                 >
-                  In Produktion setzen
+                  Gepackt
                 </button>
               )}
-              {selectedOrder.status === 'IN_PRODUKTION' && (
+              {(selectedOrder.status === 'BESTAETIGT' || selectedOrder.status === 'IN_PRODUKTION') && (
                 <button
                   className="btn btn-primary"
                   onClick={() => {
