@@ -212,7 +212,7 @@ class TestPacktag:
                           params={"target_date": date.today().isoformat()}).json()
         assert len(plan["verpacken"]) == 1
 
-    def test_abo_bestellung_faellt_nicht_aus_dem_tagesplan(self, client):
+    def test_abo_bestellung_faellt_nicht_aus_dem_tagesplan(self, client, base_unit):
         """Abo-Bestellungen liefern am selben Tag — ohne Packtag-Regel wäre
         ihr Packtag gestern und die Packarbeit unsichtbar."""
         from uuid import UUID
@@ -227,6 +227,13 @@ class TestPacktag:
         kunde = client.post("/api/v1/sales/customers", json={
             "name": "Abo-Kunde", "typ": "GASTRO",
         }).json()
+        # Seit A5 (08.10.2026) überspringt der Lauf Abos ohne Produkt und
+        # ohne Sorte, statt irgendein Produkt zu nehmen — das Abo braucht eins.
+        produkt = client.post("/api/v1/products", json={
+            "sku": "ABO-TP", "name": "Kresse Schale", "category": "MICROGREEN",
+            "base_price": 4.5,
+        })
+        assert produkt.status_code == 201, produkt.text
 
         db = TestingSessionLocal()
         try:
@@ -236,6 +243,8 @@ class TestPacktag:
                 kunde_id = UUID(kunde["id"])
                 seed_id = None
                 seed = None
+                product_id = UUID(produkt.json()["id"])
+                product_variant_id = None
                 menge = 2
                 einheit = "STUECK"
 
@@ -287,6 +296,8 @@ class TestPacktag:
                 kunde_id = UUID(kunde["id"])
                 seed_id = sorten_id
                 seed = None
+                product_id = None  # Legacy-Abo über die Sorte
+                product_variant_id = None
                 menge = Decimal("2.00")
                 einheit = "STUECK"
 

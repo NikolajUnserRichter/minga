@@ -1213,3 +1213,164 @@ class TestP4AboRechnungstask:
     def test_abo_rechnungstask_ist_entfernt(self):
         import app.tasks.invoice_tasks as invoice_tasks
         assert not hasattr(invoice_tasks, "generate_recurring_invoices")
+
+
+class TestP4AboPosition:
+    """A5: Position aus Produkt bzw. Variante, mit Kundenpreis und Produktsatz."""
+
+    def _koeder(self, client):
+        """Wie in Produktion: ein Produkt ohne Sorte, das der alte Lauf griff."""
+        return _p4_produkt(client, "Mehrwegkiste leer", "P4-KOEDER", "2.00")
+
+    def test_produkt_abo_bekommt_produkt_preis_satz_und_einheit(self, client):
+        kunde = _p4_kunde(client)
+        self._koeder(client)
+        produkt = _p4_produkt(client, "BIO Snackbox | Amaranth", "P4-SNACK", "4.50",
+                              tax_rate="STANDARD")
+        abo = _p4_abo(client, kunde, product_id=produkt["id"], einheit="KISTE_6")
+
+        _p4_anlegen(abo["id"])
+
+        [bestellung] = _p4_bestellungen(abo["id"])
+        [zeile] = bestellung["lines"]
+        # Vorher: ("Abo-Lieferung: Unknown", 2,00, REDUZIERT) vom Köder-Produkt
+        assert (zeile["beschreibung"], zeile["unit_price"], zeile["tax_rate"]) == (
+            "BIO Snackbox | Amaranth", Decimal("4.50"), "STANDARD")
+        assert zeile["product_id"] == produkt["id"]
+        assert zeile["unit"] == "KISTE_6"
+        assert zeile["line_net"] == Decimal("9.00")
+        assert bestellung["total_vat"] == Decimal("1.71")
+        assert bestellung["total_gross"] == Decimal("10.71")
+
+    def test_sonderpreis_des_kunden_gilt(self, client):
+        kunde = _p4_kunde(client)
+        produkt = _p4_produkt(client, "BIO Snackbox | Amaranth", "P4-SNACK", "4.50")
+        r = client.post(f"/api/v1/sales/customers/{kunde['id']}/prices", json={
+            "product_id": produkt["id"], "unit_price": "4.20", "valid_from": "2026-09-01",
+        })
+        assert r.status_code in (200, 201), r.text
+        abo = _p4_abo(client, kunde, product_id=produkt["id"])
+
+        _p4_anlegen(abo["id"])
+
+        [bestellung] = _p4_bestellungen(abo["id"])
+        assert bestellung["lines"][0]["unit_price"] == Decimal("4.20")
+
+    def test_variante_liefert_name_einheit_und_preis(self, client):
+        kunde = _p4_kunde(client)
+        produkt = _p4_produkt(client, "BIO Snackbox | Amaranth", "P4-SNACK", "4.50")
+        r = client.post(f"/api/v1/products/{produkt['id']}/variants", json={
+            "packaging_unit_id": _p4_einheit("KISTE_12", "Mehrwegkiste 12"),
+            "name_suffix": "12er Mehrwegkiste", "price_override": "48.00", "items_per_pack": 12,
+        })
+        assert r.status_code in (200, 201), r.text
+        variante = r.json()
+        abo = _p4_abo(client, kunde, product_id=produkt["id"],
+                      product_variant_id=variante["id"], menge=1)
+
+        _p4_anlegen(abo["id"])
+
+        [zeile] = _p4_bestellungen(abo["id"])[0]["lines"]
+        assert zeile["product_variant_id"] == variante["id"]
+        assert zeile["beschreibung"] == "BIO Snackbox | Amaranth — 12er Mehrwegkiste"
+        assert zeile["unit"] == "KISTE_12"
+        assert zeile["unit_price"] == Decimal("48.00")
+
+    def test_abo_ohne_produkt_und_sorte_legt_nichts_an(self, client):
+        from app.models.customer import Subscription, SubscriptionInterval
+        from app.tasks.subscription_tasks import AboUebersprungen
+        kunde = _p4_kunde(client)
+        self._koeder(client)
+        with TestingSessionLocal() as db:
+            sub = Subscription(
+                kunde_id=uuid.UUID(kunde["id"]), menge=Decimal("2"), einheit="STUECK",
+                intervall=SubscriptionInterval.WOECHENTLICH, liefertage=[3], gueltig_von=_P4_MO,
+            )
+            db.add(sub)
+            db.commit()
+            abo_id = str(sub.id)
+
+        with pytest.raises(AboUebersprungen):
+            _p4_anlegen(abo_id)
+        assert _p4_bestellungen() == []
+
+    def test_mehrdeutige_sorte_legt_nichts_an(self, client):
+        from app.tasks.subscription_tasks import AboUebersprungen
+        kunde = _p4_kunde(client)
+        sorte = client.post("/api/v1/seeds", json={
+            "name": "Gartenkresse", "keimdauer_tage": 3, "wachstumsdauer_tage": 3,
+            "erntefenster_min_tage": 6, "erntefenster_optimal_tage": 7,
+            "erntefenster_max_tage": 8, "ertrag_gramm_pro_tray": 350,
+        }).json()
+        _p4_produkt(client, "Kresse Schale", "P4-KR-S", "3.00", seed_id=sorte["id"])
+        _p4_produkt(client, "Kresse Kiste", "P4-KR-K", "30.00", seed_id=sorte["id"])
+        abo = _p4_abo(client, kunde, seed_id=sorte["id"])
+
+        with pytest.raises(AboUebersprungen):
+            _p4_anlegen(abo["id"])
+        assert _p4_bestellungen() == []
+
+    def test_lauf_ueberspringt_meldet_und_beliefert_die_anderen(self, client):
+        from app.models.customer import Subscription, SubscriptionInterval
+        kunde = _p4_kunde(client)
+        produkt = _p4_produkt(client, "BIO Snackbox | Amaranth", "P4-SNACK", "4.50")
+        gut = _p4_abo(client, kunde, product_id=produkt["id"], liefertage=[3])
+        with TestingSessionLocal() as db:
+            kaputt = Subscription(
+                kunde_id=uuid.UUID(kunde["id"]), menge=Decimal("2"), einheit="STUECK",
+                intervall=SubscriptionInterval.WOECHENTLICH, liefertage=[3], gueltig_von=_P4_MO,
+            )
+            db.add(kaputt)
+            db.commit()
+            kaputt_id = str(kaputt.id)
+
+        ergebnis = _p4_lauf(_P4_DO)
+
+        assert ergebnis["erstellt"] == 1
+        assert [u["abo_id"] for u in ergebnis["uebersprungen"]] == [kaputt_id]
+        assert len(_p4_bestellungen(gut["id"])) == 1
+        assert _p4_bestellungen(kaputt_id) == []
+
+    def test_sorten_abo_mit_eindeutigem_produkt(self, client):
+        """Absicherung: Legacy-Abos über die Sorte liefern weiter das Produkt der Sorte."""
+        kunde = _p4_kunde(client)
+        sorte = client.post("/api/v1/seeds", json={
+            "name": "Gartenkresse", "keimdauer_tage": 3, "wachstumsdauer_tage": 3,
+            "erntefenster_min_tage": 6, "erntefenster_optimal_tage": 7,
+            "erntefenster_max_tage": 8, "ertrag_gramm_pro_tray": 350,
+        }).json()
+        self._koeder(client)
+        _p4_produkt(client, "Kresse Schale", "P4-KR-S", "3.00", seed_id=sorte["id"])
+        abo = _p4_abo(client, kunde, seed_id=sorte["id"])
+
+        _p4_anlegen(abo["id"])
+
+        [zeile] = _p4_bestellungen(abo["id"])[0]["lines"]
+        assert zeile["unit_price"] == Decimal("3.00")
+        assert zeile["tax_rate"] == "REDUZIERT"
+
+    def test_variables_bundle_wird_uebersprungen(self, client):
+        """create_order lehnt ein variables Bundle ohne Sortenauswahl ab
+        (sales.py, 'bitte Sorten auswählen'); ein Abo hat keine Auswahl."""
+        from app.tasks.subscription_tasks import AboUebersprungen
+        kunde = _p4_kunde(client)
+        tray = _p4_produkt(client, "Gastrotray 4 Sorten", "P4-TRAY", "18.00",
+                           is_variable_bundle=True, variable_bundle_min_slots=4,
+                           variable_bundle_max_slots=4)
+        abo = _p4_abo(client, kunde, product_id=tray["id"])
+
+        with pytest.raises(AboUebersprungen, match="variables Bundle"):
+            _p4_anlegen(abo["id"])
+        assert _p4_bestellungen() == []
+
+    def test_deaktiviertes_produkt_wird_uebersprungen(self, client):
+        from app.tasks.subscription_tasks import AboUebersprungen
+        kunde = _p4_kunde(client)
+        produkt = _p4_produkt(client, "BIO Snackbox | Amaranth", "P4-SNACK", "4.50")
+        abo = _p4_abo(client, kunde, product_id=produkt["id"])
+        r = client.delete(f"/api/v1/products/{produkt['id']}")  # Soft-Delete: is_active = False
+        assert r.status_code == 204, r.text
+
+        with pytest.raises(AboUebersprungen, match="deaktiviert"):
+            _p4_anlegen(abo["id"])
+        assert _p4_bestellungen() == []

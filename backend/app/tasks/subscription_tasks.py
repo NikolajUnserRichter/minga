@@ -1,15 +1,25 @@
+import logging
 from calendar import monthrange
 from datetime import date, timedelta
 from decimal import Decimal
 from typing import Optional
+
 from celery import shared_task
 from sqlalchemy import select
 from app.database import SessionLocal
 from app.models.customer import Subscription, SubscriptionInterval
 from app.models.order import Order, OrderLine, OrderStatus, TaxRate
-from app.models.product import Product, PriceList, PriceListItem
+from app.models.product import Product, ProductVariant
+from app.models.unit import UnitOfMeasure
+from app.services.pricing_service import resolve_unit_price
 from app.api.v1.sales import router
 from typing import List
+
+logger = logging.getLogger(__name__)
+
+
+class AboUebersprungen(Exception):
+    """Das Abo wird nicht beliefert; die Meldung nennt den Grund."""
 
 def _montag(tag: date) -> date:
     return tag - timedelta(days=tag.weekday())
@@ -80,6 +90,104 @@ def _is_subscription_due_today(sub: Subscription) -> bool:
     """Prüft ob Abo heute fällig ist (alter Name, ruft ist_faellig)."""
     return ist_faellig(sub, date.today())
 
+def _abo_produkt(db, sub) -> tuple[Product, Optional[ProductVariant]]:
+    """Produkt und Verpackungsvariante, die das Abo liefert.
+
+    Vorrang: product_id, dann die Variante (über ihr Elternprodukt), dann das
+    Legacy-Feld seed_id, dort nur, wenn genau ein aktives Produkt an der
+    Sorte hängt. Ein deaktiviertes Produkt und ein variables Bundle werden
+    nicht geliefert. Bis Oktober 2026 suchte der Lauf nur über seed_id. Bei
+    Produkt-Abos (seed_id leer) entstand daraus WHERE products.seed_id IS NULL,
+    also Preis und Steuersatz irgendeines Produkts ohne Sorte
+    ("Abo-Lieferung: Unknown", LfA Förderbank Bayern ab 14.09.2026).
+    """
+    variante = None
+    if sub.product_variant_id:
+        variante = db.get(ProductVariant, sub.product_variant_id)
+        if variante is None:
+            raise AboUebersprungen(f"Verpackungsvariante {sub.product_variant_id} existiert nicht")
+
+    if sub.product_id:
+        produkt = db.get(Product, sub.product_id)
+        if produkt is None:
+            raise AboUebersprungen(f"Produkt {sub.product_id} existiert nicht")
+    elif variante is not None:
+        produkt = variante.parent_product
+    elif sub.seed_id:
+        treffer = db.execute(
+            select(Product).where(Product.seed_id == sub.seed_id, Product.is_active == True)
+        ).scalars().all()
+        if len(treffer) != 1:
+            raise AboUebersprungen(
+                f"Sorte {sub.seed_id}: {len(treffer)} aktive Produkte, das Abo braucht genau eines"
+            )
+        produkt = treffer[0]
+    else:
+        raise AboUebersprungen("Abo hat weder Produkt noch Sorte")
+
+    if variante is not None and variante.parent_product_id != produkt.id:
+        raise AboUebersprungen("Verpackungsvariante gehört nicht zum Abo-Produkt")
+    # "is False": nur ein ausdrücklich deaktiviertes Produkt (DELETE /products/{id}).
+    if produkt.is_active is False:
+        raise AboUebersprungen(f"Produkt {produkt.name} ist deaktiviert")
+    if produkt.is_variable_bundle:
+        # create_order verlangt dafür eine Sortenauswahl (variable_bundle_selections),
+        # ohne sie fällt die Position aus dem Packplan. Ein Abo hat keine.
+        raise AboUebersprungen(
+            f"{produkt.name} ist ein variables Bundle und braucht eine Sortenauswahl"
+        )
+    return produkt, variante
+
+
+def abo_position(db, sub, heute: date) -> OrderLine:
+    """Bestellposition einer Abo-Lieferung an `heute`.
+
+    Preis wie in create_order (sales.py, Positionsschleife): Sonderpreis des
+    Kunden (resolve_unit_price, Stichtag = Liefertag) vor Variantenpreis vor
+    Basispreis. Steuersatz aus dem Produktstamm. Einheit der Variante, sonst
+    die des Abos. Wirft AboUebersprungen, bevor etwas angelegt ist.
+    """
+    from app.api.v1.sales import _calculate_line_amounts
+
+    produkt, variante = _abo_produkt(db, sub)
+
+    preis, ist_sonderpreis = resolve_unit_price(
+        db, customer_id=sub.kunde_id, product_id=produkt.id,
+        default=produkt.base_price, on_date=heute,
+    )
+    name = produkt.name
+    einheit = sub.einheit
+    if variante is not None:
+        name = f"{produkt.name} — {variante.name_suffix or ''}".strip(" —")
+        verpackung = db.get(UnitOfMeasure, variante.packaging_unit_id)
+        if verpackung is not None:
+            einheit = verpackung.code
+        if not ist_sonderpreis:
+            if variante.price_override is not None:
+                preis = variante.price_override
+            elif produkt.base_price is not None:
+                preis = produkt.base_price
+
+    if not preis:
+        logger.warning("[abo] Abo %s: %s hat keinen Preis, Position mit 0,00 EUR", sub.id, produkt.name)
+
+    line = OrderLine(
+        position=1,
+        product_id=produkt.id,
+        product_variant_id=variante.id if variante is not None else None,
+        seed_id=sub.seed_id,
+        beschreibung=name,
+        # Durchgehend Decimal: Decimal * float wirft.
+        quantity=Decimal(str(sub.menge)),
+        unit=einheit,
+        unit_price=Decimal(str(preis or 0)),
+        tax_rate=produkt.tax_rate or TaxRate.REDUZIERT,
+        requested_delivery_date=heute,
+    )
+    _calculate_line_amounts(line)
+    return line
+
+
 @shared_task
 def process_daily_subscriptions(heute: Optional[date] = None):
     """Täglicher Task: Erstellt Entwurfs-Bestellungen aus aktiven Abos."""
@@ -91,28 +199,41 @@ def process_daily_subscriptions(heute: Optional[date] = None):
             select(Subscription).where(Subscription.aktiv == True)
         ).scalars().all()
 
-        created_count = 0
-
+        erstellt = 0
+        uebersprungen = []
         for sub in subs:
-            if ist_faellig(sub, heute):
+            if not ist_faellig(sub, heute):
+                continue
+            try:
                 _create_order_from_subscription(db, sub, heute)
-                created_count += 1
+                erstellt += 1
+            except AboUebersprungen as grund:
+                kunde = sub.kunde.name if sub.kunde else str(sub.kunde_id)
+                logger.warning("[abo] Abo %s (%s) übersprungen: %s", sub.id, kunde, grund)
+                uebersprungen.append({"abo_id": str(sub.id), "kunde": kunde, "grund": str(grund)})
 
         db.commit()
-        return f"{created_count} orders created from subscriptions"
+        # Dict statt Text: _safe_wrap (scheduler_service.py) liest "status",
+        # der Knopf "Heute verarbeiten" die Zahlen.
+        return {"status": "ok", "erstellt": erstellt, "uebersprungen": uebersprungen}
     finally:
         db.close()
 
-def _create_order_from_subscription(db, sub: Subscription, heute: Optional[date] = None):
-    """Erstellt eine Order aus einem Abo für den Liefertag `heute`."""
+def _create_order_from_subscription(db, sub: Subscription, heute: Optional[date] = None) -> Order:
+    """Erstellt eine Order aus einem Abo für den Liefertag `heute`.
+
+    Wirft AboUebersprungen, ohne etwas anzulegen, wenn kein eindeutiges
+    Produkt feststeht.
+    """
+    from app.api.v1.sales import _generate_order_number, _calculate_order_totals
+
     heute = heute or date.today()
+    # Zuerst die Position: steht kein Produkt fest, entsteht auch kein Kopf.
+    line = abo_position(db, sub, heute)
+
     customer = sub.kunde
-    
-    # Order Header
-    from app.api.v1.sales import _generate_order_number, _calculate_order_totals, _calculate_line_amounts
-    
     order_number = _generate_order_number(db)
-    
+
     # Adressen
     billing_addr = None
     if customer.billing_address:
@@ -129,7 +250,7 @@ def _create_order_from_subscription(db, sub: Subscription, heute: Optional[date]
     else:
         # Fallback minimal
         billing_addr = {"name": customer.name, "strasse": "TBD", "plz": "00000", "ort": "TBD"}
-        
+
     delivery_addr = None
     if customer.shipping_address:
         delivery_addr = {
@@ -141,7 +262,7 @@ def _create_order_from_subscription(db, sub: Subscription, heute: Optional[date]
             "ort": customer.shipping_address.ort,
             "land": customer.shipping_address.land
         }
-    
+
     order = Order(
         order_number=order_number,
         customer_id=sub.kunde_id,
@@ -159,42 +280,7 @@ def _create_order_from_subscription(db, sub: Subscription, heute: Optional[date]
     )
     db.add(order)
     db.flush()
-    
-    # Order Line (Single Item Subscription Model assumed)
-    # Holen des Preises - vereinfacht 0 oder aus Product/PriceList.
-    # Durchgehend Decimal: sub.menge ist Numeric, und Decimal * float wirft.
-    unit_price = Decimal("0")
-    product = db.execute(select(Product).where(Product.seed_id == sub.seed_id)).scalars().first()
 
-    if product:
-        # 1. Price from Customer Price List
-        if customer.price_list_id:
-            price_item = db.execute(
-                select(PriceListItem)
-                .where(
-                    PriceListItem.price_list_id == customer.price_list_id,
-                    PriceListItem.product_id == product.id
-                )
-            ).scalars().first()
-            if price_item:
-                unit_price = Decimal(str(price_item.price))
-
-        # 2. Price from Base Price (if no list price found)
-        if unit_price == 0 and product.base_price:
-             unit_price = Decimal(str(product.base_price))
-
-    # Erstelle Line
-    line = OrderLine(
-        position=1,
-        seed_id=sub.seed_id, 
-        beschreibung=f"Abo-Lieferung: {sub.seed.name if sub.seed else 'Unknown'}",
-        quantity=sub.menge,
-        unit=sub.einheit,
-        unit_price=unit_price,
-        tax_rate=product.tax_rate if product else TaxRate.REDUZIERT,
-        requested_delivery_date=heute
-    )
-    _calculate_line_amounts(line)
     # Über die Beziehung anhängen: order.lines ist bei einer frisch erzeugten
     # Order eine leere Liste, die kein Lazy-Load mehr nachlädt — mit db.add()
     # allein summierte _calculate_order_totals über nichts und die Abo-
@@ -202,3 +288,4 @@ def _create_order_from_subscription(db, sub: Subscription, heute: Optional[date]
     order.lines.append(line)
 
     _calculate_order_totals(order)
+    return order
