@@ -168,7 +168,7 @@ class InvoiceUpdate(BaseModel):
     invoice_date: Optional[date] = None
     delivery_date: Optional[date] = None
     due_date: Optional[date] = None
-    status: Optional[InvoiceStatus] = None
+    status: Optional[Literal[InvoiceStatus.ENTWURF, InvoiceStatus.OFFEN]] = None
     discount_percent: Optional[Decimal] = None
     header_text: Optional[str] = None
     footer_text: Optional[str] = None

@@ -188,8 +188,17 @@ def update_invoice(
         raise HTTPException(status_code=400, detail="Nur Entwürfe können bearbeitet werden")
 
     update_data = data.model_dump(exclude_unset=True)
+    neuer_status = update_data.pop("status", None)
     for field, value in update_data.items():
         setattr(invoice, field, value)
+
+    if neuer_status == InvoiceStatus.OFFEN:
+        try:
+            InvoiceService(db).finalize_invoice(invoice.id)
+        except BereitsAbgerechnet as e:
+            raise HTTPException(status_code=409, detail=str(e))
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
 
     # Ein geänderter Einmalrabatt muss sofort in den Summen landen — sonst
     # zeigt die Rechnung den alten Betrag, bis irgendwann eine Zeile angefasst wird.
@@ -209,6 +218,8 @@ def finalize_invoice(invoice_id: UUID, db: DBSession):
         db.commit()
         db.refresh(invoice)
         return invoice
+    except BereitsAbgerechnet as e:
+        raise HTTPException(status_code=409, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -294,6 +305,10 @@ def send_invoice_email(
     # berechnet (GoBD). Scheitert der Versand, wird nicht committet und die
     # Neuberechnung verfällt mit der Session.
     if invoice.status == InvoiceStatus.ENTWURF:
+        try:
+            InvoiceService(db).pruefe_festschreibung(invoice)
+        except BereitsAbgerechnet as e:
+            raise HTTPException(status_code=409, detail=str(e))
         invoice.calculate_totals()
 
     try:
@@ -772,7 +787,10 @@ def batch_run_commit(anfrage: BatchRunRequest, db: DBSession):
         db.refresh(invoice)
         invoice.calculate_totals()
 
-        invoice.status = InvoiceStatus.OFFEN
+        try:
+            service.finalize_invoice(invoice.id)
+        except BereitsAbgerechnet as e:
+            raise HTTPException(status_code=409, detail=str(e))
         rechnungen.append(invoice)
 
     db.commit()

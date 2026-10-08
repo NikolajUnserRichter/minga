@@ -384,7 +384,10 @@ class InvoiceService:
 
         return invoice
 
-    def aktive_rechnung_zur_bestellung(self, order_id: UUID) -> Optional[Invoice]:
+    def aktive_rechnung_zur_bestellung(
+        self, order_id: UUID, *, ohne_rechnung_id: Optional[UUID] = None,
+        nur_festgeschrieben: bool = False,
+    ) -> Optional[Invoice]:
         """Die nicht stornierte Rechnung, in der die Bestellung steckt, sonst None.
 
         Zwei Wege führen von der Bestellung zur Rechnung:
@@ -398,6 +401,8 @@ class InvoiceService:
             .where(
                 Invoice.invoice_type == InvoiceType.RECHNUNG,
                 Invoice.status != InvoiceStatus.STORNIERT,
+                Invoice.id != ohne_rechnung_id if ohne_rechnung_id else True,
+                Invoice.status != InvoiceStatus.ENTWURF if nur_festgeschrieben else True,
                 or_(
                     Invoice.order_id == order_id,
                     Invoice.id.in_(
@@ -432,6 +437,25 @@ class InvoiceService:
         ).scalars().all()
         return set(ueber_bestellung) | set(ueber_lieferschein)
 
+    def pruefe_festschreibung(self, invoice: Invoice) -> None:
+        order_ids = set(self.db.execute(
+            select(DeliveryNote.order_id).where(DeliveryNote.invoice_id == invoice.id)
+        ).scalars().all())
+        if invoice.order_id is not None:
+            order_ids.add(invoice.order_id)
+        for order_id in sorted(order_ids):
+            order = self.db.execute(
+                select(Order).where(Order.id == order_id).with_for_update()
+            ).scalar_one_or_none()
+            andere = self.aktive_rechnung_zur_bestellung(
+                order_id, ohne_rechnung_id=invoice.id, nur_festgeschrieben=True,
+            )
+            if andere is not None:
+                raise BereitsAbgerechnet(
+                    f"Zur Bestellung {order.order_number if order else order_id} gibt es schon die Rechnung "
+                    f"{andere.invoice_number} — diesen Entwurf verwerfen oder die andere Rechnung erst stornieren"
+                )
+
     def finalize_invoice(self, invoice_id: UUID) -> Invoice:
         """
         Finalisiert eine Rechnung (Entwurf -> Offen).
@@ -442,6 +466,8 @@ class InvoiceService:
 
         if invoice.status != InvoiceStatus.ENTWURF:
             raise ValueError("Nur Entwürfe können finalisiert werden")
+
+        self.pruefe_festschreibung(invoice)
 
         if not invoice.lines:
             raise ValueError("Rechnung hat keine Positionen")
