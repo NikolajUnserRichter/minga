@@ -1030,112 +1030,76 @@ export const capacityApi = {
     api.get('/capacity/summary/overview').then(r => r.data),
 }
 
-// ============== Users API (Mock Data) ==============
-import type { User, UserRole } from '../types'
+// ============== Benutzerverwaltung (Mandant, Keycloak über das Backend) ==============
+// Früher stand hier eine Attrappe mit erfundenen Nutzern im localStorage;
+// angelegt wurde dort niemand. Den alten Speicher räumt pages/Users.tsx weg.
+// Jetzt spricht die Seite mit /api/v1/users (Paket 4, B8). Den Mandanten nimmt
+// das Backend immer aus Host und Token, nie aus diesen Daten.
+import type { MandantenRolle } from './rollen'
 
-// Mock users with localStorage persistence
-const MOCK_USERS_KEY = 'minga-mock-users'
-
-const defaultMockUsers: User[] = [
-  { id: '1', name: 'Max Mustermann', email: 'max@minga-greens.de', role: 'ADMIN', is_active: true, last_login: '2026-04-08T08:14:00Z', created_at: '2024-11-01T10:00:00Z', phone: '+49 89 123 4560' },
-  { id: '2', name: 'Anna Schmidt', email: 'anna@minga-greens.de', role: 'SALES', is_active: true, last_login: '2026-04-08T09:32:00Z', created_at: '2025-01-15T09:00:00Z', phone: '+49 89 123 4561' },
-  { id: '3', name: 'Peter Müller', email: 'peter@minga-greens.de', role: 'PRODUCTION_PLANNER', is_active: true, last_login: '2026-04-07T16:50:00Z', created_at: '2025-02-10T08:30:00Z', phone: '+49 89 123 4562' },
-  { id: '4', name: 'Lisa Weber', email: 'lisa@minga-greens.de', role: 'PRODUCTION_STAFF', is_active: true, last_login: '2026-04-08T06:45:00Z', created_at: '2025-03-20T07:00:00Z' },
-  { id: '5', name: 'Thomas Becker', email: 'thomas@minga-greens.de', role: 'ACCOUNTING', is_active: true, last_login: '2026-04-07T14:20:00Z', created_at: '2025-04-01T11:00:00Z', phone: '+49 89 123 4564' },
-  { id: '6', name: 'Julia Hoffmann', email: 'julia@minga-greens.de', role: 'SALES', is_active: true, last_login: '2026-04-08T10:05:00Z', created_at: '2025-06-15T09:00:00Z' },
-  { id: '7', name: 'Markus Klein', email: 'markus@minga-greens.de', role: 'PRODUCTION_STAFF', is_active: false, last_login: '2026-02-14T11:30:00Z', created_at: '2025-05-01T08:00:00Z' },
-]
-
-function getMockUsers(): User[] {
-  const stored = localStorage.getItem(MOCK_USERS_KEY)
-  if (stored) {
-    return JSON.parse(stored)
-  }
-  localStorage.setItem(MOCK_USERS_KEY, JSON.stringify(defaultMockUsers))
-  return defaultMockUsers
+/** backend/app/schemas/user.py: BenutzerResponse */
+export interface MandantenBenutzer {
+  id: string
+  email: string
+  first_name: string
+  last_name: string
+  /** Höchste der fünf Mandanten-Rollen; null = keine, der Benutzer kommt nirgends hin. */
+  role: MandantenRolle | null
+  roles: MandantenRolle[]
+  enabled: boolean
+  created_at: string | null
+  /** Das eigene Konto des angemeldeten Admins. */
+  is_self: boolean
 }
 
-function saveMockUsers(users: User[]): void {
-  localStorage.setItem(MOCK_USERS_KEY, JSON.stringify(users))
+/** BenutzerListResponse */
+export interface BenutzerListe {
+  items: MandantenBenutzer[]
+  total: number
+  /** true im Demo-Mandanten: Anlegen, Ändern und Passwort-Reset lehnt der Server ab (E-M6). */
+  schreibgeschuetzt: boolean
+}
+
+/** BenutzerCreate. Ein tenant_slug im Body wird vom Server mit 422 abgelehnt. */
+export interface BenutzerAnlegen {
+  email: string
+  first_name: string
+  last_name: string
+  role: MandantenRolle
+}
+
+/** BenutzerUpdate. Die E-Mail ist nicht änderbar. */
+export interface BenutzerAendern {
+  first_name?: string
+  last_name?: string
+  role?: MandantenRolle
+  enabled?: boolean
+}
+
+/** BenutzerAngelegtResponse: das Einmalpasswort kommt genau einmal. */
+export interface BenutzerAngelegt extends MandantenBenutzer {
+  temporary_password: string
+}
+
+/** PasswortZurueckgesetztResponse */
+export interface PasswortZurueckgesetzt {
+  user: MandantenBenutzer
+  temporary_password: string
 }
 
 export const usersApi = {
-  list: (params?: { role?: UserRole; search?: string }): Promise<{ items: User[]; total: number }> => {
-    return new Promise((resolve) => {
-      setTimeout(() => {
-        let users = getMockUsers()
-        if (params?.role) {
-          users = users.filter(u => u.role === params.role)
-        }
-        if (params?.search) {
-          const search = params.search.toLowerCase()
-          users = users.filter(u =>
-            u.name.toLowerCase().includes(search) ||
-            u.email.toLowerCase().includes(search)
-          )
-        }
-        resolve({ items: users, total: users.length })
-      }, 200)
-    })
-  },
+  list: () =>
+    api.get<BenutzerListe>('/users').then(r => r.data),
 
-  get: (id: string): Promise<User> => {
-    return new Promise((resolve, reject) => {
-      setTimeout(() => {
-        const users = getMockUsers()
-        const user = users.find(u => u.id === id)
-        if (user) {
-          resolve(user)
-        } else {
-          reject(new Error('User not found'))
-        }
-      }, 100)
-    })
-  },
+  create: (data: BenutzerAnlegen) =>
+    api.post<BenutzerAngelegt>('/users', data).then(r => r.data),
 
-  create: (data: Partial<User>): Promise<User> => {
-    return new Promise((resolve) => {
-      setTimeout(() => {
-        const users = getMockUsers()
-        const newUser: User = {
-          id: String(Date.now()),
-          name: data.name || '',
-          email: data.email || '',
-          role: data.role || 'PRODUCTION_STAFF',
-          avatar: data.avatar,
-        }
-        users.push(newUser)
-        saveMockUsers(users)
-        resolve(newUser)
-      }, 200)
-    })
-  },
+  /** Name, Rolle und Aktiv-Status. Deaktivieren = { enabled: false }; gelöscht wird nie. */
+  update: (id: string, data: BenutzerAendern) =>
+    api.patch<MandantenBenutzer>(`/users/${id}`, data).then(r => r.data),
 
-  update: (id: string, data: Partial<User>): Promise<User> => {
-    return new Promise((resolve, reject) => {
-      setTimeout(() => {
-        const users = getMockUsers()
-        const index = users.findIndex(u => u.id === id)
-        if (index !== -1) {
-          users[index] = { ...users[index], ...data }
-          saveMockUsers(users)
-          resolve(users[index])
-        } else {
-          reject(new Error('User not found'))
-        }
-      }, 200)
-    })
-  },
-
-  delete: (id: string): Promise<void> => {
-    return new Promise((resolve) => {
-      setTimeout(() => {
-        const users = getMockUsers().filter(u => u.id !== id)
-        saveMockUsers(users)
-        resolve()
-      }, 200)
-    })
-  },
+  resetPassword: (id: string) =>
+    api.post<PasswortZurueckgesetzt>(`/users/${id}/reset-password`).then(r => r.data),
 }
 
 // ==================== GROWTH-TIMELINE-EVENTS ====================

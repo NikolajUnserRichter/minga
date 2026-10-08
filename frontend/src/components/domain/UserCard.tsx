@@ -1,61 +1,67 @@
-import { User, UserRole } from '../../types';
 import { Badge } from '../ui';
-import { Mail, Edit2, Trash2, Shield, Clock, Phone } from 'lucide-react';
+import { Mail, Edit2, Shield, KeyRound, UserX, UserCheck, CalendarPlus } from 'lucide-react';
+import type { MandantenBenutzer } from '../../services/api';
+import { rollenInfo } from '../../services/rollen';
 
-// Role display names and colors (using valid BadgeVariant types)
-const roleConfig: Record<UserRole, { label: string; variant: 'success' | 'info' | 'warning' | 'purple' | 'gray' | 'danger' }> = {
-    ADMIN: { label: 'Administrator', variant: 'purple' },
-    SALES: { label: 'Vertrieb', variant: 'info' },
-    PRODUCTION_PLANNER: { label: 'Produktionsplanung', variant: 'success' },
-    PRODUCTION_STAFF: { label: 'Produktion', variant: 'warning' },
-    ACCOUNTING: { label: 'Buchhaltung', variant: 'gray' },
-};
-
-interface UserCardProps {
-    user: User;
-    onEdit?: () => void;
-    onDelete?: () => void;
+/** Vor- und Nachname; fehlen beide, die E-Mail. */
+export function anzeigeName(b: MandantenBenutzer): string {
+    return [b.first_name, b.last_name].filter(Boolean).join(' ') || b.email;
 }
 
-export function UserCard({ user, onEdit, onDelete }: UserCardProps) {
-    const config = roleConfig[user.role];
+interface UserCardProps {
+    user: MandantenBenutzer;
+    onEdit: () => void;
+    onDeaktivieren: () => void;
+    onAktivieren: () => void;
+    onPasswort: () => void;
+    /** Während eine Änderung läuft, keine zweite auslösen. */
+    gesperrt?: boolean;
+    /** Demo-Mandant (E-M6): keine Aktionen anbieten, der Server lehnt jedes Schreiben ab. */
+    schreibgeschuetzt?: boolean;
+}
 
-    // Generate initials from name
-    const initials = user.name
-        .split(' ')
-        .map((n) => n[0])
-        .join('')
-        .toUpperCase();
+export function UserCard({
+    user,
+    onEdit,
+    onDeaktivieren,
+    onAktivieren,
+    onPasswort,
+    gesperrt = false,
+    schreibgeschuetzt = false,
+}: UserCardProps) {
+    const name = anzeigeName(user);
+    const initialen =
+        [user.first_name, user.last_name]
+            .filter(Boolean)
+            .map((n) => n[0])
+            .join('')
+            .toUpperCase() || user.email.slice(0, 1).toUpperCase();
 
     return (
-        <div className={`card card-hover ${user.is_active === false ? 'opacity-60' : ''}`}>
+        <div className={`card card-hover ${user.enabled ? '' : 'opacity-60'}`}>
             <div className="card-body">
                 <div className="flex items-start gap-4">
-                    {/* Avatar */}
-                    <div className="relative">
-                        <div className="w-12 h-12 rounded-full bg-minga-100 dark:bg-minga-900/50 flex items-center justify-center text-minga-700 dark:text-minga-400 font-semibold text-lg flex-shrink-0">
-                            {user.avatar ? (
-                                <img src={user.avatar} alt={user.name} className="w-full h-full rounded-full object-cover" />
-                            ) : (
-                                initials
-                            )}
-                        </div>
-                        {/* Online indicator */}
-                        <div className={`absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full border-2 border-white dark:border-gray-800 ${user.is_active !== false ? 'bg-green-50 dark:bg-green-900/200' : 'bg-gray-400'}`} />
+                    <div className="w-12 h-12 rounded-full bg-minga-100 dark:bg-minga-900/50 flex items-center justify-center text-minga-700 dark:text-minga-400 font-semibold text-lg flex-shrink-0">
+                        {initialen}
                     </div>
 
                     <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2">
-                            <h3 className="font-semibold text-gray-900 dark:text-white truncate">{user.name}</h3>
-                            {user.is_active === false && (
-                                <span className="text-xs text-gray-400 font-normal">Inaktiv</span>
-                            )}
+                            <h3 className="font-semibold text-gray-900 dark:text-white truncate">{name}</h3>
+                            {user.is_self && <span className="text-xs text-gray-500 dark:text-gray-400">(Sie)</span>}
                         </div>
-                        <div className="flex items-center gap-2 mt-1">
-                            <Badge variant={config.variant}>
-                                <Shield className="w-3 h-3 mr-1" />
-                                {config.label}
-                            </Badge>
+                        <div className="flex flex-wrap items-center gap-2 mt-1">
+                            {user.roles.length === 0 && <Badge variant="danger">Keine Rolle</Badge>}
+                            {user.roles.map((r) => {
+                                const info = rollenInfo(r);
+                                return (
+                                    <Badge key={r} variant={info?.badge ?? 'gray'}>
+                                        <Shield className="w-3 h-3 mr-1" />
+                                        {info?.label ?? r}
+                                    </Badge>
+                                );
+                            })}
+                            {!user.enabled && <Badge variant="gray">Deaktiviert</Badge>}
                         </div>
                     </div>
                 </div>
@@ -63,52 +69,50 @@ export function UserCard({ user, onEdit, onDelete }: UserCardProps) {
                 <div className="mt-4 space-y-2">
                     <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
                         <Mail className="w-4 h-4 text-gray-400" />
-                        <a href={`mailto:${user.email}`} className="hover:text-minga-600 dark:text-minga-400 truncate">
-                            {user.email}
-                        </a>
+                        <span className="truncate">{user.email}</span>
                     </div>
-                    {user.phone && (
-                        <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
-                            <Phone className="w-4 h-4 text-gray-400" />
-                            <span>{user.phone}</span>
-                        </div>
-                    )}
-                    {user.last_login && (
-                        <div className="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-500 dark:text-gray-400">
-                            <Clock className="w-4 h-4 text-gray-400" />
+                    {user.created_at && (
+                        <div className="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
+                            <CalendarPlus className="w-4 h-4 text-gray-400" />
                             <span>
-                                Zuletzt aktiv: {new Date(user.last_login).toLocaleDateString('de-DE', {
-                                    day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
+                                Angelegt am{' '}
+                                {new Date(user.created_at).toLocaleDateString('de-DE', {
+                                    day: '2-digit',
+                                    month: '2-digit',
+                                    year: 'numeric',
                                 })}
                             </span>
                         </div>
                     )}
                 </div>
 
-                {(onEdit || onDelete) && (
+                {!schreibgeschuetzt && (
                     <div className="mt-4 pt-4 border-t border-gray-100 dark:border-gray-700 flex flex-wrap gap-2">
-                        {onEdit && (
-                            <button
-                                className="btn btn-ghost btn-sm"
-                                onClick={(e) => {
-                                    e.stopPropagation();
-                                    onEdit();
-                                }}
-                            >
-                                <Edit2 className="w-4 h-4" />
-                                Bearbeiten
-                            </button>
-                        )}
-                        {onDelete && (
-                            <button
-                                className="btn btn-ghost btn-sm text-red-600 dark:text-red-400 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-900/20"
-                                onClick={(e) => {
-                                    e.stopPropagation();
-                                    onDelete();
-                                }}
-                            >
-                                <Trash2 className="w-4 h-4" />
-                                Löschen
+                        <button className="btn btn-ghost btn-sm" onClick={onEdit} disabled={gesperrt}>
+                            <Edit2 className="w-4 h-4" />
+                            Bearbeiten
+                        </button>
+                        <button className="btn btn-ghost btn-sm" onClick={onPasswort} disabled={gesperrt || !user.enabled}>
+                            <KeyRound className="w-4 h-4" />
+                            Passwort zurücksetzen
+                        </button>
+                        {user.enabled ? (
+                            // Das eigene Konto nicht anbieten: wer sich selbst sperrt, kommt nicht mehr hinein.
+                            // Der Server lehnt es ohnehin mit 409 ab.
+                            !user.is_self && (
+                                <button
+                                    className="btn btn-ghost btn-sm text-red-600 dark:text-red-400 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-900/20"
+                                    onClick={onDeaktivieren}
+                                    disabled={gesperrt}
+                                >
+                                    <UserX className="w-4 h-4" />
+                                    Deaktivieren
+                                </button>
+                            )
+                        ) : (
+                            <button className="btn btn-ghost btn-sm" onClick={onAktivieren} disabled={gesperrt}>
+                                <UserCheck className="w-4 h-4" />
+                                Aktivieren
                             </button>
                         )}
                     </div>
