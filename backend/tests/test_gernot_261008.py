@@ -2049,3 +2049,90 @@ class TestS6LieferscheinHaengtAnDerRechnung:
         sammel = _s6_lauf(client, S6_COMMIT)["rechnungen"][0]
 
         assert b"Enthaltene Lieferscheine" in _s6_pdf_text(client, sammel)
+
+
+class TestS6SammellaufRechnetJedeBestellungEinmal:
+    """(c) Vorschau und Festschreiben: abgerechnete Bestellungen raus, je Bestellung einmal."""
+
+    def test_bestellung_mit_rechnung_aus_bestellung_wird_uebersprungen(self, client):
+        bestellung = _s6_bestellung(client, _s6_kunde(client))
+        _s6_lieferschein(client, bestellung)
+        assert _s6_aus_bestellung(client, bestellung).status_code == 201
+
+        assert _s6_lauf(client, S6_PREVIEW)["kunden"] == []
+        assert _s6_lauf(client, S6_COMMIT)["rechnungen"] == []
+
+    def test_altbestand_ohne_verknuepfung_wird_uebersprungen(self, client):
+        """RE-00002/3/4: vor S6 aus Bestellung erzeugt, Lieferschein ohne invoice_id."""
+        from uuid import UUID
+        from app.models.documents import DeliveryNote
+        from tests.conftest import TestingSessionLocal
+
+        bestellung = _s6_bestellung(client, _s6_kunde(client))
+        ls = _s6_lieferschein(client, bestellung)
+        assert _s6_aus_bestellung(client, bestellung).status_code == 201
+        with TestingSessionLocal() as db:
+            db.get(DeliveryNote, UUID(ls["id"])).invoice_id = None
+            db.commit()
+
+        assert _s6_lauf(client, S6_PREVIEW)["kunden"] == []
+        assert _s6_lauf(client, S6_COMMIT)["rechnungen"] == []
+
+    def test_nach_storno_rechnet_der_lauf_die_bestellung_wieder(self, client):
+        bestellung = _s6_bestellung(client, _s6_kunde(client))
+        _s6_lieferschein(client, bestellung)
+        _s6_storno(client, _s6_finalisieren(client, _s6_aus_bestellung(client, bestellung).json()))
+
+        kunden = _s6_lauf(client, S6_PREVIEW)["kunden"]
+
+        assert len(kunden) == 1
+        assert kunden[0]["anzahl_lieferscheine"] == 1
+
+    def test_zwei_lieferscheine_einer_bestellung_werden_einmal_berechnet(self, client):
+        bestellung = _s6_bestellung(client, _s6_kunde(client), menge=10, preis=2.50)
+        ls1 = _s6_lieferschein(client, bestellung)
+        _s6_lieferschein(client, bestellung, zusaetzlich=True)
+
+        k = _s6_lauf(client, S6_PREVIEW)["kunden"][0]
+        assert k["anzahl_lieferscheine"] == 1
+        assert Decimal(str(k["summe_netto"])) == Decimal("25.00")
+
+        rechnung = _s6_lauf(client, S6_COMMIT)["rechnungen"][0]
+        assert Decimal(str(rechnung["subtotal"])) == Decimal("25.00")
+        assert _s6_ls_an_rechnung(client, rechnung) == [ls1["delivery_note_number"]]
+        assert _s6_lauf(client, S6_COMMIT)["rechnungen"] == []
+
+    def test_quittierter_lieferschein_vertritt_die_bestellung(self, client):
+        bestellung = _s6_bestellung(client, _s6_kunde(client))
+        # Manager 08.10. (Paket 2, Entscheidung E5): Quittieren setzt ab Paket 2 eine
+        # bestätigte Bestellung voraus — ENTWURF → GELIEFERT ist kein erlaubter Übergang.
+        r = client.post(f"/api/v1/sales/orders/{bestellung['id']}/confirm")
+        assert r.status_code == 200, r.text
+        _s6_lieferschein(client, bestellung)
+        ls2 = _s6_lieferschein(client, bestellung, zusaetzlich=True)
+        r = client.patch(f"/api/v1/sales/delivery-notes/{ls2['id']}/mark-delivered",
+                         json={"signed_by": "Fahrer", "actual_delivery_date": "2026-03-06"})
+        assert r.status_code == 200, r.text
+
+        rechnung = _s6_lauf(client, S6_COMMIT)["rechnungen"][0]
+
+        assert _s6_ls_an_rechnung(client, rechnung) == [ls2["delivery_note_number"]]
+
+    def test_fakturierte_bestellung_ohne_rechnung_wird_uebersprungen(self, client):
+        """Spec-Nachtrag 08.10.2026: FAKTURIERT heißt abgerechnet — auch ohne
+        Rechnung im System (z. B. außerhalb von NovaERP berechnet). Bisher
+        rechnete der Lauf sie trotzdem ab, sobald sie einen freien Lieferschein
+        hatte (Nachtrag T4, Probe P7)."""
+        from uuid import UUID
+        from app.models.enums import OrderStatus
+        from app.models.order import Order
+
+        bestellung = _s6_bestellung(client, _s6_kunde(client))
+        _s6_lieferschein(client, bestellung)
+        # Zustand wie nach dem manuellen Übergang GELIEFERT → FAKTURIERT
+        with TestingSessionLocal() as db:
+            db.get(Order, UUID(bestellung["id"])).status = OrderStatus.FAKTURIERT
+            db.commit()
+
+        assert _s6_lauf(client, S6_PREVIEW)["kunden"] == []
+        assert _s6_lauf(client, S6_COMMIT)["rechnungen"] == []

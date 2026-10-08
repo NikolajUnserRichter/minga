@@ -21,7 +21,7 @@ from app.schemas.invoice import (
     InvoiceSendRequest, InvoiceCancelRequest,
     DatevExportRequest, DatevExportResponse,
 )
-from app.services.invoice_service import InvoiceService, BereitsAbgerechnet
+from app.services.invoice_service import InvoiceService, BereitsAbgerechnet, waehle_vertreter
 from app.services.datev_service import DatevService
 from app.services.email_service import send_email, EmailNotConfiguredError
 from app.services.pdf_service import load_company_settings
@@ -562,23 +562,45 @@ class BatchRunRequest(_BaseModel):
 
 
 def _abrechenbare_lieferscheine(db, anfrage: BatchRunRequest):
-    """Lieferscheine des Zeitraums, die noch in keiner Rechnung stecken.
+    """Je noch nicht abgerechneter Bestellung genau EIN Lieferschein des Zeitraums.
 
-    Leistungsdatum je Lieferschein: das tatsächliche Lieferdatum, ersatzweise
-    das Wunschlieferdatum der Bestellung. Stornierte Bestellungen bleiben
-    draußen.
+    Abgerechnet wird die Bestellung, nicht der Lieferschein: _aggregiere
+    zählt order.lines je zurückgegebenem Lieferschein. Deshalb
+    - fällt jede Bestellung heraus, die schon in einer nicht stornierten
+      Rechnung steckt — über Invoice.order_id (Rechnung aus Bestellung, auch
+      Altbestand ohne Lieferschein-Zuordnung) oder über einen bereits
+      zugeordneten Lieferschein (Sammelrechnung);
+    - steht jede Bestellung höchstens einmal in der Liste, auch wenn sie
+      mehrere Lieferscheine hat (Vertreter: waehle_vertreter).
+    Vorschau und Festschreiben rufen beide diese Funktion — eine Regel.
+
+    Leistungsdatum: das tatsächliche Lieferdatum des Vertreters, ersatzweise
+    das Wunschlieferdatum der Bestellung. Stornierte und fakturierte
+    Bestellungen bleiben draußen — FAKTURIERT gilt als abgerechnet, auch ohne
+    Rechnung im System (Spec-Nachtrag 08.10.2026).
     """
+    abgerechnet = InvoiceService(db).abgerechnete_bestellungen()
     notes = db.execute(
         select(DeliveryNote)
         .join(Order, DeliveryNote.order_id == Order.id)
         .where(
             DeliveryNote.invoice_id.is_(None),
-            Order.status != OrderStatus.STORNIERT,
+            # STORNIERT nie. FAKTURIERT heißt: schon abgerechnet, auch wenn die
+            # Rechnung nicht im System steht (Spec-Nachtrag 08.10.2026,
+            # Sofort-Fix der Doppelabrechnungssperre).
+            Order.status.notin_([OrderStatus.STORNIERT, OrderStatus.FAKTURIERT]),
         )
     ).scalars().all()
 
-    ergebnis = []
+    je_bestellung: dict = {}
     for note in notes:
+        if note.order_id in abgerechnet:
+            continue
+        je_bestellung.setdefault(note.order_id, []).append(note)
+
+    ergebnis = []
+    for kandidaten in je_bestellung.values():
+        note = waehle_vertreter(kandidaten)
         leistungsdatum = note.actual_delivery_date or note.order.requested_delivery_date
         if not (anfrage.period_from <= leistungsdatum <= anfrage.period_to):
             continue

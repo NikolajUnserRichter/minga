@@ -340,6 +340,26 @@ class InvoiceService:
             .limit(1)
         ).scalars().first()
 
+    def abgerechnete_bestellungen(self) -> set[UUID]:
+        """IDs aller Bestellungen mit nicht stornierter Rechnung.
+
+        Dieselbe Regel wie aktive_rechnung_zur_bestellung, als Menge für den
+        Sammellauf (eine Abfrage je Weg statt einer je Bestellung).
+        """
+        aktiv = (
+            Invoice.invoice_type == InvoiceType.RECHNUNG,
+            Invoice.status != InvoiceStatus.STORNIERT,
+        )
+        ueber_bestellung = self.db.execute(
+            select(Invoice.order_id).where(Invoice.order_id.is_not(None), *aktiv)
+        ).scalars().all()
+        ueber_lieferschein = self.db.execute(
+            select(DeliveryNote.order_id)
+            .join(Invoice, DeliveryNote.invoice_id == Invoice.id)
+            .where(*aktiv)
+        ).scalars().all()
+        return set(ueber_bestellung) | set(ueber_lieferschein)
+
     def finalize_invoice(self, invoice_id: UUID) -> Invoice:
         """
         Finalisiert eine Rechnung (Entwurf -> Offen).
