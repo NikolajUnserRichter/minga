@@ -19,6 +19,7 @@ from app.models.invoice import (
 from app.models.customer import Customer, AddressType
 from app.models.order import Order, OrderLine
 from app.models.product import Product
+from app.services.steuersatz import produkt_der_position, steuersatz_der_position
 
 
 class InvoiceService:
@@ -177,6 +178,14 @@ class InvoiceService:
     def create_invoice_from_order(self, order_id: UUID) -> Invoice:
         """
         Erstellt eine Rechnung aus einer Bestellung.
+
+        - Steuersatz: bei Positionen mit Produkt (direkt oder über die
+          Variante) der Satz des Produktstamms, nicht der gespeicherte Satz
+          der Bestellposition — den setzte das Bestellformular bis 08.10.2026
+          fest auf 7 % (A3). Freitextpositionen behalten ihren Satz.
+        - Positionsrabatt wird übernommen (fehlte bisher still).
+        - Leistungsdatum: das tatsächliche Lieferdatum, ersatzweise das
+          Wunschlieferdatum — dieselbe Regel wie die Sammelrechnung.
         """
         order = self.db.get(Order, order_id)
         if not order:
@@ -186,23 +195,32 @@ class InvoiceService:
         invoice = self.create_invoice(
             customer_id=order.customer_id,
             order_id=order_id,
-            delivery_date=order.requested_delivery_date,
+            delivery_date=order.actual_delivery_date or order.requested_delivery_date,
         )
 
         # Positionen aus Bestellung übernehmen
         for line in order.lines:
-            # Produkt laden für Beschreibung und MwSt
-            product = self.db.get(Product, line.product_id) if line.product_id else None
+            # Beschreibung wie bisher aus dem direkt verknüpften Produkt — bei
+            # reinen Variantenpositionen bleibt der gespeicherte Name stehen.
+            direkt = self.db.get(Product, line.product_id) if line.product_id else None
+            # Pfandkennzeichen und SKU aus dem Produkt hinter der Position,
+            # auch wenn nur die Variante gesetzt ist.
+            produkt = produkt_der_position(self.db, line.product_id, line.product_variant_id)
 
             self.add_line(
                 invoice_id=invoice.id,
-                description=product.name if product else (line.beschreibung or f"Position {line.id}"),
+                description=direkt.name if direkt else (line.beschreibung or f"Position {line.id}"),
                 quantity=line.quantity,
                 unit=line.unit,
                 unit_price=line.unit_price or Decimal("0"),
-                product_id=product.id if product else None,
-                sku=product.sku if product else None,
-                tax_rate=line.tax_rate or TaxRate.REDUZIERT,
+                product_id=produkt.id if produkt else None,
+                sku=produkt.sku if produkt else None,
+                discount_percent=line.discount_percent or Decimal("0"),
+                # Dieselbe Satzregel wie in der Bestellung (Task 1) — nicht hier
+                # nachgebaut, damit sie nur an einer Stelle steht.
+                tax_rate=steuersatz_der_position(
+                    self.db, line.product_id, line.product_variant_id, line.tax_rate
+                ),
                 order_item_id=line.id,
                 harvest_batch_ids=[line.harvest_id] if line.harvest_id else None,
             )

@@ -305,3 +305,87 @@ class TestS1SteuersatzInDerBestellung:
         })
         assert r.status_code == 400, r.text
         assert "Kreditlimit" in r.json()["detail"]
+
+
+class TestS1RechnungAusBestellung:
+    """Task 2: Rechnung aus der Bestellung — Satz, Rabatt, Leistungsdatum."""
+
+    def test_altposition_mit_7_prozent_wird_mit_dem_produktsatz_fakturiert(self, client):
+        """Der Weg von RE-00002/3/4: Bestellposition 7 %, Produkt 19 %."""
+        pfand = _s1_pfandkiste(client)
+        order = _s1_altbestellung(client, _s1_kunde(client), pfand)
+
+        rechnung = _s1_rechnung_aus(client, order)
+
+        zeilen = _s1_rechnungszeilen(rechnung["id"])
+        pfandzeile = next(z for z in zeilen if z["product_id"] is not None)
+        assert pfandzeile["tax_rate"] == "STANDARD"
+        assert pfandzeile["is_deposit"] is True
+        assert next(z for z in zeilen if z["product_id"] is None)["tax_rate"] == "REDUZIERT"
+        # 25,00 € × 7 % = 1,75 € | 6,00 € × 19 % = 1,14 €
+        assert Decimal(str(rechnung["tax_amount"])) == Decimal("2.89")
+
+    def test_variantenposition_traegt_satz_und_pfandkennzeichen(self, client):
+        pfand = _s1_pfandkiste(client)
+        variante = _s1_variante(client, pfand)
+        order = _s1_bestellung(client, _s1_kunde(client), [{
+            "product_variant_id": variante["id"], "product_name": "IFCO-Kiste",
+            "quantity": 1, "unit": "STK", "unit_price": "18.00",
+        }])
+        _s1_altstand(order["id"])
+
+        zeile = _s1_rechnungszeilen(_s1_rechnung_aus(client, order)["id"])[0]
+
+        assert zeile["tax_rate"] == "STANDARD"
+        assert zeile["is_deposit"] is True
+        assert zeile["product_id"] == uuid.UUID(pfand["id"])
+
+    def test_positionsrabatt_wird_uebernommen(self, client):
+        order = _s1_bestellung(client, _s1_kunde(client), [
+            _s1_zeile(None, menge=10, preis="10.00", tax_rate="REDUZIERT", discount_percent="10"),
+        ])
+        assert Decimal(str(order["total_net"])) == Decimal("90.00")
+
+        rechnung = _s1_rechnung_aus(client, order)
+
+        assert _s1_rechnungszeilen(rechnung["id"])[0]["discount_percent"] == Decimal("10")
+        assert Decimal(str(rechnung["subtotal"])) == Decimal("90.00")
+
+    def test_leistungsdatum_ist_das_tatsaechliche_lieferdatum(self, client):
+        from app.models.order import Order
+        order = _s1_bestellung(client, _s1_kunde(client), [_s1_zeile(None, tax_rate="REDUZIERT")],
+                               liefertag="2026-10-07")
+        with TestingSessionLocal() as db:
+            db.get(Order, uuid.UUID(order["id"])).actual_delivery_date = date(2026, 10, 8)
+            db.commit()
+
+        assert _s1_rechnung_aus(client, order)["delivery_date"] == "2026-10-08"
+
+    def test_ohne_lieferung_bleibt_das_wunschlieferdatum(self, client):
+        order = _s1_bestellung(client, _s1_kunde(client), [_s1_zeile(None, tax_rate="REDUZIERT")],
+                               liefertag="2026-10-07")
+        assert _s1_rechnung_aus(client, order)["delivery_date"] == "2026-10-07"
+
+    def test_storno_bucht_mit_dem_satz_der_originalzeile_gegen(self, client):
+        """Absicherung: der Produktsatz wird NICHT in add_line erzwungen. Der
+        Storno einer alten 7-%-Pfandrechnung muss mit 7 % gegenbuchen, sonst
+        ergibt er nicht null."""
+        pfand = _s1_pfandkiste(client)
+        kunde = _s1_kunde(client)
+        rechnung = client.post("/api/v1/invoices", json={
+            "customer_id": kunde["id"], "invoice_date": "2026-10-08",
+        }).json()
+        r = client.post(f"/api/v1/invoices/{rechnung['id']}/lines", json={
+            "description": "IFCO-Kiste", "quantity": 2, "unit": "STK", "unit_price": "3.00",
+            "tax_rate": "REDUZIERT", "product_id": pfand["id"],
+        })
+        assert r.status_code == 201, r.text
+        r = client.post(f"/api/v1/invoices/{rechnung['id']}/finalize")
+        assert r.status_code == 200, r.text
+
+        storno = client.post(f"/api/v1/invoices/{rechnung['id']}/cancel",
+                             json={"reason": "Steuersatz falsch"})
+        assert storno.status_code == 200, storno.text
+
+        gutschrift = storno.json()["credit_note"]
+        assert [z["tax_rate"] for z in _s1_rechnungszeilen(gutschrift["id"])] == ["REDUZIERT"]
