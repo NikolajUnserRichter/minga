@@ -359,9 +359,6 @@ def update_product_group(
         raise HTTPException(status_code=404, detail="Produktgruppe nicht gefunden")
 
     update_data = data.model_dump(exclude_unset=True)
-    # Wird der Artikel hier zum Pfand (Kategorie PFAND oder Pfandkennzeichen),
-    # gilt dieselbe Regel wie beim Anlegen — bisher blieb er auf 7 %.
-    update_data = pfand_vorgaben(update_data, set(update_data), bisher=product)
     for field, value in update_data.items():
         setattr(group, field, value)
 
@@ -422,9 +419,6 @@ def update_grow_plan(
         raise HTTPException(status_code=404, detail="Wachstumsplan nicht gefunden")
 
     update_data = data.model_dump(exclude_unset=True)
-    # Wird der Artikel hier zum Pfand (Kategorie PFAND oder Pfandkennzeichen),
-    # gilt dieselbe Regel wie beim Anlegen — bisher blieb er auf 7 %.
-    update_data = pfand_vorgaben(update_data, set(update_data), bisher=product)
     for field, value in update_data.items():
         setattr(plan, field, value)
 
@@ -539,9 +533,6 @@ def update_price_list(
         raise HTTPException(status_code=404, detail="Preisliste nicht gefunden")
 
     update_data = data.model_dump(exclude_unset=True)
-    # Wird der Artikel hier zum Pfand (Kategorie PFAND oder Pfandkennzeichen),
-    # gilt dieselbe Regel wie beim Anlegen — bisher blieb er auf 7 %.
-    update_data = pfand_vorgaben(update_data, set(update_data), bisher=product)
     for field, value in update_data.items():
         setattr(price_list, field, value)
 
@@ -607,9 +598,6 @@ def update_price_list_item(
         raise HTTPException(status_code=404, detail="Preislistenposition nicht gefunden")
 
     update_data = data.model_dump(exclude_unset=True)
-    # Wird der Artikel hier zum Pfand (Kategorie PFAND oder Pfandkennzeichen),
-    # gilt dieselbe Regel wie beim Anlegen — bisher blieb er auf 7 %.
-    update_data = pfand_vorgaben(update_data, set(update_data), bisher=product)
     for field, value in update_data.items():
         setattr(item, field, value)
 
