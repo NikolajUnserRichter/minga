@@ -12,6 +12,7 @@ from app.models.order import Order, OrderLine, OrderStatus, TaxRate
 from app.models.product import Product, ProductVariant
 from app.models.unit import UnitOfMeasure
 from app.services.pricing_service import resolve_unit_price
+from app.services.steuersatz import steuersatz_der_position
 from app.services.order_status_service import heute_berlin
 from app.api.v1.sales import router
 from typing import List
@@ -182,7 +183,9 @@ def abo_position(db, sub, heute: date) -> OrderLine:
         quantity=Decimal(str(sub.menge)),
         unit=einheit,
         unit_price=Decimal(str(preis or 0)),
-        tax_rate=produkt.tax_rate or TaxRate.REDUZIERT,
+        tax_rate=steuersatz_der_position(
+            db, produkt.id, variante.id if variante is not None else None, None
+        ),
         requested_delivery_date=heute,
     )
     _calculate_line_amounts(line)
