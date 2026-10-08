@@ -1205,3 +1205,11 @@ class TestP4Faelligkeit:
         assert len(bestellungen) == 1
         assert bestellungen[0]["requested_delivery_date"] == _P4_DO
         assert bestellungen[0]["status"] == "ENTWURF"
+
+
+class TestP4AboRechnungstask:
+    """A5: Der nie eingeplante Abo-Rechnungstask rechnete fest 0,08 EUR und 7 %."""
+
+    def test_abo_rechnungstask_ist_entfernt(self):
+        import app.tasks.invoice_tasks as invoice_tasks
+        assert not hasattr(invoice_tasks, "generate_recurring_invoices")
