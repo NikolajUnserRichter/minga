@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session
 
 from app.models.order import Order, OrderAuditLog, OrderStatus
 from app.services.order_fulfillment_service import deduct_inventory_for_order
+from app.services.invoice_service import InvoiceService
 
 
 # IN_PRODUKTION heißt in der Oberfläche "Gepackt" (Entscheidung 08.10.2026).
@@ -101,6 +102,13 @@ def setze_status(
     Transaktion. Jeder Wechsel schreibt genau einen Audit-Log-Eintrag.
     """
     alt = order.status
+    if neu == OrderStatus.STORNIERT:
+        rechnung = InvoiceService(db).aktive_rechnung_zur_bestellung(order.id)
+        if rechnung is not None:
+            raise StatuswechselFehler(
+                f"Bestellung ist bereits berechnet ({rechnung.invoice_number}) "
+                "— erst die Rechnung stornieren"
+            )
     pruefe_uebergang(alt, neu)
 
     if lieferdatum is not None and neu != OrderStatus.GELIEFERT:

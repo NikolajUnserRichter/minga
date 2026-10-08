@@ -1458,3 +1458,72 @@ class TestP4AboLauf:
         # liefertag_heute ruft order_status_service.heute_berlin (eine Regel)
         with patch.object(order_status_service, "datetime", _Uhr):
             assert liefertag_heute() == date(2026, 10, 8)
+
+
+class TestNacharbeitStornosperre:
+    @pytest.mark.parametrize("bestellstatus", ["ENTWURF", "BESTAETIGT", "IN_PRODUKTION"])
+    @pytest.mark.parametrize("rechnungsart", ["entwurf", "offen", "sammel"])
+    @pytest.mark.parametrize("weg", ["status", "sammel"])
+    def test_aktive_rechnung_sperrt_storno_bis_rechnungsstorno(
+        self, client, bestellstatus, rechnungsart, weg
+    ):
+        kunde = _kunde(client)
+        anlegen = {
+            "ENTWURF": _bestellung, "BESTAETIGT": _bestaetigt, "IN_PRODUKTION": _gepackt,
+        }[bestellstatus]
+        order = anlegen(client, kunde)
+        weitere = _bestaetigt(client, kunde)
+        if rechnungsart == "sammel":
+            _lieferschein(client, order)
+            response = client.post("/api/v1/invoices/batch-run/commit", json={
+                "period_from": order["requested_delivery_date"],
+                "period_to": order["requested_delivery_date"],
+                "customer_ids": [kunde["id"]],
+            })
+            assert response.status_code == 201, response.text
+            rechnung = response.json()["rechnungen"][0]
+        else:
+            response = client.post(f"/api/v1/invoices/from-order/{order['id']}")
+            assert response.status_code == 201, response.text
+            rechnung = response.json()
+            if rechnungsart == "offen":
+                response = client.post(f"/api/v1/invoices/{rechnung['id']}/finalize")
+                assert response.status_code == 200, response.text
+
+        def stornieren():
+            if weg == "status":
+                return _status(client, order, "STORNIERT", reason="Aus Bearbeiten-Dialog")
+            return client.post("/api/v1/sales/orders/bulk-status", json={
+                "order_ids": [weitere["id"], order["id"]], "status": "STORNIERT",
+            })
+
+        vorher = _audit(client, order)
+        response = stornieren()
+        assert response.status_code == 400, response.text
+        assert rechnung["invoice_number"] in response.json()["detail"]
+        assert "erst die Rechnung stornieren" in response.json()["detail"]
+        assert _lesen(client, order)["status"] == bestellstatus
+        assert _lesen(client, weitere)["status"] == "BESTAETIGT"
+        assert _audit(client, order) == vorher
+
+        response = client.post(f"/api/v1/invoices/{rechnung['id']}/cancel", json={
+            "reason": "Bestellung entfällt", "create_credit_note": rechnungsart != "entwurf",
+        })
+        assert response.status_code == 200, response.text
+        response = stornieren()
+        assert response.status_code == 200, response.text
+        assert _lesen(client, order)["status"] == "STORNIERT"
+
+    def test_service_verweigert_storno_vor_jeder_aenderung(self, client):
+        from app.models.order import Order, OrderStatus
+        from app.services.order_status_service import StatuswechselFehler, setze_status
+
+        order = _bestaetigt(client, _kunde(client))
+        response = client.post(f"/api/v1/invoices/from-order/{order['id']}")
+        assert response.status_code == 201, response.text
+        with TestingSessionLocal() as db:
+            gespeichert = db.get(Order, uuid.UUID(order["id"]))
+            with pytest.raises(StatuswechselFehler, match=response.json()["invoice_number"]):
+                setze_status(db, gespeichert, OrderStatus.STORNIERT, user=None)
+            assert gespeichert.status == OrderStatus.BESTAETIGT
+            assert not db.new
