@@ -1844,3 +1844,157 @@ class TestDatevWiederholungsexport:
         assert erster[-1] == zahlung
         assert zweiter == []
         assert wiederholt == erster
+
+
+# ---------------------------------------------------------------------------
+# S6 — Doppelte Abrechnung verhindern
+# ---------------------------------------------------------------------------
+
+S6_PREVIEW = "/api/v1/invoices/batch-run/preview"
+S6_COMMIT = "/api/v1/invoices/batch-run/commit"
+
+
+def _s6_kunde(client, name="Ökoring Handels GmbH"):
+    r = client.post("/api/v1/sales/customers", json={"name": name, "typ": "HANDEL"})
+    assert r.status_code in (200, 201), r.text
+    return r.json()
+
+
+def _s6_bestellung(client, kunde, liefertag="2026-03-05", menge=10, preis=2.50):
+    """Freitext-Position mit ausdrücklichem Satz — bleibt vom A3-Fix unberührt."""
+    r = client.post("/api/v1/sales/orders", json={
+        "customer_id": kunde["id"],
+        "requested_delivery_date": liefertag,
+        "lines": [{"product_name": "Erbsen-Schale", "quantity": menge, "unit": "STK",
+                   "unit_price": preis, "tax_rate": "REDUZIERT"}],
+    })
+    assert r.status_code == 201, r.text
+    return r.json()
+
+
+def _s6_lieferschein(client, bestellung, zusaetzlich=False):
+    params = {"zusaetzlich": "true"} if zusaetzlich else None
+    r = client.post(f"/api/v1/sales/orders/{bestellung['id']}/delivery-notes",
+                    json={}, params=params)
+    assert r.status_code == 201, r.text
+    return r.json()
+
+
+def _s6_aus_bestellung(client, bestellung):
+    return client.post(f"/api/v1/invoices/from-order/{bestellung['id']}")
+
+
+def _s6_finalisieren(client, rechnung):
+    r = client.post(f"/api/v1/invoices/{rechnung['id']}/finalize")
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def _s6_storno(client, rechnung):
+    r = client.post(f"/api/v1/invoices/{rechnung['id']}/cancel", json={
+        "reason": "Pfand mit falschem Steuersatz", "reason_code": "PREISFEHLER",
+    })
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def _s6_lauf(client, endpoint):
+    r = client.post(endpoint, json={"period_from": "2026-03-01", "period_to": "2026-03-31"})
+    assert r.status_code in (200, 201), r.text
+    return r.json()
+
+
+def _s6_rechnung_ohne_bestellung(client, kunde):
+    """Manuelle Rechnung ohne Bestellbezug — schnell, ohne Bestellanlage."""
+    r = client.post("/api/v1/invoices", json={
+        "customer_id": kunde["id"], "invoice_date": date.today().isoformat(),
+    })
+    assert r.status_code == 201, r.text
+    return r.json()
+
+
+def _s6_pdf_text(client, rechnung):
+    from tests.test_documents_preise import _pdf_text
+    r = client.get(f"/api/v1/invoices/{rechnung['id']}/pdf")
+    assert r.status_code == 200, r.text
+    return _pdf_text(r.content)
+
+
+def _s6_ls_an_rechnung(client, rechnung):
+    r = client.get(f"/api/v1/invoices/{rechnung['id']}/delivery-notes")
+    assert r.status_code == 200, r.text
+    return sorted(n["delivery_note_number"] for n in r.json())
+
+
+class TestS6KeineZweiteRechnungZurBestellung:
+    """(a) from-order lehnt ab, solange eine nicht stornierte Rechnung existiert."""
+
+    def test_zweite_rechnung_aus_bestellung_wird_abgelehnt(self, client):
+        bestellung = _s6_bestellung(client, _s6_kunde(client))
+        erste = _s6_aus_bestellung(client, bestellung)
+        assert erste.status_code == 201, erste.text
+
+        zweite = _s6_aus_bestellung(client, bestellung)
+
+        assert zweite.status_code == 409, zweite.text
+        assert erste.json()["invoice_number"] in zweite.json()["detail"]
+        alle = client.get("/api/v1/invoices",
+                          params={"customer_id": bestellung["customer_id"]}).json()
+        assert len(alle) == 1, "Die abgelehnte Rechnung darf nicht gespeichert sein"
+
+    def test_finalisierte_rechnung_sperrt_ebenso(self, client):
+        bestellung = _s6_bestellung(client, _s6_kunde(client))
+        _s6_finalisieren(client, _s6_aus_bestellung(client, bestellung).json())
+
+        assert _s6_aus_bestellung(client, bestellung).status_code == 409
+
+    def test_nach_storno_ist_neuausstellung_erlaubt(self, client):
+        """Runbook S3: RE-00002/4 stornieren und neu ausstellen."""
+        bestellung = _s6_bestellung(client, _s6_kunde(client))
+        erste = _s6_finalisieren(client, _s6_aus_bestellung(client, bestellung).json())
+        _s6_storno(client, erste)
+
+        neu = _s6_aus_bestellung(client, bestellung)
+
+        assert neu.status_code == 201, neu.text
+        assert neu.json()["id"] != erste["id"]
+        # ... und die Neuausstellung sperrt wieder
+        assert _s6_aus_bestellung(client, bestellung).status_code == 409
+
+    def test_sammelrechnung_sperrt_rechnung_aus_bestellung(self, client):
+        bestellung = _s6_bestellung(client, _s6_kunde(client))
+        _s6_lieferschein(client, bestellung)
+        sammel = _s6_lauf(client, S6_COMMIT)["rechnungen"][0]
+
+        r = _s6_aus_bestellung(client, bestellung)
+
+        assert r.status_code == 409, r.text
+        assert sammel["invoice_number"] in r.json()["detail"]
+
+    def test_manuelle_rechnung_mit_bestellbezug_wird_abgelehnt(self, client):
+        bestellung = _s6_bestellung(client, _s6_kunde(client))
+        assert _s6_aus_bestellung(client, bestellung).status_code == 201
+
+        r = client.post("/api/v1/invoices", json={
+            "customer_id": bestellung["customer_id"], "order_id": bestellung["id"],
+            "invoice_date": date.today().isoformat(),
+        })
+
+        assert r.status_code == 409, r.text
+
+    def test_bestellstatus_bleibt_und_lieferung_ist_weiter_moeglich(self, client):
+        """(f) Kein automatisches FAKTURIERT: Rechnung vor Lieferung darf das
+        Quittieren (GELIEFERT + Bestandsabbuchung) nicht aushebeln."""
+        bestellung = _s6_bestellung(client, _s6_kunde(client),
+                                    liefertag=date.today().isoformat())
+        r = client.post(f"/api/v1/sales/orders/{bestellung['id']}/confirm")
+        assert r.status_code == 200, r.text
+        ls = _s6_lieferschein(client, bestellung)
+        assert _s6_aus_bestellung(client, bestellung).status_code == 201
+
+        assert client.get(f"/api/v1/sales/orders/{bestellung['id']}").json()["status"] == "BESTAETIGT"
+
+        r = client.patch(f"/api/v1/sales/delivery-notes/{ls['id']}/mark-delivered",
+                         json={"signed_by": "Fahrer"})
+        assert r.status_code == 200, r.text
+        assert client.get(f"/api/v1/sales/orders/{bestellung['id']}").json()["status"] == "GELIEFERT"

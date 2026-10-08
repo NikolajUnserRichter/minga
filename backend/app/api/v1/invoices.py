@@ -21,7 +21,7 @@ from app.schemas.invoice import (
     InvoiceSendRequest, InvoiceCancelRequest,
     DatevExportRequest, DatevExportResponse,
 )
-from app.services.invoice_service import InvoiceService
+from app.services.invoice_service import InvoiceService, BereitsAbgerechnet
 from app.services.datev_service import DatevService
 from app.services.email_service import send_email, EmailNotConfiguredError
 from app.services.pdf_service import load_company_settings
@@ -123,6 +123,8 @@ def create_invoice(data: InvoiceCreate, db: DBSession):
         db.commit()
         db.refresh(invoice)
         return invoice
+    except BereitsAbgerechnet as e:
+        raise HTTPException(status_code=409, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -136,6 +138,8 @@ def create_invoice_from_order(order_id: UUID, db: DBSession):
         db.commit()
         db.refresh(invoice)
         return invoice
+    except BereitsAbgerechnet as e:
+        raise HTTPException(status_code=409, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 

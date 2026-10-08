@@ -9,7 +9,7 @@ from uuid import UUID
 from io import StringIO
 import csv
 from sqlalchemy.orm import Session
-from sqlalchemy import select, func, and_
+from sqlalchemy import select, func, and_, or_
 
 from app.models.invoice import (
     Invoice, InvoiceLine, Payment,
@@ -19,12 +19,21 @@ from app.models.invoice import (
 from app.models.customer import Customer, AddressType
 from app.models.order import Order, OrderLine
 from app.models.product import Product
+from app.models.documents import DeliveryNote
 from app.services.steuersatz import produkt_der_position, steuersatz_der_position
 
 
 def _euro(betrag: Decimal) -> str:
     """Betrag mit deutschem Dezimalkomma: Decimal("5") -> "5,00 €"."""
     return f"{Decimal(betrag):.2f} €".replace(".", ",")
+
+
+class BereitsAbgerechnet(ValueError):
+    """Zur Bestellung gibt es schon eine nicht stornierte Rechnung.
+
+    Unterklasse von ValueError: bestehende Aufrufer, die ValueError fangen,
+    funktionieren weiter. Die API macht daraus 409 statt 400.
+    """
 
 
 class InvoiceService:
@@ -54,6 +63,21 @@ class InvoiceService:
         customer = self.db.get(Customer, customer_id)
         if not customer:
             raise ValueError("Kunde nicht gefunden")
+
+        # Doppelabrechnung: je Bestellung höchstens eine nicht stornierte
+        # Rechnung. Gilt für "Rechnung aus Bestellung" und für manuell
+        # angelegte Rechnungen mit Bestellbezug. Vor dem Anlegen der neuen
+        # Rechnung — danach fände die Abfrage sie selbst.
+        if order_id is not None and invoice_type == InvoiceType.RECHNUNG:
+            vorhandene = self.aktive_rechnung_zur_bestellung(order_id)
+            if vorhandene is not None:
+                order = self.db.get(Order, order_id)
+                raise BereitsAbgerechnet(
+                    f"Zur Bestellung {order.order_number if order else order_id} gibt es "
+                    f"bereits die Rechnung {vorhandene.invoice_number} "
+                    f"({vorhandene.status.value}). Eine zweite Rechnung ist nicht möglich. "
+                    f"Zur Korrektur die Rechnung stornieren und danach neu ausstellen."
+                )
 
         # Rechnungsnummer generieren
         invoice_number = self._generate_next_invoice_number(invoice_type)
@@ -253,6 +277,34 @@ class InvoiceService:
         invoice.calculate_totals()
 
         return invoice
+
+    def aktive_rechnung_zur_bestellung(self, order_id: UUID) -> Optional[Invoice]:
+        """Die nicht stornierte Rechnung, in der die Bestellung steckt, sonst None.
+
+        Zwei Wege führen von der Bestellung zur Rechnung:
+        - Rechnung aus Bestellung: Invoice.order_id
+        - Sammelrechnung: ein Lieferschein der Bestellung trägt invoice_id
+        Nur Typ RECHNUNG zählt: Gutschriften (Storno), Proforma und
+        Abschlagsrechnungen sperren nicht.
+        """
+        return self.db.execute(
+            select(Invoice)
+            .where(
+                Invoice.invoice_type == InvoiceType.RECHNUNG,
+                Invoice.status != InvoiceStatus.STORNIERT,
+                or_(
+                    Invoice.order_id == order_id,
+                    Invoice.id.in_(
+                        select(DeliveryNote.invoice_id).where(
+                            DeliveryNote.order_id == order_id,
+                            DeliveryNote.invoice_id.is_not(None),
+                        )
+                    ),
+                ),
+            )
+            .order_by(Invoice.invoice_number)
+            .limit(1)
+        ).scalars().first()
 
     def finalize_invoice(self, invoice_id: UUID) -> Invoice:
         """
