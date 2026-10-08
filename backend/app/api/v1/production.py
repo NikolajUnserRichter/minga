@@ -676,6 +676,8 @@ def get_packaging_plan(
     braucht die Sortenmengen, um die Kartons zusammenzubauen.
     Entwürfe werden mitgezählt und per Status gekennzeichnet, damit noch
     nicht bestätigte Bestellungen nicht unsichtbar bleiben.
+    Gepackte Bestellungen (IN_PRODUKTION, Oberfläche "Gepackt") zählen weder
+    in `items` noch in `komponenten`; sie stehen nur namentlich unter `gepackt`.
     """
     from datetime import timedelta
     from decimal import Decimal
@@ -698,6 +700,9 @@ def get_packaging_plan(
         .order_by(Order.requested_delivery_date)
     ).scalars().unique().all()
     orders = [o for o in orders if o.effective_packing_date == target_date]
+    # Was schon im Karton liegt, braucht keine Sorten mehr (A4, 08.10.2026).
+    gepackt = [o for o in orders if o.status in _SCHON_GEPACKT]
+    orders = [o for o in orders if o.status in _NOCH_ZU_PACKEN]
 
     # 2. Aggregieren
     plan = {}
@@ -791,6 +796,12 @@ def get_packaging_plan(
         "target_date": target_date,
         "items": list(plan.values()),
         "komponenten": sorted(komponenten.values(), key=lambda k: k["product_name"]),
+        "gepackt": [{
+            "order_id": str(o.id),
+            "order_number": o.order_number,
+            "customer_name": o.customer.name if o.customer else "—",
+            "delivery_date": o.requested_delivery_date.isoformat(),
+        } for o in gepackt],
     }
 
 

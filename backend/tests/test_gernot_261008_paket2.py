@@ -761,3 +761,64 @@ class TestTagesplanGepackt:
         assert plan["verpacken"] == []
         assert _a4_nummern(plan["verpacken_erledigt"]) == sorted(
             [geliefert["order_number"], fakturiert["order_number"]])
+
+
+@pytest.mark.usefixtures("_a4_ohne_celery")
+class TestSortenbedarfGepackt:
+    """A4: Sortenbedarf und Packliste zählen nur, was noch zu packen ist."""
+
+    def test_gepackte_zaehlt_nicht_im_sortenbedarf(self, client):
+        heute, morgen = date.today(), date.today() + timedelta(days=1)
+        _a4_bestellung(client, morgen, menge=3)
+        gepackt = _a4_bestellung(client, morgen, menge=5)
+        _a4_packen(client, gepackt)
+
+        plan = _a4_packplan(client, heute)
+        bedarf = {k["product_name"]: k["total_quantity"] for k in plan["komponenten"]}
+        assert bedarf == {"Erbsen-Schale": 3}
+
+    def test_gepackte_zaehlt_nicht_in_der_packliste(self, client):
+        """`items` speist den Tab Verpackungsplan auf der Produktionsseite."""
+        heute, morgen = date.today(), date.today() + timedelta(days=1)
+        offen = _a4_bestellung(client, morgen, menge=3)
+        gepackt = _a4_bestellung(client, morgen, menge=5)
+        _a4_packen(client, gepackt)
+
+        items = _a4_packplan(client, heute)["items"]
+        assert len(items) == 1
+        assert items[0]["total_quantity"] == 3
+        assert [o["order_number"] for o in items[0]["orders"]] == [offen["order_number"]]
+
+    def test_gepackte_werden_benannt(self, client):
+        """Niemand soll eine Bestellung suchen müssen, die schon im Karton liegt."""
+        heute, morgen = date.today(), date.today() + timedelta(days=1)
+        gepackt = _a4_bestellung(client, morgen)
+        _a4_packen(client, gepackt)
+
+        plan = _a4_packplan(client, heute)
+        assert plan["komponenten"] == []
+        assert plan["items"] == []
+        assert [g["order_number"] for g in plan["gepackt"]] == [gepackt["order_number"]]
+        assert plan["gepackt"][0]["order_id"] == gepackt["id"]
+        assert plan["gepackt"][0]["delivery_date"] == morgen.isoformat()
+
+    def test_bestaetigte_und_entwuerfe_zaehlen_weiter(self, client):
+        """Charakterisierung: ohne Packmarke bleibt alles im Bedarf, auch Entwürfe."""
+        heute, morgen = date.today(), date.today() + timedelta(days=1)
+        _a4_bestellung(client, morgen, menge=3)
+        _a4_bestellung(client, morgen, menge=4, bestaetigen=False)
+
+        bedarf = {k["product_name"]: k["total_quantity"] for k in _a4_packplan(client, heute)["komponenten"]}
+        assert bedarf == {"Erbsen-Schale": 7}
+
+    def test_gelieferte_zaehlt_nicht(self, client):
+        """Charakterisierung: GELIEFERT war schon vorher ausgeschlossen und bleibt es."""
+        heute, morgen = date.today(), date.today() + timedelta(days=1)
+        order = _a4_bestellung(client, morgen)
+        _a4_packen(client, order)
+        r = _a4_status(client, order, "GELIEFERT")
+        assert r.status_code == 200, r.text
+
+        plan = _a4_packplan(client, heute)
+        assert plan["komponenten"] == []
+        assert plan["items"] == []
