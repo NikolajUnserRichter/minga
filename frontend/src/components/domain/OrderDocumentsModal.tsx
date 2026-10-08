@@ -1,11 +1,12 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { FileText, Truck, Package, Send, Download, Plus, CheckCheck, Receipt, Mail } from 'lucide-react';
+import { FileText, Truck, Package, Send, Download, Plus, CheckCheck, Receipt, Mail, Pencil } from 'lucide-react';
 import { Modal } from '../ui/Modal';
 import { Button, Input, useToast } from '../ui';
 import { documentsApi, invoicesApi, OrderConfirmation, DeliveryNote } from '../../services/api';
 import { Order, Invoice } from '../../types';
 import { getErrorMessage } from '../../services/errors';
+import { InvoiceDetail } from '../../pages/Invoices';
 
 interface Props {
   open: boolean;
@@ -44,16 +45,18 @@ export function OrderDocumentsModal({ open, onClose, order }: Props) {
   // Sammelrechnung (über den Lieferschein). Früher wurden die 20 neuesten
   // Rechnungen clientseitig gefiltert — ab Rechnung 21 stand hier "keine
   // Rechnung", und der Knopf erzeugte eine Doppelrechnung.
+  // page_size 100: ohne Angabe kürzt das Backend still auf 20.
+  // Schlüssel unter 'invoices', damit Änderungen im Entwurf (InvoiceDetail
+  // invalidiert ['invoices']) auch diese Liste neu laden.
   const invoicesQuery = useQuery({
-    queryKey: ['order-invoices', orderId],
-    queryFn: () => invoicesApi.list({ order_id: orderId! }),
+    queryKey: ['invoices', 'order', orderId],
+    queryFn: () => invoicesApi.list({ order_id: orderId!, page_size: 100 }),
     enabled: open && !!orderId,
   });
 
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ['confirmations', orderId] });
     queryClient.invalidateQueries({ queryKey: ['delivery-notes', orderId] });
-    queryClient.invalidateQueries({ queryKey: ['order-invoices', orderId] });
     queryClient.invalidateQueries({ queryKey: ['invoices'] });
     queryClient.invalidateQueries({ queryKey: ['orders'] });
   };
@@ -146,6 +149,8 @@ export function OrderDocumentsModal({ open, onClose, order }: Props) {
   });
 
   const [signedByInput, setSignedByInput] = useState<Record<string, string>>({});
+  // Aufgeklappte Rechnung: Positionen prüfen und im Entwurf bearbeiten
+  const [offeneRechnung, setOffeneRechnung] = useState<string | null>(null);
 
   if (!order) return null;
 
@@ -336,13 +341,22 @@ export function OrderDocumentsModal({ open, onClose, order }: Props) {
           ) : (
             <ul className="space-y-2">
               {invoices.map((inv: Invoice) => (
-                <li key={inv.id} className="flex items-center justify-between border rounded p-2 dark:border-gray-700">
+                <li key={inv.id} className="border rounded p-2 dark:border-gray-700">
+                  <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
                     <span className="font-mono text-sm">{inv.invoice_number}</span>
                     <span className={`text-xs px-2 py-0.5 rounded ${statusBadge(inv.status)}`}>{inv.status}</span>
                     <span className="text-xs text-gray-500">€ {Number(inv.total || 0).toFixed(2)}</span>
                   </div>
                   <div className="flex gap-1">
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      icon={<Pencil className="w-3 h-3" />}
+                      onClick={() => setOffeneRechnung(offeneRechnung === inv.id ? null : inv.id)}
+                    >
+                      {inv.status === 'ENTWURF' ? 'Bearbeiten' : 'Positionen'}
+                    </Button>
                     <Button
                       size="sm"
                       variant="secondary"
@@ -377,6 +391,12 @@ export function OrderDocumentsModal({ open, onClose, order }: Props) {
                       </Button>
                     )}
                   </div>
+                  </div>
+                  {offeneRechnung === inv.id && (
+                    <div className="mt-3 border-t pt-3 dark:border-gray-700">
+                      <InvoiceDetail invoice={inv} />
+                    </div>
+                  )}
                 </li>
               ))}
             </ul>

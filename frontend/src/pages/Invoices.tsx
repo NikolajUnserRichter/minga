@@ -489,7 +489,7 @@ export default function Invoices() {
                       </Button>
                     )}
                     <Button variant="ghost" size="sm" onClick={() => setSelectedInvoice(invoice)}>
-                      Details
+                      {invoice.status === 'ENTWURF' ? 'Bearbeiten' : 'Details'}
                     </Button>
                   </td>
                 </tr>
@@ -997,16 +997,21 @@ function DatevExportForm({ onClose }: { onClose: () => void }) {
   );
 }
 
-// Invoice Detail
-function InvoiceDetail({ invoice: initial }: { invoice: Invoice }) {
+// Invoice Detail — auch im Belege-Dialog der Bestellung (OrderDocumentsModal)
+export function InvoiceDetail({ invoice: initial }: { invoice: Invoice }) {
   const queryClient = useQueryClient();
   const toast = useToast();
 
   // Refetch invoice details after every mutation so the lines list stays in sync.
-  const { data: refreshed } = useQuery({
+  const { data: refreshed, isError: detailFehler } = useQuery({
     queryKey: ['invoice', initial.id],
     queryFn: () => invoicesApi.get(initial.id),
     initialData: initial,
+    // initialData ist der Listeneintrag. GET /invoices liefert ihn ohne
+    // Positionen (InvoiceResponse, kein lines). Mit staleTime 60 s aus
+    // main.tsx gälte er als frisch und würde beim Öffnen nicht nachgeladen —
+    // der Dialog zeigte "Keine Positionen" und keinen Löschknopf (B4).
+    refetchOnMount: 'always',
   });
   const invoice = refreshed || initial;
   const isDraft = invoice.status === 'ENTWURF';
@@ -1097,6 +1102,7 @@ function InvoiceDetail({ invoice: initial }: { invoice: Invoice }) {
       invalidate();
       toast.success('Position entfernt');
     },
+    onError: (e: any) => toast.error(getErrorMessage(e, 'Position konnte nicht entfernt werden')),
   });
 
   const handleProductSelect = (productId: string) => {
@@ -1229,7 +1235,12 @@ function InvoiceDetail({ invoice: initial }: { invoice: Invoice }) {
             <tbody>
               {invoice.lines.map((line) => (
                 <tr key={line.id} className="border-b">
-                  <td className="py-2">{line.description}</td>
+                  <td className="py-2">
+                    {line.description}
+                    {line.is_deposit && (
+                      <Badge variant="info" size="sm" className="ml-2">Pfand</Badge>
+                    )}
+                  </td>
                   <td className="text-right py-2">
                     {line.quantity} {line.unit}
                   </td>
@@ -1240,7 +1251,11 @@ function InvoiceDetail({ invoice: initial }: { invoice: Invoice }) {
                       <button
                         type="button"
                         title="Position entfernen"
-                        onClick={() => deleteLineMutation.mutate(line.id)}
+                        disabled={deleteLineMutation.isPending}
+                        onClick={() => {
+                          if (!confirm(`Position „${line.description}" aus dem Entwurf entfernen?`)) return;
+                          deleteLineMutation.mutate(line.id);
+                        }}
                         className="text-red-600 hover:text-red-800 dark:text-red-400"
                       >
                         ×
@@ -1252,7 +1267,13 @@ function InvoiceDetail({ invoice: initial }: { invoice: Invoice }) {
             </tbody>
           </table>
         ) : (
-          <p className="text-gray-500 dark:text-gray-400 text-sm">Keine Positionen</p>
+          <p className="text-gray-500 dark:text-gray-400 text-sm">
+            {invoice.lines
+              ? 'Keine Positionen'
+              : detailFehler
+                ? 'Positionen konnten nicht geladen werden.'
+                : 'Positionen werden geladen …'}
+          </p>
         )}
 
         {isDraft && (
