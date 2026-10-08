@@ -359,6 +359,14 @@ class InvoiceService:
                 "Entwurf korrigieren und finalisieren oder ohne Stornorechnung verwerfen"
             )
 
+        # DATEV kennt die Rechnung schon. Ohne Stornorechnung fiele sie aus
+        # jedem weiteren Export, ihr Umsatz bliebe in DATEV still stehen.
+        if invoice.datev_exported and not create_credit_note:
+            raise ValueError(
+                "Die Rechnung wurde bereits an DATEV exportiert und kann nur mit "
+                "Stornorechnung storniert werden"
+            )
+
         # Original stornieren
         invoice.status = InvoiceStatus.STORNIERT
         invoice.internal_notes = f"{invoice.internal_notes or ''}\n\nStorniert: {reason}".strip()

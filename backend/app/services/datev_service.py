@@ -4,8 +4,8 @@ from typing import Optional
 import csv
 from io import StringIO
 
-from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy import select, and_, or_
+from sqlalchemy.orm import Session, aliased
 
 from app.models.invoice import (
     Invoice, InvoiceLine, InvoiceStatus, InvoiceType, Payment, PaymentMethod,
@@ -155,6 +155,50 @@ class DatevService:
     def __init__(self, db: Session):
         self.db = db
 
+    def _rechnungen(
+        self, from_date: date, to_date: date, erneut_exportieren: bool = False
+    ) -> list[Invoice]:
+        """Buchungsrelevante Belege im Zeitraum.
+
+        - Entwürfe nie, Proforma/Abschlag nie.
+        - Eine Stornorechnung (GUTSCHRIFT mit original_invoice_id) immer,
+          gleich mit welchem Status: der Storno-Abschnitt setzt sie auf
+          STORNIERT, sie bleibt trotzdem ein Beleg.
+        - Eine stornierte RECHNUNG nur, wenn eine Stornorechnung existiert:
+          dann sind beide Belege und heben sich in DATEV auf. Ohne Gegenbeleg
+          (Storno ohne Stornorechnung, per PATCH stornierter Entwurf) gäbe es
+          nur Umsatz, den es nie gab.
+        - Eine stornierte Gutschrift von Hand (verworfener Entwurf) nie.
+        - Bereits exportierte nur mit erneut_exportieren=True.
+        """
+        storno = aliased(Invoice)
+        hat_stornorechnung = (
+            select(storno.id)
+            .where(
+                storno.original_invoice_id == Invoice.id,
+                storno.invoice_type == InvoiceType.GUTSCHRIFT,
+                storno.status != InvoiceStatus.ENTWURF,
+            )
+            .exists()
+        )
+        ist_stornorechnung = and_(
+            Invoice.invoice_type == InvoiceType.GUTSCHRIFT,
+            Invoice.original_invoice_id.isnot(None),
+        )
+        query = select(Invoice).where(
+            Invoice.invoice_date.between(from_date, to_date),
+            Invoice.status != InvoiceStatus.ENTWURF,
+            Invoice.invoice_type.in_(EXPORTIERBARE_TYPEN),
+            or_(
+                ist_stornorechnung,
+                Invoice.status != InvoiceStatus.STORNIERT,
+                hat_stornorechnung,
+            ),
+        )
+        if not erneut_exportieren:
+            query = query.where(Invoice.datev_exported == False)  # noqa: E712
+        return self.db.execute(query.order_by(Invoice.invoice_number)).scalars().all()
+
     def export_invoices_csv(
         self,
         from_date: date,
@@ -166,17 +210,7 @@ class DatevService:
         Gibt CSV-Content, Anzahl Records und den Saldo der Rechnungszeilen
         (S positiv, H negativ, brutto) zurück.
         """
-        # Exclude drafts and already exported?
-        # Typically we want to export everything not yet exported within the range.
-        invoices = self.db.execute(
-            select(Invoice)
-            .where(
-                Invoice.invoice_date.between(from_date, to_date),
-                Invoice.status != InvoiceStatus.ENTWURF,
-                Invoice.datev_exported == False
-            )
-            .order_by(Invoice.invoice_number)
-        ).scalars().all()
+        invoices = self._rechnungen(from_date, to_date)
 
         output = StringIO()
         writer = csv.writer(output, delimiter=';', quoting=csv.QUOTE_MINIMAL)

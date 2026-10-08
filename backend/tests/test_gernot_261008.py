@@ -1721,3 +1721,64 @@ class TestDatevGutschrift:
             _datev_zeile("10,70", "H", "10008", "8300", gs["invoice_number"],
                          "Gutschrift 7 % Ökoring Testkunde"),
         ]
+
+
+class TestDatevBelegauswahl:
+    """Nur Buchungsbelege: kein Entwurf, keine Proforma, kein Storno ohne Gegenbeleg."""
+
+    def test_storniert_ohne_stornorechnung_wird_nicht_exportiert(self, client):
+        """Ohne Gegenbeleg würde DATEV Umsatz buchen, den es nie gab."""
+        from app.models.invoice import Invoice, InvoiceStatus
+        kunde = _datev_kunde(client)
+        rechnung = _datev_rechnung(client, kunde, DATEV_GEMISCHT)
+        # Zustand wie nach einem Storno ohne Gegenbeleg (create_credit_note=False
+        # oder PATCH status) — direkt gesetzt, damit der Test nicht davon abhängt,
+        # ob die API diesen Weg künftig noch erlaubt.
+        with TestingSessionLocal() as db:
+            db.get(Invoice, uuid.UUID(rechnung["id"])).status = InvoiceStatus.STORNIERT
+            db.commit()
+
+        daten, _, zeilen = _datev_export(client)
+
+        assert zeilen == []
+        assert daten["record_count"] == 0
+
+    def test_verworfene_gutschrift_von_hand_wird_nicht_exportiert(self, client):
+        """Eine von Hand angelegte Gutschrift, deren Entwurf per PATCH status=STORNIERT
+        verworfen wurde, ist kein Beleg. Nur die Stornorechnung (GUTSCHRIFT mit
+        original_invoice_id) wird unabhängig vom Status exportiert."""
+        from app.models.invoice import Invoice, InvoiceStatus
+        kunde = _datev_kunde(client)
+        gs = _datev_rechnung(client, kunde, [("Preisnachlass", 1, "10.00", "REDUZIERT")],
+                             typ="GUTSCHRIFT", finalisieren=False)
+        with TestingSessionLocal() as db:
+            db.get(Invoice, uuid.UUID(gs["id"])).status = InvoiceStatus.STORNIERT
+            db.commit()
+
+        _, _, zeilen = _datev_export(client)
+
+        assert zeilen == []
+
+    def test_proforma_und_entwurf_werden_nicht_exportiert(self, client):
+        kunde = _datev_kunde(client)
+        _datev_rechnung(client, kunde, DATEV_GEMISCHT, typ="PROFORMA")
+        _datev_rechnung(client, kunde, DATEV_GEMISCHT, finalisieren=False)
+
+        _, _, zeilen = _datev_export(client)
+
+        assert zeilen == []
+
+    def test_exportierte_rechnung_nur_mit_stornorechnung_stornierbar(self, client):
+        """Nach dem Export kann nur ein Gegenbeleg den Umsatz in DATEV aufheben.
+        Ein Storno ohne Stornorechnung nähme die Rechnung aus jedem weiteren
+        Export, der Umsatz bliebe in DATEV still stehen."""
+        kunde = _datev_kunde(client)
+        rechnung = _datev_rechnung(client, kunde, DATEV_GEMISCHT)
+        _datev_export(client)
+
+        r = client.post(f"/api/v1/invoices/{rechnung['id']}/cancel",
+                        json={"reason": "Doppelt erfasst", "create_credit_note": False})
+
+        assert r.status_code == 400, r.text
+        assert "DATEV" in r.json()["detail"]
+        assert client.get(f"/api/v1/invoices/{rechnung['id']}").json()["status"] == "OFFEN"
