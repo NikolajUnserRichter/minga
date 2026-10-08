@@ -57,9 +57,19 @@ export default function Dashboard() {
   const isDemo = !rawDashboard && !dashboardLoading;
   const dashboardData = rawDashboard || MOCK_DASHBOARD;
 
+  // Offen = bestätigt oder gepackt. Seit dem Knopf "Gepackt" im Tagesplan
+  // stehen Bestellungen über Nacht auf IN_PRODUKTION ("Gepackt") — sie sind
+  // weder geliefert noch berechnet und zählen weiter (A4, 08.10.2026).
+  // Entwürfe zählen wie bisher nicht mit (dafür gäbe es den Filter OFFEN).
   const { data: ordersData } = useQuery({
     queryKey: ['orders', 'open'],
-    queryFn: () => salesApi.listOrders({ status: 'BESTAETIGT' }),
+    queryFn: async () => {
+      const [bestaetigt, gepackt] = await Promise.all([
+        salesApi.listOrders({ status: 'BESTAETIGT' }),
+        salesApi.listOrders({ status: 'IN_PRODUKTION' }),
+      ]);
+      return { total: bestaetigt.total + gepackt.total };
+    },
     retry: 0,
   });
 
