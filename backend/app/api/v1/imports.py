@@ -265,6 +265,8 @@ HINWEISE = {
         "(auch 'Bestätigt', 'In Produktion', 'Gepackt'). GELIEFERT heißt: ohne "
         "Lieferschein und ohne Lagerabzug, der Sammellauf erfasst die Bestellung nicht. "
         "Bestelldatum: nicht in der Zukunft und nicht nach dem Lieferdatum. "
+        "Einheit leer = STK. Variable Bundles brauchen für offene Bestellungen ab heute "
+        "die Sortenauswahl in bundle_selections. "
         "Hat eine Zeile einen Fehler, wird keine Bestellung der Datei angelegt."
     ),
     "grow_batches": "Die Sorte muss vorher als Saatgut angelegt sein.",
@@ -533,6 +535,8 @@ _STATUS_AUS_DATEI = {
     "STORNIERT": OrderStatus.STORNIERT,
 }
 _GUELTIGE_STATUS = "ENTWURF, BESTAETIGT, IN_PRODUKTION, GELIEFERT, FAKTURIERT, STORNIERT"
+# Status, die noch gepackt und geliefert werden (wie day-plan, production.py)
+_OFFEN = (OrderStatus.ENTWURF, OrderStatus.BESTAETIGT, OrderStatus.IN_PRODUKTION)
 
 
 def _status_schluessel(roh: Any) -> str:
@@ -625,14 +629,39 @@ def _pruefe_bestellung(
             "Status-Spalte leer lassen oder BESTAETIGT eintragen"
         )
 
+    # Sortenauswahl nur dort Pflicht, wo noch gepackt wird — Altdaten
+    # gelieferter Bestellungen kennen sie oft nicht.
+    wird_noch_gepackt = status in _OFFEN and lieferdatum >= heute
     positionen: list[dict] = []
     for zeile in zeilen:
-        product = get_product(zeile["produkt_sku"])
+        sku = zeile["produkt_sku"]
+        product = get_product(sku)
         if not product:
-            fehler.append(f"Bestellung '{ext_nr}': SKU '{zeile['produkt_sku']}' nicht gefunden")
+            fehler.append(f"Bestellung '{ext_nr}': SKU '{sku}' nicht gefunden")
             continue
+        # Wie das Bestellschema (schemas/order.py: quantity > 0, unit_price >= 0)
+        if zeile["menge"] <= 0:
+            fehler.append(f"Bestellung '{ext_nr}', SKU '{sku}': Menge {zeile['menge']} — muss größer als 0 sein")
+        if zeile["einzelpreis"] < 0:
+            fehler.append(f"Bestellung '{ext_nr}', SKU '{sku}': Einzelpreis {zeile['einzelpreis']} ist negativ")
         auswahl, auswahl_fehler = _bundle_auswahl(ext_nr, zeile.get("bundle_selections"), get_product)
         fehler.extend(auswahl_fehler)
+        # Wie create_order (sales.py, Abschnitt „Variable Bundle")
+        if product.is_variable_bundle and wird_noch_gepackt and not auswahl_fehler:
+            if not auswahl:
+                fehler.append(
+                    f"Bestellung '{ext_nr}': '{product.name}' ist ein variables Bundle — "
+                    "bitte Sorten in bundle_selections angeben"
+                )
+            else:
+                slots = sum(s["quantity"] for s in auswahl)
+                min_slots = product.variable_bundle_min_slots or 1
+                max_slots = product.variable_bundle_max_slots or 99
+                if not min_slots <= slots <= max_slots:
+                    fehler.append(
+                        f"Bestellung '{ext_nr}': '{product.name}' braucht {min_slots}–{max_slots} "
+                        f"Sorten, erhalten: {slots}"
+                    )
         positionen.append({"produkt": product, "zeile": zeile, "auswahl": auswahl})
 
     if fehler:
@@ -688,7 +717,10 @@ def _lege_bestellung_an(db, plan: dict, used_numbers: set[str]) -> Order:
             product_sku=product.sku,
             beschreibung=product.name,  # Snapshot des Produktnamens
             quantity=zeile["menge"],
-            unit=zeile.get("einheit") or "g",
+            # Leer = Stück wie im Bestellformular (CreateOrderModal.tsx). Das
+            # Produkt trägt keine verlässliche Verkaufseinheit: base_unit ist
+            # beim Excel-Produktimport immer G, sales_units wird nirgends gepflegt.
+            unit=zeile.get("einheit") or "STK",
             unit_price=zeile["einzelpreis"],
             discount_percent=Decimal("0"),
             tax_rate=product.tax_rate or TaxRate.REDUZIERT,

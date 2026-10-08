@@ -405,3 +405,115 @@ class TestP5Kopfdaten:
             str(zelle) for zeile in workbook["Beispiel"].iter_rows(values_only=True) for zelle in zeile if zelle
         )
         assert "ENTWURF, BESTAETIGT, IN_PRODUKTION, GELIEFERT, FAKTURIERT, STORNIERT" in texte
+
+
+def _p5_variables_bundle(sku="MG-GASTROTRAY", min_slots=2, max_slots=3):
+    """Variables Bundle (Gastrotray): der Kunde wählt min..max Sorten."""
+    import uuid
+    from app.models.product import Product
+
+    bundle = _produkt(sku)
+    with TestingSessionLocal() as db:
+        produkt = db.get(Product, uuid.UUID(bundle["id"]))
+        produkt.is_variable_bundle = True
+        produkt.variable_bundle_min_slots = min_slots
+        produkt.variable_bundle_max_slots = max_slots
+        db.commit()
+    return bundle
+
+
+class TestP5Positionen:
+    """Menge, Preis, Einheit und Sortenauswahl wie im Bestellformular."""
+
+    def test_leere_einheit_wird_stueck(self, client):
+        """Formular-Standard ist STK (CreateOrderModal.tsx: 'es wird aktuell
+        nichts abgewogen verkauft'). Bisher wurde daraus 'g'."""
+        heute = _heute_berlin()
+        kunde = _kunde(client)
+        produkt = _produkt()
+
+        response = _import_bestellungen(client, [
+            _p5_zeile("P5-EINHEIT", kunde, produkt, heute, heute + timedelta(days=2), einheit=None),
+        ])
+
+        assert response.status_code == 200, response.text
+        assert [line["unit"] for line in _bestellung(client, "P5-EINHEIT")["lines"]] == ["STK"]
+
+    def test_angegebene_einheit_bleibt(self, client):
+        """Charakterisierung, schon grün: eine befüllte Einheit wird übernommen."""
+        heute = _heute_berlin()
+        kunde = _kunde(client)
+        produkt = _produkt()
+
+        response = _import_bestellungen(client, [
+            _p5_zeile("P5-KISTE", kunde, produkt, heute, heute + timedelta(days=2), einheit="KISTE_12"),
+        ])
+
+        assert response.status_code == 200, response.text
+        assert [line["unit"] for line in _bestellung(client, "P5-KISTE")["lines"]] == ["KISTE_12"]
+
+    def test_menge_null_und_negativer_preis(self, client):
+        heute = _heute_berlin()
+        lieferdatum = heute + timedelta(days=2)
+        kunde = _kunde(client)
+        produkt = _produkt()
+
+        response = _import_bestellungen(client, [
+            _p5_zeile("P5-NULL", kunde, produkt, heute, lieferdatum, menge=0),
+            _p5_zeile("P5-MINUS", kunde, produkt, heute, lieferdatum, preis="-1.00"),
+        ])
+
+        assert response.status_code == 400, response.text
+        detail = response.json()["detail"]
+        assert "Bestellung 'P5-NULL'" in detail and "Menge 0" in detail
+        assert "Bestellung 'P5-MINUS'" in detail and "Einzelpreis -1" in detail
+        assert _p5_referenzen(client) == set()
+
+    def test_offenes_variables_bundle_braucht_sorten_in_den_grenzen(self, client):
+        heute = _heute_berlin()
+        lieferdatum = heute + timedelta(days=2)
+        kunde = _kunde(client)
+        bundle = _p5_variables_bundle()
+        _produkt("MG-SONNE")  # Sorte existiert — der Fehler liegt an der Anzahl
+
+        response = _import_bestellungen(client, [
+            _p5_zeile("P5-OHNE-SORTEN", kunde, bundle, heute, lieferdatum),
+            _p5_zeile("P5-EINE-SORTE", kunde, bundle, heute, lieferdatum,
+                      bundle='[{"sku": "MG-SONNE", "quantity": 1}]'),
+        ])
+
+        assert response.status_code == 400, response.text
+        detail = response.json()["detail"]
+        assert "Bestellung 'P5-OHNE-SORTEN'" in detail and "variables Bundle" in detail
+        assert "Bestellung 'P5-EINE-SORTE'" in detail and "2–3 Sorten, erhalten: 1" in detail
+
+    def test_variables_bundle_mit_gueltiger_auswahl(self, client):
+        """Charakterisierung, schon grün: Auswahl wird aufgelöst und gespeichert."""
+        heute = _heute_berlin()
+        kunde = _kunde(client)
+        bundle = _p5_variables_bundle()
+        sonne = _produkt("MG-SONNE")
+        erbse = _produkt("MG-ERBSE")
+
+        response = _import_bestellungen(client, [
+            _p5_zeile("P5-TRAY", kunde, bundle, heute, heute + timedelta(days=2),
+                      bundle='[{"sku": "MG-SONNE", "quantity": 1}, {"sku": "MG-ERBSE", "quantity": 1}]'),
+        ])
+
+        assert response.status_code == 200, response.text
+        auswahl = _bestellung(client, "P5-TRAY")["lines"][0]["variable_bundle_selections"]
+        assert sorted(s["product_id"] for s in auswahl) == sorted([sonne["id"], erbse["id"]])
+
+    def test_geliefertes_variables_bundle_ohne_auswahl_bleibt_erlaubt(self, client):
+        """Charakterisierung, schon grün: Historie wird nicht mehr gepackt —
+        die Altdaten kennen die Sortenauswahl oft nicht."""
+        vergangen = _heute_berlin() - timedelta(days=5)
+        kunde = _kunde(client)
+        bundle = _p5_variables_bundle()
+
+        response = _import_bestellungen(client, [
+            _p5_zeile("P5-TRAY-ALT", kunde, bundle, vergangen, vergangen),
+        ])
+
+        assert response.status_code == 200, response.text
+        assert _bestellung(client, "P5-TRAY-ALT")["status"] == "GELIEFERT"
