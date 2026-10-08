@@ -957,3 +957,62 @@ class TestRechnungZeigtKunde:
         assert r.status_code == 200, r.text
         assert r.json()["invoice"]["customer_name"] == "Fruchthof Nagel"
         assert r.json()["credit_note"]["customer_name"] == "Fruchthof Nagel"
+
+
+# --- P3 / A2: keine Kundenabfrage je Zeile (N+1) ---
+from contextlib import contextmanager
+
+from sqlalchemy import event
+
+from tests.conftest import engine as _a2_engine
+
+
+@contextmanager
+def _a2_selects():
+    """Zählt SELECT-Anweisungen auf der Test-Engine während des Blocks."""
+    zaehler = {"n": 0}
+
+    def _mitzaehlen(conn, cursor, statement, parameters, context, executemany):
+        if statement.lstrip().upper().startswith("SELECT"):
+            zaehler["n"] += 1
+
+    event.listen(_a2_engine, "before_cursor_execute", _mitzaehlen)
+    try:
+        yield zaehler
+    finally:
+        event.remove(_a2_engine, "before_cursor_execute", _mitzaehlen)
+
+
+class TestRechnungslistenOhneNPlusEins:
+    """Der Kundenname darf nicht pro Zeile eine eigene Abfrage kosten."""
+
+    def _selects(self, client, url):
+        with _a2_selects() as z:
+            r = client.get(url)
+        return z["n"], _a2_liste(r)
+
+    def test_liste(self, client):
+        _a2_rechnung(client, _a2_kunde(client, "Kunde 0", "K-A2-100"))
+        einer, rows = self._selects(client, "/api/v1/invoices")
+        assert len(rows) == 1
+
+        for i in range(1, 4):
+            _a2_rechnung(client, _a2_kunde(client, f"Kunde {i}", f"K-A2-10{i}"))
+        vier, rows = self._selects(client, "/api/v1/invoices")
+        assert len(rows) == 4
+        assert {r["customer_name"] for r in rows} == {f"Kunde {i}" for i in range(4)}
+
+        assert vier == einer, f"{einer} SELECTs bei 1 Rechnung, {vier} bei 4 — N+1"
+
+    def test_ueberfaellig(self, client):
+        _a2_rechnung(client, _a2_kunde(client, "Kunde 0", "K-A2-100"), ueberfaellig=True)
+        einer, rows = self._selects(client, "/api/v1/invoices/overdue")
+        assert len(rows) == 1
+
+        for i in range(1, 4):
+            _a2_rechnung(client, _a2_kunde(client, f"Kunde {i}", f"K-A2-10{i}"), ueberfaellig=True)
+        vier, rows = self._selects(client, "/api/v1/invoices/overdue")
+        assert len(rows) == 4
+        assert {r["customer_name"] for r in rows} == {f"Kunde {i}" for i in range(4)}
+
+        assert vier == einer, f"{einer} SELECTs bei 1 Rechnung, {vier} bei 4 — N+1"

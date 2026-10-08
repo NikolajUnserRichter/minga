@@ -44,7 +44,9 @@ def list_invoices(
     to_date: Optional[date] = None,
 ):
     """Listet alle Rechnungen mit optionaler Filterung."""
-    query = select(Invoice).options(joinedload(Invoice.lines))
+    # Kunde mitladen: customer_name/customer_number lesen invoice.customer —
+    # ohne joinedload eine Kundenabfrage je Zeile.
+    query = select(Invoice).options(joinedload(Invoice.lines), joinedload(Invoice.customer))
 
     if status:
         query = query.where(Invoice.status == status)
@@ -72,9 +74,17 @@ def list_invoices(
 def list_overdue_invoices(db: DBSession):
     """Listet alle überfälligen Rechnungen."""
     service = InvoiceService(db)
-    overdue = service.check_overdue_invoices()
+    ids = [i.id for i in service.check_overdue_invoices()]
     db.commit()
-    return overdue
+    if not ids:
+        return []
+    # Der Commit verfällt alle geladenen Objekte. Ohne Neuladen läse die
+    # Serialisierung jede Rechnung und ihren Kunden einzeln nach (N+1).
+    return db.execute(
+        select(Invoice)
+        .options(joinedload(Invoice.customer))
+        .where(Invoice.id.in_(ids))
+    ).scalars().all()
 
 
 @router.get("/revenue-summary")
