@@ -434,11 +434,19 @@ export default function Production() {
                 (Lieferungen von morgen + Same-Day-Bestellungen)
               </span>
             </h3>
+            {/* Gepackte zählen nicht mehr mit — hier benannt, damit niemand sie sucht */}
+            {(packagingPlan?.gepackt ?? []).length > 0 && (
+              <span className="text-xs text-gray-500 dark:text-gray-400">
+                Bereits gepackt: {(packagingPlan?.gepackt ?? []).map((g) => `${g.customer_name} (${g.order_number})`).join(', ')}
+              </span>
+            )}
           </div>
           {!packagingPlan?.items || packagingPlan.items.length === 0 ? (
             <EmptyState
-              title="Keine Lieferungen geplant"
-              description="Für dieses Datum gibt es keine offenen Bestellungen."
+              title={(packagingPlan?.gepackt ?? []).length > 0 ? 'Alles gepackt' : 'Keine Lieferungen geplant'}
+              description={(packagingPlan?.gepackt ?? []).length > 0
+                ? 'Alle Bestellungen dieses Packtags sind als gepackt markiert.'
+                : 'Für dieses Datum gibt es keine offenen Bestellungen.'}
             />
           ) : (
             <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
