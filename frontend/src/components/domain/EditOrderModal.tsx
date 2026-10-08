@@ -149,15 +149,17 @@ export function EditOrderModal({ open, order, onClose }: {
     }, [open, orderId, loadAttempt]);
 
     const istStorniert = currentOrder?.status === 'STORNIERT';
+    const istBerechnet = !!currentOrder?.rechnung_nummer;
     // Positionen ergänzen: nur Entwurf und Bestätigt (sales.py add_order_line).
     const positionenErweiterbar = currentOrder?.status === 'ENTWURF' || currentOrder?.status === 'BESTAETIGT';
     // Stornieren zusätzlich bei Gepackt — Bestand wird erst bei Geliefert gebucht.
     const stornierbar = positionenErweiterbar || currentOrder?.status === 'IN_PRODUKTION';
     const disabled = busy || istStorniert;
+    const positionenGesperrt = disabled || istBerechnet;
     const products = useQuery({
         queryKey: ['products', { is_active: true }],
         queryFn: () => productsApi.list({ is_active: true }),
-        enabled: open && positionenErweiterbar,
+        enabled: open && positionenErweiterbar && !istBerechnet,
     });
 
     const refreshOrder = async () => {
@@ -200,7 +202,7 @@ export function EditOrderModal({ open, order, onClose }: {
     };
 
     const saveLine = async (lineId: string, quantity: number, unitPrice: number) => {
-        if (!currentOrder) return;
+        if (!currentOrder || positionenGesperrt) return;
         await runChange(async () => {
             await salesApi.updateOrderLine(currentOrder.id, lineId, { quantity, unit_price: unitPrice });
             await refreshOrder();
@@ -208,7 +210,7 @@ export function EditOrderModal({ open, order, onClose }: {
     };
 
     const removeLine = async (lineId: string, name: string) => {
-        if (!currentOrder || disabled) return;
+        if (!currentOrder || positionenGesperrt) return;
         if (!window.confirm(`Position "${name}" aus der Bestellung entfernen?`)) return;
         await runChange(async () => {
             await salesApi.deleteOrderLine(currentOrder.id, lineId);
@@ -243,7 +245,7 @@ export function EditOrderModal({ open, order, onClose }: {
     };
 
     const addLine = async () => {
-        if (!currentOrder || !positionenErweiterbar || priceLoading || priceError) return;
+        if (!currentOrder || positionenGesperrt || !positionenErweiterbar || priceLoading || priceError) return;
         if (!newLine.product_id) return toast.error('Bitte ein Produkt auswählen');
         const quantity = Number(newLine.quantity);
         const unitPrice = Number(newLine.unit_price);
@@ -307,9 +309,11 @@ export function EditOrderModal({ open, order, onClose }: {
                 </section>
                 <section className="space-y-3 border-t border-gray-200 dark:border-gray-700 pt-4">
                     <h3 className="font-semibold">Positionen</h3>
-                    <p className="text-sm text-gray-500">Menge und Preis werden beim Verlassen des Feldes gespeichert.</p>
+                    {istBerechnet ? <p role="status" className="text-sm text-amber-700 dark:text-amber-400">
+                        Bestellung ist bereits berechnet ({currentOrder.rechnung_nummer}) — erst die Rechnung stornieren bzw. den Entwurf verwerfen
+                    </p> : <p className="text-sm text-gray-500">Menge und Preis werden beim Verlassen des Feldes gespeichert.</p>}
                     {busy && <p role="status" className="text-sm">Änderung wird gespeichert…</p>}
-                    {currentOrder.lines.map((line) => <EditableOrderLine key={line.id} line={line} disabled={disabled}
+                    {currentOrder.lines.map((line) => <EditableOrderLine key={line.id} line={line} disabled={positionenGesperrt}
                         canRemove={currentOrder.status === 'ENTWURF' || currentOrder.lines.length > 1}
                         onSave={saveLine} onRemove={removeLine} />)}
                     {currentOrder.lines.length === 0 && <p className="text-sm text-gray-500">Keine Positionen vorhanden.</p>}
@@ -317,7 +321,7 @@ export function EditOrderModal({ open, order, onClose }: {
                         <span>Netto: {formatAmount(currentOrder.total_net)}</span>
                         <span>Brutto: {formatAmount(currentOrder.total_gross)}</span>
                     </div>
-                    {positionenErweiterbar ? <div className="rounded-lg bg-gray-50 dark:bg-gray-800 p-3 space-y-3">
+                    {positionenErweiterbar && !istBerechnet ? <div className="rounded-lg bg-gray-50 dark:bg-gray-800 p-3 space-y-3">
                         <h4 className="font-medium">Position hinzufügen</h4>
                         {products.isError && <p role="alert" className="text-red-600 text-sm">
                             {getErrorMessage(products.error, 'Produkte konnten nicht geladen werden')}
@@ -350,7 +354,7 @@ export function EditOrderModal({ open, order, onClose }: {
                         {priceError && <p role="alert" className="text-red-600 text-sm">{priceError}</p>}
                         <Button variant="secondary" icon={<Plus className="w-4 h-4" />} onClick={addLine}
                             disabled={disabled || priceLoading || !!priceError || !newLine.product_id}>Position hinzufügen</Button>
-                    </div> : !istStorniert && <p className="text-sm text-gray-500">
+                    </div> : !istStorniert && !istBerechnet && <p className="text-sm text-gray-500">
                         Positionen können nur bei Entwürfen und bestätigten Bestellungen hinzugefügt werden.
                     </p>}
                 </section>

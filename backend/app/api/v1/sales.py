@@ -31,6 +31,7 @@ from app.schemas.order import (
 from app.tasks.forecast_tasks import update_forecast_from_order
 from app.services.customer_service import next_customer_number
 from app.services.datev_service import DatevService
+from app.services.invoice_service import InvoiceService
 from app.services.order_status_service import (
     BestandsbuchungFehler, StatuswechselFehler, bezeichnung, pruefe_uebergang, setze_status,
 )
@@ -743,13 +744,13 @@ async def list_orders(
 
     items = []
     for order in orders:
-        response = _build_order_response(order)
+        response = _build_order_response(order, db)
         items.append(response)
 
     return OrderListResponse(items=items, total=total)
 
 
-def _build_order_response(order: Order) -> OrderResponse:
+def _build_order_response(order: Order, db: DBSession) -> OrderResponse:
     """Baut OrderResponse aus Order-Objekt."""
     lines = []
     for line in order.lines:
@@ -780,6 +781,7 @@ def _build_order_response(order: Order) -> OrderResponse:
         )
         lines.append(line_response)
 
+    rechnung = InvoiceService(db).aktive_rechnung_zur_bestellung(order.id)
     return OrderResponse(
         id=order.id,
         order_number=order.order_number,
@@ -804,6 +806,7 @@ def _build_order_response(order: Order) -> OrderResponse:
         notes=order.notes,
         internal_notes=order.internal_notes,
         invoice_id=order.invoice_id,
+        rechnung_nummer=rechnung.invoice_number if rechnung else None,
         lines=lines,
         created_at=order.created_at,
         updated_at=order.updated_at,
@@ -827,7 +830,7 @@ async def get_order(order_id: UUID, db: DBSession):
     if not order:
         raise HTTPException(status_code=404, detail="Bestellung nicht gefunden")
 
-    return _build_order_response(order)
+    return _build_order_response(order, db)
 
 
 @router.post("/orders", response_model=OrderResponse, status_code=status.HTTP_201_CREATED)
@@ -1075,7 +1078,7 @@ async def create_order(order_data: OrderCreate, db: DBSession, user: CurrentUser
     # Forecast-Neuberechnung triggern
     _trigger_forecast_update(str(order.id), "CREATE")
 
-    return _build_order_response(order)
+    return _build_order_response(order, db)
 
 
 @router.patch("/orders/{order_id}", response_model=OrderResponse)
@@ -1271,6 +1274,16 @@ async def delete_order(order_id: UUID, db: DBSession, user: CurrentUser):
 
 # ============== Order Line Endpoints ==============
 
+def _pruefe_bestellung_nicht_berechnet(order: Order, db: DBSession) -> None:
+    rechnung = InvoiceService(db).aktive_rechnung_zur_bestellung(order.id)
+    if rechnung is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Bestellung ist bereits berechnet ({rechnung.invoice_number}) — "
+                   "erst die Rechnung stornieren bzw. den Entwurf verwerfen",
+        )
+
+
 @router.post("/orders/{order_id}/lines", response_model=OrderLineResponse, status_code=status.HTTP_201_CREATED)
 async def add_order_line(
     order_id: UUID,
@@ -1291,6 +1304,8 @@ async def add_order_line(
 
     if not order:
         raise HTTPException(status_code=404, detail="Bestellung nicht gefunden")
+
+    _pruefe_bestellung_nicht_berechnet(order, db)
 
     if order.status not in [OrderStatus.ENTWURF, OrderStatus.BESTAETIGT]:
         raise HTTPException(
@@ -1404,6 +1419,8 @@ async def update_order_line(
     if not order:
         raise HTTPException(status_code=404, detail="Bestellung nicht gefunden")
 
+    _pruefe_bestellung_nicht_berechnet(order, db)
+
     line = next((l for l in order.lines if l.id == line_id), None)
     if not line:
         raise HTTPException(status_code=404, detail="Position nicht gefunden")
@@ -1491,6 +1508,8 @@ async def delete_order_line(
 
     if not order:
         raise HTTPException(status_code=404, detail="Bestellung nicht gefunden")
+
+    _pruefe_bestellung_nicht_berechnet(order, db)
 
     line = next((l for l in order.lines if l.id == line_id), None)
     if not line:

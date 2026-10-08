@@ -186,6 +186,7 @@ export interface Order {
   customer_id?: string
   customer_name?: string | null
   customer_reference?: string | null
+  rechnung_nummer?: string | null
   total_gross?: number | string
   total_net?: number | string
   total_vat?: number | string

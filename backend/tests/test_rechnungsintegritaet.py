@@ -86,3 +86,75 @@ class TestFestschreiben:
         _altrechnung(order, "RE-2026-00003", "ENTWURF")
         assert _s6_lauf(client, S6_PREVIEW)["kunden"] == []
         assert _s6_lauf(client, S6_COMMIT)["rechnungen"] == []
+
+
+def _positionsaenderung(client, order, methode):
+    url = f"/api/v1/sales/orders/{order['id']}/lines"
+    if methode == "post":
+        return client.post(url, json={
+            "product_name": "Kresse", "quantity": 1, "unit": "STK", "unit_price": 4,
+        })
+    url += f"/{order['lines'][0]['id']}"
+    if methode == "patch":
+        return client.patch(url, json={"quantity": 9, "unit_price": 99})
+    return client.delete(url)
+
+
+def _berechnet_hinweis(invoice):
+    return (f"Bestellung ist bereits berechnet ({invoice['invoice_number']}) — "
+            "erst die Rechnung stornieren bzw. den Entwurf verwerfen")
+
+
+class TestPositionssperre:
+    @pytest.mark.parametrize("methode", ["post", "patch", "delete"])
+    @pytest.mark.parametrize("status", ["ENTWURF", "OFFEN", "BEZAHLT", "TEILBEZAHLT", "UEBERFAELLIG", "MAHNVERFAHREN"])
+    @pytest.mark.parametrize("bezug", ["bestellung", "lieferschein"])
+    def test_berechnete_positionen_unveraenderlich(self, client, methode, status, bezug):
+        order = _bestellung(client, _kunde(client))
+        invoice = _altrechnung(order, "RE-2026-00002", status)
+        if bezug == "lieferschein":
+            from app.models.documents import DeliveryNote
+            note = _s6_lieferschein(client, order)
+            with TestingSessionLocal() as db:
+                db.get(Invoice, uuid.UUID(invoice["id"])).order_id = None
+                db.get(DeliveryNote, uuid.UUID(note["id"])).invoice_id = uuid.UUID(invoice["id"])
+                db.commit()
+        response = _positionsaenderung(client, order, methode)
+        assert response.status_code == 409, response.text
+        assert response.json()["detail"] == _berechnet_hinweis(invoice)
+        nachher = client.get(f"/api/v1/sales/orders/{order['id']}").json()
+        assert nachher["lines"] == order["lines"]
+        assert nachher["total_gross"] == order["total_gross"]
+
+    @pytest.mark.parametrize("status", [None, "ENTWURF", "OFFEN", "STORNIERT"])
+    def test_bestellantwort_enthaelt_aktive_rechnungsnummer(self, client, status):
+        order = _bestellung(client, _kunde(client))
+        if status:
+            _altrechnung(order, "RE-2026-00002", status)
+        nummer = "RE-2026-00002" if status in ("ENTWURF", "OFFEN") else None
+        detail = client.get(f"/api/v1/sales/orders/{order['id']}").json()
+        liste = client.get("/api/v1/sales/orders").json()["items"]
+        assert "rechnung_nummer" in detail
+        assert detail["rechnung_nummer"] == nummer
+        assert next(item for item in liste if item["id"] == order["id"])["rechnung_nummer"] == nummer
+
+    def test_kopfdaten_und_lieferdatum_bleiben_editierbar(self, client):
+        order = _bestellung(client, _kunde(client))
+        _altrechnung(order, "RE-2026-00002", "OFFEN")
+        kopf = {"notes": "Neue Notiz", "customer_reference": "PO-42",
+                "requested_delivery_date": "2026-10-12"}
+        response = client.patch(f"/api/v1/sales/orders/{order['id']}", json=kopf)
+        assert response.status_code == 200, response.text
+        for feld, wert in kopf.items():
+            assert response.json()[feld] == wert
+
+    @pytest.mark.parametrize("methode", ["post", "patch", "delete"])
+    def test_nach_storno_wieder_editierbar(self, client, methode):
+        order = _bestellung(client, _kunde(client))
+        invoice = _altrechnung(order, "RE-2026-00002", "ENTWURF")
+        response = client.post(f"/api/v1/invoices/{invoice['id']}/cancel", json={
+            "reason": "Verwerfen", "create_credit_note": False,
+        })
+        assert response.status_code == 200, response.text
+        response = _positionsaenderung(client, order, methode)
+        assert response.status_code == {"post": 201, "patch": 200, "delete": 204}[methode], response.text

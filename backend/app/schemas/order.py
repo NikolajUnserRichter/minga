@@ -224,6 +224,7 @@ class OrderResponse(BaseModel):
 
     # Rechnung
     invoice_id: Optional[UUID]
+    rechnung_nummer: Optional[str] = None
 
     # Positionen
     lines: list[OrderLineResponse] = []
