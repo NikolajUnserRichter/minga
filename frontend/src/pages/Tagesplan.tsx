@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { Sprout, Scissors, Package, Truck, Users, Boxes, ListTodo, Plus, FileText, ChevronDown, ChevronRight, CheckCircle, PackageCheck } from 'lucide-react';
@@ -13,13 +13,14 @@ import { invalidateOrderViews } from '../services/orderQueries';
  * Aussaat · Ernte · Verpacken · Ausliefern — auf einer Seite.
  */
 export default function Tagesplan() {
-  // Lokaler Kalendertag (sv-SE = JJJJ-MM-TT). toISOString() wäre UTC und
+  // Berliner Kalendertag (sv-SE = JJJJ-MM-TT). toISOString() wäre UTC und
   // zeigte zwischen 0 und 2 Uhr noch den Vortag.
-  const today = new Date().toLocaleDateString('sv-SE');
+  const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Europe/Berlin' });
   const [date, setDate] = useState(today);
   const [neueAufgabe, setNeueAufgabe] = useState('');
   const toast = useToast();
   const queryClient = useQueryClient();
+  const statuswechselLaeuft = useRef(false);
 
   const { data: plan, isLoading } = useQuery({
     queryKey: ['day-plan', date],
@@ -98,6 +99,16 @@ export default function Tagesplan() {
     // gepackte Bestellung (400 "Statuswechsel nicht möglich: Gepackt → Gepackt").
     onSettled: () => invalidateOrderViews(queryClient),
   });
+
+  const statusWechsel = (orderId: string, ziel: 'IN_PRODUKTION' | 'GELIEFERT') => {
+    if (statuswechselLaeuft.current || (ziel === 'GELIEFERT' && date > today)) return;
+    statuswechselLaeuft.current = true;
+    const mutation = ziel === 'GELIEFERT' ? ausgeliefertMutation : gepacktMutation;
+    mutation.mutate(orderId, {
+      onSettled: () => { statuswechselLaeuft.current = false; },
+    });
+  };
+  const statuswechselPending = gepacktMutation.isPending || ausgeliefertMutation.isPending;
 
   if (isLoading) return <PageLoader />;
 
@@ -202,10 +213,10 @@ export default function Tagesplan() {
                   variant="success"
                   icon={<PackageCheck className="w-4 h-4" />}
                   loading={gepacktMutation.isPending && gepacktMutation.variables === o.order_id}
-                  disabled={gepacktMutation.isPending}
+                  disabled={statuswechselPending}
                   onClick={(e) => {
                     e.stopPropagation();
-                    gepacktMutation.mutate(o.order_id);
+                    statusWechsel(o.order_id, 'IN_PRODUKTION');
                   }}
                 >
                   Gepackt
@@ -262,14 +273,14 @@ export default function Tagesplan() {
           </div>
           <div className="flex items-center gap-2">
             <OrderStatusBadge status={o.status} />
-            {(o.status === 'BESTAETIGT' || o.status === 'IN_PRODUKTION') && (
+            {date <= today && (o.status === 'BESTAETIGT' || o.status === 'IN_PRODUKTION') && (
               <Button
                 size="sm"
                 variant="success"
                 icon={<CheckCircle className="w-4 h-4" />}
                 loading={ausgeliefertMutation.isPending && ausgeliefertMutation.variables === o.order_id}
-                disabled={ausgeliefertMutation.isPending}
-                onClick={() => ausgeliefertMutation.mutate(o.order_id)}
+                disabled={statuswechselPending}
+                onClick={() => statusWechsel(o.order_id, 'GELIEFERT')}
               >
                 Ausgeliefert
               </Button>
