@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { Sprout, Scissors, Package, Truck, Users, Boxes, ListTodo, Plus, FileText, ChevronDown, ChevronRight, CheckCircle } from 'lucide-react';
+import { Sprout, Scissors, Package, Truck, Users, Boxes, ListTodo, Plus, FileText, ChevronDown, ChevronRight, CheckCircle, PackageCheck } from 'lucide-react';
 import { productionApi, staffApi, documentsApi, salesApi } from '../services/api';
 import { PageHeader } from '../components/common/Layout';
 import { Input, EmptyState, Badge, OrderStatusBadge, PageLoader, Button, useToast, aussaatStatusLabel } from '../components/ui';
@@ -85,6 +85,20 @@ export default function Tagesplan() {
     onError: (e) => toast.error(getErrorMessage(e, 'Status konnte nicht geändert werden')),
   });
 
+  // "Gepackt" = BESTAETIGT → IN_PRODUKTION. Die Bestellung fällt danach aus
+  // Verpacken und Sortenbedarf, bleibt aber unter Ausliefern (A4, 08.10.2026).
+  const gepacktMutation = useMutation({
+    mutationFn: (orderId: string) =>
+      salesApi.updateOrderStatus(orderId, 'IN_PRODUKTION', 'Im Tagesplan als gepackt markiert'),
+    onSuccess: (order) => toast.success(`${order.order_number ?? 'Bestellung'} als gepackt markiert`),
+    onError: (error) => toast.error(getErrorMessage(error, 'Konnte nicht als gepackt markiert werden')),
+    // Auch nach einem Fehler neu laden — meist hat ein anderes Gerät schon
+    // gepackt. Das Promise zurückgeben: isPending bleibt dann true, bis der
+    // Tagesplan neu geladen ist, und ein zweiter Klick trifft keine schon
+    // gepackte Bestellung (400 "Statuswechsel nicht möglich: Gepackt → Gepackt").
+    onSettled: () => invalidateOrderViews(queryClient),
+  });
+
   if (isLoading) return <PageLoader />;
 
   const sections = [
@@ -147,7 +161,9 @@ export default function Tagesplan() {
       title: 'Verpacken',
       icon: <Package className="w-5 h-5 text-blue-600 dark:text-blue-400" />,
       count: plan?.verpacken.length ?? 0,
-      empty: 'Nichts zu verpacken (Bestellungen werden am Tag vor der Lieferung gepackt).',
+      empty: (plan?.verpacken_erledigt ?? []).length > 0
+        ? 'Alles gepackt.'
+        : 'Nichts zu verpacken (Bestellungen werden am Tag vor der Lieferung gepackt).',
       rows: (plan?.verpacken ?? []).map((o) => (
         <div key={o.order_id} className="p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
           <div
@@ -180,6 +196,23 @@ export default function Tagesplan() {
                 <FileText className="w-4 h-4" />
                 Packliste
               </button>
+              {o.packbar ? (
+                <Button
+                  size="sm"
+                  variant="success"
+                  icon={<PackageCheck className="w-4 h-4" />}
+                  loading={gepacktMutation.isPending && gepacktMutation.variables === o.order_id}
+                  disabled={gepacktMutation.isPending}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    gepacktMutation.mutate(o.order_id);
+                  }}
+                >
+                  Gepackt
+                </Button>
+              ) : (
+                <span className="text-xs text-gray-500 dark:text-gray-400">erst bestätigen</span>
+              )}
             </div>
           </div>
           {/* Aufgeklappt: was in die Kiste gehört, ohne Seitenwechsel */}
@@ -195,6 +228,23 @@ export default function Tagesplan() {
           )}
         </div>
       )),
+      // Erledigt am Packtag: sichtbar, damit niemand eine gepackte Bestellung sucht
+      footer: (plan?.verpacken_erledigt ?? []).length > 0 && (
+        <div className="mt-3 pt-3 border-t border-gray-100 dark:border-gray-700 space-y-1">
+          <p className="text-xs font-medium text-gray-500 dark:text-gray-400">Bereits gepackt</p>
+          {(plan?.verpacken_erledigt ?? []).map((o) => (
+            <div key={o.order_id} className="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
+              <PackageCheck className="w-4 h-4 text-green-600 dark:text-green-400 shrink-0" />
+              <span>{o.customer_name}</span>
+              <span className="text-gray-400">
+                · {o.order_number} · Lieferung {new Date(o.delivery_date).toLocaleDateString('de-DE')}
+              </span>
+              {/* Gepackt, Geliefert oder Fakturiert — alles erledigt am Packtag */}
+              <OrderStatusBadge status={o.status} />
+            </div>
+          ))}
+        </div>
+      ),
     },
     {
       key: 'ausliefern',
@@ -355,7 +405,15 @@ export default function Tagesplan() {
               <Boxes className="w-5 h-5 text-blue-600 dark:text-blue-400" />
               Sortenbedarf zum Packen
             </h3>
-            <Badge variant="info">{packaging?.komponenten.length}</Badge>
+            <div className="flex items-center gap-2">
+              {/* Gleiche Quelle wie die Liste "Bereits gepackt" in der Verpacken-Karte */}
+              {(plan?.verpacken_erledigt ?? []).length > 0 && (
+                <span className="text-xs text-gray-500 dark:text-gray-400">
+                  ohne {plan?.verpacken_erledigt.length} bereits gepackte
+                </span>
+              )}
+              <Badge variant="info">{packaging?.komponenten.length}</Badge>
+            </div>
           </div>
           <div className="card-body">
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
@@ -388,6 +446,7 @@ export default function Tagesplan() {
               ) : (
                 <div className="space-y-2">{s.rows}</div>
               )}
+              {s.footer}
             </div>
           </div>
         ))}

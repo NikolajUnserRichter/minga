@@ -145,6 +145,8 @@ export interface DayPlanOrder {
   status: OrderStatus  // Enum-Wert; Anzeige über orderStatusLabel / OrderStatusBadge
   positionen: number
   lines: Array<{ product_name: string; quantity: number; unit: string }>
+  // Knopf "Gepackt" möglich (BESTAETIGT → IN_PRODUKTION); ein Entwurf muss erst bestätigt werden
+  packbar: boolean
 }
 
 export const productionApi = {
@@ -232,6 +234,8 @@ export const productionApi = {
       items: any[]
       // Bundles in Sorten aufgelöst — Bauliste für den Produktionsmitarbeiter
       komponenten: Array<{ product_id: string | null; product_name: string; total_quantity: number; aus_bundles: string[] }>
+      // Schon gepackt (IN_PRODUKTION): zählt weder in items noch in komponenten
+      gepackt: Array<{ order_id: string; order_number: string; customer_name: string; delivery_date: string }>
     }>(`/production/packaging-plan`, { params: { target_date: targetDate } }).then(r => r.data),
 
   getDayPlan: (targetDate: string) =>
@@ -242,6 +246,8 @@ export const productionApi = {
       aussaat: Array<{ seed_name: string; trays: number; substrat: string | null; saatgut_gramm: number; status: string; mix_components: Array<{ seed_name: string | null; gramm_pro_tray: number; gramm_gesamt: number; charge_nummer: string | null }> }>
       ernte: Array<{ batch_id: string; seed_name: string; trays: number; regal_position: string | null; optimal: string; ist_optimal_heute: boolean }>
       verpacken: Array<DayPlanOrder>
+      // Packtag erledigt: gepackt, geliefert oder fakturiert — fehlt in verpacken
+      verpacken_erledigt: Array<DayPlanOrder>
       ausliefern: Array<DayPlanOrder>
       dienst: Array<{ employee_name: string; start_time: string | null; end_time: string | null; aufgabe: string | null }>
       aufgaben: Array<{ id: string; titel: string; beschreibung: string | null; employee_name: string | null; erledigt: boolean }>
