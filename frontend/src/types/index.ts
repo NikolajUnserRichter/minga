@@ -186,6 +186,8 @@ export interface Order {
   total_vat?: number | string
   kunde_id: string
   liefer_datum: string
+  // Tatsächlicher Liefertag (gesetzt beim Wechsel auf GELIEFERT)
+  actual_delivery_date?: string | null
   status: OrderStatus
   notizen: string | null
   gesamtwert: number

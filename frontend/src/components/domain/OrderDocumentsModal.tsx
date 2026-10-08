@@ -7,6 +7,7 @@ import { documentsApi, invoicesApi, OrderConfirmation, DeliveryNote } from '../.
 import { Order, Invoice } from '../../types';
 import { getErrorMessage } from '../../services/errors';
 import { belegStatusLabel } from '../ui/statusLabels';
+import { invalidateOrderViews } from '../../services/orderQueries';
 
 interface Props {
   open: boolean;
@@ -52,7 +53,8 @@ export function OrderDocumentsModal({ open, onClose, order }: Props) {
     queryClient.invalidateQueries({ queryKey: ['delivery-notes', orderId] });
     queryClient.invalidateQueries({ queryKey: ['order-invoices', orderId] });
     queryClient.invalidateQueries({ queryKey: ['invoices'] });
-    queryClient.invalidateQueries({ queryKey: ['orders'] });
+    // Quittieren setzt die Bestellung auf Geliefert — Tagesplan mit neu laden
+    void invalidateOrderViews(queryClient);
   };
 
   const createInvoice = useMutation({
@@ -122,15 +124,29 @@ export function OrderDocumentsModal({ open, onClose, order }: Props) {
   });
 
   const markDeliveredMutation = useMutation({
-    mutationFn: ({ noteId, signed_by }: { noteId: string; signed_by: string }) =>
-      documentsApi.markDelivered(noteId, { signed_by }),
+    mutationFn: ({ noteId, signed_by, actual_delivery_date }: { noteId: string; signed_by: string; actual_delivery_date: string }) =>
+      documentsApi.markDelivered(noteId, { signed_by, actual_delivery_date }),
     onSuccess: () => { toast.success('Lieferschein quittiert'); invalidate(); },
     onError: (e: any) => toast.error(getErrorMessage(e, 'Fehler beim Quittieren')),
   });
 
   const [signedByInput, setSignedByInput] = useState<Record<string, string>>({});
 
+  // Tatsächlicher Liefertag je Lieferschein (Eingabe des Anwenders).
+  const [lieferdatumInput, setLieferdatumInput] = useState<Record<string, string>>({});
+
   if (!order) return null;
+
+  const heute = new Date().toLocaleDateString('sv-SE');
+  // Vorschlag: Ist die Bestellung schon geliefert, ihr Lieferdatum — der Server
+  // überschreibt es nie, Lieferschein und Bestellung sollen gleich lauten.
+  // Sonst der geplante Liefertag, höchstens heute (Nachtragen, LÜCKEN 4).
+  const vorschlagLieferdatum =
+    order.actual_delivery_date
+    ?? (order.liefer_datum && order.liefer_datum < heute ? order.liefer_datum : heute);
+  // Quittieren setzt die Bestellung auf Geliefert; aus Entwurf und Storniert
+  // lehnt der Server das ab (order_status_service.setze_status).
+  const quittierbar = order.status !== 'ENTWURF' && order.status !== 'STORNIERT';
 
   const confirmations = confirmationsQuery.data || [];
   const deliveryNotes = deliveryNotesQuery.data || [];
@@ -251,12 +267,27 @@ export function OrderDocumentsModal({ open, onClose, order }: Props) {
                       )}
                     </div>
                   </div>
-                  {n.status !== 'GELIEFERT' && (
+                  {n.status !== 'GELIEFERT' && !quittierbar && (
+                    <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                      {order.status === 'STORNIERT'
+                        ? 'Bestellung ist storniert, der Lieferschein kann nicht quittiert werden.'
+                        : 'Erst die Bestellung bestätigen, dann den Lieferschein quittieren.'}
+                    </p>
+                  )}
+                  {n.status !== 'GELIEFERT' && quittierbar && (
                     <div className="mt-2 flex items-center gap-2">
                       <Input
                         placeholder="Unterzeichnet von..."
                         value={signedByInput[n.id] || ''}
                         onChange={(e) => setSignedByInput((p) => ({ ...p, [n.id]: e.target.value }))}
+                      />
+                      <Input
+                        type="date"
+                        aria-label="Liefertag"
+                        title="Tatsächlicher Liefertag"
+                        max={heute}
+                        value={lieferdatumInput[n.id] ?? vorschlagLieferdatum}
+                        onChange={(e) => setLieferdatumInput((p) => ({ ...p, [n.id]: e.target.value }))}
                       />
                       <Button
                         size="sm"
@@ -266,6 +297,7 @@ export function OrderDocumentsModal({ open, onClose, order }: Props) {
                           markDeliveredMutation.mutate({
                             noteId: n.id,
                             signed_by: signedByInput[n.id] || '',
+                            actual_delivery_date: lieferdatumInput[n.id] || vorschlagLieferdatum,
                           })
                         }
                       >
