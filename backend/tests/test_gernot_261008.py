@@ -1083,3 +1083,185 @@ class TestS2Mailversand:
         assert "USt:" in texte
         assert any(t.startswith("1.03 ") for t in texte)
         assert "8.03 EUR" in mail["body"]
+
+
+# ---------------------------------------------------------------------------
+# S3: Storno mehrzeiliger Rechnungen, Ausgleich, Warnungen
+# ---------------------------------------------------------------------------
+
+_S3_ZEILEN = [
+    {"description": "BIO Erbsen-Schale", "quantity": 10, "unit": "STK",
+     "unit_price": 1.00, "tax_rate": "REDUZIERT"},
+    {"description": "Versandkarton", "quantity": 1, "unit": "STK",
+     "unit_price": 6.67, "tax_rate": "STANDARD"},
+]
+
+
+def _s3_pfandartikel(client):
+    """Pfandartikel wie im Produktstamm von Minga: 19 %, als Pfand gekennzeichnet."""
+    from app.models.unit import UnitOfMeasure, UnitCategory
+    with TestingSessionLocal() as db:
+        unit = db.query(UnitOfMeasure).filter_by(code="STK").first()
+        if unit is None:
+            unit = UnitOfMeasure(code="STK", name="Stück", category=UnitCategory.COUNT)
+            db.add(unit)
+            db.commit()
+        unit_id = str(unit.id)
+    r = client.post("/api/v1/products", json={
+        "sku": f"IFCO-{uuid.uuid4().hex[:6]}", "name": "Pfand IFCO-Kiste",
+        "category": "PFAND", "base_price": "6.67", "base_unit_id": unit_id,
+        "tax_rate": "STANDARD", "is_deposit": True,
+    })
+    assert r.status_code in (200, 201), r.text
+    return r.json()
+
+
+def _s3_altrechnung(client, kunde, *, rabatt=None, lieferdatum=None, konto_ware=None):
+    """Stellt RE-2026-00002/4 nach: Ware zu 7 % plus Pfand-Produktzeile, die
+    auf der Rechnung mit 7 % statt 19 % steht — versendet, also OFFEN.
+
+    Die Pfandzeile wird direkt angelegt: so steht sie in Produktion, und die
+    API muss einen vom Produktstamm abweichenden Satz nicht mehr annehmen.
+    konto_ware: ausdrücklich gesetztes Sonderkonto der Warenzeile
+    (InvoiceLineCreate.buchungskonto), sonst das Standardkonto zum Satz.
+    Ohne Rabatt: 16,67 netto, 1,17 USt, 17,84 brutto.
+    """
+    from app.models.invoice import InvoiceLine, TaxRate
+
+    pfand = _s3_pfandartikel(client)
+    body = {"customer_id": kunde["id"], "invoice_date": date.today().isoformat()}
+    if lieferdatum:
+        body["delivery_date"] = lieferdatum
+    r = client.post("/api/v1/invoices", json=body)
+    assert r.status_code == 201, r.text
+    rechnung = r.json()
+
+    ware = dict(_S3_ZEILEN[0])
+    if konto_ware:
+        ware["buchungskonto"] = konto_ware
+    r = client.post(f"/api/v1/invoices/{rechnung['id']}/lines", json=ware)
+    assert r.status_code == 201, r.text
+    with TestingSessionLocal() as db:
+        db.add(InvoiceLine(
+            invoice_id=uuid.UUID(rechnung["id"]), position=2,
+            product_id=uuid.UUID(pfand["id"]), sku=pfand["sku"],
+            description="Pfand IFCO-Kiste",
+            quantity=Decimal("1"), unit="STK", unit_price=Decimal("6.67"),
+            tax_rate=TaxRate.REDUZIERT, is_deposit=True, buchungskonto="8300",
+        ))
+        db.commit()
+
+    if rabatt is not None:
+        r = client.patch(f"/api/v1/invoices/{rechnung['id']}", json={"discount_percent": rabatt})
+        assert r.status_code == 200, r.text
+    # finalize rechnet die Summen in einem frischen Request über alle Zeilen
+    r = client.post(f"/api/v1/invoices/{rechnung['id']}/finalize")
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def _s3_storniere(client, rechnung, **extra):
+    body = {"reason": "Pfand mit 7 % statt 19 %", "reason_code": "SONSTIGES", **extra}
+    return client.post(f"/api/v1/invoices/{rechnung['id']}/cancel", json=body)
+
+
+def _s3_betrag(wert):
+    # Beträge kommen als JSON-String ("17.84") — nie über float vergleichen
+    return Decimal(str(wert))
+
+
+class TestS3StornoMehrzeilig:
+    """Der Storno summierte bei mehreren Positionen nur die erste (−10,70 statt −17,84)."""
+
+    def test_storno_summiert_alle_positionen(self, client, sample_customer):
+        original = _s3_altrechnung(client, sample_customer)
+        assert _s3_betrag(original["total"]) == Decimal("17.84")
+
+        r = _s3_storniere(client, original)
+        assert r.status_code == 200, r.text
+        storno = r.json()["credit_note"]
+
+        assert _s3_betrag(storno["subtotal"]) == Decimal("-16.67")
+        assert _s3_betrag(storno["tax_amount"]) == Decimal("-1.17")
+        assert _s3_betrag(storno["total"]) == Decimal("-17.84")
+
+    def test_storno_ist_spiegelbild_je_position(self, client, sample_customer):
+        """Satz, Konto, Pfandkennzeichen und Artikelnummer kommen von der
+        Originalzeile. Die Warenzeile steht auf einem Sonderkonto (8338): der
+        frühere Weg über add_line setzte dort das Standardkonto zum Satz (8300),
+        die Gegenbuchung landete auf einem anderen Konto als die Buchung."""
+        from app.models.invoice import Invoice
+
+        original = _s3_altrechnung(client, sample_customer, konto_ware="8338")
+        storno = _s3_storniere(client, original).json()["credit_note"]
+
+        orig = client.get(f"/api/v1/invoices/{original['id']}").json()
+        sto = client.get(f"/api/v1/invoices/{storno['id']}").json()
+        assert len(sto["lines"]) == len(orig["lines"]) == 2
+        for o, s in zip(orig["lines"], sto["lines"]):
+            assert s["position"] == o["position"]
+            assert s["tax_rate"] == o["tax_rate"]
+            assert s["buchungskonto"] == o["buchungskonto"]
+            assert s["product_id"] == o["product_id"]
+            assert s["sku"] == o["sku"]
+            assert _s3_betrag(s["discount_percent"]) == _s3_betrag(o["discount_percent"])
+            assert _s3_betrag(s["quantity"]) == -_s3_betrag(o["quantity"])
+            assert _s3_betrag(s["line_total"]) == -_s3_betrag(o["line_total"])
+        assert _s3_betrag(sto["total_deposit"]) == -_s3_betrag(orig["total_deposit"])
+
+        # is_deposit steht erst ab S5 in der Zeilenantwort — deshalb über das ORM
+        with TestingSessionLocal() as db:
+            o_zeilen = db.get(Invoice, uuid.UUID(original["id"])).lines
+            s_zeilen = db.get(Invoice, uuid.UUID(storno["id"])).lines
+            assert [z.is_deposit for z in s_zeilen] == [z.is_deposit for z in o_zeilen] == [False, True]
+
+        # GoBD: das Original bleibt unverändert
+        assert _s3_betrag(orig["total"]) == Decimal("17.84")
+        assert [l["tax_rate"] for l in orig["lines"]] == ["REDUZIERT", "REDUZIERT"]
+        assert [l["buchungskonto"] for l in orig["lines"]] == ["8338", "8300"]
+
+    def test_storno_mit_zwei_saetzen_spiegelt_steuer_je_satz(self, client, sample_customer):
+        """Stornorechnung mit 7 % und 19 %: je Satz heben Entgelt und Steuer
+        das Original genau auf, und die Satzsteuern ergeben tax_amount
+        (dieselbe Prüfung wie steuerausweis_stimmt aus S2)."""
+        from app.models.invoice import Invoice
+
+        r = client.post("/api/v1/invoices", json={
+            "customer_id": sample_customer["id"],
+            "invoice_date": date.today().isoformat(),
+        })
+        assert r.status_code == 201, r.text
+        rechnung = r.json()
+        # Positionen einzeln: jeder Request hat eine frische Session, die
+        # Summen des Originals stimmen also auch ohne den Fix in add_line.
+        for zeile in _S3_ZEILEN:
+            r = client.post(f"/api/v1/invoices/{rechnung['id']}/lines", json=zeile)
+            assert r.status_code == 201, r.text
+        r = client.post(f"/api/v1/invoices/{rechnung['id']}/finalize")
+        assert r.status_code == 200, r.text
+        original = r.json()
+        # 10,00 × 7 % + 6,67 × 19 % = 16,67 netto + 0,70 + 1,27 USt
+        assert _s3_betrag(original["total"]) == Decimal("18.64")
+
+        storno = _s3_storniere(client, original).json()["credit_note"]
+
+        assert _s3_betrag(storno["subtotal"]) == Decimal("-16.67")
+        assert _s3_betrag(storno["tax_amount"]) == Decimal("-1.97")
+        assert _s3_betrag(storno["total"]) == Decimal("-18.64")
+        with TestingSessionLocal() as db:
+            o = db.get(Invoice, uuid.UUID(original["id"]))
+            s = db.get(Invoice, uuid.UUID(storno["id"]))
+            je_satz_o = {e["rate"]: (e["base"], e["tax"]) for e in o.get_tax_summary()}
+            je_satz_s = {e["rate"]: (e["base"], e["tax"]) for e in s.get_tax_summary()}
+            assert sum(b for b, _ in je_satz_s.values()) == s.subtotal
+            assert sum(t for _, t in je_satz_s.values()) == s.tax_amount
+        assert len(je_satz_s) == 2
+        assert je_satz_s == {satz: (-b, -t) for satz, (b, t) in je_satz_o.items()}
+
+    def test_storno_uebernimmt_rabatt_und_lieferdatum(self, client, sample_customer):
+        original = _s3_altrechnung(client, sample_customer, rabatt=10, lieferdatum="2026-10-07")
+        storno = _s3_storniere(client, original).json()["credit_note"]
+
+        assert _s3_betrag(storno["discount_percent"]) == Decimal("10")
+        assert _s3_betrag(storno["total"]) == -_s3_betrag(original["total"])
+        assert storno["delivery_date"] == "2026-10-07"

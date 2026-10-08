@@ -348,11 +348,12 @@ class InvoiceService:
 
         credit_note = None
         if create_credit_note and invoice.total > 0:
-            # Gutschrift erstellen
             credit_note = self.create_invoice(
                 customer_id=invoice.customer_id,
                 invoice_type=InvoiceType.GUTSCHRIFT,
                 original_invoice_id=invoice_id,
+                delivery_date=invoice.delivery_date,
+                buchungskonto=invoice.buchungskonto,
                 header_text=(
                     f"Stornorechnung zur Rechnung Nr. {invoice.invoice_number} "
                     f"vom {invoice.invoice_date.strftime('%d.%m.%Y')}"
@@ -360,22 +361,33 @@ class InvoiceService:
             )
             # Der Grund gehört an beide Belege — beim Prüfen liegt oft nur einer vor.
             credit_note.internal_notes = f"Storno zu {invoice.invoice_number}: {reason}"
+            # Spiegelbild: create_invoice setzt sonst den heutigen Kundenrabatt.
+            credit_note.discount_percent = invoice.discount_percent
+            credit_note.service_period_start = invoice.service_period_start
+            credit_note.service_period_end = invoice.service_period_end
 
-            # Positionen kopieren (mit negativen Beträgen)
+            # Positionen 1:1 mit negativer Menge kopieren. Bewusst nicht über
+            # add_line: die Stornorechnung muss Steuersatz, Konto und
+            # Pfandkennzeichen des Originals tragen, nicht den heutigen
+            # Produktstamm.
             for line in invoice.lines:
-                self.add_line(
+                self.db.add(InvoiceLine(
                     invoice_id=credit_note.id,
+                    position=line.position,
+                    product_id=line.product_id,
                     description=line.description,
-                    quantity=-line.quantity,  # Negativ für Gutschrift
+                    sku=line.sku,
+                    quantity=-line.quantity,
                     unit=line.unit,
                     unit_price=line.unit_price,
-                    product_id=line.product_id,
-                    sku=line.sku,
                     discount_percent=line.discount_percent,
                     tax_rate=line.tax_rate,
-                )
+                    buchungskonto=line.buchungskonto,
+                    is_deposit=line.is_deposit,
+                ))
+            self.recalculate_totals(credit_note)
 
-            # Gutschrift sofort finalisieren
+            # Status regelt Task 13
             credit_note.status = InvoiceStatus.OFFEN
             credit_note.sent_at = datetime.now(timezone.utc)
 
