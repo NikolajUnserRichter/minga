@@ -1016,3 +1016,192 @@ class TestRechnungslistenOhneNPlusEins:
         assert {r["customer_name"] for r in rows} == {f"Kunde {i}" for i in range(4)}
 
         assert vier == einer, f"{einer} SELECTs bei 1 Rechnung, {vier} bei 4 — N+1"
+
+
+# ============================================================
+# P4 — Abo-Bestellungen (A5)
+#
+# Der Abo-Lauf suchte das Produkt nur über seed_id. Produkt-Abos haben
+# seed_id = None, daraus wurde WHERE products.seed_id IS NULL: Preis und
+# Steuersatz irgendeines Produkts ohne Sorte, Text "Abo-Lieferung: Unknown"
+# (LfA Förderbank Bayern, vier Entwürfe ab 14.09.2026, je 2,00 EUR).
+# Die Fälligkeit prüfte zusätzlich den Abstand zu gueltig_von in ganzen
+# Wochen: mehrere Liefertage wirkten nicht. Alle P4-Helfer tragen das
+# Präfix _p4_, damit andere Abschnitte in dieselbe Datei schreiben können.
+# ============================================================
+import uuid
+from datetime import date, timedelta
+from decimal import Decimal
+from types import SimpleNamespace
+from unittest.mock import patch
+
+import pytest
+
+from tests.conftest import TestingSessionLocal
+
+_P4_MO = date(2026, 10, 5)   # Montag
+_P4_MI = date(2026, 10, 7)   # Mittwoch
+_P4_DO = date(2026, 10, 8)   # Donnerstag
+
+
+def _p4_einheit(code="STK", name="Stück"):
+    from app.models.unit import UnitOfMeasure, UnitCategory
+    with TestingSessionLocal() as db:
+        unit = db.query(UnitOfMeasure).filter_by(code=code).first()
+        if unit is None:
+            unit = UnitOfMeasure(code=code, name=name, category=UnitCategory.COUNT)
+            db.add(unit)
+            db.commit()
+        return str(unit.id)
+
+
+def _p4_produkt(client, name, sku, preis, **extra):
+    r = client.post("/api/v1/products", json={
+        "name": name, "sku": sku, "base_price": str(preis),
+        "category": "MICROGREEN", "base_unit_id": _p4_einheit(), **extra,
+    })
+    assert r.status_code in (200, 201), r.text
+    return r.json()
+
+
+def _p4_kunde(client, name="LfA Förderbank Bayern"):
+    r = client.post("/api/v1/sales/customers", json={"name": name, "typ": "GEWERBE"})
+    assert r.status_code in (200, 201), r.text
+    return r.json()
+
+
+def _p4_abo(client, kunde, gueltig_von=_P4_MO, **felder):
+    body = {
+        "kunde_id": kunde["id"], "menge": 2, "einheit": "STUECK",
+        "intervall": "WOECHENTLICH", "liefertage": [0],
+        "gueltig_von": gueltig_von.isoformat(), **felder,
+    }
+    r = client.post("/api/v1/sales/subscriptions", json=body)
+    assert r.status_code == 201, r.text
+    return r.json()
+
+
+def _p4_bestellungen(abo_id=None):
+    """Alle Bestellungen (optional nur die eines Abos) mit ihren Positionen."""
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+    from app.models.order import Order
+    with TestingSessionLocal() as db:
+        q = select(Order).options(selectinload(Order.lines)).order_by(Order.order_number)
+        if abo_id:
+            q = q.where(Order.notes.contains(f"Abo {abo_id}"))
+        return [
+            {
+                "order_number": o.order_number,
+                "status": o.status.value,
+                "requested_delivery_date": o.requested_delivery_date,
+                "total_net": o.total_net, "total_vat": o.total_vat, "total_gross": o.total_gross,
+                "lines": [
+                    {
+                        "product_id": str(l.product_id) if l.product_id else None,
+                        "product_variant_id": str(l.product_variant_id) if l.product_variant_id else None,
+                        "beschreibung": l.beschreibung, "unit": l.unit,
+                        "quantity": l.quantity, "unit_price": l.unit_price,
+                        "tax_rate": l.tax_rate.value, "line_net": l.line_net,
+                    }
+                    for l in o.lines
+                ],
+            }
+            for o in db.execute(q).scalars().all()
+        ]
+
+
+def _p4_anlegen(abo_id, heute=_P4_DO):
+    """Legt die Abo-Bestellung an wie der Lauf, ohne Fälligkeitsprüfung."""
+    from app.models.customer import Subscription
+    from app.tasks.subscription_tasks import _create_order_from_subscription
+    with TestingSessionLocal() as db:
+        sub = db.get(Subscription, uuid.UUID(abo_id))
+        _create_order_from_subscription(db, sub, heute)
+        db.commit()
+
+
+def _p4_lauf(heute):
+    """Der echte Lauf (Scheduler bzw. "Heute verarbeiten") gegen die Test-DB."""
+    from app.tasks.subscription_tasks import process_daily_subscriptions
+    with patch("app.tasks.subscription_tasks.SessionLocal", TestingSessionLocal):
+        return process_daily_subscriptions(heute=heute)
+
+
+def _p4_sub(intervall, liefertage, gueltig_von, gueltig_bis=None, aktiv=True):
+    """Abo nur mit den Feldern, die die Fälligkeit liest."""
+    from app.models.customer import SubscriptionInterval
+    return SimpleNamespace(
+        aktiv=aktiv, intervall=SubscriptionInterval(intervall), liefertage=liefertage,
+        gueltig_von=gueltig_von, gueltig_bis=gueltig_bis,
+    )
+
+
+def _p4_faellige_tage(sub, von, bis):
+    from app.tasks.subscription_tasks import ist_faellig
+    tage, tag = [], von
+    while tag <= bis:
+        if ist_faellig(sub, tag):
+            tage.append(tag)
+        tag += timedelta(days=1)
+    return tage
+
+class TestP4Faelligkeit:
+    """A5: Mehrere Liefertage wirkten nicht; ein gueltig_von an einem
+    Nicht-Liefertag hieß: nie liefern."""
+
+    def test_woechentlich_mo_und_do_liefert_an_beiden_tagen(self):
+        sub = _p4_sub("WOECHENTLICH", [0, 3], _P4_MO)
+        assert _p4_faellige_tage(sub, _P4_MO, date(2026, 10, 18)) == [
+            date(2026, 10, 5), date(2026, 10, 8), date(2026, 10, 12), date(2026, 10, 15),
+        ]
+
+    def test_woechentlich_start_an_einem_nicht_liefertag(self):
+        """Das Formular setzt gueltig_von = heute. Am Mittwoch angelegt, montags geliefert."""
+        sub = _p4_sub("WOECHENTLICH", [0], _P4_MI)
+        assert _p4_faellige_tage(sub, _P4_MI, date(2026, 10, 25)) == [
+            date(2026, 10, 12), date(2026, 10, 19),
+        ]
+
+    def test_zweiwoechentlich_zaehlt_kalenderwochen_ab_erster_lieferung(self):
+        sub = _p4_sub("ZWEIWOECHENTLICH", [0, 3], _P4_MI)
+        assert _p4_faellige_tage(sub, _P4_MI, date(2026, 10, 25)) == [
+            date(2026, 10, 8), date(2026, 10, 19), date(2026, 10, 22),
+        ]
+
+    def test_monatlich_mit_liefertag_erster_montag_ab_stichtag(self):
+        sub = _p4_sub("MONATLICH", [0], date(2026, 10, 15))
+        assert _p4_faellige_tage(sub, date(2026, 10, 15), date(2026, 12, 31)) == [
+            date(2026, 10, 19), date(2026, 11, 16), date(2026, 12, 21),
+        ]
+
+    def test_monatlich_ohne_liefertag_kappt_auf_monatsende(self):
+        sub = _p4_sub("MONATLICH", None, date(2026, 8, 31))
+        assert _p4_faellige_tage(sub, date(2026, 8, 31), date(2026, 11, 30)) == [
+            date(2026, 8, 31), date(2026, 9, 30), date(2026, 10, 31), date(2026, 11, 30),
+        ]
+
+    def test_bisheriges_verhalten_bleibt(self):
+        """Absicherung: Fälle, die schon vorher stimmten."""
+        taeglich = _p4_sub("TAEGLICH", [0, 1, 2, 3, 4], _P4_MO)
+        assert len(_p4_faellige_tage(taeglich, _P4_MO, date(2026, 10, 18))) == 10
+        ohne_tage = _p4_sub("WOECHENTLICH", None, _P4_MI)
+        assert _p4_faellige_tage(ohne_tage, _P4_MI, date(2026, 10, 21)) == [
+            date(2026, 10, 7), date(2026, 10, 14), date(2026, 10, 21),
+        ]
+        beendet = _p4_sub("WOECHENTLICH", [0], _P4_MO, gueltig_bis=date(2026, 10, 11))
+        assert _p4_faellige_tage(beendet, _P4_MO, date(2026, 10, 25)) == [date(2026, 10, 5)]
+        pausiert = _p4_sub("WOECHENTLICH", [0], _P4_MO, aktiv=False)
+        assert _p4_faellige_tage(pausiert, _P4_MO, date(2026, 10, 25)) == []
+
+    def test_lauf_am_donnerstag_beliefert_mo_do_abo(self, client):
+        kunde = _p4_kunde(client)
+        produkt = _p4_produkt(client, "BIO Snackbox | Amaranth", "P4-SNACK", "4.50")
+        abo = _p4_abo(client, kunde, product_id=produkt["id"], liefertage=[0, 3])
+
+        _p4_lauf(_P4_DO)
+
+        bestellungen = _p4_bestellungen(abo["id"])
+        assert len(bestellungen) == 1
+        assert bestellungen[0]["requested_delivery_date"] == _P4_DO
+        assert bestellungen[0]["status"] == "ENTWURF"
