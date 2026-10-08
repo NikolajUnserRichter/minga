@@ -18,6 +18,8 @@ import {
   SelectOption,
   Input,
   getRelativeDate,
+  GrowBatchStatusBadge,
+  orderStatusLabel,
 } from '../components/ui';
 import { Plus, Sprout, Search, LayoutGrid, List, Columns3, Printer, Download } from 'lucide-react';
 import type { GrowBatch, GrowBatchStatus, Seed } from '../types';
@@ -462,7 +464,7 @@ export default function Production() {
                             <div className="flex gap-2 text-xs items-center">
                               <span className="font-medium text-gray-900 dark:text-white">{o.quantity} {item.unit}</span>
                               <span className="text-gray-400">
-                                ({o.status}{o.same_day ? ' · Same-Day!' : ''} · Lieferung {o.delivery_date ? new Date(o.delivery_date).toLocaleDateString('de-DE') : '—'})
+                                ({orderStatusLabel(o.status)}{o.same_day ? ' · Same-Day!' : ''} · Lieferung {o.delivery_date ? new Date(o.delivery_date).toLocaleDateString('de-DE') : '—'})
                               </span>
                             </div>
                           </div>
@@ -600,7 +602,7 @@ export default function Production() {
                       <td>{batch.tage_seit_aussaat}</td>
                       <td>{batch.regal_position || '-'}</td>
                       <td>
-                        <span className={`badge badge-${batch.status.toLowerCase()}`}>{batch.status}</span>
+                        <GrowBatchStatusBadge status={batch.status} />
                       </td>
                       <td>
                         <div className="flex gap-2">

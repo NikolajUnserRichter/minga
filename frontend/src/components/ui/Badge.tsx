@@ -1,5 +1,6 @@
 import { ReactNode } from 'react';
 import { GrowBatchStatus, OrderStatus, SuggestionStatus, CustomerType } from '../../types';
+import { orderStatusLabel } from './statusLabels';
 
 type BadgeVariant = 'success' | 'warning' | 'danger' | 'info' | 'gray' | 'purple';
 type BadgeSize = 'sm' | 'md' | 'lg';
@@ -54,15 +55,15 @@ export function GrowBatchStatusBadge({ status }: GrowBatchStatusBadgeProps) {
   return <span className={`badge ${config.class}`}>{config.label}</span>;
 }
 
-// Order Status Badge
-const orderStatusConfig: Record<string, { label: string; variant: BadgeVariant }> = {
-  // Current backend (OrderStatus)
-  ENTWURF: { label: 'Entwurf', variant: 'gray' },
-  BESTAETIGT: { label: 'Bestätigt', variant: 'info' },
-  IN_PRODUKTION: { label: 'In Produktion', variant: 'warning' },
-  GELIEFERT: { label: 'Geliefert', variant: 'success' },
-  FAKTURIERT: { label: 'Fakturiert', variant: 'gray' },
-  STORNIERT: { label: 'Storniert', variant: 'danger' },
+// Order Status Badge — Bezeichnungen in statusLabels.ts. Farben wie bisher
+// in der Bestellliste; der Tagesplan übernimmt sie.
+const orderStatusVariant: Record<OrderStatus, BadgeVariant> = {
+  ENTWURF: 'gray',
+  BESTAETIGT: 'info',
+  IN_PRODUKTION: 'warning',
+  GELIEFERT: 'success',
+  FAKTURIERT: 'gray',
+  STORNIERT: 'danger',
 };
 
 interface OrderStatusBadgeProps {
@@ -70,8 +71,8 @@ interface OrderStatusBadgeProps {
 }
 
 export function OrderStatusBadge({ status }: OrderStatusBadgeProps) {
-  const config = orderStatusConfig[status as string] || { label: status, variant: 'gray' as BadgeVariant };
-  return <Badge variant={config.variant}>{config.label}</Badge>;
+  const variant = orderStatusVariant[status as OrderStatus] ?? 'gray';
+  return <Badge variant={variant}>{orderStatusLabel(status)}</Badge>;
 }
 
 // Suggestion Status Badge

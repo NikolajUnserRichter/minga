@@ -9,6 +9,14 @@ export { DatePicker, formatDate, getRelativeDate } from './DatePicker';
 
 // Feedback Components
 export { Badge, GrowBatchStatusBadge, OrderStatusBadge, SuggestionStatusBadge, CustomerTypeBadge, WarningBadge } from './Badge';
+export {
+  ORDER_STATUS_LABELS,
+  orderStatusLabel,
+  belegStatusLabel,
+  aussaatStatusLabel,
+  lexofficeStatusLabel,
+  warnungTypLabel,
+} from './statusLabels';
 export { Alert } from './Alert';
 export { ToastProvider, useToast } from './Toast';
 export { Spinner, PageLoader, InlineLoader } from './Spinner';

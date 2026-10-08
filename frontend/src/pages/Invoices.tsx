@@ -19,6 +19,7 @@ import {
 import { ListPageSkeleton } from '../components/ui/Skeleton';
 import { getErrorMessage } from '../services/errors';
 import { sammelrechnungApi, SammelrechnungVorschauKunde } from '../services/api';
+import { lexofficeStatusLabel } from '../components/ui/statusLabels';
 
 const STATUS_LABELS: Record<InvoiceStatus, string> = {
   ENTWURF: 'Entwurf',
@@ -125,7 +126,7 @@ export default function Invoices() {
     mutationFn: (id: string) => integrationsApi.lexofficePullStatus(id),
     onSuccess: (res) => {
       queryClient.invalidateQueries({ queryKey: ['invoices'] });
-      toast.success(res.updated ? 'Als bezahlt übernommen' : `lexoffice-Status: ${res.lexoffice_status}`);
+      toast.success(res.updated ? 'Als bezahlt übernommen' : `lexoffice-Status: ${lexofficeStatusLabel(res.lexoffice_status)}`);
     },
     onError: (e: any) => toast.error(getErrorMessage(e, 'Statusabruf fehlgeschlagen')),
   });

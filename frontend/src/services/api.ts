@@ -12,6 +12,7 @@ import type {
   PurchaseOrder, PurchaseOrderListItem, PurchaseOrderStatus, TradeGoodsStock,
   SeedBatchComponent
 } from '../types'
+import type { OrderStatus } from '../types'
 
 import keycloak from './auth';
 
@@ -141,7 +142,7 @@ export interface DayPlanOrder {
   delivery_date: string
   packing_date: string | null
   packing_date_explizit: boolean
-  status: string
+  status: OrderStatus  // Enum-Wert; Anzeige über orderStatusLabel / OrderStatusBadge
   positionen: number
   lines: Array<{ product_name: string; quantity: number; unit: string }>
 }
@@ -381,8 +382,17 @@ export const salesApi = {
       confirmedDeliveryDate ? { params: { confirmed_delivery_date: confirmedDeliveryDate } } : undefined,
     ).then(r => r.data),
 
-  updateOrderStatus: (id: string, status: string, reason?: string) =>
-    api.post<Order>(`/sales/orders/${id}/status`, { status, reason }).then(r => r.data),
+  // actualDeliveryDate nur bei GELIEFERT: tatsächlicher Liefertag (Standard heute)
+  updateOrderStatus: (id: string, status: OrderStatus, reason?: string, actualDeliveryDate?: string) =>
+    api.post<Order>(`/sales/orders/${id}/status`, {
+      status, reason, actual_delivery_date: actualDeliveryDate,
+    }).then(r => r.data),
+
+  // Sammelaktion: alle oder keine — der Server prüft jeden Übergang vorab
+  bulkUpdateStatus: (orderIds: string[], status: OrderStatus, reason?: string) =>
+    api.post<Array<{ id: string; order_number: string; status: OrderStatus; total_gross: string }>>(
+      '/sales/orders/bulk-status', { order_ids: orderIds, status, reason },
+    ).then(r => r.data),
 
   updateOrder: (id: string, data: {
     requested_delivery_date?: string

@@ -4,7 +4,7 @@ import { Link } from 'react-router-dom';
 import { Sprout, Scissors, Package, Truck, Users, Boxes, ListTodo, Plus, FileText, ChevronDown, ChevronRight } from 'lucide-react';
 import { productionApi, staffApi, documentsApi } from '../services/api';
 import { PageHeader } from '../components/common/Layout';
-import { Input, EmptyState, Badge, PageLoader, Button, useToast } from '../components/ui';
+import { Input, EmptyState, Badge, OrderStatusBadge, PageLoader, Button, useToast, aussaatStatusLabel } from '../components/ui';
 
 /**
  * Tagesplan für Mitarbeiter: was ist heute zu tun?
@@ -99,7 +99,7 @@ export default function Tagesplan() {
               </div>
             )}
           </div>
-          <Badge variant={a.status === 'GENEHMIGT' ? 'success' : 'warning'}>{a.status}</Badge>
+          <Badge variant={a.status === 'GENEHMIGT' ? 'success' : 'warning'}>{aussaatStatusLabel(a.status)}</Badge>
         </div>
       )),
     },
@@ -146,7 +146,7 @@ export default function Tagesplan() {
             </div>
             <div className="flex items-center gap-2">
               {o.packing_date_explizit && <Badge variant="warning">Packtag fix</Badge>}
-              <Badge variant={o.status === 'Entwurf' ? 'warning' : 'info'}>{o.status}</Badge>
+              <OrderStatusBadge status={o.status} />
               <button
                 className="btn btn-ghost btn-sm"
                 title="Packliste öffnen"
@@ -187,7 +187,7 @@ export default function Tagesplan() {
             <p className="font-medium text-gray-900 dark:text-white">{o.customer_name}</p>
             <p className="text-sm text-gray-500 dark:text-gray-400">{o.order_number} · {o.positionen} Positionen</p>
           </div>
-          <Badge variant={o.status === 'Entwurf' ? 'warning' : 'info'}>{o.status}</Badge>
+          <OrderStatusBadge status={o.status} />
         </div>
       )),
     },

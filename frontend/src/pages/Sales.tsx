@@ -15,6 +15,8 @@ import {
   Select,
   useToast,
   SelectOption,
+  OrderStatusBadge,
+  ORDER_STATUS_LABELS,
 } from '../components/ui';
 import {
   Plus,
@@ -25,7 +27,7 @@ import {
   Search,
   Clock,
 } from 'lucide-react';
-import type { Order, Customer, OrderWithCustomer } from '../types';
+import type { Order, OrderStatus, Customer, OrderWithCustomer } from '../types';
 
 export default function Sales() {
   const toast = useToast();
@@ -95,12 +97,10 @@ export default function Sales() {
 
   const orderStatusOptions: SelectOption[] = [
     { value: '', label: 'Alle Status' },
-    { value: 'ENTWURF', label: 'Entwurf' },
-    { value: 'BESTAETIGT', label: 'Bestätigt' },
-    { value: 'IN_PRODUKTION', label: 'In Produktion' },
-    { value: 'GELIEFERT', label: 'Geliefert' },
-    { value: 'FAKTURIERT', label: 'Fakturiert' },
-    { value: 'STORNIERT', label: 'Storniert' },
+    ...(Object.keys(ORDER_STATUS_LABELS) as OrderStatus[]).map((s) => ({
+      value: s,
+      label: ORDER_STATUS_LABELS[s],
+    })),
   ];
 
   const tabs = [
@@ -303,9 +303,7 @@ export default function Sales() {
               </div>
               <div>
                 <p className="text-sm text-gray-500 dark:text-gray-400">Status</p>
-                <span className={`badge badge-${selectedOrder.status.toLowerCase()}`}>
-                  {selectedOrder.status}
-                </span>
+                <OrderStatusBadge status={selectedOrder.status} />
               </div>
               <div>
                 <p className="text-sm text-gray-500 dark:text-gray-400">Erstellt am</p>

@@ -10,6 +10,8 @@ import {
   PageLoader,
   EmptyState,
   Badge,
+  SuggestionStatusBadge,
+  warnungTypLabel,
   useToast,
   SelectOption,
   Button,
@@ -359,23 +361,13 @@ export default function Forecasting() {
                       <td>{new Date(suggestion.aussaat_datum).toLocaleDateString('de-DE')}</td>
                       <td>{new Date(suggestion.erwartete_ernte_datum).toLocaleDateString('de-DE')}</td>
                       <td>
-                        <Badge
-                          variant={
-                            suggestion.status === 'GENEHMIGT'
-                              ? 'success'
-                              : suggestion.status === 'ABGELEHNT'
-                                ? 'danger'
-                                : 'gray'
-                          }
-                        >
-                          {suggestion.status}
-                        </Badge>
+                        <SuggestionStatusBadge status={suggestion.status} />
                       </td>
                       <td>
                         <div className="flex flex-wrap gap-1">
                           {suggestion.warnungen?.map((w, i) => (
                             <Badge key={i} variant="warning" size="sm">
-                              {w.typ}
+                              <span title={w.nachricht}>{warnungTypLabel(w.typ)}</span>
                             </Badge>
                           ))}
                         </div>

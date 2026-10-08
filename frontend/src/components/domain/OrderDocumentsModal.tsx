@@ -6,6 +6,7 @@ import { Button, Input, useToast } from '../ui';
 import { documentsApi, invoicesApi, OrderConfirmation, DeliveryNote } from '../../services/api';
 import { Order, Invoice } from '../../types';
 import { getErrorMessage } from '../../services/errors';
+import { belegStatusLabel } from '../ui/statusLabels';
 
 interface Props {
   open: boolean;
@@ -168,7 +169,7 @@ export function OrderDocumentsModal({ open, onClose, order }: Props) {
                 <li key={c.id} className="flex items-center justify-between border rounded p-2 dark:border-gray-700">
                   <div className="flex items-center gap-3">
                     <span className="font-mono text-sm">{c.confirmation_number}</span>
-                    <span className={`text-xs px-2 py-0.5 rounded ${statusBadge(c.status)}`}>{c.status}</span>
+                    <span className={`text-xs px-2 py-0.5 rounded ${statusBadge(c.status)}`}>{belegStatusLabel(c.status)}</span>
                     {c.sent_to_email && <span className="text-xs text-gray-500">→ {c.sent_to_email}</span>}
                   </div>
                   <div className="flex gap-1">
@@ -226,7 +227,7 @@ export function OrderDocumentsModal({ open, onClose, order }: Props) {
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
                       <span className="font-mono text-sm">{n.delivery_note_number}</span>
-                      <span className={`text-xs px-2 py-0.5 rounded ${statusBadge(n.status)}`}>{n.status}</span>
+                      <span className={`text-xs px-2 py-0.5 rounded ${statusBadge(n.status)}`}>{belegStatusLabel(n.status)}</span>
                       {n.signed_by && <span className="text-xs text-gray-500">✓ {n.signed_by}</span>}
                     </div>
                     <div className="flex gap-1">
@@ -302,7 +303,7 @@ export function OrderDocumentsModal({ open, onClose, order }: Props) {
                 <li key={inv.id} className="flex items-center justify-between border rounded p-2 dark:border-gray-700">
                   <div className="flex items-center gap-3">
                     <span className="font-mono text-sm">{inv.invoice_number}</span>
-                    <span className={`text-xs px-2 py-0.5 rounded ${statusBadge(inv.status)}`}>{inv.status}</span>
+                    <span className={`text-xs px-2 py-0.5 rounded ${statusBadge(inv.status)}`}>{belegStatusLabel(inv.status)}</span>
                     <span className="text-xs text-gray-500">€ {Number(inv.total || 0).toFixed(2)}</span>
                   </div>
                   <div className="flex gap-1">

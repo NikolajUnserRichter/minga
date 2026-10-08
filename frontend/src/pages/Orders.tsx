@@ -23,17 +23,16 @@ import {
   SelectOption,
   formatDate,
   getRelativeDate,
+  ORDER_STATUS_LABELS,
 } from '../components/ui';
 import { getErrorMessage } from '../services/errors';
 
 const statusOptions: SelectOption[] = [
   { value: 'all', label: 'Alle Status' },
-  { value: 'ENTWURF', label: 'Entwurf' },
-  { value: 'BESTAETIGT', label: 'Bestätigt' },
-  { value: 'IN_PRODUKTION', label: 'In Produktion' },
-  { value: 'GELIEFERT', label: 'Geliefert' },
-  { value: 'FAKTURIERT', label: 'Fakturiert' },
-  { value: 'STORNIERT', label: 'Storniert' },
+  ...(Object.keys(ORDER_STATUS_LABELS) as OrderStatus[]).map((s) => ({
+    value: s,
+    label: ORDER_STATUS_LABELS[s],
+  })),
 ];
 
 export default function Orders() {
