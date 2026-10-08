@@ -21,6 +21,14 @@ router = APIRouter(tags=["Produktion"])
 # Schon beim Kunden: erscheint im Tagesplan nur noch unter "Ausliefern".
 _AUSGELIEFERT = (OrderStatus.GELIEFERT, OrderStatus.FAKTURIERT)
 
+# Packen (Gernot, 08.10.2026): IN_PRODUKTION heißt in der Oberfläche "Gepackt".
+# Noch zu packen sind nur Entwürfe und bestätigte Bestellungen. Gepackte,
+# gelieferte und fakturierte gelten für den Packtag als erledigt — sie stehen
+# nicht mehr in "Verpacken" und zählen nicht im Sortenbedarf, bleiben aber in
+# "Ausliefern".
+_NOCH_ZU_PACKEN = (OrderStatus.ENTWURF, OrderStatus.BESTAETIGT)
+_SCHON_GEPACKT = (OrderStatus.IN_PRODUKTION, OrderStatus.GELIEFERT, OrderStatus.FAKTURIERT)
+
 
 @router.get("/growroom-capacity")
 def read_growroom_capacity(db: DBSession):
@@ -543,6 +551,9 @@ def get_day_plan(
             # Enum-Wert; die Oberfläche übersetzt (statusLabels.ts)
             "status": o.status.value,
             "positionen": len(o.lines),
+            # Der Knopf "Gepackt" setzt BESTAETIGT → IN_PRODUKTION. Ein Entwurf
+            # muss erst bestätigt werden; ENTWURF → IN_PRODUKTION ist verboten.
+            "packbar": o.status == OrderStatus.BESTAETIGT,
             # Was zu packen ist — der Mitarbeiter soll dafür nicht in die
             # Bestellungen wechseln müssen.
             "lines": [{
@@ -552,10 +563,11 @@ def get_day_plan(
             } for line in sorted(o.lines, key=lambda l: l.position or 0)],
         }
 
-    verpacken = [
-        _order_ref(o) for o in orders
-        if o.effective_packing_date == target_date and o.status not in _AUSGELIEFERT
-    ]
+    # Verpacken und Ausliefern kommen aus derselben Abfrage. Gepackte gehören
+    # weiter zu "Ausliefern" — deshalb hier in Python trennen, nicht im SQL.
+    packtag = [o for o in orders if o.effective_packing_date == target_date]
+    verpacken = [_order_ref(o) for o in packtag if o.status in _NOCH_ZU_PACKEN]
+    verpacken_erledigt = [_order_ref(o) for o in packtag if o.status in _SCHON_GEPACKT]
     ausliefern = [_order_ref(o) for o in orders if o.requested_delivery_date == target_date]
 
     # Dienst: wer ist an dem Tag eingeteilt (Dienstplan)
@@ -591,6 +603,7 @@ def get_day_plan(
         "aussaat": aussaat,
         "ernte": ernte,
         "verpacken": verpacken,
+        "verpacken_erledigt": verpacken_erledigt,
         "ausliefern": ausliefern,
         "dienst": dienst,
         "aufgaben": aufgaben,

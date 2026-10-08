@@ -687,3 +687,77 @@ class TestGepacktBedeutung:
         r = _a4_status(client, order, "STORNIERT", "Kunde hat abgesagt")
         assert r.status_code == 200, r.text
         assert _a4_tagesplan(client, morgen)["ausliefern"] == []
+
+
+@pytest.mark.usefixtures("_a4_ohne_celery")
+class TestTagesplanGepackt:
+    """A4: gepackte Bestellungen raus aus "Verpacken", drin in "Ausliefern"."""
+
+    def test_gepackte_faellt_aus_verpacken(self, client):
+        heute, morgen = date.today(), date.today() + timedelta(days=1)
+        offen = _a4_bestellung(client, morgen)
+        gepackt = _a4_bestellung(client, morgen)
+        _a4_packen(client, gepackt)
+
+        plan = _a4_tagesplan(client, heute)
+        assert _a4_nummern(plan["verpacken"]) == [offen["order_number"]]
+        assert _a4_nummern(plan["verpacken_erledigt"]) == [gepackt["order_number"]]
+
+    def test_gepackte_bleibt_in_ausliefern(self, client):
+        morgen = date.today() + timedelta(days=1)
+        offen = _a4_bestellung(client, morgen)
+        gepackt = _a4_bestellung(client, morgen)
+        _a4_packen(client, gepackt)
+
+        plan = _a4_tagesplan(client, morgen)
+        assert _a4_nummern(plan["ausliefern"]) == sorted([offen["order_number"], gepackt["order_number"]])
+
+    def test_same_day_gepackt(self, client):
+        """Same-Day: Pack- und Liefertag sind derselbe Tag. Nach dem Packen nur noch
+        unter Ausliefern (vgl. test_gernot_260817.py::test_same_day_bestellung_wird_heute_verpackt)."""
+        heute = date.today()
+        order = _a4_bestellung(client, heute)
+        _a4_packen(client, order)
+
+        plan = _a4_tagesplan(client, heute)
+        assert plan["verpacken"] == []
+        assert _a4_nummern(plan["verpacken_erledigt"]) == [order["order_number"]]
+        assert _a4_nummern(plan["ausliefern"]) == [order["order_number"]]
+
+    def test_packbar_nur_wenn_bestaetigt(self, client):
+        """Der Knopf "Gepackt" braucht BESTAETIGT; ein Entwurf muss erst bestätigt werden."""
+        morgen = date.today() + timedelta(days=1)
+        entwurf = _a4_bestellung(client, morgen, bestaetigen=False)
+        bestaetigt = _a4_bestellung(client, morgen)
+
+        zeilen = {z["order_number"]: z for z in _a4_tagesplan(client, date.today())["verpacken"]}
+        assert zeilen[entwurf["order_number"]]["packbar"] is False
+        assert zeilen[bestaetigt["order_number"]]["packbar"] is True
+
+    def test_expliziter_packtag_gepackt(self, client):
+        """Abweichender Packtag: gepackt fällt auch dort aus Verpacken."""
+        heute = date.today()
+        order = _a4_bestellung(client, heute + timedelta(days=3), packing_date=heute.isoformat())
+        _a4_packen(client, order)
+
+        plan = _a4_tagesplan(client, heute)
+        assert plan["verpacken"] == []
+        assert _a4_nummern(plan["verpacken_erledigt"]) == [order["order_number"]]
+
+    def test_gelieferte_und_fakturierte_gelten_als_erledigt(self, client):
+        """P1 (Task 4) lädt GELIEFERT und FAKTURIERT für "Ausliefern" mit. Am
+        Packtag stehen sie unter "Bereits gepackt", nie unter "Verpacken"."""
+        heute = date.today()
+        geliefert = _a4_bestellung(client, heute)
+        fakturiert = _a4_bestellung(client, heute)
+        for order in (geliefert, fakturiert):
+            _a4_packen(client, order)
+            r = _a4_status(client, order, "GELIEFERT")
+            assert r.status_code == 200, r.text
+        r = _a4_status(client, fakturiert, "FAKTURIERT")
+        assert r.status_code == 200, r.text
+
+        plan = _a4_tagesplan(client, heute)
+        assert plan["verpacken"] == []
+        assert _a4_nummern(plan["verpacken_erledigt"]) == sorted(
+            [geliefert["order_number"], fakturiert["order_number"]])
