@@ -712,6 +712,7 @@ class TestS1Datenkorrektur:
             Base.metadata.drop_all(bind=engine)
             engine.dispose()
 
+
     def test_gescheiterte_korrektur_blockiert_keine_schemamigration(self, monkeypatch, caplog):
         """Scheitert die Korrektur, laufen die Spaltenmigrationen trotzdem, es
         steht kein Marker, und _auto_migrate wirft nicht — beim nächsten Start
@@ -752,3 +753,145 @@ class TestS1Datenkorrektur:
         finally:
             Base.metadata.drop_all(bind=engine)
             engine.dispose()
+
+
+# ===========================================================================
+# S2 — Rechnungs-PDF weist Steuer je Satz aus, Rundung einheitlich
+# Helfer und Klassen tragen das Präfix _s2_/TestS2, weil sich mehrere
+# Abschnitte diese Datei teilen: ein gleichnamiger Helfer oder eine
+# gleichnamige Klasse aus einem anderen Abschnitt würde still ersetzt.
+# ===========================================================================
+
+#: Gernots Fall im Kleinen: Ware zu 7 %, Pfandkiste zu 19 %.
+#: 2,50 × 7 % = 0,175 → 0,18 | 4,50 × 19 % = 0,855 → 0,86 | zusammen 1,04.
+#: Einmal über alle Sätze gerundet ergab das 1,03 — 1 ct neben dem Steuerblock.
+S2_ZEILEN = [
+    {"description": "Erbsen-Schale", "quantity": 1, "unit": "STK",
+     "unit_price": 2.50, "tax_rate": "REDUZIERT"},
+    {"description": "Pfandkiste IFCO", "quantity": 1, "unit": "STK",
+     "unit_price": 4.50, "tax_rate": "STANDARD"},
+]
+
+
+def _s2_kunde(client):
+    r = client.post("/api/v1/sales/customers", json={"name": "Oekoring Test", "typ": "HANDEL"})
+    assert r.status_code == 201, r.text
+    return r.json()
+
+
+def _s2_rechnung_zeilenweise(client, zeilen=S2_ZEILEN, **kopf):
+    """Anlage wie in der Oberfläche: Kopf, dann jede Position einzeln."""
+    r = client.post("/api/v1/invoices", json={
+        "customer_id": _s2_kunde(client)["id"],
+        "invoice_date": date.today().isoformat(),
+        **kopf,
+    })
+    assert r.status_code == 201, r.text
+    rechnung = r.json()
+    for zeile in zeilen:
+        z = client.post(f"/api/v1/invoices/{rechnung['id']}/lines", json=zeile)
+        assert z.status_code == 201, z.text
+    return client.get(f"/api/v1/invoices/{rechnung['id']}").json()
+
+
+def _s2_steuerblock(invoice_id):
+    """(get_tax_summary(), subtotal, tax_amount, total) direkt aus der DB."""
+    from app.models.invoice import Invoice
+    with TestingSessionLocal() as db:
+        inv = db.get(Invoice, uuid.UUID(invoice_id))
+        return inv.get_tax_summary(), inv.subtotal, inv.tax_amount, inv.total
+
+
+class TestS2Rechenregel:
+    """Die eine Rechenregel, ohne Datenbank geprüft."""
+
+    @staticmethod
+    def _zeile(betrag, satz):
+        from app.models.enums import TaxRate
+        return SimpleNamespace(line_total=Decimal(betrag), tax_rate=TaxRate(satz))
+
+    def test_steuer_wird_je_satz_gerundet(self):
+        from app.models.invoice import steuer_je_satz
+        saetze = steuer_je_satz(
+            [self._zeile("4.50", "STANDARD"), self._zeile("2.50", "REDUZIERT")], Decimal("0"))
+
+        # aufsteigend nach Satz, unabhängig von der Positionsreihenfolge
+        assert [(s["percent"], s["base"], s["tax"]) for s in saetze] == [
+            (7, Decimal("2.50"), Decimal("0.18")),
+            (19, Decimal("4.50"), Decimal("0.86")),
+        ]
+
+    def test_rabatt_wird_je_satz_gerundet(self):
+        """3,8 % auf 25,00 € (7 %) und 9,00 € (19 %)."""
+        from app.models.invoice import steuer_je_satz
+        saetze = steuer_je_satz(
+            [self._zeile("25.00", "REDUZIERT"), self._zeile("9.00", "STANDARD")], Decimal("3.8"))
+
+        assert [(s["rabatt"], s["base"], s["tax"]) for s in saetze] == [
+            (Decimal("0.95"), Decimal("24.05"), Decimal("1.68")),
+            (Decimal("0.34"), Decimal("8.66"), Decimal("1.65")),
+        ]
+
+
+class TestS2Rechnungssummen:
+
+    def test_summe_der_satzsteuern_ist_tax_amount(self, client):
+        """Bisher: tax_amount 1,03, Steuerblock 0,18 + 0,86 = 1,04."""
+        rechnung = _s2_rechnung_zeilenweise(client)
+
+        saetze, netto, steuer, brutto = _s2_steuerblock(rechnung["id"])
+        assert sum(s["tax"] for s in saetze) == steuer == Decimal("1.04")
+        assert sum(s["base"] for s in saetze) == netto == Decimal("7.00")
+        assert brutto == Decimal("8.04")
+        assert Decimal(str(rechnung["tax_amount"])) == Decimal("1.04")
+
+    def test_mit_rechnungsrabatt_gehen_alle_summen_auf(self, client):
+        rechnung = _s2_rechnung_zeilenweise(client, zeilen=[
+            {"description": "Erbsen-Schale", "quantity": 10, "unit": "STK",
+             "unit_price": 2.50, "tax_rate": "REDUZIERT"},
+            {"description": "Pfandkiste IFCO", "quantity": 2, "unit": "STK",
+             "unit_price": 4.50, "tax_rate": "STANDARD"},
+        ], discount_percent=3.8)
+
+        saetze, netto, steuer, brutto = _s2_steuerblock(rechnung["id"])
+        assert Decimal(str(rechnung["discount_amount"])) == sum(s["rabatt"] for s in saetze) == Decimal("1.29")
+        assert netto == sum(s["base"] for s in saetze) == Decimal("32.71")
+        assert steuer == sum(s["tax"] for s in saetze) == Decimal("3.33")
+        assert brutto == netto + steuer == Decimal("36.04")
+
+    def test_rabatt_entfernen_setzt_rabattbetrag_zurueck(self, client):
+        """Sonst druckt das PDF 'Zwischensumme' und 'Rabatt' mit dem alten Betrag."""
+        rechnung = _s2_rechnung_zeilenweise(client, discount_percent=10)
+        assert Decimal(str(rechnung["discount_amount"])) == Decimal("0.70")
+
+        r = client.patch(f"/api/v1/invoices/{rechnung['id']}", json={"discount_percent": 0})
+
+        assert r.status_code == 200, r.text
+        assert Decimal(str(r.json()["discount_amount"])) == Decimal("0")
+        assert Decimal(str(r.json()["total"])) == Decimal("8.04")
+
+
+class TestS2KeinAbrufSchreibt:
+
+    def test_get_tax_summary_liest_gespeicherte_zeilenbetraege(self, client):
+        """PDF-Abruf und DATEV lesen get_tax_summary() auch für versendete
+        Rechnungen. Es darf line_total nicht aus Menge × Preis neu rechnen
+        und nichts an der Session verändern."""
+        from app.models.invoice import Invoice
+        rechnung = _s2_rechnung_zeilenweise(client)
+        # Gespeicherten Zeilenbetrag abweichend von Menge × Preis setzen, damit
+        # ein Neuberechnen auffällt. Nur im Test — echte Rechnungen nie direkt ändern.
+        with TestingSessionLocal() as db:
+            inv = db.get(Invoice, uuid.UUID(rechnung["id"]))
+            next(l for l in inv.lines if l.description == "Erbsen-Schale").line_total = Decimal("2.40")
+            db.commit()
+
+        with TestingSessionLocal() as db:
+            inv = db.get(Invoice, uuid.UUID(rechnung["id"]))
+            saetze = inv.get_tax_summary()
+
+            assert not db.dirty, f"get_tax_summary() hat verändert: {db.dirty}"
+            assert [(s["percent"], s["base"]) for s in saetze] == [
+                (7, Decimal("2.40")),
+                (19, Decimal("4.50")),
+            ]

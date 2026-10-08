@@ -18,6 +18,67 @@ from app.database import Base
 from app.models.enums import InvoiceStatus, InvoiceType, TaxRate, PaymentMethod
 
 
+def _cent(betrag: Decimal) -> Decimal:
+    return betrag.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
+def steuer_je_satz(lines, discount_percent) -> list[dict]:
+    """Entgelt und Steuer je Steuersatz — die eine Rechenregel für Rechnungssummen,
+    PDF-Steuerblock und DATEV.
+
+    § 14 Abs. 4 Nr. 8 UStG verlangt auf der Rechnung das Entgelt und den
+    Steuerbetrag je Steuersatz; § 16 Abs. 1 UStG rechnet die Steuer auf die
+    Summe der Entgelte je Satz. Regel:
+      1. je Satz die (bereits auf den Cent gerundeten) Zeilenbeträge summieren,
+      2. den Rechnungsrabatt je Satz auf den Cent runden und abziehen (= Entgelt),
+      3. die Steuer auf dieses Entgelt rechnen und je Satz auf den Cent runden.
+    Entgelt und Steuer je Satz folgen so aus den Positionen auf dem Beleg.
+    Der Gesamtrabatt ist die Summe der Rabatte je Satz und kann deshalb 1 ct
+    von "Zwischensumme × Rabattsatz" abweichen.
+
+    Arbeitet auf allem, was `tax_rate` und `line_total` trägt (auch auf den
+    Dummy-Zeilen der Vorlagen-Vorschau). Verändert nichts.
+    Reihenfolge: aufsteigend nach Steuersatz (0 %, 7 %, 19 %).
+    """
+    rabatt_prozent = Decimal(str(discount_percent or 0))
+    je_satz: dict = {}
+    for line in lines:
+        eintrag = je_satz.setdefault(line.tax_rate, {
+            "rate": line.tax_rate,
+            "percent": line.tax_rate.percent,
+            "netto_vor_rabatt": Decimal("0.00"),
+            "rabatt": Decimal("0.00"),
+            "base": Decimal("0.00"),
+            "tax": Decimal("0.00"),
+        })
+        eintrag["netto_vor_rabatt"] += Decimal(str(line.line_total or 0))
+
+    for eintrag in je_satz.values():
+        if rabatt_prozent > 0:
+            eintrag["rabatt"] = _cent(eintrag["netto_vor_rabatt"] * rabatt_prozent / 100)
+        eintrag["base"] = eintrag["netto_vor_rabatt"] - eintrag["rabatt"]
+        eintrag["tax"] = _cent(eintrag["base"] * eintrag["rate"].rate)
+
+    return sorted(je_satz.values(), key=lambda e: e["percent"])
+
+
+def steuerausweis_stimmt(invoice) -> bool:
+    """Ergibt die Aufteilung je Satz exakt die gespeicherten Rechnungssummen?
+
+    Für jede mit calculate_totals() berechnete Rechnung ja. Nein nur bei
+    Altrechnungen, deren Summen vor der Vereinheitlichung (Oktober 2026) mit
+    einmaliger Rundung über alle Sätze festgeschrieben wurden — bei
+    gemischten Sätzen oder Rechnungsrabatt kann das 1 ct abweichen.
+    Versendete Rechnungen sind unveränderlich (GoBD); ihr PDF muss dann die
+    festgeschriebenen Beträge zeigen, keine davon abweichende Aufteilung.
+    """
+    saetze = steuer_je_satz(invoice.lines, invoice.discount_percent)
+    return (
+        sum((s["base"] for s in saetze), Decimal("0")) == Decimal(str(invoice.subtotal or 0))
+        and sum((s["tax"] for s in saetze), Decimal("0")) == Decimal(str(invoice.tax_amount or 0))
+    )
+
+
 class Invoice(Base):
     """
     Rechnung - Vollständige deutsche Rechnung mit MwSt und DATEV-Feldern
@@ -130,42 +191,23 @@ class Invoice(Base):
     )
 
     def calculate_totals(self) -> None:
-        """Berechnet Zwischensumme, MwSt und Gesamtbetrag"""
-        subtotal = Decimal("0")
-        tax_by_rate: dict[TaxRate, Decimal] = {}
+        """Berechnet Zwischensumme, Rabatt, MwSt und Gesamtbetrag.
 
+        Alle Beträge kommen aus steuer_je_satz() — derselben Rechnung, die
+        get_tax_summary() und der Steuerblock im PDF verwenden. Dadurch gilt
+        für jede hier berechnete Rechnung: Summe der Netto je Satz = subtotal,
+        Summe der Steuer je Satz = tax_amount. Früher rundete diese Methode
+        die Steuer einmal über alle Sätze, get_tax_summary() je Satz — bei
+        gemischten Sätzen lagen beide 1 ct auseinander.
+        """
         for line in self.lines:
-            line_total = line.calculate_line_total()
-            subtotal += line_total
+            line.calculate_line_total()
+        saetze = steuer_je_satz(self.lines, self.discount_percent)
 
-            # MwSt nach Satz gruppieren
-            tax_rate = line.tax_rate
-            if tax_rate not in tax_by_rate:
-                tax_by_rate[tax_rate] = Decimal("0")
-            tax_by_rate[tax_rate] += line_total
-
-        # Rabatt anwenden
-        if self.discount_percent > 0:
-            self.discount_amount = (subtotal * self.discount_percent / 100).quantize(
-                Decimal("0.01"), rounding=ROUND_HALF_UP
-            )
-            subtotal -= self.discount_amount
-
-        self.subtotal = subtotal.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-
-        # MwSt berechnen (nach Rabatt)
-        total_tax = Decimal("0")
-        for tax_rate, base_amount in tax_by_rate.items():
-            # Rabatt proportional verteilen
-            if self.discount_percent > 0:
-                base_amount -= base_amount * self.discount_percent / 100
-            tax = base_amount * tax_rate.rate
-            total_tax += tax
-
-        self.tax_amount = total_tax.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-        self.total = (self.subtotal + self.tax_amount).quantize(
-            Decimal("0.01"), rounding=ROUND_HALF_UP
-        )
+        self.discount_amount = sum((s["rabatt"] for s in saetze), Decimal("0.00"))
+        self.subtotal = sum((s["base"] for s in saetze), Decimal("0.00"))
+        self.tax_amount = sum((s["tax"] for s in saetze), Decimal("0.00"))
+        self.total = self.subtotal + self.tax_amount
 
         # Pfand-Summe berechnen (Brutto)
         deposit_sum = sum((line.gross_total for line in self.lines if line.is_deposit), Decimal("0.00"))
@@ -191,36 +233,13 @@ class Invoice(Base):
         return date.today() > self.due_date
 
     def get_tax_summary(self) -> list[dict]:
-        """MwSt-Zusammenfassung für Rechnung"""
-        tax_by_rate: dict[TaxRate, dict] = {}
+        """MwSt je Satz: Schlüssel rate, percent, base, tax, netto_vor_rabatt, rabatt.
 
-        for line in self.lines:
-            line_total = line.calculate_line_total()
-            rate = line.tax_rate
-
-            if rate not in tax_by_rate:
-                tax_by_rate[rate] = {
-                    "rate": rate,
-                    "percent": rate.percent,
-                    "base": Decimal("0"),
-                    "tax": Decimal("0"),
-                }
-
-            # Rabatt proportional
-            if self.discount_percent > 0:
-                line_total -= line_total * self.discount_percent / 100
-
-            tax_by_rate[rate]["base"] += line_total
-            tax_by_rate[rate]["tax"] += line_total * rate.rate
-
-        # Runden
-        result = []
-        for data in tax_by_rate.values():
-            data["base"] = data["base"].quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-            data["tax"] = data["tax"].quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-            result.append(data)
-
-        return result
+        Gleiche Rechenregel wie calculate_totals(). Liest die gespeicherten
+        Zeilenbeträge und verändert nichts — sicher auch für versendete
+        Rechnungen (PDF-Abruf, DATEV-Export).
+        """
+        return steuer_je_satz(self.lines, self.discount_percent)
 
     def __repr__(self) -> str:
         return f"<Invoice(number='{self.invoice_number}', total={self.total})>"
