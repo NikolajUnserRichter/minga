@@ -190,6 +190,21 @@ class Invoice(Base):
             return False
         return date.today() > self.due_date
 
+    # Kunde für Listen und Detail. InvoiceResponse kennt beide Felder seit
+    # jeher (from_attributes), das Modell hatte sie nicht — die Spalte "Kunde"
+    # blieb deshalb überall leer. Stammdaten-Stand wie im PDF
+    # (pdf_service: invoice.customer.name). Listen laden den Kunden per
+    # joinedload, sonst kostet jede Zeile eine eigene Abfrage.
+    @property
+    def customer_name(self) -> Optional[str]:
+        """Name des Kunden (aktueller Stammdatenstand)."""
+        return self.customer.name if self.customer else None
+
+    @property
+    def customer_number(self) -> Optional[str]:
+        """Kundennummer (aktueller Stammdatenstand)."""
+        return self.customer.customer_number if self.customer else None
+
     def get_tax_summary(self) -> list[dict]:
         """MwSt-Zusammenfassung für Rechnung"""
         tax_by_rate: dict[TaxRate, dict] = {}

@@ -822,3 +822,138 @@ class TestSortenbedarfGepackt:
         plan = _a4_packplan(client, heute)
         assert plan["komponenten"] == []
         assert plan["items"] == []
+
+
+# ===========================================================================
+# P3 / A2 — Kunde in Rechnungsliste, Detail und "Überfällig"
+#
+# InvoiceResponse kannte customer_name/customer_number seit dem Initial
+# Commit, das Invoice-Modell nicht — die Felder kamen immer als null.
+# ===========================================================================
+from datetime import date, timedelta
+
+
+def _a2_kunde(client, name="Gasthof Zur Post", nummer="K-A2-001"):
+    r = client.post("/api/v1/sales/customers", json={
+        "name": name, "typ": "GASTRO", "customer_number": nummer,
+    })
+    assert r.status_code in (200, 201), r.text
+    return r.json()
+
+
+def _a2_entwurf(client, kunde, *, rechnungsdatum=None, faellig=None):
+    """Rechnungsentwurf mit einer Position, Satz ausdrücklich gesetzt."""
+    body = {
+        "customer_id": kunde["id"],
+        "invoice_date": (rechnungsdatum or date.today()).isoformat(),
+        "lines": [{
+            "description": "Erbse 100 g", "quantity": "2", "unit": "STUECK",
+            "unit_price": "3.50", "tax_rate": "REDUZIERT",
+        }],
+    }
+    if faellig is not None:
+        body["due_date"] = faellig.isoformat()
+    r = client.post("/api/v1/invoices", json=body)
+    assert r.status_code == 201, r.text
+    return r.json()
+
+
+def _a2_rechnung(client, kunde, *, ueberfaellig=False):
+    """Finalisierte (OFFEN) Rechnung; ueberfaellig=True → Zahlungsziel gestern."""
+    heute = date.today()
+    if ueberfaellig:
+        entwurf = _a2_entwurf(client, kunde, rechnungsdatum=heute - timedelta(days=30),
+                              faellig=heute - timedelta(days=1))
+    else:
+        entwurf = _a2_entwurf(client, kunde, faellig=heute + timedelta(days=14))
+    r = client.post(f"/api/v1/invoices/{entwurf['id']}/finalize")
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def _a2_liste(r):
+    """Zeilen aus GET /invoices bzw. /invoices/overdue.
+
+    Heute eine nackte Liste (api.ts: api.get<Invoice[]>). Stellt Paket 1 die
+    Rechnungsliste auf {"items": [...], ...} um, greift der zweite Zweig.
+    """
+    assert r.status_code == 200, r.text
+    daten = r.json()
+    return daten["items"] if isinstance(daten, dict) else daten
+
+
+def _a2_zeile(rows, invoice_id):
+    treffer = [r for r in rows if r["id"] == invoice_id]
+    assert len(treffer) == 1, f"Rechnung {invoice_id} nicht in der Antwort"
+    return treffer[0]
+
+
+class TestRechnungZeigtKunde:
+    """A2: Spalte "Kunde" war in Liste, Detail und "Überfällig" leer."""
+
+    def test_liste(self, client):
+        kunde = _a2_kunde(client)
+        rechnung = _a2_rechnung(client, kunde)
+
+        zeile = _a2_zeile(_a2_liste(client.get("/api/v1/invoices")), rechnung["id"])
+        assert zeile["customer_name"] == "Gasthof Zur Post"
+        assert zeile["customer_number"] == "K-A2-001"
+
+    def test_liste_mit_statusfilter_wie_dashboard(self, client):
+        """Dashboard.tsx fragt GET /invoices?status=OFFEN ab."""
+        kunde = _a2_kunde(client)
+        rechnung = _a2_rechnung(client, kunde)
+
+        rows = _a2_liste(client.get("/api/v1/invoices", params={"status": "OFFEN"}))
+        assert _a2_zeile(rows, rechnung["id"])["customer_name"] == "Gasthof Zur Post"
+
+    def test_detail(self, client):
+        kunde = _a2_kunde(client)
+        rechnung = _a2_rechnung(client, kunde)
+
+        r = client.get(f"/api/v1/invoices/{rechnung['id']}")
+        assert r.status_code == 200, r.text
+        assert r.json()["customer_name"] == "Gasthof Zur Post"
+        assert r.json()["customer_number"] == "K-A2-001"
+
+    def test_ueberfaellig(self, client):
+        kunde = _a2_kunde(client)
+        rechnung = _a2_rechnung(client, kunde, ueberfaellig=True)
+
+        zeile = _a2_zeile(_a2_liste(client.get("/api/v1/invoices/overdue")), rechnung["id"])
+        assert zeile["status"] == "UEBERFAELLIG"
+        assert zeile["customer_name"] == "Gasthof Zur Post"
+        assert zeile["customer_number"] == "K-A2-001"
+
+    def test_ueberfaellig_zweiter_aufruf(self, client):
+        """Beim zweiten Aufruf steht die Rechnung schon auf UEBERFAELLIG — Kunde bleibt."""
+        kunde = _a2_kunde(client)
+        rechnung = _a2_rechnung(client, kunde, ueberfaellig=True)
+        client.get("/api/v1/invoices/overdue")
+
+        rows = _a2_liste(client.get("/api/v1/invoices/overdue"))
+        assert _a2_zeile(rows, rechnung["id"])["customer_name"] == "Gasthof Zur Post"
+
+    def test_schreibende_endpunkte(self, client):
+        """Anlegen, Kopfdaten ändern, Finalisieren und Storno liefern den Kunden mit."""
+        alt = _a2_kunde(client)
+        neu = _a2_kunde(client, name="Fruchthof Nagel", nummer="K-A2-002")
+
+        entwurf = _a2_entwurf(client, alt, faellig=date.today() + timedelta(days=14))
+        assert entwurf["customer_name"] == "Gasthof Zur Post"
+
+        r = client.patch(f"/api/v1/invoices/{entwurf['id']}", json={"customer_id": neu["id"]})
+        assert r.status_code == 200, r.text
+        assert r.json()["customer_name"] == "Fruchthof Nagel"
+        assert r.json()["customer_number"] == "K-A2-002"
+
+        r = client.post(f"/api/v1/invoices/{entwurf['id']}/finalize")
+        assert r.status_code == 200, r.text
+        assert r.json()["customer_name"] == "Fruchthof Nagel"
+
+        r = client.post(f"/api/v1/invoices/{entwurf['id']}/cancel", json={
+            "reason": "Test", "reason_code": "SONSTIGES", "create_credit_note": True,
+        })
+        assert r.status_code == 200, r.text
+        assert r.json()["invoice"]["customer_name"] == "Fruchthof Nagel"
+        assert r.json()["credit_note"]["customer_name"] == "Fruchthof Nagel"
