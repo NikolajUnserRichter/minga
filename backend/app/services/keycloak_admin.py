@@ -8,16 +8,31 @@ Auth gegen Keycloak: master-Realm-Admin via Env
     KEYCLOAK_ADMIN_USER, KEYCLOAK_ADMIN_PASSWORD
 Ziel-Realm: KEYCLOAK_REALM (Default: novaerp)
 Keycloak-Basis-URL: KEYCLOAK_URL
+
+Benutzerverwaltung je Mandant (unten, /api/v1/users): Realm = settings.keycloak_realm,
+also derselbe Realm wie die Token-Prüfung (core/security.py). Zugang NUR über einen
+Service-Account im Ziel-Realm (KEYCLOAK_USERS_CLIENT_ID, KEYCLOAK_USERS_CLIENT_SECRET;
+Client-Rollen manage-users, view-users, view-realm). Fehlt er, antwortet die
+Benutzerverwaltung mit 503. Den master-Admin nutzt sie nie.
 """
 from __future__ import annotations
 
+import logging
 import os
 import re
 import secrets
 import string
+import threading
+import time
+import uuid
+from datetime import datetime, timezone
 from typing import Optional
 
 import httpx
+
+from app.config import get_settings
+
+logger = logging.getLogger(__name__)
 
 
 class KeycloakAdminError(Exception):
@@ -231,3 +246,256 @@ def is_configured() -> bool:
         return True
     except KeycloakAdminError:
         return False
+
+
+# ---------------------------------------------------------------------------
+# Benutzerverwaltung je Mandant (Paket 4, B8)
+#
+# Ein Realm für alle Mandanten: getrennt wird NUR über das Attribut
+# tenant_slug. Deshalb prüft jede Funktion hier vor jedem Lesen oder
+# Schreiben, dass der Zielbenutzer genau diesen tenant_slug trägt. Ein
+# Benutzer eines anderen Mandanten ist für den Aufrufer "nicht gefunden".
+# ---------------------------------------------------------------------------
+
+#: Rollen, die ein Mandanten-Admin vergeben darf. Reihenfolge = Rangfolge wie
+#: ROLLEN_RANGFOLGE in frontend/src/components/common/Layout.tsx.
+MANDANTEN_ROLLEN: tuple[str, ...] = (
+    "admin", "production_planner", "sales", "accounting", "production_staff",
+)
+
+_SEITE = 100
+_MAX_SEITEN = 10
+#: Token des Service-Accounts, bis kurz vor Ablauf: {(url, realm, client_id): (token, gültig_bis)}.
+_token_cache: dict[tuple, tuple[str, float]] = {}
+_token_lock = threading.Lock()
+
+
+class KeycloakNichtErreichbar(KeycloakAdminError):
+    """Keycloak antwortet nicht oder mit 5xx, oder der Zugang fehlt bzw. wird abgelehnt."""
+
+
+class KeycloakNichtGefunden(KeycloakAdminError):
+    """Benutzer gibt es nicht — oder er gehört zu einem anderen Mandanten."""
+
+    def __init__(self, fremd: bool = False) -> None:
+        super().__init__("Benutzer nicht gefunden.")
+        self.fremd = fremd
+
+
+class KeycloakKonflikt(KeycloakAdminError):
+    """E-Mail-Adresse ist im Realm schon vergeben."""
+
+
+class BenutzerSchutzregel(KeycloakAdminError):
+    """Änderung würde den eigenen Zugang sperren oder den Mandanten ohne Admin lassen."""
+
+
+class BenutzerVomSupportVerwaltet(BenutzerSchutzregel):
+    """Konto hat Rechte außerhalb der App-Rollen (Client-Rollen, Gruppen, fremde
+    oder zusammengesetzte Realm-Rollen). Ein Mandanten-Admin ändert es nicht."""
+
+    def __init__(self) -> None:
+        super().__init__("Dieser Benutzer wird vom Support verwaltet und kann hier nicht geändert werden.")
+
+
+class RolleNichtErlaubt(KeycloakAdminError):
+    """Rolle liegt außerhalb von MANDANTEN_ROLLEN."""
+
+
+def _http_client() -> httpx.Client:
+    """Fabrik für den HTTP-Client. Tests hängen hier einen httpx.MockTransport ein."""
+    return httpx.Client(verify=True, timeout=15)
+
+
+def _require_user_id(user_id: str) -> str:
+    """Keycloak-IDs sind UUIDs. Alles andere ist "nicht gefunden", bevor es in
+    einen URL-Pfad gelangt — httpx löst '..' auf (/users/../roles/admin wäre
+    /roles/admin), '?' finge eine Query an."""
+    try:
+        return str(uuid.UUID(str(user_id)))
+    except (ValueError, TypeError, AttributeError):
+        raise KeycloakNichtGefunden() from None
+
+
+def _users_cfg() -> dict:
+    """Zugang der Benutzerverwaltung.
+
+    Realm = der Realm, gegen den die App Tokens prüft (settings.keycloak_realm,
+    core/security.py:69) — nicht der KEYCLOAK_REALM-Default 'novaerp' aus _cfg().
+    Sonst verwaltete ein Mandanten-Admin Benutzer in einem anderen Realm als dem,
+    aus dem sein Token stammt.
+
+    Ausschließlich ein Service-Account im Ziel-Realm (T5 R5, Risiko 2; E-M16).
+    Ohne ihn: 503. Einen Rückfall auf den master-Admin gibt es nicht, auch wenn
+    KEYCLOAK_ADMIN_USER/_PASSWORD gesetzt sind (die nutzt nur das Onboarding).
+    """
+    url = os.environ.get("KEYCLOAK_URL", "").rstrip("/")
+    realm = get_settings().keycloak_realm
+    svc_id = os.environ.get("KEYCLOAK_USERS_CLIENT_ID", "").strip()
+    svc_secret = os.environ.get("KEYCLOAK_USERS_CLIENT_SECRET", "")
+    if not url:
+        raise KeycloakNichtErreichbar("Benutzerverwaltung ist nicht eingerichtet (KEYCLOAK_URL fehlt).")
+    if not (svc_id and svc_secret):
+        raise KeycloakNichtErreichbar(
+            "Benutzerverwaltung ist nicht eingerichtet "
+            "(Service-Account fehlt: KEYCLOAK_USERS_CLIENT_ID/_SECRET)."
+        )
+    return {"url": url, "realm": realm, "svc_id": svc_id, "svc_secret": svc_secret}
+
+
+def _neues_token(c: dict, client: httpx.Client) -> tuple[str, float]:
+    """Anmeldung des Service-Accounts (client_credentials) im Ziel-Realm.
+    Rückgabe: (Token, gültig bis — monotone Uhr, 30 s Puffer)."""
+    url = f"{c['url']}/realms/{c['realm']}/protocol/openid-connect/token"
+    daten = {"grant_type": "client_credentials",
+             "client_id": c["svc_id"], "client_secret": c["svc_secret"]}
+    try:
+        r = client.post(url, data=daten, headers={"Content-Type": "application/x-www-form-urlencoded"})
+    except httpx.TransportError as e:
+        raise KeycloakNichtErreichbar("Keycloak ist nicht erreichbar.") from e
+    if r.status_code != 200:
+        raise KeycloakNichtErreichbar(
+            f"Anmeldung der Benutzerverwaltung bei Keycloak abgelehnt (HTTP {r.status_code})."
+        )
+    antwort = r.json()
+    laufzeit = float(antwort.get("expires_in") or 60)
+    return antwort["access_token"], time.monotonic() + max(0.0, laufzeit - 30)
+
+
+def _users_token(c: dict, client: httpx.Client, *, erneuern: bool = False) -> str:
+    """Token aus dem Prozess-Cache; neu anmelden erst kurz vor Ablauf."""
+    schluessel = (c["url"], c["realm"], c["svc_id"])
+    with _token_lock:
+        if erneuern:
+            _token_cache.pop(schluessel, None)
+        eintrag = _token_cache.get(schluessel)
+        if eintrag and eintrag[1] > time.monotonic():
+            return eintrag[0]
+    token, gueltig_bis = _neues_token(c, client)
+    with _token_lock:
+        _token_cache[schluessel] = (token, gueltig_bis)
+    return token
+
+
+class _Benutzerzugang:
+    """Eine Keycloak-Sitzung je API-Aufruf: Client, Token, Basis-URL des Realms."""
+
+    def __init__(self) -> None:
+        self.c = _users_cfg()
+        self.base = f"{self.c['url']}/admin/realms/{self.c['realm']}"
+        self.client = _http_client()
+        try:
+            self.h = {"Authorization": f"Bearer {_users_token(self.c, self.client)}"}
+        except Exception:
+            self.client.close()
+            raise
+
+    def __enter__(self) -> "_Benutzerzugang":
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.client.close()
+
+    def _senden(self, method: str, path: str, **kw) -> httpx.Response:
+        try:
+            return self.client.request(method, f"{self.base}{path}", headers=self.h, **kw)
+        except httpx.TransportError as e:
+            raise KeycloakNichtErreichbar("Keycloak ist nicht erreichbar.") from e
+
+    def call(self, method: str, path: str, **kw) -> httpx.Response:
+        r = self._senden(method, path, **kw)
+        if r.status_code == 401:
+            # Token aus dem Cache abgelaufen oder widerrufen: einmal neu anmelden.
+            self.h = {"Authorization": f"Bearer {_users_token(self.c, self.client, erneuern=True)}"}
+            r = self._senden(method, path, **kw)
+        if r.status_code >= 500:
+            raise KeycloakNichtErreichbar(f"Keycloak meldet einen Serverfehler (HTTP {r.status_code}).")
+        return r
+
+
+def _gehoert_zum_mandanten(rep: dict, tenant_slug: str) -> bool:
+    """Genau ein Wert, genau dieser Mandant. Fehlt das Attribut: fremd."""
+    return (rep.get("attributes") or {}).get("tenant_slug") == [tenant_slug]
+
+
+def _lade_mandanten_user(kc: _Benutzerzugang, user_id: str, tenant_slug: str) -> dict:
+    user_id = _require_user_id(user_id)
+    r = kc.call("GET", f"/users/{user_id}")
+    if r.status_code == 404:
+        raise KeycloakNichtGefunden()
+    if r.status_code != 200:
+        raise KeycloakAdminError(f"Benutzer konnte nicht gelesen werden (HTTP {r.status_code}).")
+    rep = r.json()
+    if not _gehoert_zum_mandanten(rep, tenant_slug):
+        raise KeycloakNichtGefunden(fremd=True)
+    return rep
+
+
+def _rollen_mappings(kc: _Benutzerzugang, user_id: str) -> list[dict]:
+    r = kc.call("GET", f"/users/{user_id}/role-mappings/realm")
+    if r.status_code != 200:
+        raise KeycloakAdminError(f"Rollen konnten nicht gelesen werden (HTTP {r.status_code}).")
+    return r.json()
+
+
+def _app_rollen(kc: _Benutzerzugang, user_id: str) -> list[str]:
+    """Direkt zugewiesene App-Rollen, in Rangfolge. Andere Realm-Rollen fallen heraus."""
+    namen = {m.get("name") for m in _rollen_mappings(kc, user_id)}
+    return [r for r in MANDANTEN_ROLLEN if r in namen]
+
+
+def _als_benutzer(rep: dict, rollen: list[str]) -> dict:
+    ts = rep.get("createdTimestamp")
+    return {
+        "id": rep["id"],
+        "email": rep.get("email") or rep.get("username") or "",
+        "first_name": rep.get("firstName") or "",
+        "last_name": rep.get("lastName") or "",
+        "enabled": bool(rep.get("enabled", False)),
+        "roles": rollen,
+        "role": rollen[0] if rollen else None,
+        "created_at": datetime.fromtimestamp(ts / 1000, tz=timezone.utc) if ts else None,
+    }
+
+
+def _mandanten_reps(kc: _Benutzerzugang, tenant_slug: str) -> list[dict]:
+    """Alle Benutzer des Mandanten: Keycloak-Attributsuche plus exakter Filter in Python.
+
+    Die q-Suche kann je nach Keycloak-Version auch Teiltreffer liefern
+    (q=tenant_slug:minga träfe minga-test). Maßgeblich ist der Python-Filter.
+    """
+    treffer: list[dict] = []
+    first = 0
+    for _ in range(_MAX_SEITEN):
+        r = kc.call("GET", "/users", params={
+            "q": f"tenant_slug:{tenant_slug}",
+            "exact": "true",
+            "briefRepresentation": "false",
+            "first": first,
+            "max": _SEITE,
+        })
+        if r.status_code != 200:
+            raise KeycloakAdminError(f"Benutzerliste konnte nicht gelesen werden (HTTP {r.status_code}).")
+        seite = r.json()
+        treffer.extend(seite)
+        if len(seite) < _SEITE:
+            break
+        first += _SEITE
+    else:
+        raise KeycloakAdminError("Mehr als 1000 Treffer — Benutzerliste wäre unvollständig.")
+    return [u for u in treffer if _gehoert_zum_mandanten(u, tenant_slug)]
+
+
+def list_tenant_users(tenant_slug: str) -> list[dict]:
+    tenant_slug = _require_safe_slug(tenant_slug)
+    with _Benutzerzugang() as kc:
+        benutzer = [_als_benutzer(u, _app_rollen(kc, u["id"])) for u in _mandanten_reps(kc, tenant_slug)]
+    return sorted(benutzer, key=lambda b: (b["last_name"].lower(), b["first_name"].lower(), b["email"]))
+
+
+def get_tenant_user(tenant_slug: str, user_id: str) -> dict:
+    tenant_slug = _require_safe_slug(tenant_slug)
+    user_id = _require_user_id(user_id)
+    with _Benutzerzugang() as kc:
+        rep = _lade_mandanten_user(kc, user_id, tenant_slug)
+        return _als_benutzer(rep, _app_rollen(kc, user_id))
