@@ -22,7 +22,7 @@ from app.schemas.invoice import (
     InvoiceSendRequest, InvoiceCancelRequest,
     DatevExportRequest, DatevExportResponse,
 )
-from app.services.invoice_service import InvoiceService, BereitsAbgerechnet, waehle_vertreter
+from app.services.invoice_service import InvoiceService, BereitsAbgerechnet, waehle_vertreter, ist_clearing_pfand, netto_je_lieferschein
 from app.services.datev_service import DatevService, erloeskonto_fuer, ist_standard_erloeskonto
 from app.services.email_service import send_email, EmailNotConfiguredError
 from app.services.pdf_service import load_company_settings
@@ -659,6 +659,10 @@ def _aggregiere(db, notes) -> dict:
         })
         k["lieferscheine"].append(note)
         for line in order.lines:
+            # Pfand über IFCO-Clearing steht auf dem Lieferschein, nicht auf
+            # der Rechnung — dieselbe Regel wie bei der Rechnung aus Bestellung.
+            if ist_clearing_pfand(db, order.customer, line):
+                continue
             produkt = produkt_der_position(db, line.product_id, line.product_variant_id)
             satz = steuersatz_der_position(
                 db, line.product_id, line.product_variant_id, line.tax_rate
@@ -671,7 +675,9 @@ def _aggregiere(db, notes) -> dict:
             pos = k["positionen"].setdefault(key, {"menge": Decimal("0"), "quellen": []})
             pos["menge"] += line.quantity
             pos["quellen"].append((note.id, line.quantity))
-    return kunden
+    # Wer im Zeitraum nur Clearing-Pfand geliefert bekam, bekommt keine leere
+    # Rechnung — und taucht auch in der Vorschau nicht auf.
+    return {kid: k for kid, k in kunden.items() if k["positionen"]}
 
 
 @router.post("/batch-run/preview")
@@ -769,9 +775,12 @@ def invoice_delivery_notes(invoice_id: UUID, db: DBSession):
     notes = db.execute(
         select(DeliveryNote).where(DeliveryNote.invoice_id == invoice_id)
     ).scalars().all()
+    # Betrag aus den Positionen dieser Rechnung, nicht aus der Bestellung —
+    # sonst zählte Clearing-Pfand mit (dieselbe Regel wie die PDF-Anlage).
+    betraege = netto_je_lieferschein(db, invoice, notes)
     return [{
         "id": str(n.id),
         "delivery_note_number": n.delivery_note_number,
         "lieferdatum": (n.actual_delivery_date or n.order.requested_delivery_date).isoformat(),
-        "betrag_netto": sum((l.quantity * l.unit_price for l in n.order.lines), Decimal("0")),
+        "betrag_netto": betraege[n.id],
     } for n in notes]

@@ -12,11 +12,11 @@ from sqlalchemy.orm import Session
 from sqlalchemy import select, func, and_, or_
 
 from app.models.invoice import (
-    Invoice, InvoiceLine, Payment,
+    Invoice, InvoiceLine, InvoiceLineSource, Payment,
     InvoiceStatus, InvoiceType, TaxRate, PaymentMethod,
     generate_invoice_number, STANDARD_ACCOUNTS
 )
-from app.models.customer import Customer, AddressType
+from app.models.customer import Customer, AddressType, PfandAbrechnung
 from app.models.order import Order, OrderLine
 from app.models.product import Product
 from app.models.documents import DeliveryNote
@@ -55,6 +55,64 @@ def waehle_vertreter(lieferscheine):
         lieferscheine,
         key=lambda n: (n.status != DeliveryNoteStatus.GELIEFERT, n.delivery_note_number),
     )
+
+
+def ist_clearing_pfand(db: Session, kunde: Optional[Customer], line: OrderLine) -> bool:
+    """Gehört diese Bestellposition NICHT auf die Rechnung?
+
+    Kunden mit pfand_abrechnung = KEINE (z. B. Ökoring, Bodan) rechnen das
+    Pfand für IFCO-Kisten über das IFCO-Clearing ab, nicht über Minga Greens.
+    Die Pfandposition bleibt auf Bestellung und Lieferschein (Nachweis der
+    gelieferten Kisten), fehlt aber auf der Rechnung. Erkannt wird Pfand am
+    Produktstamm (is_deposit) — Freitext-Pfandzeilen ohne Produkt bleiben
+    stehen, weil nichts sie als Pfand ausweist. MONATLICH (Leergutkonto)
+    kommt mit Paket 3 und muss hier ergänzt werden.
+    """
+    if kunde is None or kunde.pfand_abrechnung != PfandAbrechnung.KEINE:
+        return False
+    produkt = produkt_der_position(db, line.product_id, line.product_variant_id)
+    return produkt is not None and bool(produkt.is_deposit)
+
+
+def netto_je_lieferschein(db: Session, invoice: Invoice, lieferscheine: list[DeliveryNote]) -> dict[UUID, Decimal]:
+    """Abgerechneter Nettobetrag je Lieferschein dieser Rechnung.
+
+    Für die Anlage "Enthaltene Lieferscheine" im Rechnungs-PDF und für
+    GET /invoices/{id}/delivery-notes. Gerechnet wird aus den Positionen
+    DIESER Rechnung, nicht aus der Bestellung: Clearing-Pfand steht auf
+    Bestellung und Lieferschein, aber nicht auf der Rechnung — die Anlage
+    muss zur Rechnung passen. Bewusst nicht über ist_clearing_pfand: Das PDF
+    entsteht bei jedem Abruf neu, ein später geändertes Kundenfeld
+    änderte sonst die Anlage einer versendeten Rechnung (GoBD).
+
+    - Sammelrechnung: invoice_line_sources (Menge je Lieferschein) mal
+      Einzelpreis der Position, nach Positionsrabatt.
+    - Rechnung aus Bestellung (S6 hängt genau einen Lieferschein an, ohne
+      invoice_line_sources): die Positionen, deren order_item_id zur
+      Bestellung des Lieferscheins gehört.
+    Der Rabatt auf die ganze Rechnung (Kopfrabatt) bleibt wie bisher außen vor.
+    """
+    betraege = {n.id: Decimal("0") for n in lieferscheine}
+    mit_quelle = set()
+    quellen = db.execute(
+        select(InvoiceLineSource.delivery_note_id, InvoiceLineSource.quantity,
+               InvoiceLine.unit_price, InvoiceLine.discount_percent)
+        .join(InvoiceLine, InvoiceLineSource.invoice_line_id == InvoiceLine.id)
+        .where(InvoiceLine.invoice_id == invoice.id)
+    ).all()
+    for note_id, menge, preis, rabatt in quellen:
+        if note_id in betraege:
+            betraege[note_id] += menge * preis * (1 - (rabatt or Decimal("0")) / 100)
+            mit_quelle.add(note_id)
+    for note in lieferscheine:
+        if note.id in mit_quelle or note.order is None:
+            continue
+        bestellzeilen = {l.id for l in note.order.lines}
+        betraege[note.id] = sum(
+            (l.line_total for l in invoice.lines if l.order_item_id in bestellzeilen),
+            Decimal("0"),
+        )
+    return {nid: b.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP) for nid, b in betraege.items()}
 
 
 class InvoiceService:
@@ -254,6 +312,16 @@ class InvoiceService:
         if not order:
             raise ValueError("Bestellung nicht gefunden")
 
+        # Pfand über IFCO-Clearing bleibt auf dem Lieferschein, nicht auf der
+        # Rechnung. Vor dem Anlegen prüfen: eine reine Pfandbestellung ergäbe
+        # sonst eine leere Rechnung (und verbrauchte eine Nummer).
+        positionen = [l for l in order.lines if not ist_clearing_pfand(self.db, order.customer, l)]
+        if order.lines and not positionen:
+            raise ValueError(
+                "Die Bestellung enthält nur Pfandpositionen. Dieser Kunde rechnet Pfand "
+                "über IFCO-Clearing ab — es gibt nichts zu fakturieren."
+            )
+
         # Rechnung erstellen
         invoice = self.create_invoice(
             customer_id=order.customer_id,
@@ -262,7 +330,7 @@ class InvoiceService:
         )
 
         # Positionen aus Bestellung übernehmen
-        for line in order.lines:
+        for line in positionen:
             # Beschreibung wie bisher aus dem direkt verknüpften Produkt — bei
             # reinen Variantenpositionen bleibt der gespeicherte Name stehen.
             direkt = self.db.get(Product, line.product_id) if line.product_id else None

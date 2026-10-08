@@ -2436,3 +2436,176 @@ class TestS5KundenfeldPfandAbrechnung:
         with engine.connect() as conn:
             assert conn.execute(text("SELECT pfand_abrechnung FROM customers")).scalar() == "JE_LIEFERUNG"
         engine.dispose()
+
+
+S5_PREVIEW = "/api/v1/invoices/batch-run/preview"
+S5_COMMIT = "/api/v1/invoices/batch-run/commit"
+S5_MAERZ = {"period_from": "2026-03-01", "period_to": "2026-03-31"}
+
+
+@pytest.fixture
+def _s5_ohne_forecast(monkeypatch):
+    """Jede neue Bestellung stößt ein Celery-Forecast-Update an. Ohne Redis
+    hängt das je Bestellung rund 15 s im Reconnect — für diese Tests egal."""
+    monkeypatch.setattr("app.api.v1.sales._trigger_forecast_update", lambda *a, **k: None)
+
+
+def _s5_ware(client):
+    return _s5_produkt(client, "Erbsen-Schale", "MG-ERBSE", "2.50")
+
+
+def _s5_bestellung(client, kunde, ware=None, kiste=None, liefertag="2026-03-05"):
+    zeilen = []
+    if ware:
+        zeilen.append({"product_id": ware["id"], "product_name": ware["name"],
+                       "quantity": 10, "unit": "STK", "unit_price": "2.50"})
+    if kiste:
+        zeilen.append({"product_id": kiste["id"], "product_name": kiste["name"],
+                       "quantity": 2, "unit": "STK", "unit_price": "3.00"})
+    r = client.post("/api/v1/sales/orders", json={
+        "customer_id": kunde["id"], "requested_delivery_date": liefertag, "lines": zeilen,
+    })
+    assert r.status_code == 201, r.text
+    return r.json()
+
+
+def _s5_lieferschein(client, bestellung):
+    r = client.post(f"/api/v1/sales/orders/{bestellung['id']}/delivery-notes", json={})
+    assert r.status_code == 201, r.text
+    return r.json()
+
+
+@pytest.mark.usefixtures("_s5_ohne_forecast")
+class TestS5PfandUeberClearing:
+    """Pfand steht auf dem Lieferschein, aber nicht auf der Rechnung des Clearing-Kunden."""
+
+    def test_rechnung_aus_bestellung_ohne_pfand(self, client):
+        kunde = _s5_kunde(client, pfand_abrechnung="KEINE")
+        bestellung = _s5_bestellung(client, kunde, _s5_ware(client), _s5_ifco_kiste(client))
+
+        r = client.post(f"/api/v1/invoices/from-order/{bestellung['id']}")
+
+        assert r.status_code == 201, r.text
+        d = _s5_detail(client, r.json())
+        assert [l["description"] for l in d["lines"]] == ["Erbsen-Schale"]
+        assert _d(d["subtotal"]) == Decimal("25.00")
+        assert _d(d["total_deposit"]) == Decimal("0.00")
+
+    def test_ohne_clearing_bleibt_pfand_auf_der_rechnung(self, client):
+        kunde = _s5_kunde(client, name="Großer Kern")
+        bestellung = _s5_bestellung(client, kunde, _s5_ware(client), _s5_ifco_kiste(client))
+
+        r = client.post(f"/api/v1/invoices/from-order/{bestellung['id']}")
+
+        assert r.status_code == 201, r.text
+        d = _s5_detail(client, r.json())
+        assert sorted(l["description"] for l in d["lines"]) == ["Erbsen-Schale", "IFCO-Kiste"]
+        assert [l["is_deposit"] for l in d["lines"] if l["description"] == "IFCO-Kiste"] == [True]
+        assert _d(d["subtotal"]) == Decimal("31.00")
+
+    def test_nur_pfand_beim_clearing_kunden_gibt_keine_leere_rechnung(self, client):
+        kunde = _s5_kunde(client, pfand_abrechnung="KEINE")
+        bestellung = _s5_bestellung(client, kunde, kiste=_s5_ifco_kiste(client))
+
+        r = client.post(f"/api/v1/invoices/from-order/{bestellung['id']}")
+
+        assert r.status_code == 400, r.text
+        assert "IFCO-Clearing" in r.json()["detail"]
+        assert client.get("/api/v1/invoices", params={"customer_id": kunde["id"]}).json() == []
+
+    def test_lieferschein_behaelt_pfand(self, client):
+        from tests.test_documents_preise import _pdf_text
+
+        kunde = _s5_kunde(client, pfand_abrechnung="KEINE")
+        bestellung = _s5_bestellung(client, kunde, _s5_ware(client), _s5_ifco_kiste(client))
+        note = _s5_lieferschein(client, bestellung)
+
+        pdf = client.get(f"/api/v1/sales/delivery-notes/{note['id']}/pdf")
+
+        assert pdf.status_code == 200, pdf.text
+        text = _pdf_text(pdf.content).decode("latin-1", errors="ignore")
+        assert "PFAND-IFCO" in text
+        assert "MG-ERBSE" in text
+
+    def test_sammelrechnung_laesst_pfand_nur_beim_clearing_kunden_weg(self, client):
+        clearing = _s5_kunde(client, name="Ökoring", pfand_abrechnung="KEINE")
+        normal = _s5_kunde(client, name="Großer Kern")
+        ware, kiste = _s5_ware(client), _s5_ifco_kiste(client)
+        for kunde in (clearing, normal):
+            _s5_lieferschein(client, _s5_bestellung(client, kunde, ware, kiste))
+
+        vorschau = client.post(S5_PREVIEW, json=S5_MAERZ)
+
+        assert vorschau.status_code == 200, vorschau.text
+        positionen = {k["customer_name"]: sorted(p["description"] for p in k["positionen"])
+                      for k in vorschau.json()["kunden"]}
+        assert positionen == {"Ökoring": ["Erbsen-Schale"],
+                              "Großer Kern": ["Erbsen-Schale", "IFCO-Kiste"]}
+
+        lauf = client.post(S5_COMMIT, json=S5_MAERZ)
+
+        assert lauf.status_code == 201, lauf.text
+        summen = {x["customer_id"]: _d(x["subtotal"]) for x in lauf.json()["rechnungen"]}
+        assert summen == {clearing["id"]: Decimal("25.00"), normal["id"]: Decimal("31.00")}
+
+    def test_sammelrechnung_nur_pfand_beim_clearing_kunden_keine_rechnung(self, client):
+        kunde = _s5_kunde(client, pfand_abrechnung="KEINE")
+        _s5_lieferschein(client, _s5_bestellung(client, kunde, kiste=_s5_ifco_kiste(client)))
+
+        assert client.post(S5_PREVIEW, json=S5_MAERZ).json()["kunden"] == []
+        lauf = client.post(S5_COMMIT, json=S5_MAERZ)
+
+        assert lauf.status_code == 201, lauf.text
+        assert lauf.json()["rechnungen"] == []
+
+
+@pytest.mark.usefixtures("_s5_ohne_forecast")
+class TestS5LieferscheinAnlage:
+    """Die Anlage 'Enthaltene Lieferscheine' muss zur Rechnung passen."""
+
+    def test_sammelrechnung_anlage_ohne_clearing_pfand(self, client):
+        from tests.test_documents_preise import _pdf_text
+
+        kunde = _s5_kunde(client, pfand_abrechnung="KEINE")
+        note = _s5_lieferschein(client, _s5_bestellung(client, kunde, _s5_ware(client), _s5_ifco_kiste(client)))
+        rechnung = client.post(S5_COMMIT, json=S5_MAERZ).json()["rechnungen"][0]
+        assert _d(rechnung["subtotal"]) == Decimal("25.00")
+
+        anlage = client.get(f"/api/v1/invoices/{rechnung['id']}/delivery-notes")
+
+        assert anlage.status_code == 200, anlage.text
+        assert [(x["delivery_note_number"], _d(x["betrag_netto"])) for x in anlage.json()] == [
+            (note["delivery_note_number"], Decimal("25.00"))]
+        pdf = client.get(f"/api/v1/invoices/{rechnung['id']}/pdf")
+        assert pdf.status_code == 200, pdf.text
+        text = _pdf_text(pdf.content).decode("latin-1", errors="ignore")
+        assert "Enthaltene Lieferscheine" in text
+        assert "25.00 EUR" in text
+        assert "31.00 EUR" not in text
+
+    def test_spaeter_gesetztes_kennzeichen_aendert_die_anlage_nicht(self, client):
+        """GoBD: Das PDF entsteht bei jedem Abruf neu. Die Anlage rechnet aus
+        den Positionen der Rechnung, nicht aus dem heutigen Kundenfeld pfand_abrechnung."""
+        kunde = _s5_kunde(client, name="Großer Kern")
+        _s5_lieferschein(client, _s5_bestellung(client, kunde, _s5_ware(client), _s5_ifco_kiste(client)))
+        rechnung = client.post(S5_COMMIT, json=S5_MAERZ).json()["rechnungen"][0]
+        url = f"/api/v1/invoices/{rechnung['id']}/delivery-notes"
+        assert [_d(x["betrag_netto"]) for x in client.get(url).json()] == [Decimal("31.00")]
+
+        r = client.patch(f"/api/v1/sales/customers/{kunde['id']}", json={"pfand_abrechnung": "KEINE"})
+        assert r.status_code == 200, r.text
+
+        assert [_d(x["betrag_netto"]) for x in client.get(url).json()] == [Decimal("31.00")]
+
+    def test_rechnung_aus_bestellung_ohne_clearing_pfand(self, client):
+        """Task 21 hängt den Lieferschein an die Rechnung aus Bestellung; ihr
+        Betrag kommt aus den Positionen mit order_item_id."""
+        kunde = _s5_kunde(client, pfand_abrechnung="KEINE")
+        bestellung = _s5_bestellung(client, kunde, _s5_ware(client), _s5_ifco_kiste(client))
+        _s5_lieferschein(client, bestellung)
+        rechnung = client.post(f"/api/v1/invoices/from-order/{bestellung['id']}")
+        assert rechnung.status_code == 201, rechnung.text
+
+        anlage = client.get(f"/api/v1/invoices/{rechnung.json()['id']}/delivery-notes").json()
+
+        assert [_d(x["betrag_netto"]) for x in anlage] == [Decimal("25.00")]

@@ -395,6 +395,10 @@ class PDFService:
                 _select(_DN).where(_DN.invoice_id == invoice.id)
             ).scalars().all()
             if enthaltene:
+                # Beträge aus den Positionen dieser Rechnung, nicht aus der
+                # Bestellung — Clearing-Pfand steht nicht auf der Rechnung (S5).
+                from app.services.invoice_service import netto_je_lieferschein
+                betraege = netto_je_lieferschein(db, invoice, enthaltene)
                 elements.append(Paragraph("<b>Enthaltene Lieferscheine</b>", styles['Normal']))
                 elements.append(Spacer(1, 4))
                 ls_daten = [["Lieferschein", "Lieferdatum", "Betrag (netto)"]]
@@ -402,14 +406,10 @@ class PDFService:
                     datum = n.actual_delivery_date or (
                         n.order.requested_delivery_date if n.order else None
                     )
-                    betrag = sum(
-                        (l.quantity * l.unit_price for l in (n.order.lines if n.order else [])),
-                        Decimal("0"),
-                    )
                     ls_daten.append([
                         n.delivery_note_number,
                         datum.strftime("%d.%m.%Y") if datum else "—",
-                        f"{betrag:.2f} EUR",
+                        f"{betraege[n.id]:.2f} EUR",
                     ])
                 ls_tabelle = Table(ls_daten, colWidths=[6*cm, 4*cm, 4*cm])
                 ls_tabelle.setStyle(TableStyle([
