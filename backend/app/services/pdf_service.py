@@ -1,3 +1,4 @@
+from decimal import Decimal
 from io import BytesIO
 from typing import Optional
 from xml.sax.saxutils import escape
@@ -6,7 +7,7 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, Tabl
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 from reportlab.lib.units import cm
-from app.models.invoice import Invoice, InvoiceType
+from app.models.invoice import Invoice, InvoiceType, steuer_je_satz, steuerausweis_stimmt
 from app.models.order import Order
 from app.models.documents import OrderConfirmation, DeliveryNote, PackingList
 from app.models.document_template import DocumentType, DEFAULT_SECTIONS, DEFAULT_COLUMNS
@@ -270,7 +271,9 @@ class PDFService:
 
         # Line Items
         if _en(tmpl, "lines_table", default=True):
-            data = [["Pos", "Art.-Nr.", "Beschreibung", "Menge", "Einheit", "Einzelpreis", "Gesamt (Netto)"]]
+            # MwSt-Spalte: bei gemischten Sätzen (Ware 7 %, Pfand 19 %) muss je
+            # Position erkennbar sein, welcher Satz gilt (§ 14 Abs. 4 Nr. 8 UStG).
+            data = [["Pos", "Art.-Nr.", "Beschreibung", "Menge", "Einheit", "Einzelpreis", "MwSt", "Gesamt (Netto)"]]
             for idx, line in enumerate(invoice.lines, 1):
                 product = getattr(line, "product", None)
                 sku = line.sku or (product.sku if product else "") or "—"
@@ -281,9 +284,10 @@ class PDFService:
                     f"{line.quantity:.2f}",
                     unit_label(line.unit),
                     f"{line.unit_price:.2f} €",
+                    f"{line.tax_rate.percent} %",
                     f"{line.line_total:.2f} €"
                 ])
-            table = Table(data, colWidths=[1.0*cm, 2.0*cm, 5.3*cm, 1.6*cm, 1.6*cm, 2.5*cm, 3.0*cm])
+            table = Table(data, colWidths=[1.0*cm, 2.0*cm, 3.9*cm, 1.6*cm, 1.8*cm, 2.3*cm, 1.4*cm, 3.0*cm])
             table.setStyle(TableStyle([
                 ('BACKGROUND', (0,0), (-1,0), colors.lightgrey),
                 ('TEXTCOLOR', (0,0), (-1,0), colors.black),
@@ -312,11 +316,21 @@ class PDFService:
                     discount_label = f"{label_base} ({float(invoice.discount_percent):.1f} %):"
                 totals_data.append(["Zwischensumme:", f"{zwischensumme:.2f} €"])
                 totals_data.append([discount_label, f"-{discount_amount:.2f} €"])
-            totals_data += [
-                ["Netto:", f"{invoice.subtotal:.2f} €"],
-                ["USt:", f"{invoice.tax_amount:.2f} €"],
-                ["Gesamtbetrag:", f"{invoice.total:.2f} €"]
-            ]
+            totals_data.append(["Netto:", f"{invoice.subtotal:.2f} €"])
+            # § 14 Abs. 4 Nr. 8 UStG: Entgelt und Steuerbetrag je Steuersatz.
+            # Altrechnungen, deren festgeschriebene Summen noch mit der früheren
+            # Rundung entstanden sind, behalten ihre eine USt-Zeile — ein
+            # versendeter Beleg darf beim erneuten Abruf keine anderen Beträge
+            # zeigen (GoBD). Korrektur nur per Storno und Neuausstellung.
+            if steuerausweis_stimmt(invoice):
+                for satz in steuer_je_satz(invoice.lines, invoice.discount_percent):
+                    totals_data.append([
+                        f"USt {satz['percent']} % auf {satz['base']:.2f} €:",
+                        f"{satz['tax']:.2f} €",
+                    ])
+            else:
+                totals_data.append(["USt:", f"{invoice.tax_amount:.2f} €"])
+            totals_data.append(["Gesamtbetrag:", f"{invoice.total:.2f} €"])
             # Zeile des Gesamtbetrags merken: sie bleibt fett und unterstrichen,
             # auch wenn darunter noch der Pfandhinweis folgt.
             gesamt_row = len(totals_data) - 1

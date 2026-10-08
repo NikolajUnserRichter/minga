@@ -938,3 +938,83 @@ class TestS2AnlageMitPositionen:
             assert len(inv.lines) == 1
             # übrig: 2,50 € zu 7 % = 2,50 netto + 0,18 USt
             assert inv.total == Decimal("2.68")
+
+
+# --- S2 Task 3 -------------------------------------------------------------
+
+def _s2_pdf_texte(client, invoice_id) -> list[str]:
+    """Alle Textstücke des Rechnungs-PDFs, je Tabellenzelle eins.
+
+    ReportLab schreibt jede Zelle als '(<text>) Tj'; '€' erscheint dabei als
+    Oktal-Escape '\\200'. Deshalb prüfen die Tests mit startswith.
+    """
+    r = client.get(f"/api/v1/invoices/{invoice_id}/pdf")
+    assert r.status_code == 200, r.text
+    roh = _pdf_text(r.content).decode("latin-1", errors="ignore")
+    return re.findall(r"\((.*?)\) Tj", roh)
+
+
+class TestS2RechnungsPdf:
+
+    def test_pdf_weist_entgelt_und_steuer_je_satz_aus(self, client):
+        rechnung = _s2_rechnung_in_einem_aufruf(client)
+
+        texte = _s2_pdf_texte(client, rechnung["id"])
+
+        assert "MwSt" in texte, "Spalte MwSt fehlt in der Positionstabelle"
+        assert "7 %" in texte and "19 %" in texte, "Satz je Position fehlt"
+        assert any(t.startswith("USt 7 % auf 2.50 ") for t in texte), texte
+        assert any(t.startswith("USt 19 % auf 4.50 ") for t in texte), texte
+        assert any(t.startswith("0.18 ") for t in texte)
+        assert any(t.startswith("0.86 ") for t in texte)
+        assert any(t.startswith("8.04 ") for t in texte)
+        assert "USt:" not in texte, "Pauschale USt-Zeile statt Ausweis je Satz"
+
+    def test_ein_satz_ergibt_eine_steuerzeile(self, client):
+        rechnung = _s2_rechnung_in_einem_aufruf(client, zeilen=[S2_ZEILEN[0]])
+
+        texte = _s2_pdf_texte(client, rechnung["id"])
+
+        assert any(t.startswith("USt 7 % auf 2.50 ") for t in texte), texte
+        assert not any(t.startswith("USt 19 %") for t in texte)
+
+    def test_altrechnung_behaelt_festgeschriebene_betraege(self, client):
+        """GoBD: eine vor der Umstellung versendete Rechnung mit 1,03 € USt
+        darf beim erneuten Abruf nicht plötzlich 1,04 € zeigen."""
+        from app.models.invoice import Invoice
+        rechnung = _s2_rechnung_in_einem_aufruf(client)
+        assert client.post(f"/api/v1/invoices/{rechnung['id']}/finalize").status_code == 200
+        # Zustand einer Altrechnung nachstellen: Summen mit der alten Rundung.
+        # Nur im Test — in echten Daten werden Rechnungen nie direkt geändert.
+        with TestingSessionLocal() as db:
+            inv = db.get(Invoice, uuid.UUID(rechnung["id"]))
+            inv.tax_amount = Decimal("1.03")
+            inv.total = Decimal("8.03")
+            db.commit()
+
+        texte = _s2_pdf_texte(client, rechnung["id"])
+
+        assert "USt:" in texte
+        assert any(t.startswith("1.03 ") for t in texte)
+        assert any(t.startswith("8.03 ") for t in texte)
+        assert not any(t.startswith("USt 7 % auf") for t in texte)
+        # Die DB behält die festgeschriebenen Summen. GET /pdf committet nie;
+        # dass get_tax_summary() selbst nichts verändert, prüft
+        # TestS2KeinAbrufSchreibt (Task 8).
+        _, _, steuer, brutto = _s2_steuerblock(rechnung["id"])
+        assert (steuer, brutto) == (Decimal("1.03"), Decimal("8.03"))
+
+    def test_sammelrechnung_pdf_laesst_sich_erzeugen(self, client, sample_customer):
+        """Die Lieferschein-Anhangstabelle nutzte Decimal ohne Import → 500."""
+        from tests.test_sammelrechnung import COMMIT, _bestellung_mit_ls
+        _bestellung_mit_ls(client, sample_customer["id"], "2026-03-05", [
+            {"product_name": "Erbsen-Schale", "quantity": 10, "unit": "STK",
+             "unit_price": 2.50, "tax_rate": "REDUZIERT"},
+        ])
+        r = client.post(COMMIT, json={"period_from": "2026-03-01", "period_to": "2026-03-31"})
+        assert r.status_code == 201, r.text
+
+        texte = _s2_pdf_texte(client, r.json()["rechnungen"][0]["id"])
+
+        assert "Enthaltene Lieferscheine" in texte
+        assert any(t.startswith("USt 7 % auf 25.00 ") for t in texte), texte
