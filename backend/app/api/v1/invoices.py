@@ -509,6 +509,7 @@ from app.models.documents import DeliveryNote
 from app.models.enums import OrderStatus
 from app.models.invoice import InvoiceLineSource
 from app.models.order import Order, OrderLine
+from app.services.steuersatz import produkt_der_position, steuersatz_der_position
 
 
 class BatchRunRequest(_BaseModel):
@@ -545,11 +546,18 @@ def _abrechenbare_lieferscheine(db, anfrage: BatchRunRequest):
     return ergebnis
 
 
-def _aggregiere(notes) -> dict:
-    """Je Kunde: Positionen aggregiert nach (Artikel, Einheit, Preis, Steuersatz).
+def _aggregiere(db, notes) -> dict:
+    """Je Kunde: Positionen aggregiert nach (Artikel, Einheit, Preis,
+    Steuersatz, Produkt, Positionsrabatt).
 
     Merkt sich je Position, welcher Lieferschein wie viel beigetragen hat —
     daraus entstehen beim Festschreiben die invoice_line_sources (R2.3).
+
+    Produkt und Rabatt gehören in den Schlüssel (A3, 08.10.2026): ohne
+    product_id fehlte der Rechnungszeile das Pfandkennzeichen, ohne Rabatt
+    fiel der Positionsrabatt still weg. Der Steuersatz kommt aus
+    steuersatz_der_position — dieselbe Funktion wie bei der Bestellung und
+    der Rechnung aus der Bestellung (InvoiceService.create_invoice_from_order).
     """
     kunden: dict = {}
     for note, leistungsdatum in notes:
@@ -562,8 +570,15 @@ def _aggregiere(notes) -> dict:
         })
         k["lieferscheine"].append(note)
         for line in order.lines:
+            produkt = produkt_der_position(db, line.product_id, line.product_variant_id)
+            satz = steuersatz_der_position(
+                db, line.product_id, line.product_variant_id, line.tax_rate
+            )
             key = (line.beschreibung or "Position", line.unit,
-                   line.unit_price, line.tax_rate)
+                   line.unit_price,
+                   satz,
+                   produkt.id if produkt else None,
+                   line.discount_percent or Decimal("0"))
             pos = k["positionen"].setdefault(key, {"menge": Decimal("0"), "quellen": []})
             pos["menge"] += line.quantity
             pos["quellen"].append((note.id, line.quantity))
@@ -573,7 +588,7 @@ def _aggregiere(notes) -> dict:
 @router.post("/batch-run/preview")
 def batch_run_preview(anfrage: BatchRunRequest, db: DBSession):
     """Vorschau des Sammelrechnungslaufs — rechnet, schreibt nichts (R2.6)."""
-    kunden = _aggregiere(_abrechenbare_lieferscheine(db, anfrage))
+    kunden = _aggregiere(db, _abrechenbare_lieferscheine(db, anfrage))
     return {
         "period_from": anfrage.period_from.isoformat(),
         "period_to": anfrage.period_to.isoformat(),
@@ -584,9 +599,11 @@ def batch_run_preview(anfrage: BatchRunRequest, db: DBSession):
             "positionen": [{
                 "description": key[0], "unit": key[1],
                 "unit_price": key[2], "tax_rate": key[3].value,
+                "discount_percent": key[5],
                 "quantity": pos["menge"],
             } for key, pos in sorted(k["positionen"].items(), key=lambda e: (e[0][0], e[0][2]))],
-            "summe_netto": sum((pos["menge"] * key[2] for key, pos in k["positionen"].items()),
+            "summe_netto": sum((pos["menge"] * key[2] * (1 - key[5] / 100)
+                                for key, pos in k["positionen"].items()),
                                Decimal("0")),
         } for k in kunden.values()],
     }
@@ -596,7 +613,7 @@ def batch_run_preview(anfrage: BatchRunRequest, db: DBSession):
 def batch_run_commit(anfrage: BatchRunRequest, db: DBSession):
     """Schreibt den Lauf fest: eine Rechnung je Kunde, Nummern aus dem
     regulären Kreis, Lieferscheine fest zugeordnet (R2.1–R2.5)."""
-    kunden = _aggregiere(_abrechenbare_lieferscheine(db, anfrage))
+    kunden = _aggregiere(db, _abrechenbare_lieferscheine(db, anfrage))
     service = InvoiceService(db)
     rechnungen = []
 
@@ -612,7 +629,7 @@ def batch_run_commit(anfrage: BatchRunRequest, db: DBSession):
         invoice.service_period_start = anfrage.period_from
         invoice.service_period_end = anfrage.period_to
 
-        for (beschreibung, unit, preis, steuersatz), pos in sorted(
+        for (beschreibung, unit, preis, steuersatz, produkt_id, rabatt), pos in sorted(
             k["positionen"].items(), key=lambda e: (e[0][0], e[0][2])
         ):
             line = service.add_line(
@@ -621,6 +638,8 @@ def batch_run_commit(anfrage: BatchRunRequest, db: DBSession):
                 quantity=pos["menge"],
                 unit=unit,
                 unit_price=preis,
+                product_id=produkt_id,
+                discount_percent=rabatt,
                 tax_rate=steuersatz,
             )
             db.flush()

@@ -389,3 +389,35 @@ class TestS1RechnungAusBestellung:
 
         gutschrift = storno.json()["credit_note"]
         assert [z["tax_rate"] for z in _s1_rechnungszeilen(gutschrift["id"])] == ["REDUZIERT"]
+
+
+class TestS1Sammelrechnung:
+    """Task 3: Sammelrechnung übergibt Produkt, Produktsatz und Rabatt."""
+
+    def _lauf(self, client, kunde, *zeilen):
+        order = _s1_bestellung(client, kunde, list(zeilen), liefertag="2026-09-15")
+        _s1_altstand(order["id"])
+        note = client.post(f"/api/v1/sales/orders/{order['id']}/delivery-notes", json={})
+        assert note.status_code == 201, note.text
+        r = client.post("/api/v1/invoices/batch-run/commit", json={
+            "period_from": "2026-09-01", "period_to": "2026-09-30",
+            "customer_ids": [kunde["id"]],
+        })
+        assert r.status_code == 201, r.text
+        return r.json()["rechnungen"][0]
+
+    def test_pfandzeile_traegt_produkt_satz_und_kennzeichen(self, client):
+        pfand = _s1_pfandkiste(client)
+        rechnung = self._lauf(client, _s1_kunde(client), _s1_zeile(pfand, menge=4, preis="3.00"))
+
+        zeile = _s1_rechnungszeilen(rechnung["id"])[0]
+        assert zeile["product_id"] == uuid.UUID(pfand["id"])
+        assert zeile["is_deposit"] is True
+        assert zeile["tax_rate"] == "STANDARD"
+        # 4 × 3,00 € netto + 19 % = 14,28 € Pfand brutto
+        assert Decimal(str(rechnung["total_deposit"])) == Decimal("14.28")
+
+    def test_positionsrabatt_bleibt_erhalten(self, client):
+        rechnung = self._lauf(client, _s1_kunde(client), _s1_zeile(
+            None, menge=10, preis="10.00", tax_rate="REDUZIERT", discount_percent="10"))
+        assert Decimal(str(rechnung["subtotal"])) == Decimal("90.00")
