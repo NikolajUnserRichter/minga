@@ -182,7 +182,7 @@ export function OrderDocumentsModal({ open, onClose, order }: Props) {
   // eine nicht stornierte Rechnung vom Typ RECHNUNG sperrt die nächste.
   const aktiveRechnung = invoices.find((i: Invoice) => i.invoice_type === 'RECHNUNG' && i.status !== 'STORNIERT');
   // Ohne frisch geladene Liste kein Knopf: lieber einmal zu wenig anbieten als doppelt berechnen.
-  const rechnungMoeglich = invoicesQuery.isSuccess && !invoicesQuery.isFetching && !aktiveRechnung;
+  const rechnungMoeglich = order.status !== 'STORNIERT' && invoicesQuery.isSuccess && !invoicesQuery.isFetching && !aktiveRechnung;
 
   return (
     <Modal

@@ -22,7 +22,7 @@ from app.schemas.invoice import (
     InvoiceSendRequest, InvoiceCancelRequest,
     DatevExportRequest, DatevExportResponse,
 )
-from app.services.invoice_service import InvoiceService, BereitsAbgerechnet, waehle_vertreter, ist_clearing_pfand, netto_je_lieferschein
+from app.services.invoice_service import InvoiceService, BereitsAbgerechnet, BestellungStorniert, waehle_vertreter, ist_clearing_pfand, netto_je_lieferschein
 from app.services.datev_service import DatevService, erloeskonto_fuer, ist_standard_erloeskonto
 from app.services.email_service import send_email, EmailNotConfiguredError
 from app.services.pdf_service import load_company_settings
@@ -167,7 +167,7 @@ def create_invoice_from_order(order_id: UUID, db: DBSession):
         db.commit()
         db.refresh(invoice)
         return invoice
-    except BereitsAbgerechnet as e:
+    except (BereitsAbgerechnet, BestellungStorniert) as e:
         raise HTTPException(status_code=409, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

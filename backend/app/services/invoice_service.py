@@ -17,7 +17,7 @@ from app.models.invoice import (
     generate_invoice_number, STANDARD_ACCOUNTS
 )
 from app.models.customer import Customer, AddressType, PfandAbrechnung
-from app.models.order import Order, OrderLine
+from app.models.order import Order, OrderLine, OrderStatus
 from app.models.product import Product
 from app.models.documents import DeliveryNote
 from app.models.enums import DeliveryNoteStatus
@@ -28,6 +28,10 @@ from app.services.datev_service import erloeskonto_fuer
 def _euro(betrag: Decimal) -> str:
     """Betrag mit deutschem Dezimalkomma: Decimal("5") -> "5,00 €"."""
     return f"{Decimal(betrag):.2f} €".replace(".", ",")
+
+
+class BestellungStorniert(ValueError):
+    """Eine stornierte Bestellung darf nicht berechnet werden."""
 
 
 class BereitsAbgerechnet(ValueError):
@@ -312,6 +316,8 @@ class InvoiceService:
         order = self.db.get(Order, order_id)
         if not order:
             raise ValueError("Bestellung nicht gefunden")
+        if order.status == OrderStatus.STORNIERT:
+            raise BestellungStorniert("Bestellung ist storniert")
 
         # Pfand über IFCO-Clearing bleibt auf dem Lieferschein, nicht auf der
         # Rechnung. Vor dem Anlegen prüfen: eine reine Pfandbestellung ergäbe

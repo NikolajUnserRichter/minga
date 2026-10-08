@@ -158,3 +158,38 @@ class TestPositionssperre:
         assert response.status_code == 200, response.text
         response = _positionsaenderung(client, order, methode)
         assert response.status_code == {"post": 201, "patch": 200, "delete": 204}[methode], response.text
+
+
+class TestStornierteBestellung:
+    def test_rechnung_aus_stornierter_bestellung_abgelehnt(self, client):
+        order = _bestellung(client, _kunde(client))
+        response = client.post(f"/api/v1/sales/orders/{order['id']}/status", json={
+            "status": "STORNIERT", "reason": "Abgesagt",
+        })
+        assert response.status_code == 200, response.text
+        response = client.post(f"/api/v1/invoices/from-order/{order['id']}")
+        assert response.status_code == 409, response.text
+        assert response.json()["detail"] == "Bestellung ist storniert"
+        with TestingSessionLocal() as db:
+            assert db.query(Invoice).count() == 0
+
+    def test_sammellauf_schliesst_stornierte_bestellung_aus(self, client):
+        kunde = _kunde(client)
+        storniert = _bestellung(client, kunde, liefertag=date(2026, 3, 5))
+        aktiv = _bestellung(client, kunde, liefertag=date(2026, 3, 6))
+        note = _s6_lieferschein(client, storniert)
+        _s6_lieferschein(client, aktiv)
+        response = client.post(f"/api/v1/sales/orders/{storniert['id']}/status", json={
+            "status": "STORNIERT", "reason": "Abgesagt",
+        })
+        assert response.status_code == 200, response.text
+        vorschau = _s6_lauf(client, S6_PREVIEW)["kunden"]
+        assert len(vorschau) == 1
+        assert vorschau[0]["anzahl_lieferscheine"] == 1
+        assert Decimal(vorschau[0]["summe_netto"]) == Decimal("6.00")
+        rechnungen = _s6_lauf(client, S6_COMMIT)["rechnungen"]
+        assert len(rechnungen) == 1
+        assert Decimal(rechnungen[0]["subtotal"]) == Decimal("6.00")
+        from app.models.documents import DeliveryNote
+        with TestingSessionLocal() as db:
+            assert db.get(DeliveryNote, uuid.UUID(note["id"])).invoice_id is None
