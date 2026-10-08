@@ -1143,7 +1143,7 @@ async def confirm_order(
     if order.status != OrderStatus.ENTWURF:
         raise HTTPException(
             status_code=400,
-            detail=f"Bestellung hat Status {order.status.value}, kann nicht bestätigt werden"
+            detail=f"Bestellung hat Status {bezeichnung(order.status)}, kann nicht bestätigt werden"
         )
 
     if len(order.lines) == 0:
@@ -1238,7 +1238,7 @@ async def delete_order(order_id: UUID, db: DBSession, user: CurrentUser):
     if order.status != OrderStatus.ENTWURF:
         raise HTTPException(
             status_code=400,
-            detail=f"Nur Entwürfe können gelöscht werden. Diese Bestellung hat Status {order.status.value}"
+            detail=f"Nur Entwürfe können gelöscht werden. Diese Bestellung hat Status {bezeichnung(order.status)}"
         )
 
     # Positionen werden durch cascade gelöscht
@@ -1274,7 +1274,7 @@ async def add_order_line(
     if order.status not in [OrderStatus.ENTWURF, OrderStatus.BESTAETIGT]:
         raise HTTPException(
             status_code=400,
-            detail=f"Positionen können nicht hinzugefügt werden bei Status {order.status.value}"
+            detail=f"Positionen können nicht hinzugefügt werden bei Status {bezeichnung(order.status)}"
         )
 
     # Nächste Position

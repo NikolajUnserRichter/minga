@@ -474,3 +474,67 @@ class TestTagesplanAusliefern:
         _status(client, o, "STORNIERT")
         plan = _plan(client)
         assert plan["ausliefern"] == [] and plan["verpacken"] == []
+
+
+# --------------------------- Task 5: Fehlertexte mit Bezeichnung
+
+class TestFehlertexte:
+    """Fehlertexte landen als Toast beim Anwender — keine Enum-Werte."""
+
+    def test_bestaetigen(self, client):
+        o = _bestaetigt(client, _kunde(client))
+        r = client.post(f"/api/v1/sales/orders/{o['id']}/confirm")
+        assert r.status_code == 400
+        assert r.json()["detail"] == "Bestellung hat Status Bestätigt, kann nicht bestätigt werden"
+
+    def test_loeschen(self, client):
+        o = _bestaetigt(client, _kunde(client))
+        r = client.delete(f"/api/v1/sales/orders/{o['id']}")
+        assert r.status_code == 400
+        assert r.json()["detail"].endswith("Diese Bestellung hat Status Bestätigt")
+
+    def test_position_bei_gepackt(self, client):
+        o = _gepackt(client, _kunde(client))
+        r = client.post(f"/api/v1/sales/orders/{o['id']}/lines", json={
+            "product_name": "Kresse", "quantity": 1, "unit": "STK",
+            "unit_price": 2.0, "tax_rate": "REDUZIERT",
+        })
+        assert r.status_code == 400
+        assert r.json()["detail"] == "Positionen können nicht hinzugefügt werden bei Status Gepackt"
+
+    def _vorschlag(self, client, status):
+        """Produktionsvorschlag direkt über das ORM (Vorbild test_import_chargen.py)."""
+        from app.models.forecast import Forecast, ProductionSuggestion, SuggestionStatus
+        r = client.post("/api/v1/seeds", json={
+            "name": "Rettich", "keimdauer_tage": 2, "wachstumsdauer_tage": 8,
+            "erntefenster_min_tage": 9, "erntefenster_optimal_tage": 11,
+            "erntefenster_max_tage": 14, "ertrag_gramm_pro_tray": 350,
+        })
+        assert r.status_code == 201, r.text
+        seed_id = uuid.UUID(r.json()["id"])
+        with TestingSessionLocal() as db:
+            forecast = Forecast(seed_id=seed_id, datum=date.today(), horizont_tage=7,
+                                prognostizierte_menge=100, effektive_menge=100, modell_typ="MANUAL")
+            db.add(forecast)
+            db.flush()
+            vorschlag = ProductionSuggestion(
+                forecast_id=forecast.id, seed_id=seed_id, empfohlene_trays=2,
+                aussaat_datum=date.today(), erwartete_ernte_datum=date.today() + timedelta(days=10),
+                status=SuggestionStatus(status),
+            )
+            db.add(vorschlag)
+            db.commit()
+            return str(vorschlag.id)
+
+    def test_vorschlag_genehmigen(self, client):
+        vid = self._vorschlag(client, "GENEHMIGT")
+        r = client.post(f"/api/v1/forecasting/production-suggestions/{vid}/approve", json={})
+        assert r.status_code == 400
+        assert r.json()["detail"] == "Vorschlag hat Status Genehmigt, kann nicht genehmigt werden"
+
+    def test_vorschlag_ablehnen(self, client):
+        vid = self._vorschlag(client, "UMGESETZT")
+        r = client.post(f"/api/v1/forecasting/production-suggestions/{vid}/reject",
+                        json={"grund": "Zu viel Ware im Lager"})
+        assert r.status_code == 400
+        assert r.json()["detail"] == "Vorschlag hat Status Umgesetzt, kann nicht abgelehnt werden"

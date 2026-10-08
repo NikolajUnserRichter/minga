@@ -932,7 +932,8 @@ async def approve_production_suggestion(
     if suggestion.status != SuggestionStatus.VORGESCHLAGEN:
         raise HTTPException(
             status_code=400,
-            detail=f"Vorschlag hat Status {suggestion.status.value}, kann nicht genehmigt werden"
+            # capitalize(): GENEHMIGT → "Genehmigt", wie SuggestionStatusBadge
+            detail=f"Vorschlag hat Status {suggestion.status.value.capitalize()}, kann nicht genehmigt werden"
         )
 
     if approval.angepasste_trays:
@@ -1018,7 +1019,7 @@ async def reject_production_suggestion(
     if suggestion.status != SuggestionStatus.VORGESCHLAGEN:
         raise HTTPException(
             status_code=400,
-            detail=f"Vorschlag hat Status {suggestion.status.value}, kann nicht abgelehnt werden"
+            detail=f"Vorschlag hat Status {suggestion.status.value.capitalize()}, kann nicht abgelehnt werden"
         )
 
     suggestion.status = SuggestionStatus.ABGELEHNT
