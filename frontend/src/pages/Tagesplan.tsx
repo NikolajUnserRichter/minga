@@ -1,17 +1,21 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { Sprout, Scissors, Package, Truck, Users, Boxes, ListTodo, Plus, FileText, ChevronDown, ChevronRight } from 'lucide-react';
-import { productionApi, staffApi, documentsApi } from '../services/api';
+import { Sprout, Scissors, Package, Truck, Users, Boxes, ListTodo, Plus, FileText, ChevronDown, ChevronRight, CheckCircle } from 'lucide-react';
+import { productionApi, staffApi, documentsApi, salesApi } from '../services/api';
 import { PageHeader } from '../components/common/Layout';
 import { Input, EmptyState, Badge, OrderStatusBadge, PageLoader, Button, useToast, aussaatStatusLabel } from '../components/ui';
+import { getErrorMessage } from '../services/errors';
+import { invalidateOrderViews } from '../services/orderQueries';
 
 /**
  * Tagesplan für Mitarbeiter: was ist heute zu tun?
  * Aussaat · Ernte · Verpacken · Ausliefern — auf einer Seite.
  */
 export default function Tagesplan() {
-  const today = new Date().toISOString().split('T')[0];
+  // Lokaler Kalendertag (sv-SE = JJJJ-MM-TT). toISOString() wäre UTC und
+  // zeigte zwischen 0 und 2 Uhr noch den Vortag.
+  const today = new Date().toLocaleDateString('sv-SE');
   const [date, setDate] = useState(today);
   const [neueAufgabe, setNeueAufgabe] = useState('');
   const toast = useToast();
@@ -20,6 +24,9 @@ export default function Tagesplan() {
   const { data: plan, isLoading } = useQuery({
     queryKey: ['day-plan', date],
     queryFn: () => productionApi.getDayPlan(date),
+    // Hallen-Tablet: Änderungen anderer Geräte ohne Neuladen sehen
+    refetchInterval: 60_000,
+    refetchOnWindowFocus: 'always',
   });
 
   const invalidateAufgaben = () => {
@@ -47,6 +54,8 @@ export default function Tagesplan() {
   const { data: packaging } = useQuery({
     queryKey: ['packaging-plan', date],
     queryFn: () => productionApi.getPackagingPlan(date),
+    refetchInterval: 60_000,
+    refetchOnWindowFocus: 'always',
   });
 
   // Welche Verpacken-Bestellung ist aufgeklappt (Positionen sichtbar)
@@ -62,6 +71,18 @@ export default function Tagesplan() {
       await documentsApi.downloadPackingListPdf(note);
     },
     onError: () => toast.error('Packliste konnte nicht geöffnet werden'),
+  });
+
+  // "Ausgeliefert" in der Karte Ausliefern. Wer einen vergangenen Tag
+  // nachträgt, liefert dessen Datum mit — sonst setzt der Server heute.
+  const ausgeliefertMutation = useMutation({
+    mutationFn: (orderId: string) =>
+      salesApi.updateOrderStatus(orderId, 'GELIEFERT', undefined, date < today ? date : undefined),
+    onSuccess: async (order) => {
+      await invalidateOrderViews(queryClient);
+      toast.success(`${order.order_number ?? 'Bestellung'} ausgeliefert`);
+    },
+    onError: (e) => toast.error(getErrorMessage(e, 'Status konnte nicht geändert werden')),
   });
 
   if (isLoading) return <PageLoader />;
@@ -181,13 +202,29 @@ export default function Tagesplan() {
       icon: <Truck className="w-5 h-5 text-purple-600 dark:text-purple-400" />,
       count: plan?.ausliefern.length ?? 0,
       empty: 'Keine Auslieferungen an diesem Tag.',
-      rows: (plan?.ausliefern ?? []).map((o, i) => (
-        <div key={i} className="flex items-center justify-between p-3 bg-purple-50 dark:bg-purple-900/20 rounded-lg">
+      // Bestätigt und Gepackt bekommen den Knopf; Geliefert bleibt am Tag
+      // sichtbar (Badge), ein Entwurf muss erst bestätigt werden.
+      rows: (plan?.ausliefern ?? []).map((o) => (
+        <div key={o.order_id} className="flex items-center justify-between p-3 bg-purple-50 dark:bg-purple-900/20 rounded-lg">
           <div>
             <p className="font-medium text-gray-900 dark:text-white">{o.customer_name}</p>
             <p className="text-sm text-gray-500 dark:text-gray-400">{o.order_number} · {o.positionen} Positionen</p>
           </div>
-          <OrderStatusBadge status={o.status} />
+          <div className="flex items-center gap-2">
+            <OrderStatusBadge status={o.status} />
+            {(o.status === 'BESTAETIGT' || o.status === 'IN_PRODUKTION') && (
+              <Button
+                size="sm"
+                variant="success"
+                icon={<CheckCircle className="w-4 h-4" />}
+                loading={ausgeliefertMutation.isPending && ausgeliefertMutation.variables === o.order_id}
+                disabled={ausgeliefertMutation.isPending}
+                onClick={() => ausgeliefertMutation.mutate(o.order_id)}
+              >
+                Ausgeliefert
+              </Button>
+            )}
+          </div>
         </div>
       )),
     },
