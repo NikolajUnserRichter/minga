@@ -421,3 +421,77 @@ class TestS1Sammelrechnung:
         rechnung = self._lauf(client, _s1_kunde(client), _s1_zeile(
             None, menge=10, preis="10.00", tax_rate="REDUZIERT", discount_percent="10"))
         assert Decimal(str(rechnung["subtotal"])) == Decimal("90.00")
+
+
+class TestS1Produktstamm:
+    """Task 4: PATCH und Import wenden dieselbe Pfandregel an wie das Anlegen."""
+
+    def test_patch_auf_pfandkennzeichen_setzt_19_prozent(self, client):
+        kiste = _s1_produkt(client, "KISTE-1", "Mehrwegkiste", "3.00", category="PACKAGING")
+        assert kiste["tax_rate"] == "REDUZIERT"
+        r = client.patch(f"/api/v1/products/{kiste['id']}", json={"is_deposit": True})
+        assert r.status_code == 200, r.text
+        assert r.json()["tax_rate"] == "STANDARD"
+
+    def test_patch_auf_kategorie_pfand_setzt_kennzeichen_und_19_prozent(self, client):
+        kiste = _s1_produkt(client, "KISTE-2", "Mehrwegkiste", "3.00", category="PACKAGING")
+        r = client.patch(f"/api/v1/products/{kiste['id']}", json={"category": "PFAND"})
+        assert r.status_code == 200, r.text
+        assert r.json()["category"] == "PFAND"
+        assert r.json()["is_deposit"] is True
+        assert r.json()["tax_rate"] == "STANDARD"
+
+    def test_ausdruecklicher_satz_im_patch_gewinnt(self, client):
+        kiste = _s1_produkt(client, "KISTE-3", "Mehrwegkiste", "3.00", category="PACKAGING")
+        r = client.patch(f"/api/v1/products/{kiste['id']}",
+                         json={"is_deposit": True, "tax_rate": "REDUZIERT"})
+        assert r.status_code == 200, r.text
+        assert r.json()["tax_rate"] == "REDUZIERT"
+
+    def test_patch_mit_leerer_kategorie_wird_abgewiesen(self, client):
+        """products.category ist NOT NULL: ein ausdrückliches null ergibt 422,
+        nicht einen Datenbankfehler (500) beim Commit."""
+        kiste = _s1_produkt(client, "KISTE-4", "Mehrwegkiste", "3.00", category="PACKAGING")
+        r = client.patch(f"/api/v1/products/{kiste['id']}", json={"category": None})
+        assert r.status_code == 422, r.text
+        assert client.get(f"/api/v1/products/{kiste['id']}").json()["category"] == "PACKAGING"
+
+    def test_speichern_eines_7_prozent_pfands_kippt_den_satz_nicht(self, client):
+        """Erneutes is_deposit=true ist kein Übergang — der bewusst gewählte Satz bleibt."""
+        pfand = _s1_pfandkiste(client, sku="PFAND-7B", tax_rate="REDUZIERT")
+        r = client.patch(f"/api/v1/products/{pfand['id']}",
+                         json={"is_deposit": True, "name": "IFCO-Kiste 7 %"})
+        assert r.status_code == 200, r.text
+        assert r.json()["tax_rate"] == "REDUZIERT"
+
+    def test_reimport_ohne_steuersatz_laesst_pfand_bei_19_prozent(self, client):
+        pfand = _s1_pfandkiste(client, sku="PFAND-IMP1")
+        assert pfand["tax_rate"] == "STANDARD"
+
+        ergebnis = _s1_produktimport(client, {
+            "sku": "PFAND-IMP1", "name": "IFCO-Kiste", "category": "PFAND", "base_price": "3.10",
+        })
+
+        assert ergebnis["updated"] == 1, ergebnis
+        p = client.get(f"/api/v1/products/{pfand['id']}").json()
+        assert p["tax_rate"] == "STANDARD"
+        assert Decimal(str(p["base_price"])) == Decimal("3.10")
+
+    def test_neuer_pfandartikel_ohne_steuersatz_bekommt_19_prozent(self, client):
+        _s1_einheit()
+        ergebnis = _s1_produktimport(client, {"sku": "PFAND-IMP2", "name": "IFCO-Kiste", "category": "PFAND"})
+        assert ergebnis["created"] == 1, ergebnis
+        p = next(p for p in client.get("/api/v1/products").json() if p["sku"] == "PFAND-IMP2")
+        assert p["is_deposit"] is True
+        assert p["tax_rate"] == "STANDARD"
+
+    def test_zeile_ohne_kategorie_laesst_den_bestand_unveraendert(self, client):
+        """Gegenprobe zur Lückenprüfung: category ist Pflichtspalte, eine Zeile
+        ohne sie wird verworfen — der Pfandartikel bleibt PFAND."""
+        pfand = _s1_pfandkiste(client, sku="PFAND-IMP3")
+        ergebnis = _s1_produktimport(client, {"sku": "PFAND-IMP3", "name": "IFCO-Kiste"})
+        assert ergebnis["updated"] == 0
+        assert any("category" in f for f in ergebnis["errors"]), ergebnis
+        p = client.get(f"/api/v1/products/{pfand['id']}").json()
+        assert p["category"] == "PFAND"
+        assert p["tax_rate"] == "STANDARD"

@@ -26,6 +26,7 @@ from app.schemas.product import (
     PriceListItemCreate, PriceListItemUpdate, PriceListItemResponse,
 )
 from app.services.product_service import ProductService
+from app.services.steuersatz import pfand_vorgaben
 
 router = APIRouter(prefix="/products", tags=["Produkte"])
 
@@ -83,16 +84,9 @@ def get_product(product_id: UUID, db: DBSession):
 def create_product(data: ProductCreate, db: DBSession):
     """Erstellt ein neues Produkt."""
     service = ProductService(db)
-    payload = data.model_dump()
-    # Kategorie PFAND heißt: das IST ein Pfandgebinde — Kennzeichen setzen,
-    # sofern der Nutzer nichts anderes bestimmt hat.
-    if payload.get("category") == ProductCategory.PFAND and "is_deposit" not in data.model_fields_set:
-        payload["is_deposit"] = True
-    # Pfand auf Mehrweggebinde ist ein eigener Umsatz zum Regelsatz — der
-    # Lebensmittelsatz von 7 % (unser Default) gilt dafür nicht. Eine bewusst
-    # gesetzte Angabe bleibt unangetastet.
-    if payload.get("is_deposit") and "tax_rate" not in data.model_fields_set:
-        payload["tax_rate"] = TaxRate.STANDARD
+    # Pfandregel (PFAND → Pfandkennzeichen, Pfand → 19 %, ausdrückliche
+    # Angaben bleiben) — dieselbe Funktion wie PATCH und Import.
+    payload = pfand_vorgaben(data.model_dump(), data.model_fields_set)
     try:
         product = service.create_product(**payload)
         db.commit()
@@ -138,6 +132,9 @@ def update_product(
         raise HTTPException(status_code=404, detail="Produkt nicht gefunden")
 
     update_data = data.model_dump(exclude_unset=True)
+    # Wird der Artikel hier zum Pfand (Kategorie PFAND oder Pfandkennzeichen),
+    # gilt dieselbe Regel wie beim Anlegen — bisher blieb er auf 7 %.
+    update_data = pfand_vorgaben(update_data, set(update_data), bisher=product)
     for field, value in update_data.items():
         setattr(product, field, value)
 
@@ -362,6 +359,9 @@ def update_product_group(
         raise HTTPException(status_code=404, detail="Produktgruppe nicht gefunden")
 
     update_data = data.model_dump(exclude_unset=True)
+    # Wird der Artikel hier zum Pfand (Kategorie PFAND oder Pfandkennzeichen),
+    # gilt dieselbe Regel wie beim Anlegen — bisher blieb er auf 7 %.
+    update_data = pfand_vorgaben(update_data, set(update_data), bisher=product)
     for field, value in update_data.items():
         setattr(group, field, value)
 
@@ -422,6 +422,9 @@ def update_grow_plan(
         raise HTTPException(status_code=404, detail="Wachstumsplan nicht gefunden")
 
     update_data = data.model_dump(exclude_unset=True)
+    # Wird der Artikel hier zum Pfand (Kategorie PFAND oder Pfandkennzeichen),
+    # gilt dieselbe Regel wie beim Anlegen — bisher blieb er auf 7 %.
+    update_data = pfand_vorgaben(update_data, set(update_data), bisher=product)
     for field, value in update_data.items():
         setattr(plan, field, value)
 
@@ -536,6 +539,9 @@ def update_price_list(
         raise HTTPException(status_code=404, detail="Preisliste nicht gefunden")
 
     update_data = data.model_dump(exclude_unset=True)
+    # Wird der Artikel hier zum Pfand (Kategorie PFAND oder Pfandkennzeichen),
+    # gilt dieselbe Regel wie beim Anlegen — bisher blieb er auf 7 %.
+    update_data = pfand_vorgaben(update_data, set(update_data), bisher=product)
     for field, value in update_data.items():
         setattr(price_list, field, value)
 
@@ -601,6 +607,9 @@ def update_price_list_item(
         raise HTTPException(status_code=404, detail="Preislistenposition nicht gefunden")
 
     update_data = data.model_dump(exclude_unset=True)
+    # Wird der Artikel hier zum Pfand (Kategorie PFAND oder Pfandkennzeichen),
+    # gilt dieselbe Regel wie beim Anlegen — bisher blieb er auf 7 %.
+    update_data = pfand_vorgaben(update_data, set(update_data), bisher=product)
     for field, value in update_data.items():
         setattr(item, field, value)
 

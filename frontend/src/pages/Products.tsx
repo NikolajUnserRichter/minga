@@ -456,7 +456,14 @@ function ProductForm({ product, growPlans, productGroups, onSubmit, onCancel }: 
           label="Kategorie"
           options={categoryOptions}
           value={formData.category}
-          onChange={(e) => setFormData({ ...formData, category: e.target.value as ProductCategory })}
+          onChange={(e) => {
+            const category = e.target.value as ProductCategory;
+            // Wie beim Pfand-Häkchen: Kategorie Pfand schlägt Pfandkennzeichen
+            // und 19 % vor. Der Satz bleibt danach im Formular änderbar.
+            setFormData(category === 'PFAND' && formData.category !== 'PFAND'
+              ? { ...formData, category, is_deposit: true, tax_rate: 'STANDARD' }
+              : { ...formData, category });
+          }}
         />
         <Select
           label="Produktgruppe"
