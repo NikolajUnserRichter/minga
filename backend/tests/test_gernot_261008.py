@@ -531,3 +531,224 @@ class TestS1Shopify:
 
         # ohne tax_lines wie bisher 19 %
         assert self._saetze(db) == ["REDUZIERT", "STANDARD"]
+
+
+class TestS1Datenkorrektur:
+    """Task 6: einmalige Korrektur offener Bestellpositionen."""
+
+    def _lauf(self, **kw):
+        from app.services.steuersatz_korrektur import korrigiere_offene_bestellpositionen
+        with TestingSessionLocal() as db:
+            ergebnis = korrigiere_offene_bestellpositionen(db, **kw)
+            db.commit()
+            return ergebnis
+
+    def test_offene_bestellung_wird_auf_den_produktsatz_korrigiert(self, client):
+        pfand = _s1_pfandkiste(client)
+        order = _s1_altbestellung(client, _s1_kunde(client), pfand)
+        # 31,00 € × 7 % = 2,17 € — der falsche Stand
+        assert Decimal(str(order["total_vat"])) == Decimal("2.17")
+
+        ergebnis = self._lauf()
+
+        assert ergebnis["bestellungen"] == 1 and ergebnis["positionen"] == 1
+        nachher = client.get(f"/api/v1/sales/orders/{order['id']}").json()
+        assert {bool(z["product_id"]): z["tax_rate"] for z in nachher["lines"]} == {
+            True: "STANDARD", False: "REDUZIERT",
+        }
+        pfandzeile = _s1_pfandzeile(client, order["id"])
+        assert Decimal(str(pfandzeile["line_vat"])) == Decimal("1.14")
+        assert Decimal(str(pfandzeile["line_gross"])) == Decimal("7.14")
+        # 25,00 € × 7 % = 1,75 € | 6,00 € × 19 % = 1,14 €
+        assert Decimal(str(nachher["total_vat"])) == Decimal("2.89")
+        assert Decimal(str(nachher["total_gross"])) == Decimal("33.89")
+
+    def test_korrektur_steht_im_audit_log(self, client):
+        pfand = _s1_pfandkiste(client)
+        order = _s1_altbestellung(client, _s1_kunde(client), pfand)
+
+        self._lauf()
+
+        log = client.get(f"/api/v1/sales/orders/{order['id']}/audit-log").json()
+        eintrag = next(e for e in log if e["action"] == "STEUERSATZ_KORREKTUR")
+        assert eintrag["old_values"]["positionen"][0]["tax_rate"] == "REDUZIERT"
+        assert eintrag["new_values"]["positionen"][0]["tax_rate"] == "STANDARD"
+        assert Decimal(eintrag["old_values"]["total_gross"]) == Decimal("33.17")
+        assert Decimal(eintrag["new_values"]["total_gross"]) == Decimal("33.89")
+
+    def test_zweiter_lauf_aendert_nichts(self, client):
+        pfand = _s1_pfandkiste(client)
+        order = _s1_altbestellung(client, _s1_kunde(client), pfand)
+        self._lauf()
+
+        zweiter = self._lauf()
+
+        assert zweiter["bestellungen"] == 0
+        log = client.get(f"/api/v1/sales/orders/{order['id']}/audit-log").json()
+        assert sum(1 for e in log if e["action"] == "STEUERSATZ_KORREKTUR") == 1
+
+    def test_bestellung_mit_rechnung_wird_nicht_angefasst(self, client):
+        """Auch ein Rechnungsentwurf (RE-00003) sperrt: Rechnungen fasst die
+        Korrektur nie an, und die Bestellung soll nicht von ihr abweichen."""
+        pfand = _s1_pfandkiste(client)
+        order = _s1_altbestellung(client, _s1_kunde(client), pfand)
+        rechnung = _s1_rechnung_aus(client, order)
+        rechnungszeilen = _s1_rechnungszeilen(rechnung["id"])
+
+        ergebnis = self._lauf()
+
+        assert ergebnis["bestellungen"] == 0
+        assert ergebnis["uebersprungen_mit_rechnung"] == [order["order_number"]]
+        assert _s1_pfandzeile(client, order["id"])["tax_rate"] == "REDUZIERT"
+        assert _s1_rechnungszeilen(rechnung["id"]) == rechnungszeilen
+
+    def test_bestellung_in_sammelrechnung_wird_nicht_angefasst(self, client):
+        pfand = _s1_pfandkiste(client)
+        kunde = _s1_kunde(client)
+        order = _s1_altbestellung(client, kunde, pfand, liefertag="2026-09-15")
+        assert client.post(f"/api/v1/sales/orders/{order['id']}/delivery-notes", json={}).status_code == 201
+        r = client.post("/api/v1/invoices/batch-run/commit", json={
+            "period_from": "2026-09-01", "period_to": "2026-09-30", "customer_ids": [kunde["id"]],
+        })
+        assert r.status_code == 201, r.text
+
+        ergebnis = self._lauf()
+
+        assert ergebnis["bestellungen"] == 0
+        assert _s1_pfandzeile(client, order["id"])["tax_rate"] == "REDUZIERT"
+
+    def test_stornierte_bestellung_bleibt(self, client):
+        from app.models.enums import OrderStatus
+        from app.models.order import Order
+        pfand = _s1_pfandkiste(client)
+        order = _s1_altbestellung(client, _s1_kunde(client), pfand)
+        with TestingSessionLocal() as db:
+            db.get(Order, uuid.UUID(order["id"])).status = OrderStatus.STORNIERT
+            db.commit()
+
+        assert self._lauf()["bestellungen"] == 0
+        assert _s1_pfandzeile(client, order["id"])["tax_rate"] == "REDUZIERT"
+
+    def test_nach_storno_der_rechnung_gezielt_korrigierbar(self, client):
+        """Für die Neuausstellung von RE-00002/4: erst stornieren, dann die
+        Bestellung gezielt korrigieren, dann neu fakturieren."""
+        pfand = _s1_pfandkiste(client)
+        order = _s1_altbestellung(client, _s1_kunde(client), pfand)
+        rechnung = _s1_rechnung_aus(client, order)
+        r = client.post(f"/api/v1/invoices/{rechnung['id']}/cancel", json={"reason": "Steuersatz Pfand"})
+        assert r.status_code == 200, r.text
+
+        ergebnis = self._lauf(nur_bestellungen=[uuid.UUID(order["id"])])
+
+        assert ergebnis["bestellungen"] == 1
+        assert ergebnis["geaendert"] == [order["order_number"]]
+        # Die Stornorechnung sperrt nicht: beide Listen leer, wie das Runbook es verlangt
+        assert ergebnis["uebersprungen_mit_rechnung"] == []
+        assert ergebnis["uebersprungen_status"] == []
+        assert _s1_pfandzeile(client, order["id"])["tax_rate"] == "STANDARD"
+
+    def test_gezielter_aufruf_meldet_nicht_offene_und_unbekannte_bestellungen(self, client):
+        """nur_bestellungen filtert nach Status — eine fakturierte Bestellung
+        oder eine unbekannte ID darf nicht still durchrutschen. Sonst hielte
+        das Runbook ein leeres Ergebnis für Erfolg."""
+        from app.models.enums import OrderStatus
+        from app.models.order import Order
+        pfand = _s1_pfandkiste(client)
+        order = _s1_altbestellung(client, _s1_kunde(client), pfand)
+        with TestingSessionLocal() as db:
+            db.get(Order, uuid.UUID(order["id"])).status = OrderStatus.FAKTURIERT
+            db.commit()
+        unbekannt = uuid.uuid4()
+
+        ergebnis = self._lauf(nur_bestellungen=[uuid.UUID(order["id"]), unbekannt])
+
+        assert ergebnis["bestellungen"] == 0
+        assert ergebnis["uebersprungen_status"] == [
+            f"{order['order_number']} (FAKTURIERT)",
+            f"{unbekannt} (nicht gefunden)",
+        ]
+        assert _s1_pfandzeile(client, order["id"])["tax_rate"] == "REDUZIERT"
+        # Der automatische Lauf meldet fakturierte Bestellungen nicht.
+        assert self._lauf()["uebersprungen_status"] == []
+
+    def test_laeuft_je_mandant_nur_einmal(self, client):
+        from app.models.app_setting import AppSetting
+        from app.services.steuersatz_korrektur import MARKER, korrektur_einmalig_ausfuehren
+        pfand = _s1_pfandkiste(client)
+        order = _s1_altbestellung(client, _s1_kunde(client), pfand)
+        with TestingSessionLocal() as db:
+            erstes = korrektur_einmalig_ausfuehren(db)
+            db.commit()
+        assert erstes["bestellungen"] == 1
+
+        _s1_altstand(order["id"])  # dieselbe Abweichung taucht wieder auf
+        with TestingSessionLocal() as db:
+            zweites = korrektur_einmalig_ausfuehren(db)
+            db.commit()
+            assert db.get(AppSetting, MARKER) is not None
+
+        assert zweites is None
+        assert _s1_pfandzeile(client, order["id"])["tax_rate"] == "REDUZIERT"
+
+    def test_auto_migrate_fuehrt_die_korrektur_aus(self):
+        """Verdrahtung in tenancy._auto_migrate — auf einer eigenen In-Memory-
+        Engine, die geteilte Test-Engine bleibt unberührt."""
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import Session
+        from sqlalchemy.pool import StaticPool
+        from app.database import Base
+        from app.models.app_setting import AppSetting
+        from app.services.steuersatz_korrektur import MARKER
+        from app.tenancy import _auto_migrate
+
+        engine = create_engine("sqlite://", connect_args={"check_same_thread": False},
+                               poolclass=StaticPool)
+        Base.metadata.create_all(bind=engine)
+        try:
+            _auto_migrate(engine)
+            with Session(engine) as s:
+                assert s.get(AppSetting, MARKER) is not None
+        finally:
+            Base.metadata.drop_all(bind=engine)
+            engine.dispose()
+
+    def test_gescheiterte_korrektur_blockiert_keine_schemamigration(self, monkeypatch, caplog):
+        """Scheitert die Korrektur, laufen die Spaltenmigrationen trotzdem, es
+        steht kein Marker, und _auto_migrate wirft nicht — beim nächsten Start
+        wird sie erneut versucht. Stünde der Block am Anfang des ersten try,
+        fehlte die Spalte; stünde er in dessen except-Zweig, fehlte die
+        eigene Fehlermeldung."""
+        import logging
+        from sqlalchemy import create_engine, inspect, text
+        from sqlalchemy.orm import Session
+        from sqlalchemy.pool import StaticPool
+        from app.database import Base
+        from app.models.app_setting import AppSetting
+        from app.services.steuersatz_korrektur import MARKER
+        from app.tenancy import _auto_migrate
+
+        def scheitert(db, nur_bestellungen=None):
+            raise RuntimeError("Korrektur gescheitert (Test)")
+
+        monkeypatch.setattr(
+            "app.services.steuersatz_korrektur.korrigiere_offene_bestellpositionen", scheitert)
+
+        engine = create_engine("sqlite://", connect_args={"check_same_thread": False},
+                               poolclass=StaticPool)
+        Base.metadata.create_all(bind=engine)
+        try:
+            # Älteres Schema: eine Spalte fehlt, die _auto_migrate nachträgt.
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE invoices DROP COLUMN service_period_end"))
+
+            with caplog.at_level(logging.ERROR, logger="app.tenancy"):
+                _auto_migrate(engine)  # wirft nicht
+
+            spalten = {c["name"] for c in inspect(engine).get_columns("invoices")}
+            assert "service_period_end" in spalten
+            with Session(engine) as s:
+                assert s.get(AppSetting, MARKER) is None
+            assert "Steuersatz-Korrektur fehlgeschlagen" in caplog.text
+        finally:
+            Base.metadata.drop_all(bind=engine)
+            engine.dispose()

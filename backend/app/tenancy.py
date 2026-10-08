@@ -357,6 +357,20 @@ def _auto_migrate(engine: Engine) -> None:
     except Exception as e:
         logger.error(f"[auto-migrate] failed: {e}")
 
+    # Einmalige Datenkorrektur (A3, 08.10.2026): Steuersatz offener
+    # Bestellpositionen an den Produktstamm angleichen. Eigener try-Block —
+    # scheitert sie, laufen die Schema-Migrationen trotzdem, und ohne Marker
+    # wird sie beim nächsten Start erneut versucht.
+    try:
+        from sqlalchemy.orm import Session as _Session
+        from app.services.steuersatz_korrektur import korrektur_einmalig_ausfuehren
+        if inspector.has_table("order_lines") and inspector.has_table("app_settings"):
+            with _Session(engine) as session:
+                korrektur_einmalig_ausfuehren(session)
+                session.commit()
+    except Exception as e:
+        logger.error(f"[auto-migrate] Steuersatz-Korrektur fehlgeschlagen: {e}")
+
 
 def _seed_minimal(SessionFactory: sessionmaker) -> None:
     """Minimaler Seed für neue Tenants: Einheiten."""
