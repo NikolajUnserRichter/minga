@@ -365,3 +365,72 @@ class TestLieferscheinQuittieren:
         noten = client.get(f"/api/v1/sales/orders/{o['id']}/delivery-notes").json()
         assert (noten[0]["status"], noten[0]["signed_by"]) == ("ENTWURF", None)
         assert _audit(client, o)[0]["action"] == "CONFIRM"
+
+
+# --------------------- Task 3: Sammel-Endpunkt, gleiche Regel, alle oder keine
+
+class TestSammelStatus:
+    """LÜCKEN 3: POST /orders/bulk-status prüfte nichts, buchte keinen Bestand
+    und scheiterte an seinem Antwortschema (500 bei jedem Aufruf)."""
+
+    def _sammel(self, client, orders, status):
+        return client.post("/api/v1/sales/orders/bulk-status", json={
+            "order_ids": [o["id"] for o in orders], "status": status,
+        })
+
+    def test_bestaetigt_und_gepackt_auf_geliefert(self, client):
+        kunde = _kunde(client)
+        a, b = _bestaetigt(client, kunde), _gepackt(client, kunde)
+        r = self._sammel(client, [a, b], "GELIEFERT")
+        assert r.status_code == 200, r.text
+        assert sorted(x["order_number"] for x in r.json()) == sorted([a["order_number"], b["order_number"]])
+        for o in (a, b):
+            bestellung = _lesen(client, o)
+            assert bestellung["status"] == "GELIEFERT"
+            assert bestellung["actual_delivery_date"] == _heute().isoformat()
+            assert _audit(client, o)[0]["action"] == "BULK_STATUS_CHANGE"
+
+    def test_ein_unzulaessiger_aendert_nichts(self, client):
+        kunde = _kunde(client)
+        ok, entwurf = _bestaetigt(client, kunde), _bestellung(client, kunde)
+        r = self._sammel(client, [ok, entwurf], "GELIEFERT")
+        assert r.status_code == 400
+        assert entwurf["order_number"] in r.json()["detail"]
+        assert "Entwurf" in r.json()["detail"]
+        assert _lesen(client, ok)["status"] == "BESTAETIGT"
+
+    def test_bucht_bestand_fuer_jede_bestellung(self, client):
+        produkt = _produkt(client)
+        lager = _fertigware(produkt, 1000)
+        kunde = _kunde(client)
+        a = _bestaetigt(client, kunde, lines=_grammzeile(produkt, 100))
+        b = _gepackt(client, kunde, lines=_grammzeile(produkt, 100))
+        assert self._sammel(client, [a, b], "GELIEFERT").status_code == 200
+        assert _bestand(lager) == Decimal("800")
+
+    def test_bestandsfehler_aendert_keine(self, client, monkeypatch):
+        def kaputt(*a, **k):
+            raise RuntimeError("Lager gesperrt")
+        monkeypatch.setattr("app.services.order_status_service.deduct_inventory_for_order", kaputt)
+        kunde = _kunde(client)
+        a, b = _bestaetigt(client, kunde), _bestaetigt(client, kunde)
+        assert self._sammel(client, [a, b], "GELIEFERT").status_code == 500
+        assert {_lesen(client, a)["status"], _lesen(client, b)["status"]} == {"BESTAETIGT"}
+
+    def test_gepackt_per_sammelaktion(self, client):
+        kunde = _kunde(client)
+        a, b = _bestaetigt(client, kunde), _bestaetigt(client, kunde)
+        r = self._sammel(client, [a, b], "IN_PRODUKTION")
+        assert r.status_code == 200, r.text
+        assert {x["status"] for x in r.json()} == {"IN_PRODUKTION"}
+
+    def test_leere_auswahl_abgelehnt(self, client):
+        r = client.post("/api/v1/sales/orders/bulk-status", json={"order_ids": [], "status": "GELIEFERT"})
+        assert r.status_code == 422
+
+    def test_unbekannte_bestellung_404(self, client):
+        """Charakterisierung — war schon so."""
+        r = client.post("/api/v1/sales/orders/bulk-status", json={
+            "order_ids": [str(uuid.uuid4())], "status": "GELIEFERT",
+        })
+        assert r.status_code == 404

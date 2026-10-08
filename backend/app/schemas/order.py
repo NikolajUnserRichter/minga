@@ -305,9 +305,17 @@ class OrderSummary(BaseModel):
 
 class BulkStatusUpdate(BaseModel):
     """Schema für Massen-Statusänderung"""
-    order_ids: list[UUID]
+    order_ids: list[UUID] = Field(..., min_length=1)
     status: OrderStatus
     reason: Optional[str] = None
+
+
+class BulkStatusResult(BaseModel):
+    """Eine Bestellung nach der Sammel-Statusänderung"""
+    id: UUID
+    order_number: str
+    status: OrderStatus
+    total_gross: Decimal
 
 
 class OrderFromSubscriptionCreate(BaseModel):

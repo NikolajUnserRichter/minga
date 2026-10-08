@@ -25,8 +25,8 @@ from app.schemas.customer import (
 from app.schemas.order import (
     OrderCreate, OrderUpdate, OrderResponse, OrderListResponse,
     OrderLineCreate, OrderLineUpdate, OrderLineResponse,
-    OrderStatusUpdate, OrderAuditLogResponse, OrderSummary,
-    BulkStatusUpdate
+    OrderStatusUpdate, OrderAuditLogResponse,
+    BulkStatusUpdate, BulkStatusResult
 )
 from app.tasks.forecast_tasks import update_forecast_from_order
 from app.services.customer_service import next_customer_number
@@ -1505,45 +1505,76 @@ async def get_order_audit_log(order_id: UUID, db: DBSession):
 
 # ============== Bulk Operations ==============
 
-@router.post("/orders/bulk-status", response_model=list[OrderSummary])
+@router.post("/orders/bulk-status", response_model=list[BulkStatusResult])
 async def bulk_update_status(
     bulk_update: BulkStatusUpdate,
     db: DBSession,
     user: CurrentUser
 ):
-    """Mehrere Bestellungen gleichzeitig auf einen Status setzen."""
+    """Mehrere Bestellungen auf einen Status setzen — alle oder keine.
+
+    Jeder Übergang wird vorab geprüft. Ist einer unzulässig, ändert sich
+    nichts und die Antwort nennt die betroffenen Bestellnummern.
+    """
+    ids = list(dict.fromkeys(bulk_update.order_ids))
     orders = db.execute(
-        select(Order).where(Order.id.in_(bulk_update.order_ids))
+        select(Order).where(Order.id.in_(ids))
     ).scalars().all()
 
-    if len(orders) != len(bulk_update.order_ids):
+    if len(orders) != len(ids):
         raise HTTPException(
             status_code=404,
             detail="Eine oder mehrere Bestellungen nicht gefunden"
         )
 
-    updated = []
+    abgelehnt = []
     for order in orders:
-        old_status = order.status
-        order.status = bulk_update.status
-        order.updated_by = UUID(user["id"]) if user else None
-        order.updated_at = datetime.now(timezone.utc)
-
-        _create_audit_log(
-            db, order,
-            user_id=UUID(user["id"]) if user else None,
-            action="BULK_STATUS_CHANGE",
-            old_values={"status": old_status.value},
-            new_values={"status": bulk_update.status.value},
-            reason=bulk_update.reason
+        try:
+            pruefe_uebergang(order.status, bulk_update.status)
+        except StatuswechselFehler:
+            abgelehnt.append(f"{order.order_number} ({bezeichnung(order.status)})")
+    if abgelehnt:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Nichts geändert — {bezeichnung(bulk_update.status)} ist nicht möglich für: "
+                + ", ".join(sorted(abgelehnt))
+            ),
         )
 
-        updated.append(OrderSummary(
+    try:
+        for order in orders:
+            setze_status(
+                db, order, bulk_update.status,
+                user=user,
+                action="BULK_STATUS_CHANGE",
+                reason=bulk_update.reason,
+            )
+            # Nächste Bestellung soll den bereits reduzierten Bestand sehen
+            db.flush()
+    except StatuswechselFehler as e:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+    except BestandsbuchungFehler as e:
+        db.rollback()
+        logger.exception("Bestandsabzug bei Sammel-Statuswechsel fehlgeschlagen: %s", e)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Nichts geändert — Bestandsabzug fehlgeschlagen: {e}",
+        )
+
+    db.commit()
+
+    if bulk_update.status == OrderStatus.STORNIERT:
+        for order in orders:
+            _trigger_forecast_update(str(order.id), "CANCEL")
+
+    return [
+        BulkStatusResult(
             id=order.id,
             order_number=order.order_number,
             status=order.status,
-            total_gross=order.total_gross
-        ))
-
-    db.commit()
-    return updated
+            total_gross=order.total_gross,
+        )
+        for order in orders
+    ]
