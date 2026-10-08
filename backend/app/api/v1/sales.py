@@ -31,6 +31,9 @@ from app.schemas.order import (
 from app.tasks.forecast_tasks import update_forecast_from_order
 from app.services.customer_service import next_customer_number
 from app.services.datev_service import DatevService
+from app.services.order_status_service import (
+    BestandsbuchungFehler, StatuswechselFehler, bezeichnung, pruefe_uebergang, setze_status,
+)
 
 import logging
 
@@ -1181,75 +1184,36 @@ async def update_order_status(
     """
     Bestellstatus aktualisieren.
 
-    Erlaubte Übergänge:
-    - ENTWURF → BESTAETIGT, STORNIERT
-    - BESTAETIGT → IN_PRODUKTION, STORNIERT
-    - IN_PRODUKTION → GELIEFERT
-    - GELIEFERT → FAKTURIERT
+    Regeln: app.services.order_status_service.ERLAUBTE_UEBERGAENGE.
+    Beim Wechsel auf GELIEFERT: Lieferdatum (Standard heute) + Bestandsabzug.
     """
     order = db.get(Order, order_id)
     if not order:
         raise HTTPException(status_code=404, detail="Bestellung nicht gefunden")
 
-    old_status = order.status
-    new_status = status_update.status
-
-    # Status-Übergangs-Validierung
-    valid_transitions = {
-        OrderStatus.ENTWURF: [OrderStatus.BESTAETIGT, OrderStatus.STORNIERT],
-        OrderStatus.BESTAETIGT: [OrderStatus.IN_PRODUKTION, OrderStatus.STORNIERT],
-        OrderStatus.IN_PRODUKTION: [OrderStatus.GELIEFERT],
-        OrderStatus.GELIEFERT: [OrderStatus.FAKTURIERT],
-        OrderStatus.FAKTURIERT: [],
-        OrderStatus.STORNIERT: []
-    }
-
-    if new_status not in valid_transitions.get(old_status, []):
-        raise HTTPException(
-            status_code=400,
-            detail=f"Ungültiger Statusübergang: {old_status.value} → {new_status.value}"
+    neu = status_update.status
+    try:
+        setze_status(
+            db, order, neu,
+            user=user,
+            reason=status_update.reason,
+            lieferdatum=status_update.actual_delivery_date,
         )
-
-    order.status = new_status
-    order.updated_by = UUID(user["id"]) if user else None
-    order.updated_at = datetime.now(timezone.utc)
-
-    _create_audit_log(
-        db, order,
-        user_id=UUID(user["id"]) if user else None,
-        action="STATUS_CHANGE",
-        old_values={"status": old_status.value},
-        new_values={"status": new_status.value},
-        reason=status_update.reason
-    )
-
-    # Wenn Übergang auf GELIEFERT: Bestand IN DER SELBEN TRANSACTION abziehen.
-    # Damit ist garantiert, dass Status + Inventory atomar passieren — entweder
-    # beides oder nichts. Fehlschlag → 500 + Rollback, nichts wird persistiert.
-    if new_status == OrderStatus.GELIEFERT:
-        from app.services.order_fulfillment_service import deduct_inventory_for_order
-        order_full = db.execute(
-            select(Order)
-            .options(joinedload(Order.lines))
-            .where(Order.id == order_id)
-        ).unique().scalar_one_or_none()
-        if order_full:
-            try:
-                deduct_inventory_for_order(db, order_full, commit=False)
-            except Exception as e:
-                db.rollback()
-                import logging; logging.getLogger(__name__).exception(
-                    "Inventory-Deduction beim Status-Update fehlgeschlagen: %s", e
-                )
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"Status-Übergang abgebrochen — Inventory-Abzug fehlgeschlagen: {e}",
-                )
+    except StatuswechselFehler as e:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+    except BestandsbuchungFehler as e:
+        db.rollback()
+        logger.exception("Bestandsabzug beim Statuswechsel fehlgeschlagen: %s", e)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Statuswechsel abgebrochen — Bestandsabzug fehlgeschlagen: {e}",
+        )
 
     db.commit()
 
     # Forecast bei Stornierung triggern
-    if new_status == OrderStatus.STORNIERT:
+    if neu == OrderStatus.STORNIERT:
         _trigger_forecast_update(str(order.id), "CANCEL")
 
     return await get_order(order_id, db)

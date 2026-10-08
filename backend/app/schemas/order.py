@@ -168,6 +168,9 @@ class OrderStatusUpdate(BaseModel):
     """Schema für Statusänderung"""
     status: OrderStatus
     reason: Optional[str] = Field(None, description="Grund für Statusänderung")
+    actual_delivery_date: Optional[date] = Field(
+        None, description="Nur bei GELIEFERT: tatsächlicher Liefertag (Standard heute, nie in der Zukunft)"
+    )
 
 
 class OrderResponse(BaseModel):
