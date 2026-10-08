@@ -738,8 +738,10 @@ export const invoicesApi = {
   finalize: (id: string) =>
     api.post<Invoice>(`/invoices/${id}/finalize`).then(r => r.data),
 
-  cancel: (id: string, data: { reason: string; create_credit_note?: boolean }) =>
-    api.post(`/invoices/${id}/cancel`, data).then(r => r.data),
+  cancel: (id: string, data: { reason: string; reason_code?: string; create_credit_note?: boolean }) =>
+    api.post<{ invoice: Invoice; credit_note: Invoice | null; warnungen: string[] }>(
+      `/invoices/${id}/cancel`, data,
+    ).then(r => r.data),
 
   getOverdue: () =>
     api.get<Invoice[]>('/invoices/overdue').then(r => r.data),

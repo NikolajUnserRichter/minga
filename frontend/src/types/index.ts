@@ -597,6 +597,8 @@ export interface Invoice {
   invoice_type: InvoiceType
   customer_id: string
   order_id: string | null
+  /** Gesetzt bei einer Stornorechnung: die stornierte Originalrechnung */
+  original_invoice_id?: string | null
   invoice_date: string
   delivery_date: string | null
   due_date: string

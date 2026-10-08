@@ -15,6 +15,7 @@ import {
   SelectOption,
   Tabs,
   Pagination,
+  Alert,
 } from '../components/ui';
 import { ListPageSkeleton } from '../components/ui/Skeleton';
 import { getErrorMessage } from '../services/errors';
@@ -134,12 +135,14 @@ export default function Invoices() {
     mutationFn: () => invoicesApi.cancel(stornoFuer!.id, {
       reason: stornoGrund,
       reason_code: stornoGrundCode,
-    } as any),
-    onSuccess: (res: any) => {
+    }),
+    onSuccess: (res) => {
       queryClient.invalidateQueries({ queryKey: ['invoices'] });
       setStornoFuer(null);
       setStornoGrund('');
-      toast.success(`Stornorechnung ${res?.credit_note?.invoice_number ?? ''} erstellt — Lieferscheine sind wieder abrechenbar`);
+      toast.success(`Stornorechnung ${res.credit_note?.invoice_number ?? ''} erstellt — Lieferscheine sind wieder abrechenbar`);
+      // Was der Storno nicht selbst löst (gezahltes Geld, lexoffice) — lange stehen lassen
+      if (res.warnungen?.length) toast.warning(res.warnungen.join(' '), 15000);
     },
     onError: (e: any) => toast.error(getErrorMessage(e, 'Storno fehlgeschlagen')),
   });
@@ -338,7 +341,11 @@ export default function Invoices() {
                 <tr key={invoice.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/50">
                   <td className="px-6 py-4 whitespace-nowrap">
                     <div className="text-sm font-medium text-gray-900 dark:text-white">{invoice.invoice_number}</div>
-                    <div className="text-xs text-gray-500 dark:text-gray-400">{TYPE_LABELS[invoice.invoice_type]}</div>
+                    <div className="text-xs text-gray-500 dark:text-gray-400">
+                      {invoice.invoice_type === 'GUTSCHRIFT' && invoice.original_invoice_id
+                        ? 'Stornorechnung'
+                        : TYPE_LABELS[invoice.invoice_type]}
+                    </div>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white">
                     {invoice.customer_name || '-'}
@@ -369,7 +376,7 @@ export default function Invoices() {
                         Finalisieren
                       </Button>
                     )}
-                    {['OFFEN', 'TEILBEZAHLT', 'UEBERFAELLIG', 'BEZAHLT'].includes(invoice.status) && (
+                    {['OFFEN', 'TEILBEZAHLT', 'UEBERFAELLIG', 'BEZAHLT', 'STORNIERT'].includes(invoice.status) && (
                       <Button
                         variant="ghost"
                         size="sm"
@@ -547,14 +554,23 @@ export default function Invoices() {
           <p className="text-sm text-gray-600 dark:text-gray-300">
             Es wird eine <b>Stornorechnung mit eigener Nummer</b> erzeugt; das Original
             bleibt erhalten und wird schreibgeschützt. Zugeordnete Lieferscheine werden
-            wieder abrechenbar.
+            wieder abrechenbar. Original und Stornorechnung gleichen sich aus und stehen
+            danach beide auf „Storniert“.
           </p>
+          {stornoFuer && Number(stornoFuer.paid_amount) > 0 && (
+            <Alert variant="warning" title="Auf diese Rechnung wurde schon gezahlt">
+              {Number(stornoFuer.paid_amount).toFixed(2).replace('.', ',')} € sind bereits verbucht.
+              Die Zahlung bleibt am stornierten Beleg stehen — bei der Neuausstellung als
+              Zahlung erfassen oder dem Kunden erstatten.
+            </Alert>
+          )}
           <Select label="Grund" value={stornoGrundCode}
                   onChange={(e) => setStornoGrundCode(e.target.value)}
                   options={[
                     { value: 'FALSCHER_EMPFAENGER', label: 'Falscher Empfänger' },
                     { value: 'FALSCHE_MENGE', label: 'Falsche Menge' },
                     { value: 'PREISFEHLER', label: 'Preisfehler' },
+                    { value: 'FALSCHER_STEUERSATZ', label: 'Falscher Steuersatz' },
                     { value: 'LIEFERUNG_NICHT_ERFOLGT', label: 'Lieferung nicht erfolgt' },
                     { value: 'SONSTIGES', label: 'Sonstiges' },
                   ]} />
