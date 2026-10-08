@@ -137,7 +137,7 @@ class TestBug8Verpackungsplan:
         assert len(items) == 1
         order_ref = items[0]["orders"][0]
         assert order_ref["customer_name"] == "Testkunde"
-        assert order_ref["status"] == "Entwurf"
+        assert order_ref["status"] == "ENTWURF"
         assert order_ref["same_day"] is False
 
     def test_same_day_bestellung_erscheint(self, client, customer):

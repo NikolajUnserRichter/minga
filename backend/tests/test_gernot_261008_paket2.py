@@ -434,3 +434,43 @@ class TestSammelStatus:
             "order_ids": [str(uuid.uuid4())], "status": "GELIEFERT",
         })
         assert r.status_code == 404
+
+
+# ------------------ Task 4: Tagesplan zeigt Gelieferte, Status als Enum-Wert
+
+class TestTagesplanAusliefern:
+    """A1: GELIEFERT verschwand aus 'Ausliefern'; Status kam gemischt
+    ('Entwurf' übersetzt, alles andere roh)."""
+
+    def test_gelieferte_bleibt_in_ausliefern(self, client):
+        o = _bestaetigt(client, _kunde(client))  # Same-Day: verpacken + ausliefern
+        assert _status(client, o, "GELIEFERT").status_code == 200
+        plan = _plan(client)
+        assert [(x["order_id"], x["status"]) for x in plan["ausliefern"]] == [(o["id"], "GELIEFERT")]
+        assert plan["verpacken"] == []
+
+    def test_fakturierte_bleibt_in_ausliefern(self, client):
+        o = _bestaetigt(client, _kunde(client))
+        _status(client, o, "GELIEFERT")
+        assert _status(client, o, "FAKTURIERT").status_code == 200
+        assert [x["status"] for x in _plan(client)["ausliefern"]] == ["FAKTURIERT"]
+
+    def test_status_kommt_als_enum_wert(self, client):
+        kunde = _kunde(client)
+        _bestellung(client, kunde)
+        _gepackt(client, kunde)
+        stati = sorted(x["status"] for x in _plan(client)["ausliefern"])
+        assert stati == ["ENTWURF", "IN_PRODUKTION"]
+
+    def test_packaging_plan_status_als_enum_wert(self, client):
+        _bestellung(client, _kunde(client), liefertag=date.today() + timedelta(days=1))
+        r = client.get("/api/v1/production/packaging-plan",
+                       params={"target_date": date.today().isoformat()})
+        assert r.json()["items"][0]["orders"][0]["status"] == "ENTWURF"
+
+    def test_stornierte_nicht_im_tagesplan(self, client):
+        """Charakterisierung — war schon so."""
+        o = _bestaetigt(client, _kunde(client))
+        _status(client, o, "STORNIERT")
+        plan = _plan(client)
+        assert plan["ausliefern"] == [] and plan["verpacken"] == []
