@@ -174,7 +174,9 @@ export function CreateOrderModal({ open, onClose, preselectedCustomer }: CreateO
                 quantity: l.quantity,
                 unit: l.unit,
                 unit_price: l.unit_price,
-                tax_rate: 'REDUZIERT' as const, // Food products use reduced tax rate (7%)
+                // Kein tax_rate: bei Produkten setzt der Server den Satz aus dem
+                // Produktstamm (Pfand 19 %, Microgreens 7 %). Der feste Wert
+                // 'REDUZIERT' hat Pfandkisten mit 7 % fakturiert (A3, 08.10.2026).
                 variable_bundle_selections: isVB && l.variable_bundle_selections.length > 0
                     ? l.variable_bundle_selections.map(s => ({ product_id: s.product_id, quantity: Number(s.quantity) }))
                     : undefined,
