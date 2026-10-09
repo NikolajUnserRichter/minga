@@ -9,6 +9,7 @@ DB-Werte überschreiben env-Vars. Wenn weder DB noch env: None.
 from __future__ import annotations
 
 import os
+import unicodedata
 from typing import Optional
 
 from sqlalchemy.orm import Session
@@ -75,6 +76,14 @@ FIRMENDATEN_KEYS = (
 FIRMENDATEN_MAX_LAENGE = 200
 
 
+def firmendaten_zeile_pruefen(key: str, wert: str) -> None:
+    if key in (*FIRMENDATEN_KEYS, "EMAILS_FROM_NAME") and any(
+        unicodedata.category(zeichen) in {"Cc", "Cf", "Zl", "Zp", "Cs", "Co", "Cn"}
+        for zeichen in wert
+    ):
+        raise ValueError("nur eine Zeile ohne Steuerzeichen")
+
+
 def firmendaten_normalisieren(key: str, wert: str) -> str:
     wert = wert.strip()
     if key in ("COMPANY_IBAN", "COMPANY_BIC"):
@@ -92,6 +101,7 @@ def firmendaten_pruefen(key: str, wert: str) -> str:
     höchstens FIRMENDATEN_MAX_LAENGE Zeichen; IBAN und BIC wie im SEPA-Mandat
     geprüft und normalisiert.
     """
+    firmendaten_zeile_pruefen(key, wert)
     if key not in FIRMENDATEN_KEYS:
         return wert
     from app.services.sepa_service import bic_pruefen, iban_pruefen
@@ -99,8 +109,6 @@ def firmendaten_pruefen(key: str, wert: str) -> str:
     wert = wert.strip()
     if not wert:
         raise ValueError("nur Leerzeichen — zum Löschen das Feld leer lassen")
-    if "\n" in wert or "\r" in wert:
-        raise ValueError("nur eine Zeile erlaubt")
     if len(wert) > FIRMENDATEN_MAX_LAENGE:
         raise ValueError(f"höchstens {FIRMENDATEN_MAX_LAENGE} Zeichen")
     if key == "COMPANY_IBAN":

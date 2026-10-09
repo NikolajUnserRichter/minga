@@ -1255,3 +1255,44 @@ class TestF2UnveraenderteBestandswerte:
         assert antwort.status_code == 422, antwort.text
         assert antwort.json()["detail"] == "BIC: BIC hat kein gültiges Format (8 oder 11 Zeichen)"
         assert _d_einstellung(client, "COMPANY_PHONE")["value"] == "+49 89 1234"
+
+
+class TestF2Steuerzeichen:
+    @pytest.mark.parametrize("schluessel,label", [
+        ("COMPANY_NAME", "Firmenname"), ("EMAILS_FROM_NAME", "Absender-Name"),
+    ])
+    @pytest.mark.parametrize("zeichen", [
+        "\n", "\r", "\x0b", "\x0c", "\x1c", "\x1d", "\x1e", "\x85",
+        "\u2028", "\u2029", "\t", "\x00", "\x1b", "\x7f",
+        "\u200b", "\ud800", "\ue000", "\u0378",
+    ])
+    def test_name_lehnt_alle_verbotenen_kategorien_ab(self, client, schluessel, label, zeichen):
+        import json
+        _f_setze_db(**{schluessel: "Bestand GmbH"})
+        antwort = client.patch("/api/v1/admin/settings",
+            content=json.dumps({schluessel: f"Probe{zeichen}GmbH"}),
+            headers={"Content-Type": "application/json"})
+        assert antwort.status_code == 422, antwort.text
+        assert antwort.json()["detail"] == f"{label}: nur eine Zeile ohne Steuerzeichen"
+        assert _d_einstellung(client, schluessel)["value"] == "Bestand GmbH"
+
+    @pytest.mark.parametrize("schluessel", list(_F_FIRMA)[1:])
+    def test_alle_firmendaten_felder_lehnen_steuerzeichen_ab(self, client, schluessel):
+        antwort = client.patch("/api/v1/admin/settings", json={schluessel: "Probe\x00Wert"})
+        assert antwort.status_code == 422, antwort.text
+        assert antwort.json()["detail"].endswith(": nur eine Zeile ohne Steuerzeichen")
+
+    @pytest.mark.parametrize("schluessel", ["COMPANY_NAME", "EMAILS_FROM_NAME"])
+    @pytest.mark.parametrize("wert", ["\tProbe GmbH", "Probe GmbH\n", "Probe\r\nBcc: x"])
+    def test_steuerzeichen_werden_nicht_weg_normalisiert(self, client, schluessel, wert):
+        _f_setze_db(**{schluessel: "Probe GmbH"})
+        antwort = client.patch("/api/v1/admin/settings", json={schluessel: wert})
+        assert antwort.status_code == 422, antwort.text
+        assert antwort.json()["detail"].endswith(": nur eine Zeile ohne Steuerzeichen")
+
+    @pytest.mark.parametrize("schluessel", ["COMPANY_NAME", "EMAILS_FROM_NAME"])
+    @pytest.mark.parametrize("wert", ["Müller & Söhne", "GmbH & Co. KG"])
+    def test_normale_namen_bleiben_erlaubt(self, client, schluessel, wert):
+        antwort = client.patch("/api/v1/admin/settings", json={schluessel: wert})
+        assert antwort.status_code == 200, antwort.text
+        assert _d_einstellung(client, schluessel)["value"] == wert
