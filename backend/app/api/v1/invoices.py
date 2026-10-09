@@ -630,6 +630,22 @@ def update_invoice_line(
         raise HTTPException(status_code=404, detail="Position nicht gefunden")
 
     update_data = data.model_dump(exclude_unset=True)
+    # Sammel- und Monatsrechnung: Die Menge einer Position steht je
+    # Lieferschein in invoice_line_sources; die Anlage „Enthaltene
+    # Lieferscheine“ (PDF, GET /{id}/delivery-notes) rechnet Quellmenge mal
+    # Einzelpreis. Eine neue Menge nur hier ließe Rechnung und Anlage
+    # auseinanderlaufen, und welcher Lieferschein weniger hatte, weiß nur die
+    # Bestellung. Preis, Rabatt, Steuersatz und Text bleiben änderbar
+    # (Paket 4, B; G21). InvoiceLineSource: modulweiter Import beim Sammellauf.
+    neue_menge = update_data.get("quantity")
+    if neue_menge is not None and neue_menge != line.quantity and db.scalar(
+        select(InvoiceLineSource.id).where(InvoiceLineSource.invoice_line_id == line.id).limit(1)
+    ) is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="Die Menge stammt aus den Lieferscheinen dieser Sammel- bzw. Monatsrechnung. "
+                   "Entwurf verwerfen, Menge in der Bestellung korrigieren, Lauf neu starten.",
+        )
     satz_vorher = line.tax_rate
     if "buchungskonto" in update_data:
         try:

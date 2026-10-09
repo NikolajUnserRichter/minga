@@ -21,6 +21,7 @@ import { ListPageSkeleton } from '../components/ui/Skeleton';
 import { belegHerunterladen } from '../services/belegordner';
 import { belegartDerRechnung } from '../services/belegpfad';
 import { getErrorMessage } from '../services/errors';
+import { eingabeAusZahl, positionsaenderung } from '../services/positionsaenderung';
 import { BelegVersandAuftrag } from '../services/api';
 import { VersandFormular, VersandProtokoll, versandMeldung, versandZeile } from '../components/domain/BelegVersand';
 import { MonatsrechnungenDialog, MonatsrechnungenBanner } from '../components/domain/MonatsrechnungenDialog';
@@ -1209,6 +1210,33 @@ export function InvoiceDetail({ invoice: initial }: { invoice: Invoice }) {
     onError: (e: any) => toast.error(getErrorMessage(e, 'Fehler beim Hinzufügen')),
   });
 
+  // Menge und Einzelpreis einer Position im Entwurf ändern (Paket 4, B; G21).
+  // Immer nur eine Zeile in Arbeit; der Server rechnet Zeile und Summen neu.
+  const [zeileInArbeit, setZeileInArbeit] = useState<{ id: string; menge: string; preis: string } | null>(null);
+  const updateLineMutation = useMutation({
+    mutationFn: ({ lineId, daten }: { lineId: string; daten: { quantity?: number; unit_price?: number } }) =>
+      invoicesApi.updateLine(invoice.id, lineId, daten),
+    onSuccess: () => {
+      invalidate();
+      setZeileInArbeit(null);
+      toast.success('Position geändert');
+    },
+    onError: (e: any) => toast.error(getErrorMessage(e, 'Position konnte nicht geändert werden')),
+  });
+  const zeileSpeichern = (line: { id: string; quantity: number; unit_price: number }) => {
+    if (!zeileInArbeit) return;
+    const ergebnis = positionsaenderung(line, zeileInArbeit.menge, zeileInArbeit.preis);
+    if ('fehler' in ergebnis) {
+      toast.error(ergebnis.fehler);
+      return;
+    }
+    if (Object.keys(ergebnis.daten).length === 0) {
+      setZeileInArbeit(null);
+      return;
+    }
+    updateLineMutation.mutate({ lineId: line.id, daten: ergebnis.daten });
+  };
+
   const deleteLineMutation = useMutation({
     mutationFn: (lineId: string) => invoicesApi.deleteLine(invoice.id, lineId),
     onSuccess: () => {
@@ -1263,6 +1291,10 @@ export function InvoiceDetail({ invoice: initial }: { invoice: Invoice }) {
                 onChange={(e) => { setHeaderEdit({ ...headerEdit, invoice_date: e.target.value }); setHeaderDirty(true); }}
                 className="block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-800 dark:text-white rounded-md"
               />
+              {/* Paket 4, B: festgeschrieben wird immer mit dem Ausstellungstag */}
+              <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                Beim Finalisieren gilt der Tag der Ausstellung; das Zahlungsziel in Tagen bleibt.
+              </p>
             </div>
             <div>
               <label className="text-sm text-gray-500 dark:text-gray-400">Fällig am</label>
@@ -1342,7 +1374,7 @@ export function InvoiceDetail({ invoice: initial }: { invoice: Invoice }) {
                 <th className="text-right py-2">Menge</th>
                 <th className="text-right py-2">Preis</th>
                 <th className="text-right py-2">Summe</th>
-                {isDraft && <th className="w-8"></th>}
+                {isDraft && <th className="w-40"></th>}
               </tr>
             </thead>
             <tbody>
@@ -1354,13 +1386,90 @@ export function InvoiceDetail({ invoice: initial }: { invoice: Invoice }) {
                       <Badge variant="info" size="sm" className="ml-2">Pfand</Badge>
                     )}
                   </td>
-                  <td className="text-right py-2">
-                    {line.quantity} {line.unit}
-                  </td>
-                  <td className="text-right py-2">{line.unit_price.toFixed(2)} €</td>
+                  {zeileInArbeit?.id === line.id ? (
+                    <>
+                      <td className="text-right py-2">
+                        <div className="flex items-center justify-end gap-1">
+                          <input
+                            type="text"
+                            inputMode="decimal"
+                            aria-label="Menge"
+                            value={zeileInArbeit.menge}
+                            onChange={(e) => setZeileInArbeit({ ...zeileInArbeit, menge: e.target.value })}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') zeileSpeichern(line);
+                              // Nur die Zeile verwerfen: Modal.tsx schließt bei Escape
+                              // über einen keydown-Listener auf document den Dialog.
+                              if (e.key === 'Escape') { e.stopPropagation(); setZeileInArbeit(null); }
+                            }}
+                            className="w-20 px-2 py-1 text-right border border-gray-300 dark:border-gray-600 dark:bg-gray-800 dark:text-white rounded-md"
+                          />
+                          <span>{line.unit}</span>
+                        </div>
+                      </td>
+                      <td className="text-right py-2">
+                        <div className="flex items-center justify-end gap-1">
+                          <input
+                            type="text"
+                            inputMode="decimal"
+                            aria-label="Einzelpreis"
+                            value={zeileInArbeit.preis}
+                            onChange={(e) => setZeileInArbeit({ ...zeileInArbeit, preis: e.target.value })}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') zeileSpeichern(line);
+                              // Nur die Zeile verwerfen: Modal.tsx schließt bei Escape
+                              // über einen keydown-Listener auf document den Dialog.
+                              if (e.key === 'Escape') { e.stopPropagation(); setZeileInArbeit(null); }
+                            }}
+                            className="w-24 px-2 py-1 text-right border border-gray-300 dark:border-gray-600 dark:bg-gray-800 dark:text-white rounded-md"
+                          />
+                          <span>€</span>
+                        </div>
+                      </td>
+                    </>
+                  ) : (
+                    <>
+                      <td className="text-right py-2">
+                        {line.quantity} {line.unit}
+                      </td>
+                      <td className="text-right py-2">{line.unit_price.toFixed(2)} €</td>
+                    </>
+                  )}
                   <td className="text-right py-2">{line.line_total.toFixed(2)} €</td>
-                  {isDraft && (
-                    <td className="text-right py-2">
+                  {isDraft && zeileInArbeit?.id === line.id && (
+                    <td className="text-right py-2 whitespace-nowrap">
+                      <button
+                        type="button"
+                        disabled={updateLineMutation.isPending}
+                        onClick={() => zeileSpeichern(line)}
+                        className="mr-3 text-minga-600 hover:text-minga-800 dark:text-minga-400"
+                      >
+                        Speichern
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setZeileInArbeit(null)}
+                        className="text-gray-500 hover:text-gray-700 dark:text-gray-400"
+                      >
+                        Abbrechen
+                      </button>
+                    </td>
+                  )}
+                  {isDraft && zeileInArbeit?.id !== line.id && (
+                    <td className="text-right py-2 whitespace-nowrap">
+                      <button
+                        type="button"
+                        title="Menge und Einzelpreis ändern"
+                        disabled={updateLineMutation.isPending}
+                        onClick={() => setZeileInArbeit({
+                          id: line.id,
+                          menge: eingabeAusZahl(line.quantity),
+                          preis: eingabeAusZahl(line.unit_price),
+                        })}
+                        className="mr-3 text-gray-600 hover:text-gray-900 dark:text-gray-300"
+                      >
+                        Ändern
+                      </button>
                       <button
                         type="button"
                         title="Position entfernen"

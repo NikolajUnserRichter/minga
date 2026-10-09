@@ -826,3 +826,103 @@ class TestP4BLieferscheinBeimAusliefern:
         r = client.post("/api/v1/invoices/batch-run/preview", json={
             "period_from": (heute - _p4b_timedelta(days=31)).isoformat(), "period_to": heute.isoformat()})
         assert r.json()["kunden"] == []
+
+
+_P4B_SAMMELMENGE = (
+    "Die Menge stammt aus den Lieferscheinen dieser Sammel- bzw. Monatsrechnung. "
+    "Entwurf verwerfen, Menge in der Bestellung korrigieren, Lauf neu starten."
+)
+
+
+def _p4b_monatsentwurf(client, kunde):
+    """Monatsrechnung März 2026 aus zwei Lieferungen à 10 × 2,50 €: eine
+    Sammelposition mit zwei Quellen (invoice_line_sources), wie sie Gernot
+    ab 01.11. für seine Monatskunden prüft. Die Lieferscheine legt das
+    Ausliefern an (B.3)."""
+    bestellungen = []
+    for tag in (2, 9):
+        bestellung = _p4b_bestellung(client, kunde, liefertag=_p4b_date(2026, 3, tag))
+        _p4b_status(client, bestellung, "GELIEFERT", actual_delivery_date=f"2026-03-{tag:02d}")
+        bestellungen.append(bestellung)
+    r = client.post("/api/v1/invoices/monthly-proposals/run", params={"month": "2026-03"})
+    assert r.status_code == 201, r.text
+    rechnung = client.get(f"/api/v1/invoices/{r.json()['angelegt'][0]['invoice_id']}").json()
+    return rechnung, bestellungen
+
+
+def _p4b_netto_und_anlage(client, rechnung):
+    """Nettosumme der Rechnung und Netto je Lieferschein, wie in der
+    PDF-Anlage „Enthaltene Lieferscheine“ (netto_je_lieferschein)."""
+    netto = client.get(f"/api/v1/invoices/{rechnung['id']}").json()["subtotal"]
+    r = client.get(f"/api/v1/invoices/{rechnung['id']}/delivery-notes")
+    assert r.status_code == 200, r.text
+    return (_P4B_Decimal(str(netto)),
+            [_P4B_Decimal(str(ls["betrag_netto"])) for ls in r.json()])
+
+
+class TestP4BSammelpositionMenge:
+    """G21 mit Sammel- und Monatsrechnung (B-E6): Die Menge einer
+    Sammelposition steht je Lieferschein in invoice_line_sources, die Anlage
+    „Enthaltene Lieferscheine“ rechnet daraus. Eine Mengenänderung nur an
+    der Position ließ Rechnung (37,50 €) und Anlage (25,00 + 25,00 €)
+    auseinanderlaufen."""
+
+    def test_menge_einer_sammelposition_abgelehnt(self, client):
+        kunde = _p4b_kunde(client, "LfA Förderbank Bayern", invoice_mode="MONATLICH")
+        rechnung, _ = _p4b_monatsentwurf(client, kunde)
+        zeile = rechnung["lines"][0]
+
+        r = client.patch(f"/api/v1/invoices/{rechnung['id']}/lines/{zeile['id']}", json={"quantity": 15})
+
+        assert r.status_code == 409, r.text
+        assert r.json()["detail"] == _P4B_SAMMELMENGE
+        assert _p4b_netto_und_anlage(client, rechnung) == (
+            _P4B_Decimal("50.00"), [_P4B_Decimal("25.00"), _P4B_Decimal("25.00")])
+
+    def test_preis_einer_sammelposition_aenderbar(self, client):
+        """Die Anlage rechnet mit dem Einzelpreis der Position und bleibt
+        stimmig. Eine unverändert mitgeschickte Menge ist keine Änderung."""
+        kunde = _p4b_kunde(client, "LfA Förderbank Bayern", invoice_mode="MONATLICH")
+        rechnung, _ = _p4b_monatsentwurf(client, kunde)
+        zeile = rechnung["lines"][0]
+
+        r = client.patch(f"/api/v1/invoices/{rechnung['id']}/lines/{zeile['id']}",
+                         json={"quantity": 20, "unit_price": "3.00"})
+
+        assert r.status_code == 200, r.text
+        assert _p4b_netto_und_anlage(client, rechnung) == (
+            _P4B_Decimal("60.00"), [_P4B_Decimal("30.00"), _P4B_Decimal("30.00")])
+
+    def test_menge_bei_rechnung_aus_bestellung_aenderbar(self, client):
+        """Wächter: Rechnung aus Bestellung hat keine invoice_line_sources;
+        ihre Anlage rechnet aus den Positionen selbst."""
+        kunde = _p4b_kunde(client)
+        bestellung = _p4b_bestellung(client, kunde)
+        _p4b_status(client, bestellung, "GELIEFERT")
+        r = client.post(f"/api/v1/invoices/from-order/{bestellung['id']}")
+        assert r.status_code == 201, r.text
+        rechnung = client.get(f"/api/v1/invoices/{r.json()['id']}").json()
+
+        r = client.patch(f"/api/v1/invoices/{rechnung['id']}/lines/{rechnung['lines'][0]['id']}",
+                         json={"quantity": 8})
+
+        assert r.status_code == 200, r.text
+        assert _p4b_netto_und_anlage(client, rechnung) == (_P4B_Decimal("20.00"), [_P4B_Decimal("20.00")])
+
+    def test_korrekturweg_aus_der_meldung(self, client):
+        """Wächter: Der Weg aus der Meldung führt zum Ziel — Entwurf
+        verwerfen, Menge in der Bestellung korrigieren, Lauf neu starten."""
+        kunde = _p4b_kunde(client, "LfA Förderbank Bayern", invoice_mode="MONATLICH")
+        rechnung, (erste, _) = _p4b_monatsentwurf(client, kunde)
+
+        r = client.delete(f"/api/v1/invoices/{rechnung['id']}")
+        assert r.status_code == 204, r.text
+        zeile_id = client.get(f"/api/v1/sales/orders/{erste['id']}").json()["lines"][0]["id"]
+        r = client.patch(f"/api/v1/sales/orders/{erste['id']}/lines/{zeile_id}", json={"quantity": 5})
+        assert r.status_code == 200, r.text
+        r = client.post("/api/v1/invoices/monthly-proposals/run", params={"month": "2026-03"})
+        assert r.status_code == 201, r.text
+        neu = client.get(f"/api/v1/invoices/{r.json()['angelegt'][0]['invoice_id']}").json()
+
+        assert _p4b_netto_und_anlage(client, neu) == (
+            _P4B_Decimal("37.50"), [_P4B_Decimal("12.50"), _P4B_Decimal("25.00")])
