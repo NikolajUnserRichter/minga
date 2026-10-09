@@ -822,6 +822,10 @@ class InvoiceService:
             credit_note.internal_notes = f"Storno zu {invoice.invoice_number}: {reason}"
             # Spiegelbild: create_invoice setzt sonst den heutigen Kundenrabatt.
             credit_note.discount_percent = invoice.discount_percent
+            # Q6: dieselbe Rabattregel wie das Original (Pfand rabattfrei oder
+            # nicht) — sonst ergäben Original und Storno nicht null.
+            credit_note.pfand_rabattfrei = invoice.pfand_rabattfrei
+            credit_note.beleg_art = invoice.beleg_art
             credit_note.service_period_start = invoice.service_period_start
             credit_note.service_period_end = invoice.service_period_end
 

@@ -42,9 +42,14 @@ def steuer_je_satz(lines, discount_percent) -> list[dict]:
     Arbeitet auf allem, was `tax_rate` und `line_total` trägt (auch auf den
     Dummy-Zeilen der Vorlagen-Vorschau). Verändert nichts.
     Reihenfolge: aufsteigend nach Steuersatz (0 %, 7 %, 19 %).
+
+    Der Rabatt mindert nur Positionen mit `rabattfaehig` (Q6): Pfand auf
+    Rechnungen mit Invoice.pfand_rabattfrei nicht. Zeilen ohne das Merkmal
+    (Vorlagen-Vorschau) gelten als rabattfähig.
     """
     rabatt_prozent = Decimal(str(discount_percent or 0))
     je_satz: dict = {}
+    rabattbasis: dict = {}
     for line in lines:
         eintrag = je_satz.setdefault(line.tax_rate, {
             "rate": line.tax_rate,
@@ -54,11 +59,14 @@ def steuer_je_satz(lines, discount_percent) -> list[dict]:
             "base": Decimal("0.00"),
             "tax": Decimal("0.00"),
         })
-        eintrag["netto_vor_rabatt"] += Decimal(str(line.line_total or 0))
+        betrag = Decimal(str(line.line_total or 0))
+        eintrag["netto_vor_rabatt"] += betrag
+        if getattr(line, "rabattfaehig", True):
+            rabattbasis[line.tax_rate] = rabattbasis.get(line.tax_rate, Decimal("0.00")) + betrag
 
-    for eintrag in je_satz.values():
+    for satz, eintrag in je_satz.items():
         if rabatt_prozent > 0:
-            eintrag["rabatt"] = _cent(eintrag["netto_vor_rabatt"] * rabatt_prozent / 100)
+            eintrag["rabatt"] = _cent(rabattbasis.get(satz, Decimal("0.00")) * rabatt_prozent / 100)
         eintrag["base"] = eintrag["netto_vor_rabatt"] - eintrag["rabatt"]
         eintrag["tax"] = _cent(eintrag["base"] * eintrag["rate"].rate)
 
@@ -149,6 +157,16 @@ class Invoice(Base):
 
     # Pfand / Deposit (Teil von Total)
     total_deposit: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("0"))
+    # Q6: Der Rechnungsrabatt mindert kein Pfand (InvoiceLine.rabattfaehig).
+    # Neue Rechnungen True; Bestandsrechnungen bekommen per Migration False
+    # und rechnen weiter wie festgeschrieben (PDF, DATEV — GoBD).
+    pfand_rabattfrei: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default="0"
+    )
+    # Q6: Belegart innerhalb des Typs RECHNUNG — "LEERGUT" für die monatliche
+    # Leergutabrechnung. Bewusst kein neuer InvoiceType: ein Minderungsbeleg
+    # muss stornierbar bleiben, GUTSCHRIFT ist es nicht.
+    beleg_art: Mapped[Optional[str]] = mapped_column(String(20))
 
     # Währung
     currency: Mapped[str] = mapped_column(String(3), default="EUR")
@@ -376,6 +394,19 @@ class InvoiceLine(Base):
             total -= total * self.discount_percent / 100
         self.line_total = total.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
         return self.line_total
+
+    @property
+    def rabattfaehig(self) -> bool:
+        """Mindert der Rechnungsrabatt diese Position?
+
+        Pfand nicht (Q6; T3, L9): Der Jahresrabatt des Kunden minderte bis
+        Oktober 2026 auch die Pfandkisten, während "darin enthaltenes Pfand"
+        ohne Rabatt rechnete. Gilt nur auf Rechnungen mit
+        Invoice.pfand_rabattfrei — Bestandsrechnungen rechnen unverändert.
+        """
+        if not self.is_deposit:
+            return True
+        return not (self.invoice is not None and self.invoice.pfand_rabattfrei)
 
     @property
     def tax_amount(self) -> Decimal:

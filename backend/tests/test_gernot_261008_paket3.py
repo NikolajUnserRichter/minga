@@ -4402,3 +4402,86 @@ class TestQ6Abrechnungsart:
         with engine.connect() as conn:
             assert conn.execute(text("SELECT pfand_monatlich_ab FROM customers")).scalar() is None
         engine.dispose()
+
+
+# ------------------------------------------------ Task Q6.2: Rabatt mindert kein Pfand
+
+@pytest.mark.usefixtures("_q6_ohne_forecast")
+class TestQ6RabattOhnePfand:
+    """T3, L9: Der Jahresrabatt minderte auch Pfand, der Pfandhinweis rechnete ohne Rabatt."""
+
+    def _rechnung_mit_pfand(self, client, rabatt_kunde="0"):
+        kunde = _q6_kunde(client, discount_percent=rabatt_kunde)
+        bestellung = _q6_bestellung(client, kunde, _q6_ware(client), _q6_kiste(client), kisten=2)
+        r = client.post(f"/api/v1/invoices/from-order/{bestellung['id']}")
+        assert r.status_code == 201, r.text
+        return r.json()
+
+    def test_jahresrabatt_mindert_kein_pfand(self, client):
+        d = _q6_detail(client, self._rechnung_mit_pfand(client, rabatt_kunde="10"))
+
+        # Ware 25,00 € (7 %) − 10 % = 22,50 → USt 1,58; Kiste 6,00 € (19 %) ohne Rabatt → USt 1,14
+        assert _q6_d(d["discount_amount"]) == Decimal("2.50")
+        assert _q6_d(d["subtotal"]) == Decimal("28.50")
+        assert _q6_d(d["tax_amount"]) == Decimal("2.72")
+        assert _q6_d(d["total"]) == Decimal("31.22")
+        assert _q6_d(d["total_deposit"]) == Decimal("7.14")
+
+    def test_einmalrabatt_im_entwurf_mindert_kein_pfand(self, client):
+        rechnung = self._rechnung_mit_pfand(client)
+
+        r = client.patch(f"/api/v1/invoices/{rechnung['id']}", json={"discount_percent": 10})
+
+        assert r.status_code == 200, r.text
+        d = _q6_detail(client, rechnung)
+        assert (_q6_d(d["discount_amount"]), _q6_d(d["total"])) == (Decimal("2.50"), Decimal("31.22"))
+
+    def test_bestandsrechnung_rechnet_wie_festgeschrieben(self, client):
+        """Charakterisierung (vor dem Fix grün, GoBD): Rechnungen von vor der
+        Änderung behalten die alte Regel — ihr PDF und ihr DATEV-Export
+        rechnen bei jedem Abruf neu."""
+        from app.models.invoice import Invoice
+        rechnung = self._rechnung_mit_pfand(client)
+        with TestingSessionLocal() as db:
+            db.get(Invoice, uuid.UUID(rechnung["id"])).pfand_rabattfrei = False
+            db.commit()
+
+        r = client.patch(f"/api/v1/invoices/{rechnung['id']}", json={"discount_percent": 10})
+
+        assert r.status_code == 200, r.text
+        d = _q6_detail(client, rechnung)
+        assert (_q6_d(d["discount_amount"]), _q6_d(d["total"])) == (Decimal("3.10"), Decimal("30.51"))
+
+    def test_storno_einer_bestandsrechnung_geht_auf_null(self, client):
+        """Charakterisierung (vor dem Fix grün): Die Stornorechnung übernimmt
+        die Rabattregel des Originals."""
+        from app.models.invoice import Invoice
+        rechnung = self._rechnung_mit_pfand(client)
+        with TestingSessionLocal() as db:
+            db.get(Invoice, uuid.UUID(rechnung["id"])).pfand_rabattfrei = False
+            db.commit()
+        assert client.patch(f"/api/v1/invoices/{rechnung['id']}", json={"discount_percent": 10}).status_code == 200
+        assert client.post(f"/api/v1/invoices/{rechnung['id']}/finalize").status_code == 200
+
+        r = client.post(f"/api/v1/invoices/{rechnung['id']}/cancel",
+                        json={"reason": "Test", "reason_code": "PREISFEHLER"})
+
+        assert r.status_code == 200, r.text
+        assert _q6_d(r.json()["credit_note"]["total"]) == -_q6_d(_q6_detail(client, rechnung)["total"])
+
+    def test_auto_migrate_bestand_behaelt_alte_regel(self, tmp_path):
+        from sqlalchemy import create_engine, inspect, text
+        from app.tenancy import _auto_migrate
+
+        engine = create_engine(f"sqlite:///{tmp_path / 'alt.db'}")
+        with engine.begin() as conn:
+            conn.execute(text("CREATE TABLE invoices (id CHAR(32) PRIMARY KEY, invoice_number VARCHAR(20))"))
+            conn.execute(text("INSERT INTO invoices (id, invoice_number) VALUES ('a', 'RE-2026-00002')"))
+
+        _auto_migrate(engine)
+
+        spalten = {c["name"] for c in inspect(engine).get_columns("invoices")}
+        assert {"pfand_rabattfrei", "beleg_art"} <= spalten
+        with engine.connect() as conn:
+            assert conn.execute(text("SELECT pfand_rabattfrei, beleg_art FROM invoices")).one() == (0, None)
+        engine.dispose()
