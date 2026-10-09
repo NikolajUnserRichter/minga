@@ -109,6 +109,9 @@ from app.models.print_job import PrintJob, PrintJobStatus
 # Import-Läufe (Historien-Import mit Rollback)
 from app.models.import_run import ImportRun
 
+# Leergutkonto (Paket 3, Q6): Pfandkisten je Kunde, monatlich abgerechnet
+from app.models.leergut import LeergutBewegung, LeergutArt
+
 # Customer-spezifische Preise
 from app.models.customer_price import CustomerPrice
 
@@ -216,6 +219,9 @@ __all__ = [
     "PrintJobStatus",
     # Import-Läufe
     "ImportRun",
+    # Leergutkonto
+    "LeergutBewegung",
+    "LeergutArt",
     # Customer-Pricing
     "CustomerPrice",
     # Production-Timeline

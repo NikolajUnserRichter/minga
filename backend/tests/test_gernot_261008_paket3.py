@@ -4485,3 +4485,62 @@ class TestQ6RabattOhnePfand:
         with engine.connect() as conn:
             assert conn.execute(text("SELECT pfand_rabattfrei, beleg_art FROM invoices")).one() == (0, None)
         engine.dispose()
+
+
+# ------------------------------------------------ Task Q6.3: Leergutkonto lesen
+
+class TestQ6Leergutkonto:
+    def test_pfandartikel_auch_fuer_die_halle(self, client, _q6_als):
+        kiste = _q6_kiste(client)
+        _q6_ware(client)
+        _q6_als(["production_staff"])
+
+        r = client.get("/api/v1/leergut/artikel")
+
+        assert r.status_code == 200, r.text
+        assert [(a["id"], a["name"], _q6_d(a["einzelwert"]), a["tax_rate"]) for a in r.json()] == [
+            (kiste["id"], "E2-Kiste", Decimal("3.00"), "STANDARD")]
+
+    def test_leeres_konto(self, client):
+        kunde = _q6_monatskunde(client)
+
+        konto = _q6_konto(client, kunde)
+
+        assert (konto["pfand_abrechnung"], konto["pfand_monatlich_ab"]) == ("MONATLICH", "2026-09-01")
+        assert (konto["salden"], konto["bewegungen"]) == ([], [])
+
+    def test_kundenliste_nur_mit_leergutkonto(self, client, _q6_als):
+        monat = _q6_monatskunde(client, name="Knuspr")
+        _q6_kunde(client, name="Ökoring", pfand_abrechnung="KEINE")
+        _q6_als(["production_staff"])
+
+        r = client.get("/api/v1/leergut/kunden")
+
+        assert r.status_code == 200, r.text
+        assert [(k["customer_id"], k["stueck_beim_kunden"]) for k in r.json()] == [(monat["id"], 0)]
+
+    def test_saldo_aus_allen_bewegungen(self, client):
+        kunde, kiste = _q6_monatskunde(client), _q6_kiste(client)
+        _q6_bewegung(kunde, kiste, "AUSGABE", 10)
+        _q6_bewegung(kunde, kiste, "RUECKNAHME", 4)
+        _q6_bewegung(kunde, kiste, "ANFANGSBESTAND", 5, bereits_berechnet=True)
+
+        konto = _q6_konto(client, kunde)
+
+        assert len(konto["bewegungen"]) == 3
+        [saldo] = konto["salden"]
+        assert (saldo["artikel"], saldo["stueck"], _q6_d(saldo["wert"])) == ("E2-Kiste", 11, Decimal("33.00"))
+        # Anfangsbestand zählt beim Kunden, aber nicht in der Abrechnung
+        assert (saldo["offen_stueck"], _q6_d(saldo["offen_wert"])) == (6, Decimal("18.00"))
+
+    def test_create_all_legt_tabelle_an(self, tmp_path):
+        """Neue Tabelle: create_all beim Start (tenancy.init_all_existing_tenants)."""
+        from sqlalchemy import create_engine, inspect
+        from app.database import Base
+        import app.models  # noqa: F401
+
+        engine = create_engine(f"sqlite:///{tmp_path / 'neu.db'}")
+        Base.metadata.create_all(bind=engine)
+
+        assert "leergut_bewegungen" in inspect(engine).get_table_names()
+        engine.dispose()

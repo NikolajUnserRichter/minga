@@ -30,6 +30,7 @@ from app.tenancy import (
 from app.api.v1 import seeds, production, sales, forecasting, products, invoices, inventory, analytics, capacity, suppliers, units, imports, documents, attachments, admin, document_templates, platform, procurement, integrations, staff
 from app.api.v1 import print_jobs
 from app.api.v1 import reports
+from app.api.v1 import leergut
 from app.api.v1 import ratgeber as ratgeber_admin
 from app.api.v1 import seo_dashboard
 from app.api.v1 import sepa
@@ -836,6 +837,13 @@ app.include_router(
     documents.router,
     prefix="/api/v1/sales",
     tags=["Belegkette"],
+    dependencies=_deps_belege,
+)
+
+# Leergutkonto (Paket 3, Q6): Rücknahmen erfasst auch die Halle — wie die Belegkette
+app.include_router(
+    leergut.router,
+    prefix="/api/v1",
     dependencies=_deps_belege,
 )
 
