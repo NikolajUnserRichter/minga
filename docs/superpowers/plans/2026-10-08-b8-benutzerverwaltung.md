@@ -1,52 +1,58 @@
 # Benutzerverwaltung (B8) — Implementation Plan
 
-> **Für agentische Worker:** Diesen Plan Task für Task abarbeiten, Backend (Task 1–7) vor Frontend (Task 8–12). Schritte nutzen Checkbox-Syntax (`- [ ]`). Kein Task wird übersprungen, zusammengefasst oder umgestellt. Inhaltliche Widersprüche zwischen Plan und Code, vor allem beim Vertrag in Task 8: stoppen und mit exakter Ausgabe melden, nicht selbst anpassen. Rein redaktionelle Unstimmigkeiten mit eindeutiger Absicht: selbst auflösen und in der Abschlussmeldung nennen. Kein Netzwerk, kein Deploy, kein Zugriff auf Produktion oder Keycloak; Keycloak ist in allen Tests gemockt.
+> **Für agentische Worker:** Diesen Plan Task für Task abarbeiten, Backend (Task 1–7, Task 6b zwischen 6 und 7) vor Frontend (Task 8–12). Schritte nutzen Checkbox-Syntax (`- [ ]`). Kein Task wird übersprungen, zusammengefasst oder umgestellt. Inhaltliche Widersprüche zwischen Plan und Code, vor allem beim Vertrag in Task 8: stoppen und mit exakter Ausgabe melden, nicht selbst anpassen. Rein redaktionelle Unstimmigkeiten mit eindeutiger Absicht: selbst auflösen und in der Abschlussmeldung nennen. Kein Netzwerk, kein Deploy, kein Zugriff auf Produktion oder Keycloak; Keycloak ist in allen Tests gemockt.
 
 **Goal:** Ein Mandanten-Admin verwaltet die Benutzer **seines** Mandanten selbst: anlegen (mit Einmalpasswort), Vorname, Nachname und Rolle ändern, deaktivieren und wieder aktivieren (nie löschen), Passwort zurücksetzen — über echte Keycloak-Aufrufe statt der localStorage-Attrappe mit sieben erfundenen Nutzern. Benutzer anderer Mandanten sind für ihn unsichtbar und unveränderlich. Die Oberfläche zeigt die fünf Rollen mit deutscher Bezeichnung und je einem Satz, was sie dürfen; der Mitarbeiter-Login ist `production_staff`.
 
-**Architecture:** Backend: neuer Router `backend/app/api/v1/users.py` unter `/api/v1/users`, eingehängt mit `_deps_admin` (nur Rolle `admin`). Der Mandant kommt aus dem Host **und** aus dem Token-Claim `tenant_slug`; beide müssen gesetzt und gleich sein, aus dem Body kommt er nie (`extra="forbid"`). Die Keycloak-Logik liegt als neuer Abschnitt am Ende von `backend/app/services/keycloak_admin.py`, neben dem unveränderten `create_tenant_user`. Jede Funktion mit Keycloak-User-ID liest zuerst den Benutzer und verlangt `attributes.tenant_slug == [mandant]`, sonst 404 mit demselben Body wie bei einer unbekannten ID. Vor jedem Schreiben prüft der Dienst zusätzlich, dass das Ziel ein gewöhnliches Mandanten-Konto ist (keine Client-Rollen außer `account`, keine Gruppen, keine fremden oder zusammengesetzten Realm-Rollen), sonst 409 „vom Support verwaltet". Die Liste fragt Keycloak über `q=tenant_slug:<slug>` und filtert exakt in Python. Zugang nur über einen Service-Account im Realm der Token-Prüfung (`settings.keycloak_realm`), sonst 503; das Token wird je Prozess wiederverwendet. Schreibende Aufrufe sind je Mandant gebremst (30 je Minute und Prozess, dann 429). Im Demo-Mandanten und mit den öffentlichen Demo-Logins wird nie geschrieben. Audit als WARNING-Logzeile der Kategorie `app.audit.benutzer`. Frontend: dünner axios-Client `usersApi` in `services/api.ts` nach dem Vertrag, Rollentexte an einer Stelle (`services/rollen.ts`), Seite `pages/Users.tsx` mit eigener Admin-Prüfung, Lade- und Fehlerzustand, Rückfragen und einmaliger Passwortanzeige; die Befehlspalette zeigt den Eintrag nur Administratoren. Durchgesetzt werden Rechte und Mandantentrennung ausschließlich im Backend.
+**Architecture:** Backend: neuer Router `backend/app/api/v1/users.py` unter `/api/v1/users`, eingehängt mit `_deps_admin` (nur Rolle `admin`). Der Mandant kommt aus dem Host **und** aus dem Token-Claim `tenant_slug`; beide müssen gesetzt und gleich sein, aus dem Body kommt er nie (`extra="forbid"`). Die Keycloak-Logik liegt als neuer Abschnitt am Ende von `backend/app/services/keycloak_admin.py`, neben dem unveränderten `create_tenant_user`. Jede Funktion mit Keycloak-User-ID liest zuerst den Benutzer und verlangt `attributes.tenant_slug == [mandant]`, sonst 404 mit demselben Body wie bei einer unbekannten ID. Vor jedem Schreiben prüft der Dienst zusätzlich, dass das Ziel ein gewöhnliches Mandanten-Konto ist (keine Client-Rollen außer `account`, keine Gruppen, keine fremden oder zusammengesetzten Realm-Rollen), sonst 409 „vom Support verwaltet". Die Liste fragt Keycloak über `q=tenant_slug:<slug>` und filtert exakt in Python. Zugang nur über einen Service-Account im Realm der Token-Prüfung (`settings.keycloak_realm`), sonst 503; das Token wird je Prozess wiederverwendet. Schreibende Aufrufe sind je Mandant gebremst (30 je Minute und Prozess, dann 429). Im Demo-Mandanten und mit den öffentlichen Demo-Logins wird nie geschrieben; die Liste im Demo-Mandanten zeigt nur die öffentlichen Demo-Konten (`DEMO_USERS`) und meldet `schreibgeschuetzt: true`, die Oberfläche blendet dann alle Schreibknöpfe aus. Audit als WARNING-Logzeile der Kategorie `app.audit.benutzer` und dauerhaft in der Tabelle `benutzer_audit` der Mandanten-DB (Task 6b); eine vergebene E-Mail-Adresse steht dort nur als SHA-256. Frontend: dünner axios-Client `usersApi` in `services/api.ts` nach dem Vertrag, Rollentexte an einer Stelle (`services/rollen.ts`), Seite `pages/Users.tsx` mit eigener Admin-Prüfung, Lade- und Fehlerzustand, Rückfragen und einmaliger Passwortanzeige; die Befehlspalette zeigt den Eintrag nur Administratoren. Durchgesetzt werden Rechte und Mandantentrennung ausschließlich im Backend.
 
 **Tech Stack:** FastAPI + Pydantic v2, httpx (Keycloak-Admin-REST), pytest mit `httpx.MockTransport` als Keycloak-Ersatz; React 18 + TypeScript (strict, `noUnusedLocals`), TanStack Query 5, axios, Tailwind, Playwright (nur Abnahme, gemockte API).
 
 **Spec:** `docs/superpowers/specs/2026-10-08-gernot-feedback-abgleich.md` (B8, Paket 4, Entscheidungen 3 und 6, Gernots Antwort 11) und die geprüfte Analyse `docs/superpowers/specs/2026-10-08-nachtrag/T5-rechte-versand.md` (1.4, 1.5, 3.2 R3–R5, Risiken 2 und 3, Fragen F1, F6, F11).
 
+**Nachtrag 08.10.2026 spät (diese Fassung):** Die Manager-Entscheidungen E-M1, E-M6, E-M7, E-M16 und E-M17 (Abschnitt unten) sind jetzt in den Tasks ausgeschrieben, dort, wo der Code entsteht: E-M16 in Task 1, E-M6 in Task 2, 10 und 12, E-M7 in Task 3, E-M1 als neuer Task 6b. Ausgangsstand ist `main` @ `4cb9b92` (Paket 1 enthalten; `main.py`, `keycloak_admin.py`, `deps.py`, `platform.py`, `conftest.py`, `Users.tsx`, `UserCard.tsx`, `Layout.tsx`, `CommandPalette.tsx` seit `efcea00` unverändert). Die Backend-Tasks 1–7 samt 6b liefen in einer Wegwerf-Kopie von `4cb9b92` wörtlich aus dieser Fassung; die Rot-/Grün-Zahlen der Backend-Schritte sind dort gemessen, ebenso die neue Baseline der „Prozedur Vollauf" (auf `4cb9b92` 15 statt 16 Fehlernamen: `test_invoice_totals_update` ist seit Paket 1 grün). Danach lief die „Prozedur Vollauf" mit `Fehlernamen wie Baseline` (Schlusszeile `14 failed, 798 passed, 2 skipped, 1 error`), und Task 7 Step 4 sowie Task 8 Step 1–5 gaben genau die erwarteten Ausgaben. Die Frontend-Tasks 9–12 liefen in derselben Kopie: `tsc` ohne Ausgabe, `npm run build` ok, `playwright --list` zeigt zehn Tests. Die Abnahme-Spec ergab gegen einen lokalen Dev-Server `10 passed` und gegen unverändertes `4cb9b92` `10 failed`; mit einer Seite, die `schreibgeschuetzt` ignoriert, scheitert der Demo-Test. Manager-Abnahme B (echtes Keycloak) ist nicht gelaufen; ihr Python-Teil kompiliert, und die K9-Abfrage ist gegen eine provisionierte Mandanten-DB geprüft. Die Angaben im folgenden Absatz beziehen sich auf den ersten Prototyp auf `efcea00`.
+
+**Nachtrag 09.10.2026 (Review dieser Fassung):** Task 6b schließt jetzt auch die Audit-Lücke bei einem Keycloak-Ausfall mitten in einer Aktion (Keycloak hat schon geschrieben, ein Lesezugriff danach scheitert; Begründung in Task 6b unter „Keycloak fällt mitten in einer Aktion aus“): neuer Step 6 mit drei Blöcken in `keycloak_admin.py`, Audit `ANLAGE_TEILWEISE`, drei Tests in `TestAuditDauerhaft`. Ab Task 6b ändern sich die Zahlen (6b rot 14 failed, 121 passed; grün 135; Task 7 136; Task 8 Step 5 `17 passed, 119 deselected`; Vollauf-Schlusszeile `14 failed, 798 passed, 2 skipped, 1 error`). Gemessen in einer neuen Wegwerf-Kopie von `4cb9b92`, alle Codeblöcke wörtlich aus dieser Fassung; Task 1–6 unverändert (18 / 39 / 65 / 105 / 120 / 121), die greps in Task 6b und Task 8 wie angegeben, Task 7 Step 4 sieben Dateien und `0`, die 136 Tests auch auf den Produktions-Pins (Python 3.11, fastapi 0.109.0, pydantic 2.5.3, httpx 0.26.0, SQLAlchemy 2.0.25) grün. Die drei neuen Tests scheitern gegen den Code der vorigen Fassung (zweimal kein Datensatz, einmal Passwort gesetzt). Das Frontend ist davon nicht berührt.
+
 **Stand und Prototyp:** `main` @ `efcea00`. Der gesamte Code dieses Plans lief am 08.10.2026 in Wegwerf-Kopien außerhalb des Repos, in Plan-Reihenfolge, die Codeblöcke wörtlich aus diesem Plan. Backend (`git archive efcea00 backend`): die Rot-/Grün-Zahlen in den Schritten sind gemessen; Vollauf danach 15 failed / 627 passed / 2 skipped / 1 error, dieselben 16 Fehlernamen wie die Baseline. Frontend (`git archive efcea00 frontend`): `tsc` ohne Ausgabe, `npm run build` ok, Abnahme-Spec 10 von 10 grün gegen den lokalen Dev-Server; dieselbe Spec gegen unverändertes `main` 10 von 10 rot. Die 119 Tests aus Task 1–5 und 7 liefen in der U1-Prüfung zusätzlich auf den Produktions-Pins (Python 3.11, fastapi 0.109.0, pydantic 2.5.3, httpx 0.26.0) grün; für den Test aus Task 6 ist das nicht wiederholt (er nutzt nur Standardbibliothek und `Depends`).
 
 **Zusammenführung der Teilpläne** (U1 Backend, U2 Frontend; beim Zusammensetzen entschieden):
 
-1. **Kein master-Rückfall ohne eigenen Nachtrag.** Task 1 ist schon geschlossen: `_users_cfg` nimmt nur den Service-Account, den master-Admin nur mit `KEYCLOAK_USERS_ALLOW_MASTER_ADMIN=1` (Entwicklung und Test). Der U2-Nachtrag N1, der den Schalter ganz entfernt, entfällt. Deploy-Gate D7 prüft, dass der Schalter in Coolify fehlt; ob er ganz weg soll, ist Offener Punkt M16.
-2. **Die Schreibbremse aus dem U2-Nachtrag N2 ist Task 6.** Der 409 bei vergebener E-Mail bleibt wie in Task 3 im Audit `ANLAGE_ABGELEHNT` mit `ziel_email` im Klartext (Test `TestAnlegen::test_email_vergeben`). Die N2-Variante `ANLAGE_KONFLIKT` mit SHA-256 statt Klartext ist nicht übernommen, Offener Punkt M7.
-3. **Service-Account mit `view-realm`.** Rollen: `realm-management` → `manage-users`, `view-users`, `view-realm`. T5 R5 nennt nur die ersten beiden; `view-realm` (nur lesend) braucht `_rolle_rep` für `GET /roles/<rolle>` vor jeder Anlage und jedem Rollenwechsel. **Annahme** aus dem Keycloak-Quelltext; Manager-Abnahme B misst es an Keycloak 22, Offener Punkt M17.
+1. **Kein master-Rückfall (E-M16).** `_users_cfg` (Task 1) nimmt ausschließlich den Service-Account. Einen Schalter für den master-Admin gibt es nicht (wie im U2-Nachtrag N1); auch mit gesetztem `KEYCLOAK_ADMIN_USER`/`_PASSWORD` antwortet die Benutzerverwaltung ohne Service-Account mit 503. Die Tests mocken den Service-Account (Fixture `kc`). Deploy-Gate D7 prüft nur die Service-Account-Variablen.
+2. **Die Schreibbremse aus dem U2-Nachtrag N2 ist Task 6.** Den 409 bei vergebener E-Mail protokolliert Task 3 als `ANLAGE_KONFLIKT` mit `ziel_email_sha256` statt Klartext (N2-Variante, E-M7; Test `TestAnlegen::test_email_vergeben`).
+3. **Service-Account mit `view-realm` (E-M17, freigegeben).** Rollen: `realm-management` → `manage-users`, `view-users`, `view-realm`. T5 R5 nennt nur die ersten beiden; `view-realm` (nur lesend) braucht `_rolle_rep` für `GET /roles/<rolle>` vor jeder Anlage und jedem Rollenwechsel. **Annahme** aus dem Keycloak-Quelltext; Manager-Abnahme B, Zeile K2, zeigt an Keycloak 22, ob es ohne ginge.
 4. Zeilenverweise auf den früheren U1-Arbeitsstand sind durch Funktionsnamen ersetzt. Code-Kommentare und der Spec-Titel nennen „B8" statt „U1"/„U2"; sonst ist der Code wörtlich der der Teilpläne.
 
 **Abhängigkeiten**
 
-- **Code:** keine. Basis `main` @ `efcea00`; nichts aus Paket 1, 2 oder 3 nötig.
+- **Code:** keine. Basis `main` @ `4cb9b92` (Branch `feat/b8-benutzerverwaltung`, Paket 1 enthalten); nichts aus Paket 2 oder 3 nötig.
+- **Branch vor dem Lauf nicht anfassen.** `main` ist inzwischen weiter (am 09.10. `3506deb`: Paket 2 und Doku-Commits, darunter eine ältere Fassung dieser Plandatei), `feat/b8-benutzerverwaltung` steht weiter auf `4cb9b92`. Den Branch vor dem Lauf **nicht** auf `main` rebasen oder `main` hineinmergen: Task 7 Step 4, Abnahme 19 und Manager-Abnahme A6 vergleichen gegen `4cb9b92` und zeigten dann zusätzlich die Dateien aus Paket 2, der Worker stoppte. Zusammengeführt wird erst nach der Manager-Abnahme.
+- **Plandatei nicht committen.** Im Worktree liegt dieser Plan untracked (`docs/superpowers/plans/2026-10-08-b8-benutzerverwaltung.md`) und bleibt es. Committet auf dem Branch, zeigten Task 7 Step 4 acht statt sieben Dateien und Abnahme 19 fünfzehn statt vierzehn. Die Commit-Schritte nennen ihre Dateien einzeln; kein `git add -A` oder `git add .`.
 - **Entscheidung 6 (Feldschutz):** Mitarbeiter-Logins (`production_staff`) erst vergeben, wenn der B8-Kern aus Paket 3 live ist: Halle liest Produkte (T5 R1), Rechnungsteil im Belege-Dialog für die Halle ausgeblendet (R3), Feldschutz der abrechnungsrelevanten Kundenfelder (`pfand_abrechnung`, später `invoice_mode`, Bankdaten) gegen `production_staff`, ein Lieferschein je Bestellung. Vorher sehen solche Logins im Bestellformular Saatgut statt Produkte und das Speichern endet mit 404 (T5 1.3), sie dürfen abrechnungsrelevante Kundenfelder ändern, und der Rollentext „Bestellungen … anlegen" stimmt in der Oberfläche erst nach R1. **Deshalb Deploy dieses Plans erst nach dem B8-Kern.**
 - **Deploy:** Backend und Frontend gemeinsam; ohne Backend antwortet `GET /api/v1/users` mit 404 (Catch-all `main.py:1029`) und die Seite zeigt nur den Fehlerzustand. Kein Deploy, solange ein Deploy-Gate D1–D9 rot ist. Die Endpunkte sind nach dem Deploy für jeden Mandanten-Admin per API erreichbar, auch ohne Oberfläche: „unsichtbar" ist kein Schutz.
 - **Paket 3, R3** (Attrappe in `pages/Users.tsx` durch einen Hinweis ersetzen oder den Menüpunkt entfernen) trifft dieselben Dateien. Landet R3 vorher, ersetzt Task 10 `Users.tsx` vollständig; fehlt dann der Menüeintrag `/users` (`Layout.tsx:249-254`), stoppt Task 11 Step 3.
 - **Paket 3, R4** (Plattform-Endpunkte `/api/v1/platform/tenants/{slug}/users`) soll `list_tenant_users`, `create_user_for_tenant` und `update_tenant_user` aus Task 1–4 nutzen statt eines zweiten Keycloak-Pfads. Die Dienstfunktionen prüfen ID (UUID), Mandant und Supportkonto selbst.
 - **Paket 3, R1/R2** ändert `main.py:716-732` und will die Rollen-Konstanten nach `app/core/rollen.py` verschieben. Getrennte Hunks zu Task 2. Wandert `ALLE_ROLLEN`, zieht der Import in `test_rollenlisten_stimmen_ueberein` (Task 2) mit.
 
-**Überschneidungen mit Paket 1 und Paket 2** (geprüft am 08.10.2026 abends gegen `feat/paket1-steuer-rechnung` @ `d8e1db2`, 32 Dateien, und `feat/paket2-tagesplan-status` @ `4c16bea`, 31 Dateien; `git diff --name-only main...<branch>`):
+**Überschneidungen mit Paket 1 und Paket 2** (geprüft am 08.10.2026 abends gegen `feat/paket1-steuer-rechnung` @ `d8e1db2`, 32 Dateien, und `feat/paket2-tagesplan-status` @ `4c16bea`, 31 Dateien; `git diff --name-only main...<branch>`). **Nachtrag:** Paket 1 ist inzwischen in `main` (`4cb9b92`), die Anker in `api.ts` stehen dort bei `1017`/`1125`. `feat/paket2-tagesplan-status` @ `6e30723` ändert 35 Dateien, darunter `api.ts` (Hunks `@@ -12`, `-141`, `-231`, `-241`, `-346`, `-381`; Anker auf dem Branch bei `1033`/`1141`) und `types/index.ts`, aber keine der beiden neuen Modelldateien aus Task 6b (`backend/app/models/benutzer_audit.py`, `backend/app/models/__init__.py`):
 
 - Gemeinsam ist nur `frontend/src/services/api.ts`, in getrennten Hunks. Paket 1: `priceListsApi` (`@@ -708`), `invoicesApi` (`@@ -738`, `@@ -771`), `documentsApi` (`@@ -1382`). Paket 2: Importblock (`@@ -12`), `DayPlanOrder` (`@@ -141`), `productionApi` (`@@ -231`, `@@ -241`), `salesApi` (`@@ -381`). Task 10 ändert nur den Block zwischen den Ankern `// ============== Users API (Mock Data) ==============` und `// ==================== GROWTH-TIMELINE-EVENTS ====================` (auf `main` Zeile 1015/1123, auf Paket 1 1017/1125, auf Paket 2 1031/1139). Textkonflikt: keiner erwartet.
 - `frontend/src/types/index.ts` ändern beide Pakete; dieser Plan nicht.
 - `frontend/src/components/ui/Badge.tsx` und `components/ui/index.ts` ändert Paket 2. Dieser Plan importiert nur daraus; die Varianten (`success | warning | danger | info | gray | purple`) bleiben auf dem Branch gleich.
 - `backend/app/tenancy.py`: Paket 1 ergänzt `_auto_migrate` um 16 Zeilen; `get_request_tenant` (heute `tenancy.py:394-396`) rückt auf etwa 410. Dieser Plan importiert nur `get_request_tenant` und `DEFAULT_TENANT_SLUG`.
-- Keine weitere Datei dieses Plans steht im Diff eines der beiden Branches (`main.py`, `keycloak_admin.py`, `api/v1/users.py`, `schemas/user.py`, `test_benutzerverwaltung.py`, `services/rollen.ts`, `UserCard.tsx`, `pages/Users.tsx`, `CommandPalette.tsx`, `Layout.tsx`, `tests/e2e/benutzerverwaltung.spec.ts`).
+- Keine weitere Datei dieses Plans steht im Diff eines der beiden Branches (`main.py`, `keycloak_admin.py`, `api/v1/users.py`, `schemas/user.py`, `models/benutzer_audit.py`, `models/__init__.py`, `test_benutzerverwaltung.py`, `services/rollen.ts`, `UserCard.tsx`, `pages/Users.tsx`, `CommandPalette.tsx`, `Layout.tsx`, `tests/e2e/benutzerverwaltung.spec.ts`).
 - Dieser Plan fasst `invoices.py`, `sales.py`, `production.py`, `documents.py`, `Orders.tsx`, `Tagesplan.tsx`, `Invoices.tsx`, `OrderDocumentsModal.tsx` und das Kundenformular (`Customers.tsx`) nicht an.
 
 ## Manager-Entscheidungen 08.10.2026 (verbindlich — gehen den Tasks vor)
 
-Der Plan wurde auf `efcea00` geplant; Ausgangsstand ist jetzt `main` = `4cb9b92` (Paket 1 deployt). Zeilenangaben können sich verschoben haben — über die zitierten Anker finden.
+Der Plan wurde auf `efcea00` geplant; Ausgangsstand ist jetzt `main` = `4cb9b92` (Paket 1 deployt). Zeilenangaben können sich verschoben haben — über die zitierten Anker finden. Jede Entscheidung ist in dieser Fassung im Task ausgeschrieben, der den Code erzeugt (Verweis je Punkt); die Tasks sind maßgeblich.
 
-- **E-M1 Audit dauerhaft:** Jede Benutzeraktion (Anlegen, Ändern, Deaktivieren/Aktivieren, Passwort-Reset, abgelehnte Anlage) wird zusätzlich zum Log in eine neue Tabelle `benutzer_audit` der Mandanten-DB geschrieben (Modell in `backend/app/models/`, entsteht per `create_all`; Spalten: id CHAR(32), zeitpunkt, aktion, ziel_user_id, ziel_email bzw. ziel_email_sha256, ausgefuehrt_von, details JSON). Eigener Task **6b** nach Task 6, Test zuerst; GET-Endpunkt ist nicht nötig.
-- **E-M6 Demo:** Im Mandanten `demo` liefert `GET /users` nur Konten, deren E-Mail in `DEMO_USERS` (`backend/app/api/v1/platform.py`) steht. `BenutzerListResponse` bekommt ein Feld `schreibgeschuetzt: bool` (true im Demo-Mandanten); das Frontend (Task 10) blendet danach „Neuer Benutzer", „Bearbeiten", „Deaktivieren" und „Passwort zurücksetzen" aus. Umsetzung in Task 2 (Filter, Feld) und Task 10 (Ausblenden), je mit Test bzw. tsc/Build und Abnahme-Spec (Task 12).
-- **E-M7 Hash statt Klartext:** Beim 409 wegen vergebener E-Mail schreibt das Audit `ANLAGE_KONFLIKT` mit `ziel_email_sha256` (SHA-256 der kleingeschriebenen Adresse) statt `ANLAGE_ABGELEHNT` mit Klartext. Task 3 und `TestAnlegen::test_email_vergeben` entsprechend.
+- **E-M1 Audit dauerhaft:** Jede Benutzeraktion (Anlegen, Ändern, Deaktivieren/Aktivieren, Passwort-Reset, abgelehnte Anlage) wird zusätzlich zum Log in eine neue Tabelle `benutzer_audit` der Mandanten-DB geschrieben (Modell in `backend/app/models/`, entsteht per `create_all`; Spalten: id CHAR(32), zeitpunkt, aktion, ziel_user_id, ziel_email bzw. ziel_email_sha256, ausgefuehrt_von, details JSON). Eigener Task **6b** nach Task 6, Test zuerst; GET-Endpunkt ist nicht nötig. → **Umgesetzt in Task 6b** (Modell `BenutzerAudit`, Registrierung in `app.models`, `_audit` schreibt jede Audit-Zeile aus Task 2–5 zusätzlich in die Tabelle, auch die abgewiesenen Zugriffe; scheitert das Speichern: 500, Begründung dort). Auch ein Teilerfolg, wenn Keycloak mitten in der Aktion ausfällt, landet dort: `ANLAGE_TEILWEISE` für ein angelegtes, aber nicht fertiges Konto, `BENUTZER_TEILWEISE_GEAENDERT` auch beim gescheiterten Zurücklesen; der Passwort-Reset liest alles vor dem Schreiben (Task 6b, Step 6).
+- **E-M6 Demo:** Im Mandanten `demo` liefert `GET /users` nur Konten, deren E-Mail in `DEMO_USERS` (`backend/app/api/v1/platform.py`) steht. `BenutzerListResponse` bekommt ein Feld `schreibgeschuetzt: bool` (true im Demo-Mandanten); das Frontend (Task 10) blendet danach „Neuer Benutzer", „Bearbeiten", „Deaktivieren" und „Passwort zurücksetzen" aus. Umsetzung in Task 2 (Filter, Feld) und Task 10 (Ausblenden), je mit Test bzw. tsc/Build und Abnahme-Spec (Task 12). → **Umgesetzt in Task 2** (`DEMO_MANDANT`, `DEMO_LOGINS`, `_sichtbar`, Feld `schreibgeschuetzt`; auch `GET /users/{id}` zeigt dort nur Demo-Konten), **Task 10** (Knöpfe und Aktionen ausgeblendet, Hinweis) und **Task 12** (Spec „Demo: Liste lesbar, ohne Schreibknöpfe"). Offene Punkte M6 und D8 sind damit erledigt.
+- **E-M7 Hash statt Klartext:** Beim 409 wegen vergebener E-Mail schreibt das Audit `ANLAGE_KONFLIKT` mit `ziel_email_sha256` (SHA-256 der kleingeschriebenen Adresse) statt `ANLAGE_ABGELEHNT` mit Klartext. Task 3 und `TestAnlegen::test_email_vergeben` entsprechend. → **Umgesetzt in Task 3** (`_email_hash`, `create_user`, Test); die Tabelle aus Task 6b übernimmt den Hash (`TestAuditDauerhaft::test_konflikt_nur_als_hash`).
 - **E-M8:** bleibt wie geplant.
-- **E-M16 Schalter entfernen:** `KEYCLOAK_USERS_ALLOW_MASTER_ADMIN` wird nicht eingebaut; `_users_cfg` nimmt ausschließlich den Service-Account. Tests nutzen Mocks des Service-Accounts. Task 1 entsprechend; Deploy-Gate D7 prüft nur noch die Service-Account-Variablen.
-- **E-M17:** `view-realm` für den Service-Account ist freigegeben (nur lesend).
+- **E-M16 Schalter entfernen:** `KEYCLOAK_USERS_ALLOW_MASTER_ADMIN` wird nicht eingebaut; `_users_cfg` nimmt ausschließlich den Service-Account. Tests nutzen Mocks des Service-Accounts. Task 1 entsprechend; Deploy-Gate D7 prüft nur noch die Service-Account-Variablen. → **Umgesetzt in Task 1** (`_users_cfg`, `_neues_token`, `_users_token` ohne master-Zweig; Test `test_ohne_client_id_kein_master_rueckfall` statt `test_master_admin_nur_mit_freigabe`), D7 angepasst.
+- **E-M17:** `view-realm` für den Service-Account ist freigegeben (nur lesend). → Task 1 (Modulkopf), Manager-Abnahme B (Aufbau, Zeile K2), D7.
 - **Deploy:** nicht vor dem B8-Kern aus Paket 3 (Feldschutz, Halle liest Produkte); Keycloak-Konfiguration des Service-Accounts ist ein Betriebsschritt mit Freigabe.
 
 ## Global Constraints
@@ -60,7 +66,7 @@ Der Plan wurde auf `efcea00` geplant; Ausgangsstand ist jetzt `main` = `4cb9b92`
 - **Kein Hard-Delete:** keine DELETE-Route, kein `DELETE /admin/realms/{realm}/users/{id}`, kein `usersApi.delete`. Deaktivieren heißt `PATCH {enabled: false}`.
 - **Mandant nie aus dem Request:** Request-Schemas mit `extra="forbid"`; das Frontend schickt nie `tenant_slug` oder `attributes`.
 - **Rollen:** Ein Mandanten-Admin vergibt nur `admin`, `sales`, `production_planner`, `production_staff`, `accounting`. Keine Plattform- oder Realm-Rollen (`realm-admin`, `offline_access`, `default-roles-…` usw.). Die Plattform-Admin-API (`backend/app/api/v1/platform.py`, Header `X-Platform-Admin-Key`) bleibt unberührt.
-- **Kein master-Admin in Produktion:** `KEYCLOAK_USERS_ALLOW_MASTER_ADMIN` gibt es nur für Entwicklung und Test. Der Worker setzt keine Umgebungsvariable außerhalb der Tests (`monkeypatch`).
+- **Kein master-Admin (E-M16):** Die Benutzerverwaltung meldet sich ausschließlich mit dem Service-Account an; einen Schalter für einen master-Rückfall gibt es nicht, auch nicht für Entwicklung und Test. Der Worker setzt keine Umgebungsvariable außerhalb der Tests (`monkeypatch`).
 - **Profilfelder:** Vorname, Nachname, E-Mail (nur beim Anlegen; sie ist der Benutzername), Rolle, aktiv. Telefon und Kürzel werden nicht gebaut (F11 offen, „Offene Punkte für Gernot" 1).
 - **Nicht anfassen:** `backend/app/api/v1/invoices.py`, `sales.py`, `production.py`, `documents.py`, `platform.py`, `backend/app/api/deps.py`, `backend/app/tenancy.py`, `backend/tests/conftest.py`, `frontend/src/pages/Orders.tsx`, `Tagesplan.tsx`, `Invoices.tsx`, `Customers.tsx`, `frontend/src/components/domain/OrderDocumentsModal.tsx`, `frontend/src/types/index.ts`, `frontend/tests/e2e/full-suite.spec.ts`. Paket 1 und 2 ändern diese parallel. Kein Deploy, kein Zugriff auf Produktion oder Keycloak.
 - **Neue Backend-Tests** ausschließlich in `backend/tests/test_benutzerverwaltung.py`.
@@ -68,7 +74,7 @@ Der Plan wurde auf `efcea00` geplant; Ausgangsstand ist jetzt `main` = `4cb9b92`
 
 ## Prozedur Vollauf
 
-Aus `backend/`. Im Prototyp dauerte der Lauf 45 Sekunden.
+Aus `backend/`. Im Prototyp dauerte der Lauf 45 Sekunden. Die Soll-Liste ist die Baseline von `main` @ `4cb9b92`, gemessen am 08.10.2026 spät (Schlusszeile dort `14 failed, 662 passed, 2 skipped, 1 error`). Gegenüber `efcea00` fehlt `tests/test_services.py::TestInvoiceService::test_invoice_totals_update`; Paket 1 hat ihn grün gemacht.
 
 ```bash
 cd backend
@@ -86,7 +92,6 @@ FAILED tests/test_production_readiness.py::test_quality_rejected_high_loss
 FAILED tests/test_production_readiness.py::test_quality_rejected_low_note
 FAILED tests/test_refinements.py::test_main_app_imports
 FAILED tests/test_services.py::TestInvoiceService::test_finalize_empty_invoice_fails
-FAILED tests/test_services.py::TestInvoiceService::test_invoice_totals_update
 FAILED tests/test_services.py::TestInvoiceService::test_record_full_payment
 FAILED tests/test_services.py::TestInvoiceService::test_record_partial_payment
 EOF
@@ -95,7 +100,7 @@ grep -E "^(FAILED|ERROR)" /tmp/b8-vollauf.log | sed 's/ - .*//' | sort > /tmp/b8
 diff /tmp/b8-soll.txt /tmp/b8-ist.txt && echo "Fehlernamen wie Baseline"
 ```
 
-Erwartet: `diff` ohne Ausgabe, danach `Fehlernamen wie Baseline`. Das sind die 16 Baseline-Namen (15 FAILED, 1 ERROR); keiner stammt aus `test_benutzerverwaltung.py`. Die Schlusszeile von `tail` ist nur Information: Im Prototyp stand nach Task 7 dort `15 failed, 627 passed, 2 skipped, 1 error`. Die Zahl der bestandenen Tests wächst mit jedem Release; sie wird nie verglichen. Gibt `diff` etwas aus: stoppen und die Ausgabe von `diff` wörtlich melden.
+Erwartet: `diff` ohne Ausgabe, danach `Fehlernamen wie Baseline`. Das sind die 15 Baseline-Namen (14 FAILED, 1 ERROR); keiner stammt aus `test_benutzerverwaltung.py`. Die Schlusszeile von `tail` ist nur Information: In der Nachtrags-Kopie (`4cb9b92` plus Task 1–7 mit 6b) stand nach Task 7 dort `14 failed, 798 passed, 2 skipped, 1 error`. Die Zahl der bestandenen Tests wächst mit jedem Release; sie wird nie verglichen. Gibt `diff` etwas aus: stoppen und die Ausgabe von `diff` wörtlich melden.
 
 ## Review Focus (fünf Zustände ohne Testabdeckung, je ein Task)
 
@@ -125,28 +130,32 @@ Jedes Angriffsszenario mit dem Test, der es abdeckt. Backend-Tests in `backend/t
 | S10 | App-Rolle ist in Keycloak zusammengesetzt (vergäbe mehr, z. B. `realm-management`) oder fehlt | 503, nichts angelegt bzw. nichts geschrieben | `TestAnlegen::test_zusammengesetzte_rolle_nicht_vergeben`, `TestAnlegen::test_rolle_fehlt_im_realm_nichts_angelegt`, `TestAendern::test_fehlende_rolle_nichts_geschrieben` | 3, 4 |
 | S11 | Nicht-Admin (`sales`, `production_planner`, `production_staff`, `accounting`) ruft die API | 403 ohne Keycloak-Aufruf | `TestZugriff::test_nur_admin_liest`, `TestAnlegen::test_nur_admin_legt_an`, `TestAendern::test_nur_admin_aendert`, `TestPasswort::test_nur_admin` | 2–5 |
 | S12 | Token ohne Mandant (Basic-Auth, `AUTH_DISABLED`), Token eines anderen Mandanten, Token ohne `sub` | 403 ohne Keycloak-Aufruf; der Selbstschutz greift nicht ins Leere | `TestZugriff::test_ohne_mandant_im_token`, `TestZugriff::test_token_anderer_mandant`, `TestZugriff::test_ohne_sub_im_token`, `TestSchutzregeln::test_ohne_sub_kein_selbstdeaktivieren` | 2, 4 |
-| S13 | Demo-Besucher mit öffentlichem Login sperrt Demo-Konten oder setzt ihre Passwörter zurück | im Mandanten `demo` lesen ja, schreiben 403 | `TestAnlegen::test_demo_gesperrt`, `TestAendern::test_demo_gesperrt`, `TestPasswort::test_demo_gesperrt`; Spec „Demo: Liste lesbar, Schreiben endet mit dem 403 im Klartext" | 3–5, 12 |
+| S13 | Demo-Besucher mit öffentlichem Login sperrt Demo-Konten oder setzt ihre Passwörter zurück | im Mandanten `demo` lesen ja, schreiben 403; die Liste meldet `schreibgeschuetzt: true`, die Oberfläche bietet keine Schreibknöpfe an | `TestAnlegen::test_demo_gesperrt`, `TestAendern::test_demo_gesperrt`, `TestPasswort::test_demo_gesperrt`, `TestDemoListe::test_nur_demo_logins_schreibgeschuetzt`; Spec „Demo: Liste lesbar, ohne Schreibknöpfe" | 2–5, 10, 12 |
 | S14 | Öffentlicher Demo-Login mit verstelltem `tenant_slug` schreibt in einem fremden Mandanten | 403 in jedem Mandanten (Benutzername oder E-Mail aus `DEMO_USERS`) | `TestAnlegen::test_demo_login_schreibt_in_keinem_mandanten` (POST; PATCH und Reset hängen an derselben Abhängigkeit `MandantSchreiben`) | 3 |
-| S15 | Halb angelegter Benutzer bleibt aktiv, oder das Aufräumen deaktiviert einen Fremden | deaktiviert und ohne Rolle; der Fremde bleibt unberührt | `TestAnlegen::test_attribut_nicht_gespeichert_keine_rolle`, `TestAnlegen::test_lesen_nach_anlage_scheitert_deaktiviert`, `TestAnlegen::test_rueckfall_suche_trifft_keinen_fremden` | 3 |
+| S15 | Halb angelegter Benutzer bleibt aktiv oder ohne Spur, oder das Aufräumen deaktiviert einen Fremden | deaktiviert und ohne Rolle, Audit `ANLAGE_TEILWEISE`; der Fremde bleibt unberührt | `TestAnlegen::test_attribut_nicht_gespeichert_keine_rolle`, `TestAnlegen::test_lesen_nach_anlage_scheitert_deaktiviert`, `TestAnlegen::test_rueckfall_suche_trifft_keinen_fremden`, `TestAuditDauerhaft::test_anlage_teilweise` | 3, 6b |
 | S16 | Ein `PUT` verliert `tenant_slug`, das Konto fällt aus dem Mandanten | Attribute bleiben erhalten | `TestAendern::test_name_aendern_behaelt_mandant` | 4 |
 | S17 | Aussperren: sich selbst deaktivieren oder herabstufen, letzten aktiven Admin verlieren | 409 | `TestSchutzregeln::test_selbst_deaktivieren`, `TestSchutzregeln::test_selbst_herabstufen`, `TestSchutzregeln::test_letzter_aktiver_admin`; Spec „das eigene Konto ist vor Aussperren geschützt" | 4, 10, 12 |
 | S18 | Konto hart löschen | keine DELETE-Route (405); das Frontend ruft nie DELETE | `TestZugriff::test_kein_loeschen`, `test_routen_vollstaendig_ohne_loeschen`, `TestAendern::test_deaktivieren_statt_loeschen`; Spec „Deaktivieren fragt nach, löscht nie und lässt sich rückgängig machen" | 2, 4, 7, 12 |
 | S19 | Kompromittiertes oder deaktiviertes Konto bleibt per Refresh-Token angemeldet | `POST /users/{id}/logout` nach Deaktivieren, Rollenwechsel und Reset; der Reset liefert das Passwort auch, wenn der Logout scheitert | `TestPasswort::test_reset_beendet_sitzungen`, `TestAendern::test_rollenwechsel_beendet_sitzungen`, `TestAendern::test_deaktivieren_statt_loeschen`, `TestPasswort::test_logout_scheitert_passwort_trotzdem_geliefert` | 4, 5 |
-| S20 | Stiller Rückfall auf den master-Admin (ein Fehler träfe alle Realms) | 503 „Service-Account fehlt" ohne Keycloak-Aufruf; master nur mit Schalter | `TestDienstLesen::test_ohne_service_account_geschlossen`, `TestDienstLesen::test_master_admin_nur_mit_freigabe`, `TestDienstLesen::test_service_account_im_zielrealm`, `TestAusfallLesen::test_nicht_eingerichtet` | 1, 2 |
+| S20 | Rückfall auf den master-Admin (ein Fehler träfe alle Realms) | 503 „Service-Account fehlt" ohne Keycloak-Aufruf, auch wenn `KEYCLOAK_ADMIN_USER`/`_PASSWORD` gesetzt sind; einen Schalter dafür gibt es nicht (E-M16) | `TestDienstLesen::test_ohne_service_account_geschlossen`, `TestDienstLesen::test_ohne_client_id_kein_master_rueckfall`, `TestDienstLesen::test_service_account_im_zielrealm`, `TestAusfallLesen::test_nicht_eingerichtet` | 1, 2 |
 | S21 | Verwaltung im falschen Realm (Default `novaerp` aus `_cfg()`) | Realm = `settings.keycloak_realm` | `TestDienstLesen::test_realm_wie_tokenpruefung` | 1 |
 | S22 | Keycloak mit Anmeldungen fluten (eine je Request) | ein Token je Prozess und Laufzeit; nach 401 genau eine Neuanmeldung | `TestDienstLesen::test_token_wird_wiederverwendet`, `TestDienstLesen::test_abgelaufenes_token_wird_einmal_erneuert` | 1 |
-| S23 | Schreibaufrufe in Serie; fremde E-Mail-Adressen per 409 abklopfen | ab dem 31. schreibenden Aufruf je Minute 429 ohne Keycloak, Lesen frei, eigener Zähler je Mandant; jeder 409 im Audit `ANLAGE_ABGELEHNT` | `TestSchreibbremse::test_schreibbremse_je_mandant`, `TestAnlegen::test_email_vergeben` | 3, 6 |
+| S23 | Schreibaufrufe in Serie; fremde E-Mail-Adressen per 409 abklopfen | ab dem 31. schreibenden Aufruf je Minute 429 ohne Keycloak, Lesen frei, eigener Zähler je Mandant; jeder 409 im Audit `ANLAGE_KONFLIKT` (Hash, wiederholte Adresse erkennbar) | `TestSchreibbremse::test_schreibbremse_je_mandant`, `TestAnlegen::test_email_vergeben` | 3, 6 |
 | S24 | Passwort landet in Logzeilen oder Zwischenspeichern | kein Passwort im Log; `Cache-Control: no-store` an beiden Antworten mit Passwort | `TestAnlegen::test_audit_ohne_passwort`, `TestPasswort::test_audit_ohne_passwort`, `TestAnlegen::test_mitarbeiter_anlegen`, `TestPasswort::test_reset_liefert_einmalpasswort` | 3, 5 |
-| S25 | Teilweise Änderung ohne Spur | alles ohne Schreiben Prüfbare vor dem ersten Schreiben; Rest im Audit `BENUTZER_TEILWEISE_GEAENDERT` | `TestAendern::test_fehlende_rolle_nichts_geschrieben`, `TestAendern::test_teilweise_geaendert_im_audit` | 4 |
+| S25 | Teilweise Änderung ohne Spur, auch wenn Keycloak nach dem Schreiben beim Zurücklesen ausfällt | alles ohne Schreiben Prüfbare vor dem ersten Schreiben; Rest im Audit `BENUTZER_TEILWEISE_GEAENDERT`; der Passwort-Reset liest alles vor dem `PUT` | `TestAendern::test_fehlende_rolle_nichts_geschrieben`, `TestAendern::test_teilweise_geaendert_im_audit`, `TestAuditDauerhaft::test_zuruecklesen_scheitert_teilweise_geaendert`, `TestAuditDauerhaft::test_passwort_reset_liest_vor_dem_schreiben` | 4, 6b |
 | S26 | Ladefehler erscheint als leere Liste, der Admin legt Konten doppelt an | Fehlerzustand mit Serverwortlaut, kein „Neuer Benutzer" | Spec „ein Ladefehler erscheint als Fehler, nicht als leere Liste" | 10, 12 |
 | S27 | Konto mit mehreren Rollen verliert beim Umbenennen Rollen | PATCH enthält nur geänderte Felder; eine gewählte Rolle wird die einzige | Spec „mehrere Rollen: Umbenennen behält sie, die höchste wählen stuft darauf zurück", „Rolle ändern schickt nur die Rolle" | 10, 12 |
+| S28 | Spur einer Benutzeraktion geht verloren (Container-Log überlebt keinen Redeploy; Keycloak fällt mitten in der Aktion aus) oder eine Aktion meldet Erfolg ohne dauerhafte Spur | jede Audit-Zeile zusätzlich in `benutzer_audit` der Mandanten-DB, auch abgewiesene Zugriffe und Teilerfolge (`ANLAGE_TEILWEISE`, `BENUTZER_TEILWEISE_GEAENDERT`); scheitert das Speichern: 500 statt Erfolg, die Logzeile steht trotzdem | `TestAuditDauerhaft::test_anlegen`, `TestAuditDauerhaft::test_anlage_teilweise`, `TestAuditDauerhaft::test_aendern_deaktivieren_aktivieren`, `TestAuditDauerhaft::test_teilweise_geaendert`, `TestAuditDauerhaft::test_zuruecklesen_scheitert_teilweise_geaendert`, `TestAuditDauerhaft::test_passwort_reset_ohne_passwort`, `TestAuditDauerhaft::test_passwort_reset_liest_vor_dem_schreiben`, `TestAuditDauerhaft::test_abgewiesene_zugriffe`, `TestAuditDauerhaft::test_speichern_scheitert_500`, `TestAuditDauerhaft::test_neue_mandanten_db_hat_die_tabelle` | 6b |
+| S29 | Fremde E-Mail-Adresse (anderer Mandant) im Klartext in Log, Audit-Tabelle oder Antwort | `ANLAGE_KONFLIKT` nur mit `ziel_email_sha256`; die Adresse steht weder im Log noch in der Antwort noch in der Tabelle | `TestAnlegen::test_email_vergeben`, `TestAuditDauerhaft::test_konflikt_nur_als_hash` | 3, 6b |
+| S30 | Jeder Demo-Besucher sieht nicht öffentliche Konten mit `tenant_slug=demo` (Test-, Betreiberkonten) | im Mandanten `demo` nur Konten aus `DEMO_USERS`, in der Liste und beim Einzelabruf (sonst 404) | `TestDemoListe::test_nur_demo_logins_schreibgeschuetzt`, Gegenprobe `TestDemoListe::test_sonst_vollstaendig_und_schreibbar` | 2 |
 
 **Ohne automatischen Test, deshalb Gate oder Review:**
 
 - Benutzer ändert sein eigenes `tenant_slug` über Account-Konsole oder Account-REST-API und wechselt damit den Mandanten (besteht unabhängig von diesem Plan, falls der Realm es zulässt): Deploy-Gate D5, lokal nachgestellt in Manager-Abnahme B, Zeile K8.
 - Selbstregistrierung mit eigenen Attributen: D5.
 - App-Rolle `admin` oder `default-roles-<realm>` enthält `realm-management`-Rollen: D3. Der Code vergibt keine zusammengesetzte App-Rolle (S10), lässt die Standardrolle aber als einzige zusammengesetzte zu.
-- Service-Account mit mehr Rechten als nötig, master-Schalter in Produktion gesetzt: D7.
+- Service-Account mit mehr Rechten als nötig: D7.
+- Tabelle `benutzer_audit` existiert in den Produktions-Mandanten: entsteht beim ersten Start nach dem Deploy (`init_all_existing_tenants`, `main.py:150`, `create_all`); Live-Prüfung L5 liest sie.
 - Konten mit `realm-management`-Rollen und Kunden-`tenant_slug`: D6 (der Code weist sie mit 409 ab, S7).
 - Nicht-Admin in der Oberfläche: Review Focus 5, Live-Prüfung L4.
 - Wettlauf um den letzten Admin: Review Focus 2.
@@ -156,11 +165,13 @@ Jedes Angriffsszenario mit dem Test, der es abdeckt. Backend-Tests in `backend/t
 
 | Datei | Verantwortung | Task |
 |---|---|---|
-| `backend/app/services/keycloak_admin.py` | Modulkopf (Docstring, Imports, Logger), neuer Abschnitt „Benutzerverwaltung je Mandant" am Dateiende; bestehende Zeilen unverändert | 1, 3, 4, 5 |
+| `backend/app/services/keycloak_admin.py` | Modulkopf (Docstring, Imports, Logger), neuer Abschnitt „Benutzerverwaltung je Mandant" am Dateiende; bestehende Zeilen unverändert | 1, 3, 4, 5, 6b |
 | `backend/app/schemas/user.py` | **neu** — Request-/Response-Schemas, `Rolle` als `Literal` | 2 |
-| `backend/app/api/v1/users.py` | **neu** — Router `/users`, Mandanten-Abhängigkeit, Demo-Sperre, Schreibbremse, Fehlerabbildung, Audit | 2, 3, 4, 5, 6 |
+| `backend/app/api/v1/users.py` | **neu** — Router `/users`, Mandanten-Abhängigkeit, Demo-Liste und Demo-Sperre, Schreibbremse, Fehlerabbildung, Audit (Log und Tabelle) | 2, 3, 4, 5, 6, 6b |
+| `backend/app/models/benutzer_audit.py` | **neu** — Modell `BenutzerAudit`, Tabelle `benutzer_audit` (E-M1) | 6b |
+| `backend/app/models/__init__.py` | Import und `__all__`-Eintrag `BenutzerAudit`, damit `create_all` die Tabelle in jeder Mandanten-DB anlegt | 6b |
 | `backend/app/main.py` | Importzeile nach Z. 34, `include_router` mit `_deps_admin` nach dem `admin.router`-Block (Z. 807–811) | 2 |
-| `backend/tests/test_benutzerverwaltung.py` | **neu** — Keycloak-Attrappe und alle Backend-Tests dieses Plans | 1–7 |
+| `backend/tests/test_benutzerverwaltung.py` | **neu** — Keycloak-Attrappe und alle Backend-Tests dieses Plans | 1–7, 6b |
 | `frontend/src/services/rollen.ts` | **neu** — fünf Mandanten-Rollen, deutsche Bezeichnung, Beschreibung, Hinweis | 9 |
 | `frontend/src/services/api.ts` | Attrappe raus, `usersApi` und Typen nach dem Vertrag (nur der Block zwischen den beiden Ankerkommentaren) | 10 |
 | `frontend/src/components/domain/UserCard.tsx` | Karte je Benutzer: Rollen, Status, Aktionen | 10 |
@@ -169,7 +180,7 @@ Jedes Angriffsszenario mit dem Test, der es abdeckt. Backend-Tests in `backend/t
 | `frontend/src/components/common/Layout.tsx` | reicht `istAdmin` an die Befehlspalette (nur der Aufruf `:594`) | 11 |
 | `frontend/tests/e2e/benutzerverwaltung.spec.ts` | **neu** — Abnahme-Spec mit gemockter API (übersprungen ohne `U2_ABNAHME_URL`) | 12 |
 
-Task 8 liest nur. Insgesamt zwölf Dateien; `git diff --stat efcea00..HEAD` zeigt am Ende genau diese.
+Task 8 liest nur. Insgesamt vierzehn Dateien; `git diff --stat 4cb9b92..HEAD` zeigt am Ende genau diese.
 
 ## Referenz: HTTP-Vertrag
 
@@ -177,9 +188,9 @@ Router `prefix="/users"`, eingebunden mit `prefix="/api/v1"` und `dependencies=_
 
 | Methode und Pfad | Body | Erfolg | Fehler |
 |---|---|---|---|
-| `GET /api/v1/users` | – | 200 `{items: Benutzer[], total}`, sortiert nach Nachname, Vorname, E-Mail | 403 keine Admin-Rolle / kein Keycloak-Login dieses Mandanten / Token ohne `sub`; 503 Keycloak nicht erreichbar oder nicht eingerichtet (auch: Service-Account fehlt) |
+| `GET /api/v1/users` | – | 200 `{items: Benutzer[], total, schreibgeschuetzt}`, sortiert nach Nachname, Vorname, E-Mail. Im Mandanten `demo`: nur Konten, deren E-Mail in `DEMO_USERS` steht, und `schreibgeschuetzt: true`; sonst `false` | 403 keine Admin-Rolle / kein Keycloak-Login dieses Mandanten / Token ohne `sub`; 503 Keycloak nicht erreichbar oder nicht eingerichtet (auch: Service-Account fehlt) |
 | `POST /api/v1/users` | `{email, first_name, last_name, role}` | 201 `Benutzer` + `temporary_password`, Header `Cache-Control: no-store` | 422 Validierung (Rolle, E-Mail, Umlaut, Zusatzfelder wie `tenant_slug`); 409 E-Mail vergeben; 403 Demo-Mandant oder Demo-Login; 429 Schreibbremse; 503 (auch: Rolle fehlt oder ist zusammengesetzt; halb angelegt und deaktiviert); 502 |
-| `GET /api/v1/users/{id}` | – | 200 `Benutzer` (vom Frontend nicht genutzt) | 404; 422 keine UUID |
+| `GET /api/v1/users/{id}` | – | 200 `Benutzer` (vom Frontend nicht genutzt) | 404 (im Mandanten `demo` auch für Konten außerhalb von `DEMO_USERS`); 422 keine UUID |
 | `PATCH /api/v1/users/{id}` | Teilmenge von `{first_name, last_name, role, enabled}`, mindestens ein Feld; **kein** `email` | 200 `Benutzer` | 404; 409 Schutzregel oder „vom Support verwaltet"; 422; 403 Demo; 429; 503; 502 |
 | `POST /api/v1/users/{id}/reset-password` | – | 200 `{user: Benutzer, temporary_password}`, `Cache-Control: no-store` | 404; 409 „vom Support verwaltet"; 403 Demo; 429; 503; 502 |
 
@@ -193,11 +204,14 @@ Feste Fehlertexte, immer als `detail` (`getErrorMessage`, `frontend/src/services
 - 429 `Zu viele Änderungen in kurzer Zeit. Bitte in einer Minute erneut versuchen.`
 - 503 `Benutzerverwaltung derzeit nicht verfügbar: …`, z. B. `… Benutzerverwaltung ist nicht eingerichtet (Service-Account fehlt: KEYCLOAK_USERS_CLIENT_ID/_SECRET).`
 - 502 `Keycloak hat die Anfrage abgelehnt: …`
+- 500 `Die Aktion konnte nicht protokolliert werden. Eine Änderung in Keycloak kann trotzdem ausgeführt sein — bitte die Liste neu laden und den Support informieren.` (Task 6b: Audit-Zeile nicht in `benutzer_audit` gespeichert; bei jeder Route mit Audit möglich, auch beim abgewiesenen Fremdzugriff)
 - 400 nur bei Aufruf der Dienstfunktion mit fremder Rolle (`RolleNichtErlaubt`); über die API greift vorher die 422.
 
-**Für das Frontend:** `role` im PATCH nur mitschicken, wenn sie im Formular gewählt wurde; bei mehreren Rollen ist keine vorgewählt. Deaktivieren und Aktivieren laufen über `PATCH {enabled}`. Im Mandanten `demo` enden `POST /users`, `PATCH /users/{id}` und `POST /users/{id}/reset-password` immer mit dem Demo-403; `GET /users` bleibt erlaubt. Die Oberfläche zeigt die Schreibknöpfe trotzdem (Offener Punkt M6).
+**Für das Frontend:** `role` im PATCH nur mitschicken, wenn sie im Formular gewählt wurde; bei mehreren Rollen ist keine vorgewählt. Deaktivieren und Aktivieren laufen über `PATCH {enabled}`. Im Mandanten `demo` enden `POST /users`, `PATCH /users/{id}` und `POST /users/{id}/reset-password` immer mit dem Demo-403; `GET /users` bleibt erlaubt und liefert `schreibgeschuetzt: true`. Dann zeigt die Oberfläche weder „Neuer Benutzer" noch Aktionen an den Karten, sondern einen Hinweis (E-M6, Task 10).
 
 ## Referenz: Ausgangsbefund (am Code belegt, `efcea00`)
+
+Auf `4cb9b92` geprüft (Nachtrag): Die zitierten Stellen in `main.py`, `keycloak_admin.py`, `api/deps.py`, `platform.py`, `tests/conftest.py`, `Users.tsx`, `UserCard.tsx`, `Layout.tsx` und `CommandPalette.tsx` stimmen unverändert. Verschoben sind `tenancy.py` (`get_request_tenant` jetzt `:410-412`), `demo_reset_service.py` (`reset_demo_from_seed` `:58-86`, `shutil.copy2` `:74`, danach seit `d8e1db2` `create_all` und `_auto_migrate` `:77-84`) und die Anker in `api.ts` (`:1017`/`:1125`).
 
 **Backend und Keycloak**
 
@@ -207,8 +221,8 @@ Feste Fehlertexte, immer als `detail` (`getErrorMessage`, `frontend/src/services
 - **Keycloak-Helfer heute** (`services/keycloak_admin.py`): `_cfg()` (`:40-49`) liest `KEYCLOAK_URL`, `KEYCLOAK_REALM` (Default **`novaerp`**), `KEYCLOAK_ADMIN_USER/_PASSWORD`; `_admin_token` (`:52-66`) meldet sich als **master-Realm-Admin** an; `_gen_password` (`:69-71`, 16 Zeichen + `!A9`); `create_tenant_user` (`:74-173`) legt an mit `attributes.tenant_slug`, `credentials[].temporary`, `requiredActions: []`, sucht die ID per `username`+`exact`, prüft die Rolle **erst nach** der Anlage (`:147-153`) und weist sie direkt zu (`:154-164`). Liste, Ändern, Deaktivieren, Passwort-Reset gibt es nicht. Kein Aufruf von `execute-actions-email` im Repo (grep).
 - **Realm-Mismatch der Defaults:** Die Token-Prüfung nutzt `settings.keycloak_realm` (`config.py:39`, Default `minga-greens`; `core/security.py:69`), der Helfer `os.environ["KEYCLOAK_REALM"]` mit Default `novaerp`. In Produktion setzt dieselbe Variable beide (T5 1.4). Task 1 nimmt für die Benutzerverwaltung **`get_settings().keycloak_realm`** — garantiert den Realm, aus dem das Token des Aufrufers stammt.
 - **Onboarding:** `platform.create_tenant` (`platform.py:72-157`) ruft `create_tenant_user(..., role="admin", temporary_password=bool(not admin_password))` (`:141-147`) und gibt das Passwort genau einmal in `result["admin_user"]` zurück (`:148-153`). Task 3 und Task 5 übernehmen dieses Muster (Einmalpasswort, temporär) für Anlegen und Reset.
-- **Demo:** Tenant `demo` mit öffentlich bekannten Logins (`DEMO_USERS`, `DEMO_PASSWORD = "demo1234"`, `platform.py:229-235`; `anna@demo.novaerp.de` ist `admin`). Der nächtliche Reset kopiert nur die SQLite-Datei (`demo_reset_service.py:58-72`, `shutil.copy2` `:70`), **Keycloak bleibt unberührt**. Ohne Sperre könnte jeder Demo-Besucher als Anna Ben, Clara und Paul deaktivieren oder ihre Passwörter zurücksetzen — dauerhaft. Deshalb sperrt Task 3 im Mandanten `demo` jedes Schreiben (403 „In der Demo können Benutzer nicht geändert werden."), Lesen bleibt erlaubt. Diese Sperre bleibt; schreibende Abnahmen laufen nie auf der Demo. Konstante `DEFAULT_DEMO_SLUG = "demo"` (`demo_reset_service.py:19`).
-- **Audit:** Einzige Audit-Tabelle ist `order_audit_logs` (`models/order.py:354-397`) mit Pflicht-Fremdschlüssel `order_id` (`:364`) — für Benutzeraktionen untauglich. Die App konfiguriert kein Logging (kein `basicConfig`/`dictConfig` unter `backend/app`; Start ohne Log-Konfiguration: `Dockerfile:44` `uvicorn app.main:app`, `docker-compose.prod.yml:25-31` gunicorn nur mit `--access-logfile -`). INFO aus `app.*` verwirft Pythons lastResort-Handler (gibt erst ab WARNING aus). Betriebszeilen, die im Log stehen sollen, schreibt das Repo mit `logger.warning` (`main.py:161`, `:200`). Task 2 schreibt die Audit-Zeile ebenso als WARNING.
+- **Demo:** Tenant `demo` mit öffentlich bekannten Logins (`DEMO_USERS`, `DEMO_PASSWORD = "demo1234"`, `platform.py:229-235`; `anna@demo.novaerp.de` ist `admin`). Der nächtliche Reset kopiert nur die SQLite-Datei zurück und migriert sie seit `d8e1db2` (`create_all`, `_auto_migrate`; auf `4cb9b92` `demo_reset_service.py:58-86`, `shutil.copy2` `:74`), **Keycloak bleibt unberührt**. Ohne Sperre könnte jeder Demo-Besucher als Anna Ben, Clara und Paul deaktivieren oder ihre Passwörter zurücksetzen — dauerhaft. Deshalb sperrt Task 3 im Mandanten `demo` jedes Schreiben (403 „In der Demo können Benutzer nicht geändert werden."), Lesen bleibt erlaubt. Diese Sperre bleibt; schreibende Abnahmen laufen nie auf der Demo. Konstante `DEFAULT_DEMO_SLUG = "demo"` (`demo_reset_service.py:19`).
+- **Audit:** Einzige Audit-Tabelle ist `order_audit_logs` (`models/order.py:354-397`) mit Pflicht-Fremdschlüssel `order_id` (`:364`) — für Benutzeraktionen untauglich. Die App konfiguriert kein Logging (kein `basicConfig`/`dictConfig` unter `backend/app`; Start ohne Log-Konfiguration: `Dockerfile:44` `uvicorn app.main:app`, `docker-compose.prod.yml:25-31` gunicorn nur mit `--access-logfile -`). INFO aus `app.*` verwirft Pythons lastResort-Handler (gibt erst ab WARNING aus). Betriebszeilen, die im Log stehen sollen, schreibt das Repo mit `logger.warning` (`main.py:161`, `:200`). Task 2 schreibt die Audit-Zeile ebenso als WARNING. Das Container-Log überlebt keinen Redeploy; deshalb schreibt Task 6b jede Audit-Zeile zusätzlich in eine eigene Tabelle `benutzer_audit` der Mandanten-DB (E-M1). Neue Tabellen entstehen per `create_all`, sobald das Modell in `app/models/__init__.py` importiert ist: beim Start für jede vorhandene Mandanten-DB (`init_all_existing_tenants`, `tenancy.py:240-262`, aufgerufen in `main.py:150`), beim Anlegen eines Mandanten (`provision_tenant`, `tenancy.py:214-237`) und nach dem Demo-Reset. `_auto_migrate` braucht es nur für neue Spalten in bestehenden Tabellen.
 - **Tests:** `client`-Fixture (`tests/conftest.py:59-80`) überschreibt `get_current_user` und nutzt `base_url="http://localhost"`; Muster für Rollen-Overrides in `tests/test_rollen.py:21-29`. Bisher testet keine Datei den Keycloak-Helfer (T5 3.4). `httpx.MockTransport` ist Teil von httpx (`requirements.txt:19`; in `.venv` 0.28.1) — keine neue Abhängigkeit.
 - **Keycloak-Server-Version:** im Repo `quay.io/keycloak/keycloak:22.0` (`docker-compose.yml:152`), Produktion nicht im Code prüfbar. **Annahme:** Attributsuche `q=key:value` auf `GET /admin/realms/{realm}/users` vorhanden (Keycloak ≥ 15) — ob exakt oder als Teiltreffer, hängt von der Version ab; deshalb der Python-Filter. **Annahme:** Ein `PUT /users/{id}` ohne `attributes` kann je nach Version (User Profile ab 24) Attribute verwerfen; deshalb schreibt Task 4 immer die vollständige Darstellung samt `attributes` zurück.
 - **Darf ein Benutzer sein eigenes `tenant_slug` ändern? Im Repo nicht abgesichert.** Keycloak 22.0 (`docker-compose.yml:152`) startet ohne die Option `--spi-user-profile-legacy-user-profile-read-only-attributes` (`docker-compose.prod.yml:45`). `keycloak/realm-export.json` enthält keine User-Profile-Konfiguration und beschreibt den Realm `minga-greens` (`:2`). Der Produktions-Realm `novaerp` steht nicht im Repo. **Annahme aus der Keycloak-Dokumentation, nicht im Repo prüfbar:** Unter Version 24 mit dem alten User-Profile, oder ab 24 mit `unmanagedAttributePolicy=ENABLED`, kann ein Benutzer eigene Attribute über die Account-Konsole bzw. die Account-REST-API ändern. Dann wechselt jeder Login den Mandanten, auch die öffentlichen Demo-Logins (`demo1234`): `tenant_slug=minga` setzen, neues Token holen, und `deps.py:76-85` lässt ihn auf `minga.novaerp.de` als Admin herein. Diese Lücke besteht schon heute. Mit diesem Plan käme die dauerhafte Übernahme auf Keycloak-Ebene dazu: eigenen Admin anlegen, Gernots Passwort zurücksetzen. Deshalb Deploy-Gate D5. Im Code schreibt zusätzlich kein öffentlicher Demo-Login in irgendeinem Mandanten (Task 3, `_mandant_schreiben`). `editUsernameAllowed` ist im Repo-Realm `false` (`realm-export.json:11`). Der Benutzername taugt daher als Merkmal, die E-Mail nicht sicher.
@@ -233,7 +247,7 @@ Feste Fehlertexte, immer als `detail` (`getErrorMessage`, `frontend/src/services
 - **Fehlertexte:** `getErrorMessage(error, fallback)` in `frontend/src/services/errors.ts:10-32` (String-`detail`, FastAPI-422-Listen, Objekt mit `msg`).
 - **Dialoge:** `Modal` (`components/ui/Modal.tsx`) schließt per Voreinstellung über Esc (`closeOnEscape = true`, `:32-41`) und über das X im Kopf, sobald ein `title` gesetzt ist (`:75-86`). `closeOnBackdrop={false}` allein schützt ein Einmalpasswort also nicht vor einem versehentlichen Esc.
 - `User`/`UserRole` (`types/index.ts:345-357`) beschreiben den **angemeldeten** Benutzer (`Layout.tsx:41`, `:328-334`) und bleiben unverändert.
-- **tsc-Baseline** `main` @ `efcea00`: `./node_modules/.bin/tsc --noEmit -p .` ohne Ausgabe (geprüft 08.10.). `tsconfig.json` hat `noUnusedLocals` und `noUnusedParameters`: Jeder ungenutzte Import bricht den Build.
+- **tsc-Baseline** `main` @ `efcea00`: `./node_modules/.bin/tsc --noEmit -p .` ohne Ausgabe (geprüft 08.10.; auf `4cb9b92` ebenso, Nachtrag). `tsconfig.json` hat `noUnusedLocals` und `noUnusedParameters`: Jeder ungenutzte Import bricht den Build.
 - Frontend-Unit-Tests gibt es nicht. Playwright liegt unter `frontend/tests/e2e` (`playwright.config.ts`: `testDir: './tests/e2e'`, `retries: 1`). Die vorhandenen Specs laufen gegen die Demo mit echtem Login.
 
 ---
@@ -253,12 +267,14 @@ Feste Fehlertexte, immer als `detail` (`getErrorMessage`, `frontend/src/services
   - Ausnahmen, alle Unterklassen von `KeycloakAdminError`: `KeycloakNichtErreichbar`, `KeycloakNichtGefunden(fremd: bool = False)` mit Attribut `.fremd`, `KeycloakKonflikt`, `BenutzerSchutzregel`, `BenutzerVomSupportVerwaltet` (Unterklasse von `BenutzerSchutzregel`, fester Text „Dieser Benutzer wird vom Support verwaltet und kann hier nicht geändert werden."), `RolleNichtErlaubt`
   - `_http_client() -> httpx.Client` — Test-Naht
   - `_require_user_id(user_id) -> str` — kanonische UUID, sonst `KeycloakNichtGefunden()`
-  - `_users_cfg() -> dict` — fail-closed: nur Service-Account (`KEYCLOAK_USERS_CLIENT_ID`/`_SECRET`), master-Admin nur mit `KEYCLOAK_USERS_ALLOW_MASTER_ADMIN=1`, sonst `KeycloakNichtErreichbar` „… nicht eingerichtet (Service-Account fehlt …)"
-  - `_neues_token(c, client) -> tuple[str, float]`, `_users_token(c, client, *, erneuern=False) -> str`; Cache `_token_cache` (Modulvariable, Tests setzen sie je Test zurück), `_token_lock`
+  - `_users_cfg() -> dict` (Schlüssel `url`, `realm`, `svc_id`, `svc_secret`) — fail-closed: ausschließlich der Service-Account (`KEYCLOAK_USERS_CLIENT_ID`/`_SECRET`), sonst `KeycloakNichtErreichbar` „… nicht eingerichtet (Service-Account fehlt …)". Kein master-Zweig, kein Schalter (E-M16); `KEYCLOAK_ADMIN_USER`/`_PASSWORD` liest nur das unveränderte Onboarding (`_cfg`).
+  - `_neues_token(c, client) -> tuple[str, float]` (nur `client_credentials` im Ziel-Realm), `_users_token(c, client, *, erneuern=False) -> str`; Cache `_token_cache` (Modulvariable, Tests setzen sie je Test zurück), `_token_lock`
   - `_Benutzerzugang` (Kontextmanager; `.call(method, path, **kw) -> httpx.Response`, `.c` = Konfiguration); bildet `httpx.TransportError` und HTTP ≥ 500 auf `KeycloakNichtErreichbar` ab; nach HTTP 401 genau eine Neuanmeldung
   - `_gehoert_zum_mandanten(rep, tenant_slug) -> bool`, `_lade_mandanten_user(kc, user_id, tenant_slug) -> dict`, `_rollen_mappings(kc, user_id) -> list[dict]`, `_app_rollen(kc, user_id) -> list[str]`, `_als_benutzer(rep, rollen) -> dict` (Schlüssel `id, email, first_name, last_name, enabled, roles, role, created_at`), `_mandanten_reps(kc, tenant_slug) -> list[dict]`
   - `list_tenant_users(tenant_slug: str) -> list[dict]`, `get_tenant_user(tenant_slug: str, user_id: str) -> dict`
-- Produces (Test): `FakeKeycloak` (mit `client_mappings`, `groups`, `fehler_bei`, `token_abgelehnt`, `token_calls()`), Fixture `kc` (Service-Account gesetzt, Token-Cache leer), Konstanten `MANDANT`, `FREMD`, `REALM`, `ADMIN_ID`, `APP_ROLLEN`, `STANDARDROLLE`, `TOKEN_PFAD`. Die Attrappe kann bereits alles, was Tasks 2–7 brauchen; sie wird später nicht mehr geändert.
+- Produces (Test): `FakeKeycloak` (mit `client_mappings`, `groups`, `fehler_bei`, `token_abgelehnt`, `token_calls()`), Fixture `kc` (Service-Account gemockt: Dummy-Werte für `KEYCLOAK_USERS_CLIENT_ID`/`_SECRET` per `monkeypatch`, der Token-Endpunkt der Attrappe antwortet; master-Variablen entfernt, Token-Cache leer), Konstanten `MANDANT`, `FREMD`, `REALM`, `ADMIN_ID`, `APP_ROLLEN`, `STANDARDROLLE`, `TOKEN_PFAD`. Die Attrappe kann bereits alles, was Tasks 2–7 brauchen; sie wird später nicht mehr geändert.
+
+**Manager-Entscheidung E-M16 (hier umgesetzt):** Die Benutzerverwaltung kennt nur den Service-Account. `_users_cfg`, `_neues_token` und `_users_token` haben keinen master-Zweig, `KEYCLOAK_USERS_ALLOW_MASTER_ADMIN` kommt im Code nicht vor. `test_ohne_client_id_kein_master_rueckfall` ersetzt den früheren `test_master_admin_nur_mit_freigabe` (Zahl der Tests bleibt 18): Fehlt die Client-ID, gibt es 503, auch mit gesetztem master-Admin. Der Import `hashlib` im Testkopf wird erst in Task 3 gebraucht.
 
 - [ ] **Step 1: Testdatei mit Keycloak-Attrappe und Dienst-Tests anlegen**
 
@@ -273,6 +289,7 @@ Mandanten weder sieht noch ändern kann. Keycloak ist vollständig durch einen
 httpx.MockTransport ersetzt — kein Netzwerk.
 """
 import copy
+import hashlib
 import json
 import re
 import uuid
@@ -451,7 +468,7 @@ def kc(monkeypatch):
     monkeypatch.setenv("KEYCLOAK_URL", "http://keycloak.test")
     monkeypatch.setenv("KEYCLOAK_USERS_CLIENT_ID", "novaerp-users")
     monkeypatch.setenv("KEYCLOAK_USERS_CLIENT_SECRET", "nur-im-test")
-    for name in ("KEYCLOAK_ADMIN_USER", "KEYCLOAK_ADMIN_PASSWORD", "KEYCLOAK_USERS_ALLOW_MASTER_ADMIN"):
+    for name in ("KEYCLOAK_ADMIN_USER", "KEYCLOAK_ADMIN_PASSWORD"):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setattr(keycloak_admin, "_token_cache", {})
     monkeypatch.setattr(
@@ -527,13 +544,14 @@ class TestDienstLesen:
             keycloak_admin.list_tenant_users(MANDANT)
         assert kc.calls == []
 
-    def test_master_admin_nur_mit_freigabe(self, kc, monkeypatch):
+    def test_ohne_client_id_kein_master_rueckfall(self, kc, monkeypatch):
+        """E-M16: nur der Service-Account, auch wenn der master-Admin konfiguriert ist."""
         monkeypatch.delenv("KEYCLOAK_USERS_CLIENT_ID")
         monkeypatch.setenv("KEYCLOAK_ADMIN_USER", "test-admin")
         monkeypatch.setenv("KEYCLOAK_ADMIN_PASSWORD", "nur-im-test")
-        monkeypatch.setenv("KEYCLOAK_USERS_ALLOW_MASTER_ADMIN", "1")
-        keycloak_admin.list_tenant_users(MANDANT)
-        assert kc.token_calls() == [f"/realms/master{TOKEN_PFAD}"]
+        with pytest.raises(keycloak_admin.KeycloakNichtErreichbar, match="Service-Account fehlt"):
+            keycloak_admin.list_tenant_users(MANDANT)
+        assert kc.calls == []
 
     def test_token_wird_wiederverwendet(self, kc):
         """Ohne Cache löste jeder Aufruf eine eigene Keycloak-Anmeldung aus."""
@@ -602,8 +620,7 @@ Benutzerverwaltung je Mandant (unten, /api/v1/users): Realm = settings.keycloak_
 also derselbe Realm wie die Token-Prüfung (core/security.py). Zugang NUR über einen
 Service-Account im Ziel-Realm (KEYCLOAK_USERS_CLIENT_ID, KEYCLOAK_USERS_CLIENT_SECRET;
 Client-Rollen manage-users, view-users, view-realm). Fehlt er, antwortet die
-Benutzerverwaltung mit 503. Den master-Admin nimmt sie nur mit
-KEYCLOAK_USERS_ALLOW_MASTER_ADMIN=1 (Entwicklung/Test, nicht Produktion).
+Benutzerverwaltung mit 503. Den master-Admin nutzt sie nie.
 """
 from __future__ import annotations
 
@@ -649,8 +666,7 @@ MANDANTEN_ROLLEN: tuple[str, ...] = (
 
 _SEITE = 100
 _MAX_SEITEN = 10
-_master_warnung_gegeben = False
-#: Admin-Token je Zugang, bis kurz vor Ablauf: {(url, realm, konto): (token, gültig_bis)}.
+#: Token des Service-Accounts, bis kurz vor Ablauf: {(url, realm, client_id): (token, gültig_bis)}.
 _token_cache: dict[tuple, tuple[str, float]] = {}
 _token_lock = threading.Lock()
 
@@ -710,9 +726,9 @@ def _users_cfg() -> dict:
     Sonst verwaltete ein Mandanten-Admin Benutzer in einem anderen Realm als dem,
     aus dem sein Token stammt.
 
-    Nur ein Service-Account im Ziel-Realm (T5 R5, Risiko 2). Ohne ihn: 503,
-    kein stiller Rückfall auf den master-Admin. Den gibt es nur ausdrücklich mit
-    KEYCLOAK_USERS_ALLOW_MASTER_ADMIN=1 (Entwicklung/Test).
+    Ausschließlich ein Service-Account im Ziel-Realm (T5 R5, Risiko 2; E-M16).
+    Ohne ihn: 503. Einen Rückfall auf den master-Admin gibt es nicht, auch wenn
+    KEYCLOAK_ADMIN_USER/_PASSWORD gesetzt sind (die nutzt nur das Onboarding).
     """
     url = os.environ.get("KEYCLOAK_URL", "").rstrip("/")
     realm = get_settings().keycloak_realm
@@ -720,36 +736,20 @@ def _users_cfg() -> dict:
     svc_secret = os.environ.get("KEYCLOAK_USERS_CLIENT_SECRET", "")
     if not url:
         raise KeycloakNichtErreichbar("Benutzerverwaltung ist nicht eingerichtet (KEYCLOAK_URL fehlt).")
-    if svc_id and svc_secret:
-        return {"url": url, "realm": realm, "svc_id": svc_id, "svc_secret": svc_secret}
-    if os.environ.get("KEYCLOAK_USERS_ALLOW_MASTER_ADMIN", "").strip() == "1":
-        admin_user = os.environ.get("KEYCLOAK_ADMIN_USER", "")
-        admin_pw = os.environ.get("KEYCLOAK_ADMIN_PASSWORD", "")
-        if admin_user and admin_pw:
-            return {"url": url, "realm": realm, "admin_user": admin_user, "admin_pw": admin_pw}
-    raise KeycloakNichtErreichbar(
-        "Benutzerverwaltung ist nicht eingerichtet "
-        "(Service-Account fehlt: KEYCLOAK_USERS_CLIENT_ID/_SECRET)."
-    )
+    if not (svc_id and svc_secret):
+        raise KeycloakNichtErreichbar(
+            "Benutzerverwaltung ist nicht eingerichtet "
+            "(Service-Account fehlt: KEYCLOAK_USERS_CLIENT_ID/_SECRET)."
+        )
+    return {"url": url, "realm": realm, "svc_id": svc_id, "svc_secret": svc_secret}
 
 
 def _neues_token(c: dict, client: httpx.Client) -> tuple[str, float]:
-    """Anmeldung bei Keycloak. Rückgabe: (Token, gültig bis — monotone Uhr, 30 s Puffer)."""
-    global _master_warnung_gegeben
-    if "svc_id" in c:
-        url = f"{c['url']}/realms/{c['realm']}/protocol/openid-connect/token"
-        daten = {"grant_type": "client_credentials",
-                 "client_id": c["svc_id"], "client_secret": c["svc_secret"]}
-    else:
-        if not _master_warnung_gegeben:
-            logger.warning(
-                "[keycloak] Benutzerverwaltung nutzt den master-Admin "
-                "(KEYCLOAK_USERS_ALLOW_MASTER_ADMIN=1) — nur für Entwicklung/Test."
-            )
-            _master_warnung_gegeben = True
-        url = f"{c['url']}/realms/master/protocol/openid-connect/token"
-        daten = {"grant_type": "password", "client_id": "admin-cli",
-                 "username": c["admin_user"], "password": c["admin_pw"]}
+    """Anmeldung des Service-Accounts (client_credentials) im Ziel-Realm.
+    Rückgabe: (Token, gültig bis — monotone Uhr, 30 s Puffer)."""
+    url = f"{c['url']}/realms/{c['realm']}/protocol/openid-connect/token"
+    daten = {"grant_type": "client_credentials",
+             "client_id": c["svc_id"], "client_secret": c["svc_secret"]}
     try:
         r = client.post(url, data=daten, headers={"Content-Type": "application/x-www-form-urlencoded"})
     except httpx.TransportError as e:
@@ -765,7 +765,7 @@ def _neues_token(c: dict, client: httpx.Client) -> tuple[str, float]:
 
 def _users_token(c: dict, client: httpx.Client, *, erneuern: bool = False) -> str:
     """Token aus dem Prozess-Cache; neu anmelden erst kurz vor Ablauf."""
-    schluessel = (c["url"], c["realm"], c.get("svc_id") or f"master:{c.get('admin_user')}")
+    schluessel = (c["url"], c["realm"], c["svc_id"])
     with _token_lock:
         if erneuern:
             _token_cache.pop(schluessel, None)
@@ -904,6 +904,8 @@ def get_tenant_user(tenant_slug: str, user_id: str) -> dict:
 
 Bestehende Funktionen (`_cfg`, `_admin_token`, `create_tenant_user`, `add_tenant_redirect_uri`, `is_configured`) **nicht** ändern.
 
+Prüfen (E-M16, aus dem Repo-Wurzelverzeichnis): `grep -rn "ALLOW_MASTER" backend/` liefert keine Ausgabe.
+
 - [ ] **Step 5: Grün bestätigen**
 
 Run: `cd backend && REDIS_URL=memory:// /Users/nikolajunser-richter/minga-greens-erp/.venv/bin/python -m pytest tests/test_benutzerverwaltung.py -v -p no:cacheprovider`
@@ -932,13 +934,15 @@ git commit -m "feat(benutzer): Keycloak-Zugriff je Mandant — lesen nur mit pas
 - Test: `backend/tests/test_benutzerverwaltung.py` (anhängen)
 
 **Interfaces:**
-- Consumes: Task 1; `CurrentUser` (`api/deps.py:101`); `get_request_tenant` (`tenancy.py:394-396`); `_deps_admin` (`main.py:137`); `DEFAULT_DEMO_SLUG` (`services/demo_reset_service.py:19`); `DEMO_USERS` (`api/v1/platform.py:229-234`, nur importiert).
+- Consumes: Task 1; `CurrentUser` (`api/deps.py:101`); `get_request_tenant` (`tenancy.py:410-412`); `_deps_admin` (`main.py:137`); `DEFAULT_DEMO_SLUG` (`services/demo_reset_service.py:19`); `DEMO_USERS` (`api/v1/platform.py:229-234`, nur importiert: eine Liste von Dicts mit den Schlüsseln `email`, `role`, `first_name`, `last_name`; die vier Adressen sind klein geschrieben).
 - Produces:
-  - `app.schemas.user`: `Rolle` (Literal), `BenutzerResponse`, `BenutzerListResponse`, `BenutzerCreate`, `BenutzerUpdate`, `BenutzerAngelegtResponse`, `PasswortZurueckgesetztResponse` (Create/Update/Passwort werden ab Task 3 benutzt; die Datei entsteht hier vollständig)
-  - `app.api.v1.users`: `router` (Präfix `/users`), `_mandant` / `Mandant` (403 auch bei Token ohne `sub`), `_audit(aktion, mandant, user, **felder)`, `_fehler(e, mandant, user, ziel_id=None) -> HTTPException`, `_antwort(b, user) -> BenutzerResponse`, Logger `app.audit.benutzer`
-  - Routen `GET /api/v1/users`, `GET /api/v1/users/{user_id}`
+  - `app.schemas.user`: `Rolle` (Literal), `BenutzerResponse`, `BenutzerListResponse` (mit `schreibgeschuetzt: bool = False`), `BenutzerCreate`, `BenutzerUpdate`, `BenutzerAngelegtResponse`, `PasswortZurueckgesetztResponse` (Create/Update/Passwort werden ab Task 3 benutzt; die Datei entsteht hier vollständig)
+  - `app.api.v1.users`: `router` (Präfix `/users`), `DEMO_MANDANT` (= `"demo"`), `DEMO_LOGINS` (klein geschriebene E-Mails aus `DEMO_USERS`), `_mandant` / `Mandant` (403 auch bei Token ohne `sub`), `_audit(aktion, mandant, user, **felder)`, `_fehler(e, mandant, user, ziel_id=None) -> HTTPException`, `_antwort(b, user) -> BenutzerResponse`, `_sichtbar(mandant, b) -> bool` (E-M6), Logger `app.audit.benutzer`
+  - Routen `GET /api/v1/users` (im Mandanten `DEMO_MANDANT` nur `_sichtbar`e Konten, `schreibgeschuetzt=True`), `GET /api/v1/users/{user_id}` (dort für andere Konten 404)
   - Fehlerabbildung: `KeycloakNichtGefunden` → 404 „Benutzer nicht gefunden." (bei `.fremd` zusätzlich Audit `FREMDZUGRIFF_ABGEWIESEN`), `BenutzerVomSupportVerwaltet` → 409 mit Audit `SUPPORTKONTO_ABGEWIESEN`, `KeycloakKonflikt`/`BenutzerSchutzregel` → 409, `RolleNichtErlaubt` → 400, `KeycloakNichtErreichbar` → 503 „Benutzerverwaltung derzeit nicht verfügbar: …", übrige `KeycloakAdminError` → 502
-  - Test-Helfer `_als(rollen, tenant, uid, username, email)`, Fixture `admin`, `_audit_zeilen(caplog)`
+  - Test-Helfer `_als(rollen, tenant, uid, username, email)`, Fixture `admin`, `_audit_zeilen(caplog)`; Klasse `TestDemoListe`
+
+**Manager-Entscheidung E-M6 (hier umgesetzt, Backend-Teil):** Im Mandanten `demo` sieht jeder Besucher die Benutzerliste. Sie zeigt dort nur Konten, deren E-Mail in `DEMO_USERS` steht (`_sichtbar`); ein Einzelabruf eines anderen Kontos endet dort mit demselben 404 wie eine unbekannte ID. `BenutzerListResponse.schreibgeschuetzt` ist genau im Mandanten `DEMO_MANDANT` `true`, sonst `false`; Task 10 blendet danach die Schreibknöpfe aus. `DEMO_MANDANT` und `DEMO_LOGINS` entstehen deshalb schon hier, nicht erst in Task 3. Die Tests setzen `users.DEMO_MANDANT` per `monkeypatch` auf den Testmandanten (`localhost` landet immer in `DEFAULT_TENANT_SLUG`), wie die Demo-Tests aus Task 3–5.
 
 - [ ] **Step 1: Tests anhängen**
 
@@ -1019,6 +1023,32 @@ class TestListe:
         assert ben["created_at"].startswith("2025-10-08")
 
 
+class TestDemoListe:
+    """E-M6: Im Mandanten demo sieht jeder Besucher die Liste — dort nur die
+    öffentlichen Demo-Konten, und die Oberfläche erfährt, dass nichts änderbar ist."""
+
+    def test_nur_demo_logins_schreibgeschuetzt(self, admin, kc, monkeypatch):
+        from app.api.v1 import users
+        monkeypatch.setattr(users, "DEMO_MANDANT", MANDANT)
+        anna = kc.add_user("anna@demo.novaerp.de", MANDANT, roles={"admin"})
+        ben = kc.add_user("ben@demo.novaerp.de", MANDANT, roles={"sales"})
+        mia = kc.add_user("mia@beispielfirma.de", MANDANT, roles={"production_staff"})
+        r = admin.get("/api/v1/users")
+        assert r.status_code == 200, r.text
+        assert sorted(b["id"] for b in r.json()["items"]) == sorted([anna, ben])
+        assert (r.json()["total"], r.json()["schreibgeschuetzt"]) == (2, True)
+        versteckt = admin.get(f"/api/v1/users/{mia}")
+        assert (versteckt.status_code, versteckt.json()) == (404, {"detail": "Benutzer nicht gefunden."})
+        assert admin.get(f"/api/v1/users/{anna}").status_code == 200
+
+    def test_sonst_vollstaendig_und_schreibbar(self, admin, kc):
+        mia = kc.add_user("mia@beispielfirma.de", MANDANT, roles={"production_staff"})
+        r = admin.get("/api/v1/users")
+        assert r.status_code == 200, r.text
+        assert sorted(b["id"] for b in r.json()["items"]) == sorted([ADMIN_ID, mia])
+        assert r.json()["schreibgeschuetzt"] is False
+
+
 class TestFremderMandantLesen:
     def test_fremd_wie_unbekannt(self, admin, kc):
         fremd = kc.add_user("x@fremdfirma.de", FREMD)
@@ -1077,7 +1107,7 @@ def test_rollenlisten_stimmen_ueberein():
 - [ ] **Step 2: Rot bestätigen**
 
 Run: `cd backend && REDIS_URL=memory:// /Users/nikolajunser-richter/minga-greens-erp/.venv/bin/python -m pytest tests/test_benutzerverwaltung.py -v -p no:cacheprovider`
-Erwartet: **18 failed, 19 passed**. Grün sind die 18 Tests aus Task 1 und `TestZugriff::test_kein_loeschen` (die SPA-Fallback-Route `main.py:1029` kennt nur GET und antwortet auf DELETE mit 405). `test_rollenlisten_stimmen_ueberein` scheitert an `ModuleNotFoundError: No module named 'app.schemas.user'`, die übrigen daran, dass `/api/v1/users` noch 404 liefert (erwartet 200, 403, 422 oder 503).
+Erwartet: **20 failed, 19 passed**. Grün sind die 18 Tests aus Task 1 und `TestZugriff::test_kein_loeschen` (die SPA-Fallback-Route `main.py:1029` kennt nur GET und antwortet auf DELETE mit 405). `test_rollenlisten_stimmen_ueberein` scheitert an `ModuleNotFoundError: No module named 'app.schemas.user'`, `TestDemoListe::test_nur_demo_logins_schreibgeschuetzt` an `ImportError` (`app.api.v1.users` fehlt), die übrigen daran, dass `/api/v1/users` noch 404 liefert (erwartet 200, 403, 422 oder 503).
 
 - [ ] **Step 3: Schemas anlegen**
 
@@ -1113,6 +1143,9 @@ class BenutzerResponse(BaseModel):
 class BenutzerListResponse(BaseModel):
     items: list[BenutzerResponse]
     total: int
+    #: True im Demo-Mandanten: Anlegen, Ändern und Passwort-Reset lehnt der Server
+    #: dort ab; das Frontend blendet die Schreibknöpfe aus (E-M6).
+    schreibgeschuetzt: bool = False
 
 
 class BenutzerCreate(BaseModel):
@@ -1174,6 +1207,7 @@ Kein Löschen: Benutzer werden deaktiviert (``enabled: false``).
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from datetime import datetime, timezone
@@ -1198,6 +1232,15 @@ router = APIRouter(prefix="/users", tags=["Benutzer"])
 #: Logging konfiguriert (uvicorn ohne --log-config): INFO aus app.* verwirft
 #: Pythons lastResort-Handler, WARNING landet im Container-Log.
 audit_logger = logging.getLogger("app.audit.benutzer")
+
+#: Die Demo hat öffentlich bekannte Logins (platform.py: DEMO_USERS, DEMO_PASSWORD).
+#: Keycloak-Änderungen setzt der nächtliche Demo-Reset NICHT zurück (er spielt
+#: nur die SQLite-Datei zurück) — ein Besucher könnte sonst Demo-Logins sperren.
+DEMO_MANDANT = DEFAULT_DEMO_SLUG
+#: E-Mail-Adressen der öffentlichen Demo-Logins, klein geschrieben. Im Mandanten
+#: demo zeigt die Liste nur diese Konten (E-M6); ab Task 3 schreiben diese Logins
+#: in keinem Mandanten.
+DEMO_LOGINS = frozenset(u["email"].lower() for u in DEMO_USERS)
 
 
 def _mandant(request: Request, user: CurrentUser) -> str:
@@ -1252,14 +1295,20 @@ def _antwort(b: dict, user: dict) -> BenutzerResponse:
     return BenutzerResponse(**b, is_self=(b["id"] == str(user.get("id"))))
 
 
+def _sichtbar(mandant: str, b: dict) -> bool:
+    """Im Demo-Mandanten sieht jeder Besucher die Liste: dort nur die öffentlichen
+    Demo-Konten, keine Test- oder Betreiberkonten mit tenant_slug=demo (E-M6)."""
+    return mandant != DEMO_MANDANT or (b.get("email") or "").lower() in DEMO_LOGINS
+
+
 @router.get("", response_model=BenutzerListResponse)
 def list_users(mandant: Mandant, user: CurrentUser):
     try:
         benutzer = kc.list_tenant_users(mandant)
     except kc.KeycloakAdminError as e:
         raise _fehler(e, mandant, user)
-    items = [_antwort(b, user) for b in benutzer]
-    return BenutzerListResponse(items=items, total=len(items))
+    items = [_antwort(b, user) for b in benutzer if _sichtbar(mandant, b)]
+    return BenutzerListResponse(items=items, total=len(items), schreibgeschuetzt=mandant == DEMO_MANDANT)
 
 
 @router.get("/{user_id}", response_model=BenutzerResponse)
@@ -1268,10 +1317,12 @@ def get_user(user_id: UUID, mandant: Mandant, user: CurrentUser):
         b = kc.get_tenant_user(mandant, str(user_id))
     except kc.KeycloakAdminError as e:
         raise _fehler(e, mandant, user, str(user_id))
+    if not _sichtbar(mandant, b):
+        raise HTTPException(status_code=404, detail="Benutzer nicht gefunden.")
     return _antwort(b, user)
 ```
 
-Die Importe `Response`, `BenutzerAngelegtResponse`, `BenutzerCreate`, `BenutzerUpdate`, `PasswortZurueckgesetztResponse`, `DEMO_USERS` und `DEFAULT_DEMO_SLUG` werden erst in Task 3–5 benutzt; sie stehen hier schon, damit spätere Tasks nur anhängen.
+Die Importe `hashlib`, `Response`, `BenutzerAngelegtResponse`, `BenutzerCreate`, `BenutzerUpdate` und `PasswortZurueckgesetztResponse` werden erst in Task 3–5 benutzt; sie stehen hier schon, damit spätere Tasks nur anhängen. `DEMO_USERS` und `DEFAULT_DEMO_SLUG` braucht schon dieser Task (`DEMO_MANDANT`, `DEMO_LOGINS`).
 
 - [ ] **Step 5: Router einhängen**
 
@@ -1308,7 +1359,7 @@ Der Block muss vor dem Catch-All `@app.get("/{full_path:path}")` (`main.py:1029`
 - [ ] **Step 6: Grün bestätigen**
 
 Run: `cd backend && REDIS_URL=memory:// /Users/nikolajunser-richter/minga-greens-erp/.venv/bin/python -m pytest tests/test_benutzerverwaltung.py -v -p no:cacheprovider`
-Erwartet: **37 passed**.
+Erwartet: **39 passed**.
 
 - [ ] **Step 7: Nachbarn**
 
@@ -1319,7 +1370,7 @@ Erwartet: alle grün.
 
 ```bash
 git add backend/app/schemas/user.py backend/app/api/v1/users.py backend/app/main.py backend/tests/test_benutzerverwaltung.py
-git commit -m "feat(benutzer): /api/v1/users — Liste und Einzelabruf nur im eigenen Mandanten"
+git commit -m "feat(benutzer): /api/v1/users — Liste und Einzelabruf nur im eigenen Mandanten, in der Demo nur Demo-Konten"
 ```
 
 ---
@@ -1336,9 +1387,11 @@ git commit -m "feat(benutzer): /api/v1/users — Liste und Einzelabruf nur im ei
 - Produces:
   - `keycloak_admin._deaktivieren_best_effort(kc, user_id, username) -> bool` (sperrt nur, wenn der Benutzername der ID stimmt), `keycloak_admin._rolle_rep(kc, role) -> dict` (404 → `KeycloakNichtErreichbar` „Rolle '…' fehlt in Keycloak — bitte den Support informieren."; `composite: true` → `KeycloakNichtErreichbar` „… zusammengesetzt …"), `keycloak_admin._neue_user_id(kc, antwort, username) -> str` (Location-Header, sonst genau ein exakter Treffer)
   - `keycloak_admin.create_user_for_tenant(*, tenant_slug, email, first_name, last_name, role) -> dict` (Benutzer-Dict plus `temporary_password`)
-  - `users.DEMO_MANDANT` (= `"demo"`), `users.DEMO_LOGINS`, `users._ist_demo_login(user)`, `users._mandant_schreiben`, `users.MandantSchreiben`
-  - Route `POST /api/v1/users`; Audit `BENUTZER_ANGELEGT` mit `ziel_id`, `ziel_email`, `rolle`; bei 409 Audit `ANLAGE_ABGELEHNT` mit `ziel_email`
+  - `users._ist_demo_login(user)`, `users._mandant_schreiben`, `users.MandantSchreiben` (nutzen `DEMO_MANDANT` und `DEMO_LOGINS` aus Task 2), `users._email_hash(email) -> str` (SHA-256-Hexdigest von `email.strip().lower()`)
+  - Route `POST /api/v1/users`; Audit `BENUTZER_ANGELEGT` mit `ziel_id`, `ziel_email`, `rolle`; bei 409 Audit `ANLAGE_KONFLIKT` mit `ziel_email_sha256` und `grund`, **ohne** `ziel_email`
   - Test-Helfer `_neu(admin, **kw)`
+
+**Manager-Entscheidung E-M7 (hier umgesetzt):** Eine vergebene E-Mail-Adresse kann einem anderen Mandanten gehören. Der 409 landet deshalb als `ANLAGE_KONFLIKT` im Audit, mit `ziel_email_sha256` = `hashlib.sha256(email.strip().lower().encode("utf-8")).hexdigest()` statt der Adresse. Wiederholtes Abklopfen derselben Adresse bleibt am gleichen Hash erkennbar; für die Betriebsregel aus M3 lässt sich eine vermutete Adresse gegen den Hash prüfen. Die Adresse steht weder im Log noch in der Antwort (Test `test_email_vergeben`), ab Task 6b auch nicht in der Tabelle.
 
 - [ ] **Step 1: Tests anhängen**
 
@@ -1394,16 +1447,20 @@ class TestAnlegen:
         assert kc.schreibende_calls() == []
 
     def test_email_vergeben(self, admin, kc, caplog):
+        """E-M7: Die Adresse gehört womöglich einem anderen Mandanten — im Audit nur ihr Hash."""
         caplog.set_level("WARNING", logger="app.audit.benutzer")
         fremd = kc.add_user("lena@beispielfirma.de", FREMD)
-        r = _neu(admin)
+        r = _neu(admin, email="Lena@Beispielfirma.DE")
         assert r.status_code == 409
         assert r.json()["detail"] == "Diese E-Mail-Adresse ist bereits vergeben."
         assert kc.schreibende_calls(fremd) == []
         assert kc.users[fremd]["attributes"] == {"tenant_slug": [FREMD]}
         z = _audit_zeilen(caplog)
-        assert (z[-1]["aktion"], z[-1]["ziel_email"], z[-1]["von_id"]) == (
-            "ANLAGE_ABGELEHNT", "lena@beispielfirma.de", ADMIN_ID)
+        assert (z[-1]["aktion"], z[-1]["von_id"]) == ("ANLAGE_KONFLIKT", ADMIN_ID)
+        assert z[-1]["ziel_email_sha256"] == hashlib.sha256(b"lena@beispielfirma.de").hexdigest()
+        assert "ziel_email" not in z[-1]
+        assert "lena@beispielfirma.de" not in caplog.text.lower()
+        assert "lena@beispielfirma.de" not in r.text.lower()
 
     def test_email_klein_geschrieben(self, admin, kc):
         r = _neu(admin, email="Lena.Lager@Beispielfirma.DE")
@@ -1519,7 +1576,7 @@ class TestAnlegen:
 - [ ] **Step 2: Rot bestätigen**
 
 Run: `cd backend && REDIS_URL=memory:// /Users/nikolajunser-richter/minga-greens-erp/.venv/bin/python -m pytest tests/test_benutzerverwaltung.py -v -p no:cacheprovider`
-Erwartet: **26 failed, 37 passed** — alle neuen Tests rot (POST antwortet 405, `create_user_for_tenant` fehlt, `users.DEMO_MANDANT` fehlt).
+Erwartet: **26 failed, 39 passed** — alle neuen Tests rot (POST antwortet 405, `create_user_for_tenant` fehlt). `test_demo_gesperrt` kommt an `users.DEMO_MANDANT == "demo"` und am Lesen (200) vorbei und scheitert erst am POST (405 statt 403).
 
 - [ ] **Step 3: Dienst — Anlegen**
 
@@ -1651,17 +1708,10 @@ def create_user_for_tenant(
 An `backend/app/api/v1/users.py` anhängen:
 
 ```python
-#: Die Demo hat öffentlich bekannte Logins (platform.py: DEMO_USERS, DEMO_PASSWORD).
-#: Keycloak-Änderungen setzt der nächtliche Demo-Reset NICHT zurück (er kopiert
-#: nur die SQLite-Datei) — ein Besucher könnte sonst Demo-Logins sperren.
-DEMO_MANDANT = DEFAULT_DEMO_SLUG
-#: Die öffentlichen Demo-Logins schreiben in KEINEM Mandanten — auch nicht, wenn
-#: ihr tenant_slug verstellt wurde (B8-Plan, Deploy-Gate D5). Benutzername UND E-Mail,
-#: weil sich die E-Mail je nach Realm-Einstellung selbst ändern lässt.
-DEMO_LOGINS = frozenset(u["email"].lower() for u in DEMO_USERS)
-
-
 def _ist_demo_login(user: dict) -> bool:
+    """Die öffentlichen Demo-Logins schreiben in KEINEM Mandanten — auch nicht, wenn
+    ihr tenant_slug verstellt wurde (B8-Plan, Deploy-Gate D5). Benutzername UND E-Mail,
+    weil sich die E-Mail je nach Realm-Einstellung selbst ändern lässt."""
     return any((user.get(k) or "").strip().lower() in DEMO_LOGINS for k in ("username", "email"))
 
 
@@ -1676,6 +1726,12 @@ def _mandant_schreiben(mandant: Mandant, user: CurrentUser) -> str:
 MandantSchreiben = Annotated[str, Depends(_mandant_schreiben)]
 
 
+def _email_hash(email: str) -> str:
+    """SHA-256 der klein geschriebenen Adresse (E-M7): wiederholtes Abklopfen bleibt
+    erkennbar, ohne dass eine womöglich fremde Adresse im Klartext gespeichert wird."""
+    return hashlib.sha256(email.strip().lower().encode("utf-8")).hexdigest()
+
+
 @router.post("", response_model=BenutzerAngelegtResponse, status_code=201)
 def create_user(body: BenutzerCreate, mandant: MandantSchreiben, user: CurrentUser, response: Response):
     try:
@@ -1685,8 +1741,10 @@ def create_user(body: BenutzerCreate, mandant: MandantSchreiben, user: CurrentUs
         )
     except kc.KeycloakAdminError as e:
         if isinstance(e, kc.KeycloakKonflikt):
-            # Die 409 verrät, dass die Adresse irgendwo im Realm existiert: festhalten.
-            _audit("ANLAGE_ABGELEHNT", mandant, user, ziel_email=body.email, grund="E-Mail vergeben")
+            # Die 409 verrät, dass die Adresse irgendwo im Realm existiert, womöglich
+            # bei einem anderen Mandanten: festhalten, aber nur als Hash (E-M7).
+            _audit("ANLAGE_KONFLIKT", mandant, user, ziel_email_sha256=_email_hash(body.email),
+                   grund="E-Mail vergeben")
         raise _fehler(e, mandant, user)
     _audit("BENUTZER_ANGELEGT", mandant, user, ziel_id=b["id"], ziel_email=b["email"], rolle=body.role)
     response.headers["Cache-Control"] = "no-store"
@@ -1697,7 +1755,10 @@ def create_user(body: BenutzerCreate, mandant: MandantSchreiben, user: CurrentUs
 - [ ] **Step 5: Grün bestätigen**
 
 Run: `cd backend && REDIS_URL=memory:// /Users/nikolajunser-richter/minga-greens-erp/.venv/bin/python -m pytest tests/test_benutzerverwaltung.py -v -p no:cacheprovider`
-Erwartet: **63 passed**.
+Erwartet: **65 passed**.
+
+Run (aus dem Repo-Wurzelverzeichnis): `grep -n "ANLAGE_ABGELEHNT\|ziel_email=body.email" backend/app/api/v1/users.py`
+Erwartet: keine Ausgabe (E-M7: kein Klartext-Audit beim 409).
 
 - [ ] **Step 6: Commit**
 
@@ -1928,7 +1989,7 @@ class TestSchutzregeln:
 - [ ] **Step 2: Rot bestätigen**
 
 Run: `cd backend && REDIS_URL=memory:// /Users/nikolajunser-richter/minga-greens-erp/.venv/bin/python -m pytest tests/test_benutzerverwaltung.py -v -p no:cacheprovider`
-Erwartet: **40 failed, 63 passed** — PATCH antwortet 405, `update_tenant_user` fehlt.
+Erwartet: **40 failed, 65 passed** — PATCH antwortet 405, `update_tenant_user` fehlt.
 
 - [ ] **Step 3: Dienst — Ändern**
 
@@ -2116,7 +2177,7 @@ def update_user(user_id: UUID, body: BenutzerUpdate, mandant: MandantSchreiben, 
 - [ ] **Step 5: Grün bestätigen**
 
 Run: `cd backend && REDIS_URL=memory:// /Users/nikolajunser-richter/minga-greens-erp/.venv/bin/python -m pytest tests/test_benutzerverwaltung.py -v -p no:cacheprovider`
-Erwartet: **103 passed**.
+Erwartet: **105 passed**.
 
 - [ ] **Step 6: Commit**
 
@@ -2218,7 +2279,7 @@ class TestPasswort:
 - [ ] **Step 2: Rot bestätigen**
 
 Run: `cd backend && REDIS_URL=memory:// /Users/nikolajunser-richter/minga-greens-erp/.venv/bin/python -m pytest tests/test_benutzerverwaltung.py -v -p no:cacheprovider`
-Erwartet: **15 failed, 103 passed** — POST `…/reset-password` antwortet 405, `reset_tenant_user_password` fehlt.
+Erwartet: **15 failed, 105 passed** — POST `…/reset-password` antwortet 405, `reset_tenant_user_password` fehlt.
 
 - [ ] **Step 3: Dienst — Passwort**
 
@@ -2265,7 +2326,7 @@ def reset_password(user_id: UUID, mandant: MandantSchreiben, user: CurrentUser, 
 - [ ] **Step 5: Grün bestätigen**
 
 Run: `cd backend && REDIS_URL=memory:// /Users/nikolajunser-richter/minga-greens-erp/.venv/bin/python -m pytest tests/test_benutzerverwaltung.py -v -p no:cacheprovider`
-Erwartet: **118 passed**.
+Erwartet: **120 passed**.
 
 - [ ] **Step 6: Commit**
 
@@ -2320,7 +2381,7 @@ class TestSchreibbremse:
 - [ ] **Step 2: Rot bestätigen**
 
 Run: `cd backend && REDIS_URL=memory:// /Users/nikolajunser-richter/minga-greens-erp/.venv/bin/python -m pytest tests/test_benutzerverwaltung.py -v -p no:cacheprovider`
-Erwartet: **1 failed, 118 passed** — `test_schreibbremse_je_mandant` scheitert mit `AttributeError: <module 'app.api.v1.users' …> has no attribute 'SCHREIBEN_JE_MINUTE'`.
+Erwartet: **1 failed, 120 passed** — `test_schreibbremse_je_mandant` scheitert mit `AttributeError: <module 'app.api.v1.users' …> has no attribute 'SCHREIBEN_JE_MINUTE'`.
 
 - [ ] **Step 3: Router — Schreibbremse**
 
@@ -2396,7 +2457,7 @@ def update_user(user_id: UUID, body: BenutzerUpdate, mandant: MandantSchreibenGe
 def reset_password(user_id: UUID, mandant: MandantSchreibenGebremst, user: CurrentUser, response: Response):
 ```
 
-`_schreibbremse` hängt an `MandantSchreiben`. Die Demo-Sperre (403) greift also zuerst, ein gesperrter Aufruf zählt nicht. Der `except`-Block in `create_user` (Audit `ANLAGE_ABGELEHNT`) bleibt unverändert.
+`_schreibbremse` hängt an `MandantSchreiben`. Die Demo-Sperre (403) greift also zuerst, ein gesperrter Aufruf zählt nicht. Der `except`-Block in `create_user` (Audit `ANLAGE_KONFLIKT`) bleibt unverändert.
 
 In `backend/tests/test_benutzerverwaltung.py`, Fixture `admin`, ersetzen (sonst stoßen die über 30 schreibenden Tests dieser Datei an die Bremse):
 
@@ -2417,7 +2478,7 @@ def admin(client, kc):
 - [ ] **Step 4: Grün bestätigen**
 
 Run: `cd backend && REDIS_URL=memory:// /Users/nikolajunser-richter/minga-greens-erp/.venv/bin/python -m pytest tests/test_benutzerverwaltung.py -v -p no:cacheprovider`
-Erwartet: **119 passed**.
+Erwartet: **121 passed**.
 
 - [ ] **Step 5: Commit**
 
@@ -2428,13 +2489,789 @@ git commit -m "fix(benutzer): Schreibbremse je Mandant für Anlegen, Ändern und
 
 ---
 
+### Task 6b: Benutzer-Audit dauerhaft in der Mandanten-DB
+
+**Files:**
+- Create: `backend/app/models/benutzer_audit.py`
+- Modify: `backend/app/models/__init__.py` (Import nach dem `growth_event`-Block, Eintrag am Ende von `__all__`)
+- Modify: `backend/app/api/v1/users.py` (Importe, `_audit` und Anfang von `_fehler`, alle fünf Routen: Parameter `db: DBSession`, Audit-Aufrufe mit `db`; in `create_user` zusätzlich `ANLAGE_TEILWEISE`)
+- Modify: `backend/app/services/keycloak_admin.py` (je ein Block in `create_user_for_tenant`, `update_tenant_user`, `reset_tenant_user_password`: Teilerfolg bei Keycloak-Ausfall gelangt ins Audit)
+- Test: `backend/tests/test_benutzerverwaltung.py` (anhängen)
+
+**Interfaces:**
+- Consumes: Tasks 2–6 (`_audit`, `_fehler`, die fünf Routen, `_neu`, `_supportkonto`, Fixtures `admin`, `kc`); `create_user_for_tenant` (Task 3), `update_tenant_user` (Task 4), `reset_tenant_user_password` (Task 5); `Base` (`app/database.py:27`); `DBSession` (`app/api/deps.py:21`, je Request die Session der Mandanten-DB); Fixture `db` aus `tests/conftest.py:43-55` (dieselbe In-Memory-DB, die die Fixture `client` per `_tenant_db`-Override in die Routen reicht, `conftest.py:38-40`, `:73`); `tenancy.provision_tenant`, `tenancy.registry`, `snapshot_demo_seed`, `reset_demo_from_seed` (Muster `tests/test_demo_reset_migration.py`).
+- Produces:
+  - `app.models.benutzer_audit.BenutzerAudit` (Tabelle `benutzer_audit`): `id` (`Uuid`, auf SQLite `CHAR(32)`, Default `uuid4`), `zeitpunkt` (`DateTime`), `aktion` (`String(50)`), `ziel_user_id` (`String(36)`), `ziel_email` (`String(255)`), `ziel_email_sha256` (`String(64)`), `ausgefuehrt_von` (`String(255)`, Keycloak-`sub` des Admins), `details` (`JSON`); exportiert in `app.models` und `app.models.__all__`
+  - `users.AUDIT_NICHT_GESPEICHERT` (Text der 500), `users._AUDIT_SPALTEN`
+  - `users._audit(db, aktion, mandant, user, **felder)` — schreibt wie bisher die WARNING-Zeile, danach einen Datensatz und `db.commit()`; scheitert das: `db.rollback()`, ERROR-Zeile ohne Inhalt, `HTTPException(500, AUDIT_NICHT_GESPEICHERT)`
+  - `users._fehler(e, mandant, user, db, ziel_id=None)`
+  - Alle fünf Routen mit `db: DBSession` als letztem Parameter
+  - Audit `ANLAGE_TEILWEISE` in `create_user`, sobald die Ausnahme `angelegt` trägt
+  - `keycloak_admin.create_user_for_tenant`: Scheitert nach erfolgreichem `POST /users` ein Schritt (ID ermitteln, Zurücklesen, Rolle zuweisen), trägt die Ausnahme `angelegt = {"ziel_id": <ID oder None>, "ziel_email": <Adresse>, "deaktiviert": <bool>}`; `_neue_user_id` liegt dafür im `try`-Block
+  - `keycloak_admin.update_tenant_user`: Sitzungen beenden und Zurücklesen liegen im `try`-Block; scheitert das Zurücklesen, trägt die Ausnahme `teil_aenderungen`
+  - `keycloak_admin.reset_tenant_user_password`: liest die Rollen vor dem `PUT …/reset-password`; danach scheitert nichts mehr
+  - Test-Helfer `_audit_saetze(db)`, Klasse `TestAuditDauerhaft`
+
+**Manager-Entscheidung E-M1 (hier umgesetzt):** Das Container-Log überlebt keinen Redeploy. Deshalb schreibt `_audit` jede Audit-Zeile aus Task 2–5 zusätzlich als Datensatz in `benutzer_audit` der Mandanten-DB, an allen Stellen:
+
+| Aktion | Wo | Spalten | `details` |
+|---|---|---|---|
+| `BENUTZER_ANGELEGT` | `create_user` (Anlegen) | `ziel_user_id`, `ziel_email` | `rolle`, `von_name` |
+| `ANLAGE_KONFLIKT` | `create_user`, 409 (Konflikt) | nur `ziel_email_sha256` (E-M7) | `grund`, `von_name` |
+| `ANLAGE_TEILWEISE` | `create_user`, Konto in Keycloak angelegt, ein Folgeschritt gescheitert (502/503) | `ziel_user_id` (leer, wenn die ID nicht ermittelt wurde), `ziel_email` | `rolle`, `deaktiviert`, `fehler`, `von_name` |
+| `BENUTZER_GEAENDERT` | `update_user` (Ändern, Deaktivieren, Aktivieren) | `ziel_user_id`, `ziel_email` | `aenderungen` (z. B. `{"enabled": [true, false]}`), `von_name` |
+| `BENUTZER_TEILWEISE_GEAENDERT` | `update_user`, Schreibschritt oder Zurücklesen gescheitert | `ziel_user_id` | `aenderungen`, `fehler`, `von_name` |
+| `PASSWORT_ZURUECKGESETZT` | `reset_password` | `ziel_user_id`, `ziel_email` | `von_name` |
+| `FREMDZUGRIFF_ABGEWIESEN` | `_fehler` (GET, PATCH, Reset auf fremde ID) | `ziel_user_id` | `von_name` |
+| `SUPPORTKONTO_ABGEWIESEN` | `_fehler` (PATCH, Reset auf Supportkonto) | `ziel_user_id` | `von_name` |
+
+`ausgefuehrt_von` ist immer die Keycloak-ID des Admins (`von_id` der Logzeile). `mandant` und `zeit` der Logzeile stecken in der Datenbank selbst bzw. in `zeitpunkt`. Ein Passwort steht nie in der Logzeile, also auch nie im Datensatz. Lesen (`GET` ohne Fremdzugriff) und ein `PATCH` ohne Änderung schreiben nichts, ebenso eine Aktion, die vor dem ersten Schreiben an Keycloak scheitert (dann ist nichts geschehen). Einen GET-Endpunkt für die Tabelle gibt es nicht (E-M1); gelesen wird sie im Betrieb (Live-Prüfung L5).
+
+**Keycloak fällt mitten in einer Aktion aus (Review-Befund, nachgestellt).** Mit dem Code aus Task 3–5 endet eine Aktion mit 503 ohne jedes Audit, wenn Keycloak schon geschrieben hat und danach ein Lesezugriff scheitert: (a) Passwort-Reset, `GET …/role-mappings/realm` scheitert: Das Passwort ist gesetzt, denn `reset_tenant_user_password` las die Rollen erst nach `PUT …/reset-password` und `_sitzungen_beenden`. (b) `PATCH {enabled: false}`, `GET /users/{id}` nach dem `PUT` scheitert: Das Konto ist gesperrt, denn `update_tenant_user` las `rep_neu` und `_app_rollen` erst nach dem `try`-Block, die Ausnahme trug kein `teil_aenderungen`. (c) Anlegen, `POST …/role-mappings/realm` scheitert: Ein gesperrtes Konto mit `tenant_slug` bleibt in Keycloak, aber `create_user` auditierte im `except`-Zweig nur `KeycloakKonflikt`. Step 6 schließt das: (a) Die Rollen werden vor dem `PUT` gelesen; danach kann nichts mehr scheitern (`_sitzungen_beenden` meldet Fehler nur ins Log), ein Ausfall davor schreibt nichts. (b) Sitzungen beenden und Zurücklesen liegen im `try`-Block; die Route schreibt `BENUTZER_TEILWEISE_GEAENDERT` mit den geschehenen `aenderungen` und dem `fehler`. (c) Ab dem erfolgreichen `POST /users` trägt jede Ausnahme `angelegt` (ID, sofern ermittelt, Adresse, ob gesperrt); die Route schreibt `ANLAGE_TEILWEISE`. Die Adresse steht dort im Klartext: Keycloak hat sie gerade für dieses Konto im eigenen Mandanten angenommen (kein E-M7-Fall). Tests: `test_passwort_reset_liest_vor_dem_schreiben`, `test_zuruecklesen_scheitert_teilweise_geaendert`, `test_anlage_teilweise`.
+
+**Entscheidung: Fehler beim Speichern → 500, nicht verschluckt.** Der Datensatz geht in die Session der Mandanten-DB, die FastAPI dem Request gibt (`DBSession`), und wird sofort committet; andere Schreibzugriffe auf die Mandanten-DB haben diese Routen nicht. Scheitert das (Datei gesperrt, Platte voll, Tabelle fehlt): Rollback, eine ERROR-Zeile `[benutzer-audit] <AKTION> nicht in benutzer_audit gespeichert (<Fehlerklasse>)` und die Antwort 500 mit `AUDIT_NICHT_GESPEICHERT`. Begründung: Eine Benutzeraktion soll nie als Erfolg zurückkommen, ohne dass sie dauerhaft protokolliert ist; der Admin erfährt, dass etwas schiefging, und die Meldung sagt ihm, dass die Keycloak-Änderung trotzdem geschehen sein kann. **Folge, bewusst in Kauf genommen:** Keycloak und Mandanten-DB haben keine gemeinsame Transaktion. Die Keycloak-Änderung ist zum Zeitpunkt des Audits schon geschehen und wird nicht zurückgenommen. Bei Anlage und Passwort-Reset geht das Einmalpasswort verloren, weil es nie in einer Fehlerantwort steht (ein neuer Reset hilft, sobald die DB wieder schreibt). Die WARNING-Logzeile steht in jedem Fall schon im Log, die Spur ist also mindestens dort. Auch bei abgewiesenen Zugriffen (Fremdzugriff, Supportkonto, Konflikt) kommt dann 500 statt 404/409; das betrifft nur eine kaputte Mandanten-DB, in der die übrige App ohnehin nicht arbeitet. Der Test `test_speichern_scheitert_500` hält dieses Verhalten fest.
+
+**Wo die Tabelle entsteht** (keine Migration nötig, `_auto_migrate` nur für neue Spalten): `create_all` legt sie in jeder Mandanten-DB an, sobald `app.models` das Modell importiert. Das geschieht beim Start für alle vorhandenen Mandanten (`init_all_existing_tenants`, `main.py:150`), beim Anlegen eines Mandanten (`provision_tenant`) und **nach dem Demo-Reset**: Seit `d8e1db2` führt `reset_demo_from_seed` nach dem Zurückspielen `create_all` und `_auto_migrate` aus (`demo_reset_service.py:77-84`). Ein Golden-Seed von vor diesem Task bekommt die Tabelle also beim nächsten Reset. Ihr Inhalt im Mandanten `demo` geht jede Nacht mit dem Reset verloren; dort wird ohnehin nicht geschrieben (403 vor jedem Audit), es landen dort nur abgewiesene Fremd- oder Supportzugriffe. Im Test legt die Fixture `client` die Tabelle in der In-Memory-DB an (`Base.metadata.create_all`, `conftest.py:75`), weil `users.py` das Modell importiert.
+
+- [ ] **Step 1: Tests anhängen**
+
+An `backend/tests/test_benutzerverwaltung.py` anhängen:
+
+```python
+def _audit_saetze(db):
+    """Alle Datensätze aus benutzer_audit, ältester zuerst. ``db`` ist die Fixture aus
+    conftest.py: dieselbe In-Memory-DB, die die Fixture ``client`` den Routen gibt."""
+    from app.models import BenutzerAudit
+    return db.query(BenutzerAudit).order_by(BenutzerAudit.zeitpunkt).all()
+
+
+class TestAuditDauerhaft:
+    """E-M1: Jede Audit-Zeile steht zusätzlich in der Tabelle benutzer_audit der
+    Mandanten-DB — das Container-Log überlebt keinen Redeploy."""
+
+    def test_modell_in_app_models_registriert(self):
+        """Nur was app.models importiert, legt create_all in den Mandanten-DBs an."""
+        import app.models
+        assert "BenutzerAudit" in app.models.__all__
+        assert app.models.BenutzerAudit.__tablename__ == "benutzer_audit"
+
+    def test_neue_mandanten_db_hat_die_tabelle(self, tmp_path, monkeypatch):
+        from sqlalchemy import inspect
+        from app import tenancy
+        monkeypatch.setattr(tenancy, "TENANTS_DIR", tmp_path)
+        try:
+            tenancy.provision_tenant("b8-audit", seed_defaults=False)
+            spalten = {s["name"]: str(s["type"]) for s in
+                       inspect(tenancy.registry.get_engine("b8-audit")).get_columns("benutzer_audit")}
+        finally:
+            tenancy.registry.dispose_tenant("b8-audit")
+        assert set(spalten) == {"id", "zeitpunkt", "aktion", "ziel_user_id", "ziel_email",
+                                "ziel_email_sha256", "ausgefuehrt_von", "details"}
+        assert spalten["id"] == "CHAR(32)"
+
+    def test_demo_reset_legt_tabelle_an(self, tmp_path, monkeypatch):
+        """Ein Golden-Seed von vor Task 6b hat die Tabelle nicht. Der Reset legt sie
+        seit d8e1db2 per create_all an (Muster: test_demo_reset_migration.py)."""
+        import sqlite3
+        from sqlalchemy import inspect
+        from app import tenancy
+        from app.services.demo_reset_service import reset_demo_from_seed, snapshot_demo_seed
+        monkeypatch.setattr(tenancy, "TENANTS_DIR", tmp_path)
+        tenancy.registry.dispose_all()
+        try:
+            tenancy.provision_tenant("demo", seed_defaults=False)
+            seed = snapshot_demo_seed("demo")["seed"]
+            with sqlite3.connect(seed) as verbindung:
+                verbindung.execute("DROP TABLE benutzer_audit")
+                verbindung.commit()
+                verbindung.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            assert reset_demo_from_seed("demo")["migriert"] is True
+            tabellen = inspect(tenancy.registry.get_engine("demo")).get_table_names()
+        finally:
+            tenancy.registry.dispose_all()
+        assert "benutzer_audit" in tabellen
+
+    def test_anlegen(self, admin, kc, db):
+        r = _neu(admin)
+        assert r.status_code == 201, r.text
+        (s,) = _audit_saetze(db)
+        assert (s.aktion, s.ziel_user_id, s.ziel_email, s.ziel_email_sha256, s.ausgefuehrt_von) == (
+            "BENUTZER_ANGELEGT", r.json()["id"], "lena@beispielfirma.de", None, ADMIN_ID)
+        assert s.details == {"rolle": "production_staff", "von_name": "chefin@beispielfirma.de"}
+        assert s.zeitpunkt is not None
+        assert r.json()["temporary_password"] not in json.dumps(s.details)
+
+    def test_konflikt_nur_als_hash(self, admin, kc, db):
+        """E-M7: Die Adresse gehört womöglich einem anderen Mandanten."""
+        kc.add_user("lena@beispielfirma.de", FREMD)
+        assert _neu(admin).status_code == 409
+        (s,) = _audit_saetze(db)
+        assert (s.aktion, s.ziel_user_id, s.ziel_email, s.ausgefuehrt_von) == (
+            "ANLAGE_KONFLIKT", None, None, ADMIN_ID)
+        assert s.ziel_email_sha256 == hashlib.sha256(b"lena@beispielfirma.de").hexdigest()
+        assert s.details == {"grund": "E-Mail vergeben", "von_name": "chefin@beispielfirma.de"}
+
+    def test_anlage_teilweise(self, admin, kc, db, monkeypatch):
+        """Keycloak legt an, die Rollenzuweisung scheitert: Das Konto existiert
+        (gesperrt, ohne Rolle) und gehört in die Spur, obwohl die Antwort 503 ist."""
+        orig = kc.handler
+
+        def handler(request):
+            if request.method == "POST" and request.url.path.endswith("/role-mappings/realm"):
+                return httpx.Response(503, json={"error": "kurz weg"})
+            return orig(request)
+
+        monkeypatch.setattr(keycloak_admin, "_http_client",
+                            lambda: httpx.Client(transport=httpx.MockTransport(handler)))
+        r = _neu(admin)
+        assert r.status_code == 503, r.text
+        neu = next(u for u in kc.users.values() if u["username"] == "lena@beispielfirma.de")
+        assert neu["enabled"] is False
+        (s,) = _audit_saetze(db)
+        assert (s.aktion, s.ziel_user_id, s.ziel_email, s.ziel_email_sha256, s.ausgefuehrt_von) == (
+            "ANLAGE_TEILWEISE", neu["id"], "lena@beispielfirma.de", None, ADMIN_ID)
+        assert (s.details["rolle"], s.details["deaktiviert"]) == ("production_staff", True)
+        assert "deaktiviert" in s.details["fehler"]
+
+    def test_aendern_deaktivieren_aktivieren(self, admin, kc, db):
+        uid = kc.add_user("lena@beispielfirma.de", MANDANT, roles={"production_staff"}, first="Lena")
+        for body in ({"first_name": "Helena"}, {"enabled": False}, {"enabled": True}):
+            assert admin.patch(f"/api/v1/users/{uid}", json=body).status_code == 200
+        saetze = _audit_saetze(db)
+        assert [s.aktion for s in saetze] == ["BENUTZER_GEAENDERT"] * 3
+        assert [s.details["aenderungen"] for s in saetze] == [
+            {"first_name": ["Lena", "Helena"]}, {"enabled": [True, False]}, {"enabled": [False, True]}]
+        assert {(s.ziel_user_id, s.ziel_email, s.ausgefuehrt_von) for s in saetze} == {
+            (uid, "lena@beispielfirma.de", ADMIN_ID)}
+
+    def test_teilweise_geaendert(self, admin, kc, db):
+        uid = kc.add_user("lena@beispielfirma.de", MANDANT, roles={"production_staff"}, first="Lena")
+        kc.fehler_bei = ("POST", f"/users/{uid}/role-mappings/realm")
+        r = admin.patch(f"/api/v1/users/{uid}", json={"first_name": "Helena", "role": "sales"})
+        assert r.status_code == 503, r.text
+        (s,) = _audit_saetze(db)
+        assert (s.aktion, s.ziel_user_id) == ("BENUTZER_TEILWEISE_GEAENDERT", uid)
+        assert s.details["aenderungen"] == {"first_name": ["Lena", "Helena"], "roles": [["production_staff"], []]}
+        assert s.details["fehler"]
+
+    def test_zuruecklesen_scheitert_teilweise_geaendert(self, admin, kc, db, monkeypatch):
+        """Keycloak schreibt und fällt beim Zurücklesen aus: Die Änderung ist geschehen
+        und gehört als Teiländerung in die Spur."""
+        uid = kc.add_user("lena@beispielfirma.de", MANDANT, roles={"production_staff"})
+        orig = kc.handler
+
+        def handler(request):
+            geschrieben = any(c[0] == "PUT" and c[1].endswith(f"/users/{uid}") for c in kc.calls)
+            if geschrieben and request.method == "GET" and request.url.path.endswith(f"/users/{uid}"):
+                return httpx.Response(503, json={"error": "kurz weg"})
+            return orig(request)
+
+        monkeypatch.setattr(keycloak_admin, "_http_client",
+                            lambda: httpx.Client(transport=httpx.MockTransport(handler)))
+        r = admin.patch(f"/api/v1/users/{uid}", json={"enabled": False})
+        assert r.status_code == 503, r.text
+        assert kc.users[uid]["enabled"] is False
+        (s,) = _audit_saetze(db)
+        assert (s.aktion, s.ziel_user_id, s.ausgefuehrt_von) == ("BENUTZER_TEILWEISE_GEAENDERT", uid, ADMIN_ID)
+        assert s.details["aenderungen"] == {"enabled": [True, False]}
+        assert s.details["fehler"]
+
+    def test_passwort_reset_ohne_passwort(self, admin, kc, db):
+        uid = kc.add_user("lena@beispielfirma.de", MANDANT, roles={"production_staff"})
+        pw = admin.post(f"/api/v1/users/{uid}/reset-password").json()["temporary_password"]
+        (s,) = _audit_saetze(db)
+        assert (s.aktion, s.ziel_user_id, s.ziel_email, s.ausgefuehrt_von) == (
+            "PASSWORT_ZURUECKGESETZT", uid, "lena@beispielfirma.de", ADMIN_ID)
+        assert pw not in json.dumps(s.details)
+
+    def test_passwort_reset_liest_vor_dem_schreiben(self, admin, kc, db):
+        """Nach dem PUT darf nichts mehr scheitern, sonst wäre das Passwort gesetzt,
+        aber weder geliefert noch protokolliert. Fällt Keycloak beim Lesen der Rollen
+        aus, ist noch nichts geschrieben — und nichts zu protokollieren."""
+        uid = kc.add_user("lena@beispielfirma.de", MANDANT, roles={"production_staff"})
+        kc.fehler_bei = ("GET", f"/users/{uid}/role-mappings/realm")
+        r = admin.post(f"/api/v1/users/{uid}/reset-password")
+        assert r.status_code == 503, r.text
+        assert uid not in kc.passwords and kc.schreibende_calls(uid) == []
+        assert _audit_saetze(db) == []
+
+    def test_abgewiesene_zugriffe(self, admin, kc, db):
+        fremd = kc.add_user("x@fremdfirma.de", FREMD)
+        support = _supportkonto(kc, "gruppe")
+        assert admin.get(f"/api/v1/users/{fremd}").status_code == 404
+        assert admin.post(f"/api/v1/users/{support}/reset-password").status_code == 409
+        assert [(s.aktion, s.ziel_user_id) for s in _audit_saetze(db)] == [
+            ("FREMDZUGRIFF_ABGEWIESEN", fremd), ("SUPPORTKONTO_ABGEWIESEN", support)]
+
+    def test_lesen_und_leerer_patch_ohne_eintrag(self, admin, kc, db):
+        uid = kc.add_user("lena@beispielfirma.de", MANDANT, roles={"production_staff"})
+        assert admin.get("/api/v1/users").status_code == 200
+        assert admin.get(f"/api/v1/users/{uid}").status_code == 200
+        assert admin.patch(f"/api/v1/users/{uid}", json={"first_name": "Vor"}).status_code == 200
+        assert _audit_saetze(db) == []
+
+    def test_speichern_scheitert_500(self, admin, kc, db, caplog):
+        """Entscheidung zu E-M1: Audit-Fehler → 500 statt Erfolg. Keycloak und
+        Mandanten-DB haben keine gemeinsame Transaktion: Das Passwort ist in
+        Keycloak schon gesetzt, die Antwort enthält es nicht, die Logzeile steht."""
+        from app.api.v1 import users as benutzer_api
+        from app.models import BenutzerAudit
+        caplog.set_level("WARNING", logger="app.audit.benutzer")
+        uid = kc.add_user("lena@beispielfirma.de", MANDANT, roles={"production_staff"})
+        BenutzerAudit.__table__.drop(bind=db.get_bind())
+        r = admin.post(f"/api/v1/users/{uid}/reset-password")
+        assert r.status_code == 500
+        assert r.json() == {"detail": benutzer_api.AUDIT_NICHT_GESPEICHERT}
+        assert uid in kc.passwords
+        assert kc.passwords[uid]["value"] not in r.text
+        zeilen = [z for z in caplog.records if z.name == "app.audit.benutzer"]
+        assert [z.levelname for z in zeilen] == ["WARNING", "ERROR"]
+        assert "PASSWORT_ZURUECKGESETZT" in zeilen[0].getMessage()
+        assert zeilen[1].getMessage() == (
+            "[benutzer-audit] PASSWORT_ZURUECKGESETZT nicht in benutzer_audit gespeichert (OperationalError)")
+        assert kc.passwords[uid]["value"] not in caplog.text
+```
+
+- [ ] **Step 2: Rot bestätigen**
+
+Run: `cd backend && REDIS_URL=memory:// /Users/nikolajunser-richter/minga-greens-erp/.venv/bin/python -m pytest tests/test_benutzerverwaltung.py -v -p no:cacheprovider`
+Erwartet: **14 failed, 121 passed** — `test_modell_in_app_models_registriert` an `assert "BenutzerAudit" in app.models.__all__`, die beiden Tenancy-Tests an der fehlenden Tabelle (`NoSuchTableError` bzw. `sqlite3.OperationalError: no such table: benutzer_audit`), `test_passwort_reset_liest_vor_dem_schreiben` an `assert uid not in kc.passwords and …` (der Reset setzt das Passwort noch, bevor das Lesen der Rollen scheitert), die übrigen zehn an `ImportError: cannot import name 'BenutzerAudit' from 'app.models'`.
+
+- [ ] **Step 3: Modell anlegen**
+
+`backend/app/models/benutzer_audit.py`:
+
+```python
+"""Benutzer-Audit: dauerhafte Spur der Benutzerverwaltung (Paket 4, B8, E-M1).
+
+Jede Audit-Zeile aus app/api/v1/users.py (_audit) steht als WARNING im
+Container-Log, und das überlebt keinen Redeploy. Deshalb liegt jede Zeile
+zusätzlich hier, in der Datenbank des Mandanten. Kein Fremdschlüssel: Die
+Benutzer leben in Keycloak, nicht in dieser Datenbank, und werden nie gelöscht.
+
+Eine vergebene E-Mail-Adresse (ANLAGE_KONFLIKT) steht nur als SHA-256 in
+ziel_email_sha256, weil sie einem anderen Mandanten gehören kann (E-M7).
+Passwörter stehen nie hier.
+"""
+from __future__ import annotations
+
+import uuid
+from datetime import datetime, timezone
+from typing import Optional
+
+from sqlalchemy import DateTime, String
+from sqlalchemy.types import JSON, Uuid
+from sqlalchemy.orm import Mapped, mapped_column
+
+from app.database import Base
+
+
+class BenutzerAudit(Base):
+    __tablename__ = "benutzer_audit"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    zeitpunkt: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc), nullable=False
+    )
+    # BENUTZER_ANGELEGT, ANLAGE_KONFLIKT, ANLAGE_TEILWEISE, BENUTZER_GEAENDERT,
+    # BENUTZER_TEILWEISE_GEAENDERT, PASSWORT_ZURUECKGESETZT, FREMDZUGRIFF_ABGEWIESEN,
+    # SUPPORTKONTO_ABGEWIESEN
+    aktion: Mapped[str] = mapped_column(String(50), nullable=False)
+    # Keycloak-ID des Zielbenutzers; fehlt bei ANLAGE_KONFLIKT und bei ANLAGE_TEILWEISE,
+    # wenn die ID des angelegten Kontos nicht ermittelt wurde
+    ziel_user_id: Mapped[Optional[str]] = mapped_column(String(36))
+    ziel_email: Mapped[Optional[str]] = mapped_column(String(255))
+    ziel_email_sha256: Mapped[Optional[str]] = mapped_column(String(64))
+    # Keycloak-ID (Token-Claim sub) des Admins, der die Aktion ausgelöst hat
+    ausgefuehrt_von: Mapped[Optional[str]] = mapped_column(String(255))
+    # Übrige Felder der Logzeile: von_name, rolle, aenderungen, fehler, grund, deaktiviert
+    details: Mapped[Optional[dict]] = mapped_column(JSON)
+
+    def __repr__(self) -> str:
+        return f"<BenutzerAudit({self.aktion}, ziel={self.ziel_user_id})>"
+```
+
+- [ ] **Step 4: In `app.models` registrieren**
+
+`create_all` legt nur Tabellen von Modellen an, die beim Aufruf importiert sind; `provision_tenant`, `init_all_existing_tenants` und `reset_demo_from_seed` importieren dafür `app.models` (`tenancy.py:225`, `:247`, `demo_reset_service.py:62`).
+
+In `backend/app/models/__init__.py` ersetzen:
+
+```python
+from app.models.growth_event import (
+    GrowthBatchEvent,
+    GrowthEventType,
+    GROWTH_EVENT_LABELS,
+)
+```
+
+durch:
+
+```python
+from app.models.growth_event import (
+    GrowthBatchEvent,
+    GrowthEventType,
+    GROWTH_EVENT_LABELS,
+)
+
+# Benutzerverwaltung: dauerhafte Audit-Spur (Paket 4, B8)
+from app.models.benutzer_audit import BenutzerAudit
+```
+
+Ersetzen:
+
+```python
+    # Dienstplan
+    "StaffShift",
+    "StaffTask",
+]
+```
+
+durch:
+
+```python
+    # Dienstplan
+    "StaffShift",
+    "StaffTask",
+    # Benutzer-Audit
+    "BenutzerAudit",
+]
+```
+
+- [ ] **Step 5: Router — Audit mit Mandanten-DB**
+
+In `backend/app/api/v1/users.py` sieben Blöcke ersetzen, jeder kommt genau einmal vor.
+
+(1) Importe. Ersetzen:
+
+```python
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
+
+from app.api.deps import CurrentUser
+from app.api.v1.platform import DEMO_USERS
+```
+
+durch:
+
+```python
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from sqlalchemy.orm import Session
+
+from app.api.deps import CurrentUser, DBSession
+from app.api.v1.platform import DEMO_USERS
+from app.models.benutzer_audit import BenutzerAudit
+```
+
+(2) `_audit` und Anfang von `_fehler`. Ersetzen:
+
+```python
+def _audit(aktion: str, mandant: str, user: dict, **felder) -> None:
+    zeile = {
+        "aktion": aktion,
+        "mandant": mandant,
+        "von_id": user.get("id"),
+        "von_name": user.get("username"),
+        "zeit": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        **felder,
+    }
+    audit_logger.warning(
+        "[benutzer-audit] %s", json.dumps(zeile, ensure_ascii=False, sort_keys=True, default=str)
+    )
+
+
+def _fehler(e: kc.KeycloakAdminError, mandant: str, user: dict, ziel_id: str | None = None) -> HTTPException:
+    if isinstance(e, kc.KeycloakNichtGefunden):
+        if e.fremd:
+            _audit("FREMDZUGRIFF_ABGEWIESEN", mandant, user, ziel_id=ziel_id)
+        return HTTPException(status_code=404, detail="Benutzer nicht gefunden.")
+    if isinstance(e, kc.BenutzerVomSupportVerwaltet):
+        _audit("SUPPORTKONTO_ABGEWIESEN", mandant, user, ziel_id=ziel_id)
+```
+
+durch:
+
+```python
+#: Antwort, wenn die Audit-Zeile nicht in die Mandanten-DB kommt (Task 6b, E-M1).
+AUDIT_NICHT_GESPEICHERT = (
+    "Die Aktion konnte nicht protokolliert werden. Eine Änderung in Keycloak kann trotzdem "
+    "ausgeführt sein — bitte die Liste neu laden und den Support informieren."
+)
+#: Felder der Audit-Zeile mit eigener Spalte in benutzer_audit. Alle übrigen außer
+#: aktion, mandant und zeit landen in details.
+_AUDIT_SPALTEN = {
+    "von_id": "ausgefuehrt_von",
+    "ziel_id": "ziel_user_id",
+    "ziel_email": "ziel_email",
+    "ziel_email_sha256": "ziel_email_sha256",
+}
+
+
+def _audit(db: Session, aktion: str, mandant: str, user: dict, **felder) -> None:
+    """Audit-Zeile als WARNING ins Container-Log (wie bisher) UND dauerhaft in die
+    Tabelle benutzer_audit der Mandanten-DB (E-M1).
+
+    Die Logzeile kommt zuerst; sie steht auch dann im Log, wenn die Datenbank
+    streikt. Scheitert das Speichern, antwortet die API mit 500 statt mit einem
+    Erfolg: Keine Benutzeraktion gilt als erledigt, ohne dass sie dauerhaft
+    protokolliert ist. Keycloak und Mandanten-DB haben keine gemeinsame
+    Transaktion — die Keycloak-Änderung davor ist dann schon geschehen, bei
+    Anlage und Passwort-Reset geht das Einmalpasswort verloren (neuer Reset hilft).
+    """
+    jetzt = datetime.now(timezone.utc)
+    zeile = {
+        "aktion": aktion,
+        "mandant": mandant,
+        "von_id": user.get("id"),
+        "von_name": user.get("username"),
+        "zeit": jetzt.isoformat(timespec="seconds"),
+        **felder,
+    }
+    audit_logger.warning(
+        "[benutzer-audit] %s", json.dumps(zeile, ensure_ascii=False, sort_keys=True, default=str)
+    )
+    spalten = {spalte: (None if zeile.get(feld) is None else str(zeile[feld]))
+               for feld, spalte in _AUDIT_SPALTEN.items()}
+    details = {k: v for k, v in zeile.items() if k not in ("aktion", "mandant", "zeit", *_AUDIT_SPALTEN)}
+    try:
+        db.add(BenutzerAudit(zeitpunkt=jetzt, aktion=aktion, details=details or None, **spalten))
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        # Nur die Fehlerklasse: Die Meldung der Datenbank enthielte die Werte des Datensatzes.
+        audit_logger.error(
+            "[benutzer-audit] %s nicht in benutzer_audit gespeichert (%s)", aktion, type(e).__name__
+        )
+        raise HTTPException(status_code=500, detail=AUDIT_NICHT_GESPEICHERT) from None
+
+
+def _fehler(e: kc.KeycloakAdminError, mandant: str, user: dict, db: Session,
+            ziel_id: str | None = None) -> HTTPException:
+    if isinstance(e, kc.KeycloakNichtGefunden):
+        if e.fremd:
+            _audit(db, "FREMDZUGRIFF_ABGEWIESEN", mandant, user, ziel_id=ziel_id)
+        return HTTPException(status_code=404, detail="Benutzer nicht gefunden.")
+    if isinstance(e, kc.BenutzerVomSupportVerwaltet):
+        _audit(db, "SUPPORTKONTO_ABGEWIESEN", mandant, user, ziel_id=ziel_id)
+```
+
+(3) `list_users`. Ersetzen:
+
+```python
+def list_users(mandant: Mandant, user: CurrentUser):
+    try:
+        benutzer = kc.list_tenant_users(mandant)
+    except kc.KeycloakAdminError as e:
+        raise _fehler(e, mandant, user)
+```
+
+durch:
+
+```python
+def list_users(mandant: Mandant, user: CurrentUser, db: DBSession):
+    try:
+        benutzer = kc.list_tenant_users(mandant)
+    except kc.KeycloakAdminError as e:
+        raise _fehler(e, mandant, user, db)
+```
+
+(4) `get_user`. Ersetzen:
+
+```python
+def get_user(user_id: UUID, mandant: Mandant, user: CurrentUser):
+    try:
+        b = kc.get_tenant_user(mandant, str(user_id))
+    except kc.KeycloakAdminError as e:
+        raise _fehler(e, mandant, user, str(user_id))
+```
+
+durch:
+
+```python
+def get_user(user_id: UUID, mandant: Mandant, user: CurrentUser, db: DBSession):
+    try:
+        b = kc.get_tenant_user(mandant, str(user_id))
+    except kc.KeycloakAdminError as e:
+        raise _fehler(e, mandant, user, db, str(user_id))
+```
+
+(5) `create_user`. Ersetzen:
+
+```python
+def create_user(body: BenutzerCreate, mandant: MandantSchreibenGebremst, user: CurrentUser, response: Response):
+    try:
+        b = kc.create_user_for_tenant(
+            tenant_slug=mandant, email=body.email, first_name=body.first_name,
+            last_name=body.last_name, role=body.role,
+        )
+    except kc.KeycloakAdminError as e:
+        if isinstance(e, kc.KeycloakKonflikt):
+            # Die 409 verrät, dass die Adresse irgendwo im Realm existiert, womöglich
+            # bei einem anderen Mandanten: festhalten, aber nur als Hash (E-M7).
+            _audit("ANLAGE_KONFLIKT", mandant, user, ziel_email_sha256=_email_hash(body.email),
+                   grund="E-Mail vergeben")
+        raise _fehler(e, mandant, user)
+    _audit("BENUTZER_ANGELEGT", mandant, user, ziel_id=b["id"], ziel_email=b["email"], rolle=body.role)
+```
+
+durch:
+
+```python
+def create_user(body: BenutzerCreate, mandant: MandantSchreibenGebremst, user: CurrentUser,
+                response: Response, db: DBSession):
+    try:
+        b = kc.create_user_for_tenant(
+            tenant_slug=mandant, email=body.email, first_name=body.first_name,
+            last_name=body.last_name, role=body.role,
+        )
+    except kc.KeycloakAdminError as e:
+        if isinstance(e, kc.KeycloakKonflikt):
+            # Die 409 verrät, dass die Adresse irgendwo im Realm existiert, womöglich
+            # bei einem anderen Mandanten: festhalten, aber nur als Hash (E-M7).
+            _audit(db, "ANLAGE_KONFLIKT", mandant, user, ziel_email_sha256=_email_hash(body.email),
+                   grund="E-Mail vergeben")
+        elif getattr(e, "angelegt", None):
+            # Das Konto gibt es in Keycloak (eigener Mandant, gesperrt, wenn möglich), die
+            # Anlage ist aber nicht fertig: festhalten, sonst fehlte die Spur (E-M1).
+            _audit(db, "ANLAGE_TEILWEISE", mandant, user, **e.angelegt, rolle=body.role, fehler=str(e))
+        raise _fehler(e, mandant, user, db)
+    _audit(db, "BENUTZER_ANGELEGT", mandant, user, ziel_id=b["id"], ziel_email=b["email"], rolle=body.role)
+```
+
+(6) `update_user`. Ersetzen:
+
+```python
+def update_user(user_id: UUID, body: BenutzerUpdate, mandant: MandantSchreibenGebremst, user: CurrentUser):
+    try:
+        b, aenderungen = kc.update_tenant_user(
+            tenant_slug=mandant, user_id=str(user_id), acting_user_id=str(user.get("id")),
+            first_name=body.first_name, last_name=body.last_name,
+            enabled=body.enabled, role=body.role,
+        )
+    except kc.KeycloakAdminError as e:
+        teil = getattr(e, "teil_aenderungen", None)
+        if teil:
+            _audit("BENUTZER_TEILWEISE_GEAENDERT", mandant, user, ziel_id=str(user_id),
+                   aenderungen=teil, fehler=str(e))
+        raise _fehler(e, mandant, user, str(user_id))
+    if aenderungen:
+        _audit("BENUTZER_GEAENDERT", mandant, user, ziel_id=b["id"], ziel_email=b["email"],
+               aenderungen=aenderungen)
+```
+
+durch:
+
+```python
+def update_user(user_id: UUID, body: BenutzerUpdate, mandant: MandantSchreibenGebremst, user: CurrentUser,
+                db: DBSession):
+    try:
+        b, aenderungen = kc.update_tenant_user(
+            tenant_slug=mandant, user_id=str(user_id), acting_user_id=str(user.get("id")),
+            first_name=body.first_name, last_name=body.last_name,
+            enabled=body.enabled, role=body.role,
+        )
+    except kc.KeycloakAdminError as e:
+        teil = getattr(e, "teil_aenderungen", None)
+        if teil:
+            _audit(db, "BENUTZER_TEILWEISE_GEAENDERT", mandant, user, ziel_id=str(user_id),
+                   aenderungen=teil, fehler=str(e))
+        raise _fehler(e, mandant, user, db, str(user_id))
+    if aenderungen:
+        _audit(db, "BENUTZER_GEAENDERT", mandant, user, ziel_id=b["id"], ziel_email=b["email"],
+               aenderungen=aenderungen)
+```
+
+(7) `reset_password`. Ersetzen:
+
+```python
+def reset_password(user_id: UUID, mandant: MandantSchreibenGebremst, user: CurrentUser, response: Response):
+    try:
+        r = kc.reset_tenant_user_password(tenant_slug=mandant, user_id=str(user_id))
+    except kc.KeycloakAdminError as e:
+        raise _fehler(e, mandant, user, str(user_id))
+    _audit("PASSWORT_ZURUECKGESETZT", mandant, user, ziel_id=r["user"]["id"], ziel_email=r["user"]["email"])
+```
+
+durch:
+
+```python
+def reset_password(user_id: UUID, mandant: MandantSchreibenGebremst, user: CurrentUser, response: Response,
+                   db: DBSession):
+    try:
+        r = kc.reset_tenant_user_password(tenant_slug=mandant, user_id=str(user_id))
+    except kc.KeycloakAdminError as e:
+        raise _fehler(e, mandant, user, db, str(user_id))
+    _audit(db, "PASSWORT_ZURUECKGESETZT", mandant, user, ziel_id=r["user"]["id"], ziel_email=r["user"]["email"])
+```
+
+`db: DBSession` steht in jeder Route als letzter Parameter: FastAPI löst `Mandant`/`MandantSchreibenGebremst` und `CurrentUser` vorher auf, ein 403 oder 429 öffnet also keine Mandanten-DB. Bei einem 422 (Pfad oder Body ungültig) löst FastAPI dagegen alle Abhängigkeiten, auch `DBSession`, vor der Validierung auf; die Session baut ohne Abfrage keine Verbindung auf, und auditiert wird nichts.
+
+Prüfen (aus dem Repo-Wurzelverzeichnis):
+
+```bash
+grep -c '_audit(db, "' backend/app/api/v1/users.py
+grep -n '_audit("' backend/app/api/v1/users.py
+grep -c 'db: DBSession' backend/app/api/v1/users.py
+```
+
+Erwartet: `8`, keine Ausgabe, `5`.
+
+- [ ] **Step 6: Dienst — Teilerfolg bei Keycloak-Ausfall gelangt ins Audit**
+
+In `backend/app/services/keycloak_admin.py` drei Blöcke ersetzen, jeder kommt genau einmal vor (Begründung oben unter „Keycloak fällt mitten in einer Aktion aus").
+
+(1) `create_user_for_tenant`: alles nach dem erfolgreichen `POST /users` in den `try`-Block, jede Ausnahme trägt `angelegt`. Ersetzen:
+
+```python
+        user_id = _neue_user_id(kc, r, email)
+
+        try:
+            rep = kc.call("GET", f"/users/{user_id}")
+            if rep.status_code != 200 or not _gehoert_zum_mandanten(rep.json(), tenant_slug):
+                raise KeycloakAdminError(
+                    "Keycloak hat das Attribut tenant_slug nicht gespeichert (User-Profile prüfen). "
+                    "Der Benutzer wurde deaktiviert und hat keine Rolle."
+                )
+            z = kc.call("POST", f"/users/{user_id}/role-mappings/realm", json=[rolle])
+            if z.status_code >= 400:
+                raise KeycloakNichtErreichbar(_HALB_ANGELEGT)
+        except KeycloakNichtErreichbar as e:
+            gesperrt = _deaktivieren_best_effort(kc, user_id, email)
+            raise KeycloakNichtErreichbar(_HALB_ANGELEGT if gesperrt else _HALB_ANGELEGT_AKTIV) from e
+        except KeycloakAdminError:
+            _deaktivieren_best_effort(kc, user_id, email)
+            raise
+```
+
+durch:
+
+```python
+        # Ab hier gibt es das Konto in Keycloak. Jede Ausnahme trägt deshalb ``angelegt``
+        # (ID, sofern ermittelt, Adresse, ob gesperrt); die Route schreibt daraus
+        # ANLAGE_TEILWEISE ins Audit (E-M1).
+        user_id: Optional[str] = None
+        try:
+            user_id = _neue_user_id(kc, r, email)
+            rep = kc.call("GET", f"/users/{user_id}")
+            if rep.status_code != 200 or not _gehoert_zum_mandanten(rep.json(), tenant_slug):
+                raise KeycloakAdminError(
+                    "Keycloak hat das Attribut tenant_slug nicht gespeichert (User-Profile prüfen). "
+                    "Der Benutzer wurde deaktiviert und hat keine Rolle."
+                )
+            z = kc.call("POST", f"/users/{user_id}/role-mappings/realm", json=[rolle])
+            if z.status_code >= 400:
+                raise KeycloakNichtErreichbar(_HALB_ANGELEGT)
+        except KeycloakNichtErreichbar as e:
+            gesperrt = user_id is not None and _deaktivieren_best_effort(kc, user_id, email)
+            fehler = KeycloakNichtErreichbar(_HALB_ANGELEGT if gesperrt else _HALB_ANGELEGT_AKTIV)
+            fehler.angelegt = {"ziel_id": user_id, "ziel_email": email, "deaktiviert": gesperrt}
+            raise fehler from e
+        except KeycloakAdminError as e:
+            gesperrt = user_id is not None and _deaktivieren_best_effort(kc, user_id, email)
+            e.angelegt = {"ziel_id": user_id, "ziel_email": email, "deaktiviert": gesperrt}
+            raise
+```
+
+Ohne ermittelte ID (`_neue_user_id` scheitert) wird nichts gesperrt (`deaktiviert: False`), wie bisher; neu ist nur die Spur. Scheitert dort die Suche an einem Ausfall, lautet die Meldung jetzt `_HALB_ANGELEGT_AKTIV` statt „Keycloak meldet einen Serverfehler …" — sie stimmt damit.
+
+(2) `update_tenant_user`: Sitzungen beenden und Zurücklesen in den `try`-Block. Ersetzen:
+
+```python
+            if neue_rolle is not None:
+                _setze_rolle(kc, user_id, neue_rolle, rollen_alt, aenderungen)
+        except KeycloakAdminError as e:
+            e.teil_aenderungen = dict(aenderungen)
+            raise
+        if "roles" in aenderungen or aenderungen.get("enabled") == [True, False]:
+            # Deaktiviert oder Rechte geändert: laufende Sitzungen beenden.
+            _sitzungen_beenden(kc, user_id)
+
+        rep_neu = _lade_mandanten_user(kc, user_id, tenant_slug)
+        return _als_benutzer(rep_neu, _app_rollen(kc, user_id)), aenderungen
+```
+
+durch:
+
+```python
+            if neue_rolle is not None:
+                _setze_rolle(kc, user_id, neue_rolle, rollen_alt, aenderungen)
+            if "roles" in aenderungen or aenderungen.get("enabled") == [True, False]:
+                # Deaktiviert oder Rechte geändert: laufende Sitzungen beenden.
+                _sitzungen_beenden(kc, user_id)
+            # Das Zurücklesen gehört mit in den try-Block: Scheitert es, ist die Änderung
+            # schon geschehen und muss als Teiländerung ins Audit (E-M1).
+            rep_neu = _lade_mandanten_user(kc, user_id, tenant_slug)
+            benutzer = _als_benutzer(rep_neu, _app_rollen(kc, user_id))
+        except KeycloakAdminError as e:
+            e.teil_aenderungen = dict(aenderungen)
+            raise
+        return benutzer, aenderungen
+```
+
+Ist noch nichts geschrieben, bleibt `teil_aenderungen` leer und die Route auditiert nichts, wie bisher.
+
+(3) `reset_tenant_user_password`: Rollen vor dem `PUT` lesen. Ersetzen:
+
+```python
+        pw = _gen_password()
+        r = kc.call("PUT", f"/users/{user_id}/reset-password",
+                    json={"type": "password", "value": pw, "temporary": True})
+        if r.status_code not in (200, 204):
+            raise KeycloakAdminError(f"Passwort konnte nicht gesetzt werden (HTTP {r.status_code}).")
+        _sitzungen_beenden(kc, user_id)
+        benutzer = _als_benutzer(rep, _app_rollen(kc, user_id))
+    return {"user": benutzer, "temporary_password": pw}
+```
+
+durch:
+
+```python
+        # Alles Lesende VOR dem Schreiben: Nach dem PUT darf nichts mehr scheitern, sonst
+        # wäre das Passwort gesetzt, aber weder geliefert noch protokolliert (E-M1).
+        benutzer = _als_benutzer(rep, _app_rollen(kc, user_id))
+        pw = _gen_password()
+        r = kc.call("PUT", f"/users/{user_id}/reset-password",
+                    json={"type": "password", "value": pw, "temporary": True})
+        if r.status_code not in (200, 204):
+            raise KeycloakAdminError(f"Passwort konnte nicht gesetzt werden (HTTP {r.status_code}).")
+        _sitzungen_beenden(kc, user_id)
+    return {"user": benutzer, "temporary_password": pw}
+```
+
+Prüfen (aus dem Repo-Wurzelverzeichnis):
+
+```bash
+grep -c 'angelegt = {"ziel_id": user_id' backend/app/services/keycloak_admin.py
+grep -n 'teil_aenderungen = dict(aenderungen)' backend/app/services/keycloak_admin.py
+```
+
+Erwartet: `2`; eine Zeile, in `update_tenant_user`.
+
+- [ ] **Step 7: Grün bestätigen**
+
+Run: `cd backend && REDIS_URL=memory:// /Users/nikolajunser-richter/minga-greens-erp/.venv/bin/python -m pytest tests/test_benutzerverwaltung.py -v -p no:cacheprovider`
+Erwartet: **135 passed**.
+
+- [ ] **Step 8: Nachbarn**
+
+Run: `cd backend && REDIS_URL=memory:// /Users/nikolajunser-richter/minga-greens-erp/.venv/bin/python -m pytest tests/test_demo_reset.py tests/test_demo_reset_migration.py tests/test_rollen.py -q -p no:cacheprovider`
+Erwartet: alle grün (neues Modell in `app.models`, `create_all` beim Provisionieren und nach dem Demo-Reset).
+
+- [ ] **Step 9: Commit**
+
+```bash
+git add backend/app/models/benutzer_audit.py backend/app/models/__init__.py backend/app/api/v1/users.py backend/app/services/keycloak_admin.py backend/tests/test_benutzerverwaltung.py
+git commit -m "feat(benutzer): Audit der Benutzerverwaltung dauerhaft in der Mandanten-DB (benutzer_audit)"
+```
+
+---
+
 ### Task 7: Abschluss Backend — Routenwächter, Vollauf, Umfang
 
 **Files:**
 - Test: `backend/tests/test_benutzerverwaltung.py` (anhängen)
 
 **Interfaces:**
-- Consumes: Tasks 1–6.
+- Consumes: Tasks 1–6 und 6b.
 - Produces: Wächtertest gegen eine spätere DELETE-Route.
 
 - [ ] **Step 1: Wächtertest anhängen**
@@ -2450,20 +3287,20 @@ def test_routen_vollstaendig_ohne_loeschen():
 - [ ] **Step 2: Datei grün**
 
 Run: `cd backend && REDIS_URL=memory:// /Users/nikolajunser-richter/minga-greens-erp/.venv/bin/python -m pytest tests/test_benutzerverwaltung.py -v -p no:cacheprovider`
-Erwartet: **120 passed**.
+Erwartet: **136 passed**.
 
 - [ ] **Step 3: Vollauf und Fehlernamen vergleichen**
 
 Run: den Block aus „Prozedur Vollauf" (oben im Plan), unverändert.
-Erwartet: `diff` ohne Ausgabe, dann `Fehlernamen wie Baseline`. Im Prototyp lautete die Schlusszeile `15 failed, 627 passed, 2 skipped, 1 error`.
+Erwartet: `diff` ohne Ausgabe, dann `Fehlernamen wie Baseline`. In der Nachtrags-Kopie lautete die Schlusszeile `14 failed, 798 passed, 2 skipped, 1 error`.
 
 - [ ] **Step 4: Umfang prüfen**
 
-Run: `git diff --stat efcea00..HEAD` (startet der Worker auf einem neueren `main`, dessen Commit statt `efcea00`)
-Erwartet: genau fünf Dateien — `backend/app/main.py`, `backend/app/services/keycloak_admin.py`, `backend/app/schemas/user.py`, `backend/app/api/v1/users.py`, `backend/tests/test_benutzerverwaltung.py`. Kein Frontend, kein `platform.py`, kein `deps.py`, kein `tenancy.py`, kein `conftest.py`.
+Run: `git diff --stat 4cb9b92..HEAD`
+Erwartet: genau sieben Dateien — `backend/app/main.py`, `backend/app/services/keycloak_admin.py`, `backend/app/schemas/user.py`, `backend/app/api/v1/users.py`, `backend/app/models/benutzer_audit.py`, `backend/app/models/__init__.py`, `backend/tests/test_benutzerverwaltung.py`. Kein Frontend, kein `platform.py`, kein `deps.py`, kein `tenancy.py`, kein `conftest.py`.
 
-Run: `git diff efcea00..HEAD -- backend/app/services/keycloak_admin.py | grep -cE '^-([^-]|$)'`
-Erwartet: `0` — in `keycloak_admin.py` wird keine bestehende Zeile entfernt oder geändert, nur ergänzt (im Prototyp gemessen).
+Run: `git diff 4cb9b92..HEAD -- backend/app/services/keycloak_admin.py backend/app/models/__init__.py | grep -cE '^-([^-]|$)'`
+Erwartet: `0` — in `keycloak_admin.py` und `models/__init__.py` wird keine bestehende Zeile entfernt oder geändert, nur ergänzt (in der Nachtrags-Kopie gemessen).
 
 - [ ] **Step 5: Commit**
 
@@ -2480,7 +3317,7 @@ git commit -m "test(benutzer): Routenwächter — Benutzer werden deaktiviert, n
 - Read: `backend/app/api/v1/users.py`, `backend/app/schemas/user.py`, `backend/app/main.py`, `backend/app/services/keycloak_admin.py`
 
 **Interfaces:**
-- Consumes: Tasks 1–7 und den Abschnitt „Referenz: HTTP-Vertrag". Das Frontend (Task 10 und 12) baut auf genau diesen Pfaden, Feldnamen und Wortlauten auf. Weicht der Code ab, gilt der Code. Dann aber **stoppen und melden**, Task 10 nicht auf eigene Faust umbauen.
+- Consumes: Tasks 1–7 (mit 6b) und den Abschnitt „Referenz: HTTP-Vertrag". Das Frontend (Task 10 und 12) baut auf genau diesen Pfaden, Feldnamen und Wortlauten auf. Weicht der Code ab, gilt der Code. Dann aber **stoppen und melden**, Task 10 nicht auf eigene Faust umbauen.
 
 - [ ] **Step 1: Backend ist im Arbeitsstand**
 
@@ -2513,31 +3350,41 @@ sed -n '/^class BenutzerResponse/,$p' backend/app/schemas/user.py | grep -nE '^c
 ```
 Erwartet, Klasse für Klasse:
 - `BenutzerResponse`: `id`, `email`, `first_name`, `last_name`, `role`, `roles`, `enabled`, `created_at`, `is_self`
-- `BenutzerListResponse`: `items`, `total`
+- `BenutzerListResponse`: `items`, `total`, `schreibgeschuetzt` (E-M6)
 - `BenutzerCreate`: `email`, `first_name`, `last_name`, `role`
 - `BenutzerUpdate`: `first_name`, `last_name`, `role`, `enabled` (**kein** `email`)
 - `BenutzerAngelegtResponse(BenutzerResponse)`: `temporary_password`
 - `PasswortZurueckgesetztResponse`: `user`, `temporary_password`
 
-- [ ] **Step 4: Demo-Sperre, Wortlaut wie in der Spec (Task 12)**
+- [ ] **Step 4: Demo-Sperre und Demo-Liste, Wortlaut wie in der Spec (Task 12)**
 
-Run: `grep -n 'In der Demo können Benutzer nicht geändert werden.' backend/app/api/v1/users.py`
-Erwartet: genau ein Treffer, in `_mandant_schreiben` (`raise HTTPException(status_code=403, …)`).
+Run (aus dem Repo-Wurzelverzeichnis):
+```bash
+grep -n 'In der Demo können Benutzer nicht geändert werden.' backend/app/api/v1/users.py
+grep -n 'schreibgeschuetzt=mandant == DEMO_MANDANT' backend/app/api/v1/users.py
+```
+Erwartet:
+1. Genau ein Treffer, in `_mandant_schreiben` (`raise HTTPException(status_code=403, …)`).
+2. Genau ein Treffer, in `list_users` (`return BenutzerListResponse(…, schreibgeschuetzt=mandant == DEMO_MANDANT)`).
 
 - [ ] **Step 5: Service-Account-Pflicht und Schreibbremse**
 
 Run (aus dem Repo-Wurzelverzeichnis):
 ```bash
 grep -n 'Service-Account fehlt' backend/app/services/keycloak_admin.py
+grep -rn 'ALLOW_MASTER' backend/
 grep -n 'MandantSchreibenGebremst\|^SCHREIBEN_JE_MINUTE = ' backend/app/api/v1/users.py
-cd backend && REDIS_URL=memory:// /Users/nikolajunser-richter/minga-greens-erp/.venv/bin/python -m pytest tests/test_benutzerverwaltung.py -q -p no:cacheprovider -k "ohne_service_account or master_admin_nur_mit_freigabe or schreibbremse"
+grep -n '^AUDIT_NICHT_GESPEICHERT = \|db.commit()' backend/app/api/v1/users.py
+cd backend && REDIS_URL=memory:// /Users/nikolajunser-richter/minga-greens-erp/.venv/bin/python -m pytest tests/test_benutzerverwaltung.py -q -p no:cacheprovider -k "ohne_service_account or kein_master_rueckfall or schreibbremse or TestAuditDauerhaft"
 ```
 Erwartet:
 1. Genau ein Treffer, im Fehlertext von `_users_cfg` (`"(Service-Account fehlt: KEYCLOAK_USERS_CLIENT_ID/_SECRET)."`).
-2. Fünf Zeilen: `SCHREIBEN_JE_MINUTE = 30`, `MandantSchreibenGebremst = Annotated[str, Depends(_schreibbremse)]` und die Signaturen von `create_user`, `update_user`, `reset_password` mit `mandant: MandantSchreibenGebremst`.
-3. `3 passed, 117 deselected`.
+2. Keine Ausgabe (E-M16: kein master-Schalter).
+3. Fünf Zeilen: `SCHREIBEN_JE_MINUTE = 30`, `MandantSchreibenGebremst = Annotated[str, Depends(_schreibbremse)]` und die ersten Zeilen der Signaturen von `create_user`, `update_user`, `reset_password` mit `mandant: MandantSchreibenGebremst`.
+4. Zwei Zeilen: `AUDIT_NICHT_GESPEICHERT = (` und `db.commit()` in `_audit` (E-M1).
+5. `17 passed, 119 deselected`.
 
-- [ ] **Step 6: Ergebnis festhalten.** Stimmt alles, in der Abschlussmeldung vermerken: „Vertrag geprüft, identisch; Demo-Sperre, Service-Account-Pflicht und Schreibbremse vorhanden". Gibt es eine Abweichung, etwa einen anderen Pfad, `DELETE` statt `enabled`, eine flache statt verschachtelte Antwort, `email` im Update oder einen anderen Wortlaut der Demo-Sperre: stoppen und die Ausgaben von Step 2 bis 5 wörtlich melden. Kein Commit in diesem Task.
+- [ ] **Step 6: Ergebnis festhalten.** Stimmt alles, in der Abschlussmeldung vermerken: „Vertrag geprüft, identisch; Demo-Sperre, Demo-Liste mit `schreibgeschuetzt`, Service-Account-Pflicht ohne master-Schalter, Schreibbremse und Audit-Tabelle vorhanden". Gibt es eine Abweichung, etwa einen anderen Pfad, `DELETE` statt `enabled`, eine flache statt verschachtelte Antwort, `email` im Update oder einen anderen Wortlaut der Demo-Sperre: stoppen und die Ausgaben von Step 2 bis 5 wörtlich melden. Kein Commit in diesem Task.
 
 ---
 
@@ -2681,7 +3528,9 @@ git commit -m "feat(benutzer): Rollen mit deutscher Bezeichnung und Beschreibung
 
 **Interfaces:**
 - Consumes: Endpunkte aus Task 1–6 laut Vertrag (geprüft in Task 8); `MandantenRolle`, `MANDANTEN_ROLLEN`, `rollenInfo` aus Task 9; `getErrorMessage` (`services/errors.ts:10`); `useUser`, `PageHeader`, `FilterBar` (`components/common/Layout.tsx`); `Alert`, `Button`, `Input`, `Select`, `Modal` (mit `closeOnBackdrop`, `Modal.tsx:6-15`), `ConfirmDialog` (`Modal.tsx:101-111`), `EmptyState`, `useToast` aus `components/ui`.
-- Produces: `usersApi.list|create|update|resetPassword`, Typen `MandantenBenutzer`, `BenutzerListe`, `BenutzerAnlegen`, `BenutzerAendern`, `BenutzerAngelegt`, `PasswortZurueckgesetzt` (exportiert aus `services/api.ts`); `anzeigeName(b)` (exportiert aus `UserCard.tsx`).
+- Produces: `usersApi.list|create|update|resetPassword`, Typen `MandantenBenutzer`, `BenutzerListe` (mit `schreibgeschuetzt: boolean`), `BenutzerAnlegen`, `BenutzerAendern`, `BenutzerAngelegt`, `PasswortZurueckgesetzt` (exportiert aus `services/api.ts`); `anzeigeName(b)` (exportiert aus `UserCard.tsx`); `UserCard`-Prop `schreibgeschuetzt?: boolean`.
+
+**Manager-Entscheidung E-M6 (hier umgesetzt, Frontend-Teil):** Meldet `GET /users` `schreibgeschuetzt: true` (Mandant `demo`, Task 2), zeigt die Seite weder „Neuer Benutzer" noch an den Karten „Bearbeiten", „Passwort zurücksetzen", „Deaktivieren" oder „Aktivieren", sondern einen Hinweis „In der Demo können Benutzer nur angesehen werden. …"; die Warnung zu Benutzern ohne Rolle (sie verweist auf „Bearbeiten") entfällt dort ebenfalls. Durchgesetzt wird die Sperre weiter im Backend (403, Task 3–5); das Frontend kennt den Mandanten nur über dieses Feld.
 
 Die drei Dateien wandern in **einem** Commit: Nach dem Austausch des API-Blocks kompilieren die alte Seite und die alte Karte nicht mehr (`usersApi.delete`, `User` mit `name`).
 
@@ -2721,6 +3570,8 @@ export interface MandantenBenutzer {
 export interface BenutzerListe {
   items: MandantenBenutzer[]
   total: number
+  /** true im Demo-Mandanten: Anlegen, Ändern und Passwort-Reset lehnt der Server ab (E-M6). */
+  schreibgeschuetzt: boolean
 }
 
 /** BenutzerCreate. Ein tenant_slug im Body wird vom Server mit 422 abgelehnt. */
@@ -2768,7 +3619,7 @@ export const usersApi = {
 
 - [ ] **Step 3: Karte ersetzen**
 
-`frontend/src/components/domain/UserCard.tsx` vollständig ersetzen. Neu sind: alle Rollen als Abzeichen oder „Keine Rolle", „Deaktiviert", „(Sie)", „Angelegt am". Aktionen: Bearbeiten, Passwort zurücksetzen, Deaktivieren (fehlt am eigenen Konto) bzw. Aktivieren. Es gibt kein „Löschen" mehr. Telefon und „Zuletzt aktiv" fallen weg, weil das Backend sie nicht liefert („Offene Punkte für Gernot" 1 und 5).
+`frontend/src/components/domain/UserCard.tsx` vollständig ersetzen. Neu sind: alle Rollen als Abzeichen oder „Keine Rolle", „Deaktiviert", „(Sie)", „Angelegt am". Aktionen: Bearbeiten, Passwort zurücksetzen, Deaktivieren (fehlt am eigenen Konto) bzw. Aktivieren; mit `schreibgeschuetzt` (Demo, E-M6) fehlt die ganze Aktionsleiste. Es gibt kein „Löschen" mehr. Telefon und „Zuletzt aktiv" fallen weg, weil das Backend sie nicht liefert („Offene Punkte für Gernot" 1 und 5).
 
 ```tsx
 import { Badge } from '../ui';
@@ -2789,9 +3640,19 @@ interface UserCardProps {
     onPasswort: () => void;
     /** Während eine Änderung läuft, keine zweite auslösen. */
     gesperrt?: boolean;
+    /** Demo-Mandant (E-M6): keine Aktionen anbieten, der Server lehnt jedes Schreiben ab. */
+    schreibgeschuetzt?: boolean;
 }
 
-export function UserCard({ user, onEdit, onDeaktivieren, onAktivieren, onPasswort, gesperrt = false }: UserCardProps) {
+export function UserCard({
+    user,
+    onEdit,
+    onDeaktivieren,
+    onAktivieren,
+    onPasswort,
+    gesperrt = false,
+    schreibgeschuetzt = false,
+}: UserCardProps) {
     const name = anzeigeName(user);
     const initialen =
         [user.first_name, user.last_name]
@@ -2849,35 +3710,37 @@ export function UserCard({ user, onEdit, onDeaktivieren, onAktivieren, onPasswor
                     )}
                 </div>
 
-                <div className="mt-4 pt-4 border-t border-gray-100 dark:border-gray-700 flex flex-wrap gap-2">
-                    <button className="btn btn-ghost btn-sm" onClick={onEdit} disabled={gesperrt}>
-                        <Edit2 className="w-4 h-4" />
-                        Bearbeiten
-                    </button>
-                    <button className="btn btn-ghost btn-sm" onClick={onPasswort} disabled={gesperrt || !user.enabled}>
-                        <KeyRound className="w-4 h-4" />
-                        Passwort zurücksetzen
-                    </button>
-                    {user.enabled ? (
-                        // Das eigene Konto nicht anbieten: wer sich selbst sperrt, kommt nicht mehr hinein.
-                        // Der Server lehnt es ohnehin mit 409 ab.
-                        !user.is_self && (
-                            <button
-                                className="btn btn-ghost btn-sm text-red-600 dark:text-red-400 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-900/20"
-                                onClick={onDeaktivieren}
-                                disabled={gesperrt}
-                            >
-                                <UserX className="w-4 h-4" />
-                                Deaktivieren
-                            </button>
-                        )
-                    ) : (
-                        <button className="btn btn-ghost btn-sm" onClick={onAktivieren} disabled={gesperrt}>
-                            <UserCheck className="w-4 h-4" />
-                            Aktivieren
+                {!schreibgeschuetzt && (
+                    <div className="mt-4 pt-4 border-t border-gray-100 dark:border-gray-700 flex flex-wrap gap-2">
+                        <button className="btn btn-ghost btn-sm" onClick={onEdit} disabled={gesperrt}>
+                            <Edit2 className="w-4 h-4" />
+                            Bearbeiten
                         </button>
-                    )}
-                </div>
+                        <button className="btn btn-ghost btn-sm" onClick={onPasswort} disabled={gesperrt || !user.enabled}>
+                            <KeyRound className="w-4 h-4" />
+                            Passwort zurücksetzen
+                        </button>
+                        {user.enabled ? (
+                            // Das eigene Konto nicht anbieten: wer sich selbst sperrt, kommt nicht mehr hinein.
+                            // Der Server lehnt es ohnehin mit 409 ab.
+                            !user.is_self && (
+                                <button
+                                    className="btn btn-ghost btn-sm text-red-600 dark:text-red-400 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-900/20"
+                                    onClick={onDeaktivieren}
+                                    disabled={gesperrt}
+                                >
+                                    <UserX className="w-4 h-4" />
+                                    Deaktivieren
+                                </button>
+                            )
+                        ) : (
+                            <button className="btn btn-ghost btn-sm" onClick={onAktivieren} disabled={gesperrt}>
+                                <UserCheck className="w-4 h-4" />
+                                Aktivieren
+                            </button>
+                        )}
+                    </div>
+                )}
             </div>
         </div>
     );
@@ -2894,6 +3757,7 @@ export function UserCard({ user, onEdit, onDeaktivieren, onAktivieren, onPasswor
   - Kennzahlen, Suche, Rollenfilter
   - Warnung bei aktiven Benutzern ohne Rolle
   - Rückfrage vor dem Deaktivieren und vor dem Passwort-Reset
+  - Demo (E-M6): meldet die Liste `schreibgeschuetzt`, fehlen „Neuer Benutzer", die Warnung zu fehlenden Rollen und alle Aktionen an den Karten; stattdessen ein Hinweis
 - `BenutzerFormular`:
   - beim Anlegen: alle vier Felder, Rolle vorbelegt mit `production_staff`
   - beim Bearbeiten: nur geänderte Felder, E-Mail gesperrt
@@ -3058,6 +3922,8 @@ function Benutzerverwaltung() {
     }
 
     const benutzer = benutzerQuery.data?.items ?? [];
+    // Demo-Mandant (E-M6): Der Server lehnt jedes Schreiben ab, also nichts Schreibendes anbieten.
+    const schreibgeschuetzt = benutzerQuery.data?.schreibgeschuetzt ?? false;
     const s = suche.trim().toLowerCase();
     const gefiltert = benutzer
         .filter((b) =>
@@ -3081,11 +3947,20 @@ function Benutzerverwaltung() {
                 title="Benutzerverwaltung"
                 subtitle={`${benutzer.length} Benutzer in diesem Betrieb`}
                 actions={
-                    <Button icon={<Plus className="w-4 h-4" />} onClick={() => setAnlegen(true)}>
-                        Neuer Benutzer
-                    </Button>
+                    schreibgeschuetzt ? undefined : (
+                        <Button icon={<Plus className="w-4 h-4" />} onClick={() => setAnlegen(true)}>
+                            Neuer Benutzer
+                        </Button>
+                    )
                 }
             />
+
+            {schreibgeschuetzt && (
+                <Alert variant="info">
+                    In der Demo können Benutzer nur angesehen werden. Anlegen, Bearbeiten, Deaktivieren und das
+                    Zurücksetzen von Passwörtern sind hier abgeschaltet.
+                </Alert>
+            )}
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <StatCard title="Gesamt" value={benutzer.length} icon={<UsersIcon className="w-5 h-5" />} variant="primary" />
@@ -3098,7 +3973,7 @@ function Benutzerverwaltung() {
                 />
             </div>
 
-            {aktivOhneRolle > 0 && (
+            {aktivOhneRolle > 0 && !schreibgeschuetzt && (
                 <Alert variant="warning">
                     {aktivOhneRolle === 1
                         ? 'Ein aktiver Benutzer hat keine Rolle und kommt nach der Anmeldung nirgends hin.'
@@ -3131,6 +4006,7 @@ function Benutzerverwaltung() {
                             key={b.id}
                             user={b}
                             gesperrt={statusMutation.isPending || passwortMutation.isPending}
+                            schreibgeschuetzt={schreibgeschuetzt}
                             onEdit={() => setBearbeiten(b)}
                             onDeaktivieren={() => setZuDeaktivieren(b)}
                             onAktivieren={() => statusMutation.mutate({ b, aktiv: true })}
@@ -3560,7 +4436,7 @@ git commit -m "fix(navigation): Befehlspalette bot die Benutzerverwaltung jeder 
   - `data-testid="einmalpasswort"` aus `Users.tsx` (Task 10)
 - Produces: zehn Abnahmetests. Ohne die Umgebungsvariable `U2_ABNAHME_URL` werden sie übersprungen; ein Lauf gegen die Demo (`smoke-demo`, `full-suite`) bleibt also unberührt.
 
-Die Attrappe in der Spec bildet den Backend-Vertrag aus Task 2–6 nach. Sie lehnt unbekannte Felder wie das Backend (`extra="forbid"`) mit 422 ab und das Deaktivieren des eigenen Kontos mit 409. Mit `{ demo: true }` lehnt sie wie die Demo-Sperre jedes Schreiben mit 403 und demselben Wortlaut ab. Die Tests vergleichen jeden Request-Body exakt (`toEqual`). Damit ist belegt, dass weder `tenant_slug` noch `email` im PATCH mitgeht.
+Die Attrappe in der Spec bildet den Backend-Vertrag aus Task 2–6 nach. Sie lehnt unbekannte Felder wie das Backend (`extra="forbid"`) mit 422 ab und das Deaktivieren des eigenen Kontos mit 409. Mit `{ demo: true }` meldet sie in der Liste `schreibgeschuetzt: true` (E-M6, Task 2) und lehnt wie die Demo-Sperre jedes Schreiben mit 403 und demselben Wortlaut ab; sonst meldet sie `schreibgeschuetzt: false`. Die Tests vergleichen jeden Request-Body exakt (`toEqual`). Damit ist belegt, dass weder `tenant_slug` noch `email` im PATCH mitgeht.
 
 **Nicht abgedeckt:** der Weg für Nicht-Admins („Kein Zugriff" auf `/users`, Palette ohne Eintrag). Der Dev-Nutzer ist fest Administrator (`frontend/src/context/AuthContext.tsx:24-30`), die Spec sieht also nur den Admin-Fall. Geprüft wird das am Code (Review Focus 5) und nach dem Deploy mit ben (Live-Prüfung L4).
 
@@ -3665,7 +4541,7 @@ async function attrappe(
 
     if (methode === 'GET' && teile.length === 1) {
       if (opts.listeFehler) return json(opts.listeFehler.status, { detail: opts.listeFehler.detail });
-      return json(200, { items: db, total: db.length });
+      return json(200, { items: db, total: db.length, schreibgeschuetzt: !!opts.demo });
     }
     // backend/app/api/v1/users.py, _mandant_schreiben: im Mandanten demo ist jedes Schreiben gesperrt, Lesen nicht.
     if (opts.demo && methode !== 'GET') return json(403, { detail: DEMO_SPERRE });
@@ -3872,21 +4748,19 @@ test.describe('Benutzerverwaltung (B8)', () => {
     await expect(page.getByRole('button', { name: 'Neuer Benutzer' })).toHaveCount(0);
   });
 
-  test('Demo: Liste lesbar, Schreiben endet mit dem 403 im Klartext', async ({ page }) => {
+  test('Demo: Liste lesbar, ohne Schreibknöpfe', async ({ page }) => {
     const aufrufe = await attrappe(page, { demo: true });
     await page.goto(`${BASE}/users`);
     await expect(karte(page, 'gernot@example.org')).toBeVisible();
 
-    await page.getByRole('button', { name: 'Neuer Benutzer' }).click();
-    const dialog = page.getByRole('dialog');
-    await dialog.getByLabel('Vorname').fill('Sperr');
-    await dialog.getByLabel('Nachname').fill('Probe');
-    await dialog.getByLabel('E-Mail').fill('sperrprobe@example.org');
-    await dialog.getByRole('button', { name: 'Anlegen' }).click();
-
-    await expect(page.getByText(DEMO_SPERRE)).toBeVisible();
-    await expect(page.getByTestId('einmalpasswort')).toHaveCount(0);
-    expect(aufrufe.filter((a) => a.methode === 'POST')).toHaveLength(1);
+    // E-M6: Die Liste meldet schreibgeschuetzt; die Seite bietet nichts Schreibendes an.
+    await expect(page.getByText('In der Demo können Benutzer nur angesehen werden.')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Neuer Benutzer' })).toHaveCount(0);
+    for (const knopf of ['Bearbeiten', 'Passwort zurücksetzen', 'Deaktivieren', 'Aktivieren']) {
+      await expect(page.getByRole('button', { name: knopf, exact: true })).toHaveCount(0);
+    }
+    await expect(page.getByText('Ein aktiver Benutzer hat keine Rolle')).toHaveCount(0);
+    expect(aufrufe.filter((a) => a.methode !== 'GET')).toHaveLength(0);
   });
 });
 ```
@@ -3911,25 +4785,27 @@ git commit -m "test(benutzer): Abnahme der Benutzerverwaltung mit gemockter API"
 
 Fertig ist der Plan, wenn alle zutreffen:
 
-1. `tests/test_benutzerverwaltung.py`: **120 passed**. „Prozedur Vollauf": `diff` ohne Ausgabe (dieselben 16 Fehlernamen wie die Baseline).
+1. `tests/test_benutzerverwaltung.py`: **136 passed**. „Prozedur Vollauf": `diff` ohne Ausgabe (dieselben 15 Fehlernamen wie die Baseline auf `4cb9b92`).
 2. Ein Admin-Token des Mandanten A sieht in `GET /api/v1/users` nur Benutzer mit `tenant_slug == [A]`, auch wenn Keycloak Teiltreffer liefert.
 3. `GET`, `PATCH` und `POST …/reset-password` auf eine ID eines anderen Mandanten: 404 mit demselben Body wie bei einer unbekannten ID, kein schreibender Keycloak-Aufruf, Audit `FREMDZUGRIFF_ABGEWIESEN`. Eine ID, die keine UUID ist, erreicht Keycloak auch über die Dienstfunktionen nicht.
 4. `PATCH` und `POST …/reset-password` auf ein Konto des eigenen Mandanten mit Client-Rollen (außer `account`), Gruppen, fremden oder zusammengesetzten Realm-Rollen: 409 „vom Support verwaltet", kein schreibender Aufruf, Audit `SUPPORTKONTO_ABGEWIESEN`.
 5. Nur `admin` kommt durch; `sales`, `production_planner`, `production_staff`, `accounting`, Basic-Auth, `AUTH_DISABLED` und Tokens ohne `sub` bekommen 403.
 6. Rollen außerhalb der fünf App-Rollen: 422 (API) bzw. `RolleNichtErlaubt` (Dienst), ohne Keycloak-Aufruf. Zusammengesetzte Rollen werden nicht vergeben (503).
-7. Deaktivieren statt löschen; keine DELETE-Route, kein DELETE aus dem Frontend. Ein halb angelegter Benutzer wird deaktiviert, auch wenn Keycloak nach der Anlage ausfällt; ein fremder Benutzer wird dabei nie getroffen.
+7. Deaktivieren statt löschen; keine DELETE-Route, kein DELETE aus dem Frontend. Ein halb angelegter Benutzer wird deaktiviert, auch wenn Keycloak nach der Anlage ausfällt, und steht als `ANLAGE_TEILWEISE` im Audit; ein fremder Benutzer wird dabei nie getroffen.
 8. Eigenes Konto: nicht deaktivierbar, Admin-Rolle nicht selbst entziehbar; der letzte aktive Admin bleibt. In der Oberfläche fehlt am eigenen Konto „Deaktivieren", die Rolle ist nicht wählbar.
-9. Ohne Service-Account: 503 „nicht eingerichtet", kein Aufruf an Keycloak. Den master-Admin gibt es nur mit `KEYCLOAK_USERS_ALLOW_MASTER_ADMIN=1`. Eine Anmeldung je Prozess und Token-Laufzeit, nicht je Request.
+9. Ohne Service-Account: 503 „nicht eingerichtet", kein Aufruf an Keycloak, auch wenn `KEYCLOAK_ADMIN_USER`/`_PASSWORD` gesetzt sind. Einen master-Rückfall oder Schalter dafür gibt es nicht (E-M16; `grep -rn ALLOW_MASTER backend/` leer). Eine Anmeldung je Prozess und Token-Laufzeit, nicht je Request.
 10. Keycloak nicht erreichbar oder 5xx: 503 „Benutzerverwaltung derzeit nicht verfügbar: …"; die Seite zeigt den Wortlaut als Fehler, nie eine leere Liste.
-11. Demo-Mandant: lesen ja, schreiben 403. Öffentliche Demo-Logins schreiben in keinem Mandanten (403).
+11. Demo-Mandant: lesen ja, aber nur die Konten aus `DEMO_USERS` (auch beim Einzelabruf), Antwort `schreibgeschuetzt: true`, die Oberfläche zeigt keine Schreibknöpfe (E-M6); schreiben 403. Öffentliche Demo-Logins schreiben in keinem Mandanten (403).
 12. Schreibende Aufrufe je Mandant gebremst: ab dem 31. je Minute und Prozess 429, ohne Keycloak; Lesen frei.
 13. Deaktivieren, Rollenwechsel und Passwort-Reset beenden die Sitzungen des Zielbenutzers.
 14. Kein Passwort in Logzeilen. Das Einmalpasswort erscheint genau einmal in einem Dialog, der weder über Esc noch über einen Klick daneben schließt.
 15. Das Frontend schickt nie `tenant_slug` oder `attributes`, im PATCH nur geänderte Felder.
-16. `tsc --noEmit -p .` ohne Ausgabe, `npm run build` endet mit `✓ built`, `playwright test tests/e2e/benutzerverwaltung.spec.ts --list` zeigt `Total: 10 tests in 1 file`.
-17. `git diff --stat efcea00..HEAD` (bzw. ab dem Startcommit des Workers): genau die zwölf Dateien aus „File Structure"; keine Datei aus „Nicht anfassen".
+16. Jede Audit-Zeile steht zusätzlich in `benutzer_audit` der Mandanten-DB, auch abgewiesene Zugriffe und Teilerfolge bei einem Keycloak-Ausfall mitten in der Aktion (`ANLAGE_TEILWEISE`, `BENUTZER_TEILWEISE_GEAENDERT`; der Passwort-Reset liest alles vor dem Schreiben); die Tabelle entsteht per `create_all` (neue Mandanten-DB, Start, Demo-Reset). Scheitert das Speichern: 500 mit festem Text, die WARNING-Zeile steht trotzdem (E-M1).
+17. Ein 409 wegen vergebener E-Mail steht als `ANLAGE_KONFLIKT` mit `ziel_email_sha256` im Log und in der Tabelle; die Adresse steht weder dort noch in der Antwort (E-M7).
+18. `tsc --noEmit -p .` ohne Ausgabe, `npm run build` endet mit `✓ built`, `playwright test tests/e2e/benutzerverwaltung.spec.ts --list` zeigt `Total: 10 tests in 1 file`.
+19. `git diff --stat 4cb9b92..HEAD`: genau die vierzehn Dateien aus „File Structure"; keine Datei aus „Nicht anfassen".
 
-**Abschlussmeldung des Workers:** Hashes der elf Commits (Task 1–7 und 9–12; Task 8 committet nichts), die Ausgaben von Task 7 Step 3 und Step 4, Task 8 Step 2 bis 5, Task 10 Step 5 und Task 12 Step 2, dazu jede redaktionell aufgelöste Unstimmigkeit.
+**Abschlussmeldung des Workers:** Hashes der zwölf Commits (Task 1–6, 6b, 7 und 9–12; Task 8 committet nichts), die Ausgaben von Task 6b Step 5 und Step 6 (Prüf-greps), Task 7 Step 3 und Step 4, Task 8 Step 2 bis 5, Task 10 Step 5 und Task 12 Step 2, dazu jede redaktionell aufgelöste Unstimmigkeit.
 
 ## Manager-Abnahme (lokal, gemockt oder gegen einen Keycloak-Testrealm)
 
@@ -3941,7 +4817,7 @@ Der Manager prüft am laufenden Code, nicht am Diff. Teil A ist Pflicht. Teil B 
    ```bash
    cd backend && REDIS_URL=memory:// /Users/nikolajunser-richter/minga-greens-erp/.venv/bin/python -m pytest tests/test_benutzerverwaltung.py -q -p no:cacheprovider
    ```
-   Erwartet: `120 passed`.
+   Erwartet: `136 passed`.
 2. **Vollauf** nach „Prozedur Vollauf": `Fehlernamen wie Baseline`.
 3. **Typen und Build:**
    ```bash
@@ -3956,22 +4832,22 @@ Der Manager prüft am laufenden Code, nicht am Diff. Teil A ist Pflicht. Teil B 
    for i in $(seq 1 60); do curl -sf http://localhost:5179/ >/dev/null && break; sleep 1; done
    U2_ABNAHME_URL=http://localhost:5179 ./node_modules/.bin/playwright test tests/e2e/benutzerverwaltung.spec.ts --retries=0 --reporter=list
    ```
-   Erwartet: `10 passed`. Die Schleife wartet höchstens 60 s, bis der Server antwortet; nach einer Änderung an Konfiguration oder Abhängigkeiten baut Vite beim ersten Start den Abhängigkeits-Cache neu, ein festes `sleep 5` reicht dann nicht. **Gegenprobe** (am 08.10. gemessen): dieselbe Spec gegen unverändertes `main` @ `efcea00` ergibt `10 failed`, die Spec misst also die Änderung.
+   Erwartet: `10 passed`. Die Schleife wartet höchstens 60 s, bis der Server antwortet; nach einer Änderung an Konfiguration oder Abhängigkeiten baut Vite beim ersten Start den Abhängigkeits-Cache neu, ein festes `sleep 5` reicht dann nicht. **Gegenprobe:** dieselbe Spec gegen unverändertes `main` ergibt `10 failed`, die Spec misst also die Änderung (am 08.10. für die erste Fassung gegen `efcea00` gemessen; für diese Fassung gegen `4cb9b92` siehe Nachtrag oben).
 5. **Sichtprüfung** im Browser, gleicher Dev-Server, `http://localhost:5179/users` (ohne Playwright-Attrappe):
    - Die Seite zeigt den Fehlerzustand mit Text und „Erneut versuchen", keine leere Liste. Vite leitet `/api` an `http://localhost:8000` weiter (`vite.config.ts`, `server.proxy`); was dort läuft, bestimmt nur den Wortlaut (kein Server: Proxy-Fehler; ein Backend ohne diesen Plan: „Not Found"; eins mit diesem Plan und `AUTH_DISABLED`: „Benutzerverwaltung nur mit einem Keycloak-Login dieses Mandanten.").
    - Strg+K, „benu" eintippen: Als Admin erscheint „Benutzerverwaltung".
    - Danach den Dev-Server beenden: `kill $VITE_PID`. `vite.config.ts` setzt `host: true`, der Server lauscht sonst weiter im LAN.
 6. **Diff-Umfang:**
    ```bash
-   git diff --stat efcea00..HEAD
-   git log --format=%s efcea00..HEAD
+   git diff --stat 4cb9b92..HEAD
+   git log --format=%s 4cb9b92..HEAD
    ```
-   Erwartet: genau die zwölf Dateien aus „File Structure", keine aus „Nicht anfassen"; elf Commits (Task 1–7, 9–12). Startet der Worker auf einem neueren `main`, dessen Commit statt `efcea00`.
+   Erwartet: genau die vierzehn Dateien aus „File Structure", keine aus „Nicht anfassen"; zwölf Commits (Task 1–6, 6b, 7, 9–12).
 7. **Review Focus 1–5** am Code abhaken.
 
 ### B. Lokaler Keycloak-Testrealm (empfohlen vor dem ersten Deploy)
 
-Misst, was die Attrappe nur annimmt (Review Focus 1), ob der Service-Account `view-realm` braucht (Zusammenführung 3, Offener Punkt M17), und stellt den `tenant_slug`-Angriff aus D5 an einem eigenen Keycloak nach. Nichts davon berührt Produktion. **Nicht vorab gelaufen:** In der Planungsumgebung lief kein Keycloak. Die Keycloak-Seite (Startbefehl, Konsole, Account-REST-API) ist **Annahme** laut Keycloak-Dokumentation für Version 22; die Python-Seite nutzt nur Namen aus diesem Plan.
+Misst, was die Attrappe nur annimmt (Review Focus 1), prüft den Service-Account mit den freigegebenen Rollen (E-M17) und die Audit-Tabelle aus Task 6b gegen echtes Keycloak, und stellt den `tenant_slug`-Angriff aus D5 an einem eigenen Keycloak nach. Nichts davon berührt Produktion. **Nicht vorab gelaufen:** In der Planungsumgebung lief kein Keycloak. Die Keycloak-Seite (Startbefehl, Konsole, Account-REST-API) ist **Annahme** laut Keycloak-Dokumentation für Version 22; die Python-Seite nutzt nur Namen aus diesem Plan.
 
 **Aufbau** (nur lokal; `admin`/`admin` gilt nur für diesen Wegwerf-Container):
 ```bash
@@ -3981,7 +4857,7 @@ docker run -d --name b8-keycloak -p 127.0.0.1:8180:8080 -v b8-keycloak-data:/opt
 In der Admin-Konsole `http://localhost:8180/admin` einen Realm `b8-test` anlegen, darin:
 1. Realm-Rollen `admin`, `sales`, `production_planner`, `production_staff`, `accounting` (nicht zusammengesetzt).
 2. Client `b8-frontend`: OpenID Connect, „Client authentication" aus, „Direct access grants" an. Im dedizierten Client-Scope einen Mapper „User Attribute": Attribut `tenant_slug`, Token-Claim `tenant_slug`, Typ String, „Add to access token" an.
-3. Client `novaerp-users`: „Client authentication" an, „Service accounts roles" an, „Standard flow" und „Direct access grants" aus. Unter „Service accounts roles" zunächst nur `realm-management` → `manage-users` und `view-users`. Das Secret unter „Credentials" nur in die Variable unten übernehmen.
+3. Client `novaerp-users`: „Client authentication" an, „Service accounts roles" an, „Standard flow" und „Direct access grants" aus. Unter „Service accounts roles" `realm-management` → `manage-users`, `view-users` und `view-realm` (E-M17), sonst nichts. Das Secret unter „Credentials" nur in die Variable unten übernehmen.
 4. Benutzer, Benutzername = E-Mail, „Email verified" an, Passwort nicht temporär (für alle dasselbe Testpasswort), Attribut `tenant_slug`:
    - `chef@dev.test`: `tenant_slug` = `dev`, Realm-Rolle `admin`
    - `lena@dev.test`: `dev`, `production_staff`
@@ -3989,7 +4865,7 @@ In der Admin-Konsole `http://localhost:8180/admin` einen Realm `b8-test` anlegen
    - `y@devx.test`: `devx`, `admin`
    - `betrieb@dev.test`: `dev`, `admin`, dazu Client-Rolle `realm-management` → `realm-admin`
 
-`dev` ist `DEFAULT_TENANT_SLUG` (`tenancy.py:53`): Der Testclient mit `base_url="http://localhost"` landet in diesem Mandanten (`tenancy.py:186-188`), und `/api/v1/users` braucht keine Mandanten-Datenbank. Die `.venv` hat kein uvicorn; der `TestClient` ruft die echte App im Prozess auf, mit echten Tokens und echter Token-Prüfung (`core/security.py`, Issuer `KEYCLOAK_URL/realms/KEYCLOAK_REALM`).
+`dev` ist `DEFAULT_TENANT_SLUG` (`tenancy.py:53`): Der Testclient mit `base_url="http://localhost"` landet in diesem Mandanten (`tenancy.py:186-188`). Seit Task 6b schreiben Anlegen, Ändern, Reset und abgewiesene Zugriffe in `benutzer_audit` der Mandanten-DB; die Probe legt deshalb zuerst die Mandanten-DB `dev` unter `TENANTS_DIR` an (`provision_tenant`, idempotent) und liest am Ende die Einträge dieses Laufs (K9). Die `.venv` hat kein uvicorn; der `TestClient` ruft die echte App im Prozess auf, mit echten Tokens und echter Token-Prüfung (`core/security.py`, Issuer `KEYCLOAK_URL/realms/KEYCLOAK_REALM`).
 
 **Probe** (aus `backend/`; Secret und Passwort werden eingelesen, nicht ausgegeben):
 ```bash
@@ -4002,10 +4878,16 @@ read -rs B8_PW; export B8_PW
 import os, time, httpx
 from jose import jwt
 from fastapi.testclient import TestClient
+from datetime import datetime, timezone
+from app.database import get_tenant_session
 from app.main import app
+from app.models import BenutzerAudit
 from app.services import keycloak_admin
+from app.tenancy import provision_tenant
 
 KC, REALM = os.environ["KEYCLOAK_URL"], os.environ["KEYCLOAK_REALM"]
+provision_tenant("dev")   # Mandanten-DB mit Tabelle benutzer_audit (Task 6b)
+start = datetime.now(timezone.utc)
 
 def token(benutzer):
     r = httpx.post(f"{KC}/realms/{REALM}/protocol/openid-connect/token",
@@ -4049,6 +4931,9 @@ konto = httpx.get(f"{KC}/realms/{REALM}/account/", headers={"Authorization": f"B
 konto.setdefault("attributes", {})["tenant_slug"] = ["fremd"]
 r = httpx.post(f"{KC}/realms/{REALM}/account/", headers={"Authorization": f"Bearer {lt}"}, json=konto)
 print("K8", r.status_code, jwt.get_unverified_claims(token("lena@dev.test")).get("tenant_slug"))
+with get_tenant_session("dev") as s:
+    print("K9", [a.aktion for a in s.query(BenutzerAudit).filter(BenutzerAudit.zeitpunkt >= start)
+                 .order_by(BenutzerAudit.zeitpunkt)])
 EOF
 ```
 
@@ -4057,13 +4942,14 @@ Erwartet:
 | Zeile | Erwartet | Bedeutung, wenn nicht |
 |---|---|---|
 | K1 | `200 ['betrieb@dev.test', 'chef@dev.test', 'lena@dev.test']` (bei Wiederholung zusätzlich die `neu-…`-Konten), **ohne** `x@fremd.test` und `y@devx.test` | Mandantentrennung der Liste kaputt: stoppen |
-| K2 | `201 Einmalpasswort erhalten` | `502 Keycloak hat die Anfrage abgelehnt: Rolle 'production_staff' konnte nicht gelesen werden (HTTP 403).` heißt: `view-realm` fehlt. Dem Service-Account `realm-management` → `view-realm` zuweisen, Probe wiederholen, Ergebnis für D7 notieren (Offener Punkt M17) |
+| K2 | `201 Einmalpasswort erhalten` | `502 Keycloak hat die Anfrage abgelehnt: Rolle 'production_staff' konnte nicht gelesen werden (HTTP 403).` heißt: `view-realm` fehlt am Service-Account (Aufbau Punkt 3, E-M17). Zuweisen, Probe wiederholen. `500 Die Aktion konnte nicht protokolliert werden. …` heißt: Mandanten-DB `dev` ohne Tabelle (`provision_tenant` lief nicht) |
 | K3 | `({'tenant_slug': ['dev']}, ['default-roles-b8-test', 'production_staff'], True)` | Attribut nicht gespeichert oder falsche Rolle: stoppen |
 | K4 | `200 {'tenant_slug': ['dev']}` | Ein `PUT` hat das Attribut verworfen (Review Focus 1): stoppen |
 | K5 | `404 {'detail': 'Benutzer nicht gefunden.'}` und der bisherige Vorname | Fremdzugriff möglich: stoppen |
 | K6 | `409 Dieser Benutzer wird vom Support verwaltet und kann hier nicht geändert werden.` | Supportkonto übernehmbar: stoppen |
 | K7 | `200 False` | Deaktivieren wirkt nicht |
 | K8 | `dev`, egal ob der POST mit 4xx abgelehnt oder mit 2xx ohne Wirkung angenommen wurde | `fremd` heißt: Keycloak 22 lässt Benutzer ihr `tenant_slug` selbst ändern. Dann in der Konsole bei `lena@dev.test` wieder `dev` eintragen, den Container mit derselben Datenablage und der Option `--spi-user-profile-legacy-user-profile-read-only-attributes=tenant_slug` neu starten (`docker rm -f b8-keycloak`, dann der `docker run` von oben mit der Option hinter `start-dev`; **Annahme:** Optionsname laut Keycloak-Dokumentation) und K8 wiederholen. Das Ergebnis zeigt, worauf D5 in Produktion achten muss |
+| K9 | `['BENUTZER_ANGELEGT', 'BENUTZER_GEAENDERT', 'FREMDZUGRIFF_ABGEWIESEN', 'SUPPORTKONTO_ABGEWIESEN', 'BENUTZER_GEAENDERT']` (aus K2, K4, K5, K6, K7; scheitert K2, fehlen die Einträge aus K2, K4 und K7) | Ein Eintrag fehlt: Der Audit-Pfad aus Task 6b greift nicht, stoppen. Die Tabelle liegt in `/tmp/b8-tenants/dev.db`; das Verzeichnis nach der Probe löschen |
 
 Aufräumen: `docker rm -f b8-keycloak && docker volume rm b8-keycloak-data`.
 
@@ -4097,11 +4983,11 @@ Betriebsschritte des Managers gegen Produktion. Nur lesen, außer im Testmandant
   - (d) Realm settings → Login: „User registration" ist aus. Eine Selbstregistrierung mit eigenen Attributen umginge (a).
 - **D6 Betreiberkonten.** Alle Inhaber von `realm-management`-Rollen mit ihrem `tenant_slug`: `GET /admin/realms/<realm>/clients?clientId=realm-management` → ID, dann `GET …/clients/<id>/roles/<rolle>/users` für `realm-admin`, `manage-users`, `manage-realm`, `manage-clients`, `impersonation`, dazu Gruppen mit solchen Rollen und ihre Mitglieder. Ein solches Konto mit dem `tenant_slug` eines Kunden weist der Code mit 409 ab (S7); es sollte trotzdem keinen tragen.
 - **D7 Service-Account statt master-Admin** (T5 R5, Risiko 2):
-  1. Im Realm aus D1 einen Client `novaerp-users` anlegen: vertraulich, „Service accounts" an, Standard Flow und Direct Access Grants aus. Service-Account-Rollen nur `realm-management` → `manage-users`, `view-users`, `view-realm` (letztere nur lesend, für `GET /roles/<rolle>`; ob nötig, zeigt Manager-Abnahme B, Zeile K2). Nie `realm-admin` oder `manage-realm`. Auch `manage-users` gilt realmweit; die Mandantentrennung bleibt Sache des Codes.
-  2. In Coolify `KEYCLOAK_USERS_CLIENT_ID=novaerp-users` und `KEYCLOAK_USERS_CLIENT_SECRET` setzen; das Secret nirgends ausgeben. `KEYCLOAK_USERS_ALLOW_MASTER_ADMIN` ist **nicht** gesetzt.
+  1. Im Realm aus D1 einen Client `novaerp-users` anlegen: vertraulich, „Service accounts" an, Standard Flow und Direct Access Grants aus. Service-Account-Rollen nur `realm-management` → `manage-users`, `view-users`, `view-realm` (letztere nur lesend, für `GET /roles/<rolle>`; freigegeben mit E-M17). Nie `realm-admin` oder `manage-realm`. Auch `manage-users` gilt realmweit; die Mandantentrennung bleibt Sache des Codes.
+  2. In Coolify `KEYCLOAK_USERS_CLIENT_ID=novaerp-users` und `KEYCLOAK_USERS_CLIENT_SECRET` setzen; das Secret nirgends ausgeben. Das sind die einzigen Variablen, die die Benutzerverwaltung braucht (E-M16: kein master-Rückfall, kein Schalter).
   3. Mit dem Token dieses Service-Accounts (nicht dem master-Admin): `GET /admin/realms/<realm>/roles/production_staff` antwortet 200, ebenso `GET …/users/<id>/role-mappings` und `GET …/users/<id>/groups`. Ohne Leserecht scheitert jedes Anlegen und jeder Rollenwechsel mit 502 „… Rolle 'production_staff' konnte nicht gelesen werden (HTTP 403)." (**Annahme** aus dem Keycloak-Quelltext, `RoleContainerResource.getRole`).
   4. Nach dem Deploy lädt die Benutzerliste (L1). „… nicht eingerichtet (Service-Account fehlt: …)" heißt: Variablen fehlen.
-- **D8 Demo-Liste ist öffentlich.** Nach dem Deploy sieht jeder Besucher als anna Name und E-Mail aller Konten mit `tenant_slug=demo`. Vorher in der Admin-Konsole (Users → Attributsuche `tenant_slug` = `demo`) prüfen: genau anna, ben, clara, paul (`DEMO_USERS`, `platform.py:229-234`), keine echten Personen und keine Test- oder Betreiberkonten (Offener Punkt M6).
+- **D8 Demo-Liste ist öffentlich — erledigt durch E-M6 (Task 2).** Die Liste im Mandanten `demo` zeigt nur Konten, deren E-Mail in `DEMO_USERS` steht (`platform.py:229-234`); nicht öffentliche Konten mit `tenant_slug=demo` sieht kein Besucher, auch nicht per ID. Kein Gate mehr; L1 prüft die Liste live.
 - **D9 Testmandant `abnahme`** für die schreibende Probe (einmalig, vor D5 (b)). Ein Mandant ohne öffentliche Logins, angelegt über die Plattform-API (`POST /api/v1/platform/tenants`, `platform.py:71-157`). Mit `admin_password` ist das Passwort nicht temporär (`platform.py:146`), deshalb funktioniert der Password-Grant in D5 (b):
   ```bash
   read -rs PAK                                    # PLATFORM_ADMIN_KEY aus Coolify, wird nicht ausgegeben
@@ -4115,7 +5001,7 @@ Betriebsschritte des Managers gegen Produktion. Nur lesen, außer im Testmandant
 
 **Live-Prüfung nach dem Deploy** (Backend und Frontend zusammen, erst nach dem B8-Kern aus Paket 3 und mit D1–D9 grün; vorher WAL-sicheres Backup laut Deploy-Freigabe). Auf der Demo wird nur gelesen; geschrieben wird ausschließlich im Testmandanten `abnahme`.
 
-- **L1 Demo, lesend und Sperre** (`demo.novaerp.de`, **anna**, admin, `platform.py:230`): Menü → Benutzerverwaltung lädt; „Service-Account fehlt" wäre D7. Die Liste zeigt genau anna, ben, clara und paul; anna trägt „(Sie)" und hat kein „Deaktivieren". „Neuer Benutzer" mit `sperrprobe@novaerp.de`, Rolle Produktion, „Anlegen": Der Toast zeigt „In der Demo können Benutzer nicht geändert werden.", es erscheint kein Einmalpasswort, nach dem Neuladen stehen weiter genau vier Konten da. Sonst auf der Demo nichts Schreibendes anklicken.
+- **L1 Demo, nur lesend** (`demo.novaerp.de`, **anna**, admin, `platform.py:230`): Menü → Benutzerverwaltung lädt; „Service-Account fehlt" wäre D7. Die Liste zeigt genau anna, ben, clara und paul (E-M6), anna trägt „(Sie)". Oben steht der Hinweis „In der Demo können Benutzer nur angesehen werden. …"; es gibt weder „Neuer Benutzer" noch an einer Karte „Bearbeiten", „Passwort zurücksetzen", „Deaktivieren" oder „Aktivieren". DevTools: Die Antwort von `GET /api/v1/users` enthält `"schreibgeschuetzt": true`. Die Schreibsperre im Backend prüft L3 per `curl`.
 - **L2 Testmandant, schreibend gegen echtes Keycloak** (`https://abnahme.novaerp.de`, Testadmin aus D9):
   1. Als `abnahme-admin@novaerp.de` anmelden → Benutzerverwaltung: genau ein Eintrag mit „(Sie)", kein Konto aus `demo` oder `minga`.
   2. `abnahme-ma@novaerp.de` mit Rolle Produktion anlegen. Im Einmalpasswort-Dialog Esc drücken: Der Dialog bleibt offen. „Kopieren", dann „Passwort ist notiert". DevTools: Die Antwort von `POST /api/v1/users` enthält `temporary_password` und den Header `Cache-Control: no-store`; Local Storage enthält das Passwort nicht. Endet das Anlegen mit 502 „… Rolle 'production_staff' konnte nicht gelesen werden (HTTP 403).": D7 Punkt 1, `view-realm`.
@@ -4132,19 +5018,33 @@ Betriebsschritte des Managers gegen Produktion. Nur lesen, außer im Testmandant
   curl -s -w ' %{http_code}\n' -X PATCH "https://abnahme.novaerp.de/api/v1/users/$BEN_ID" \
     -H "Authorization: Bearer $TOK" -H 'Content-Type: application/json' -d '{"first_name":"X"}'
   curl -s -o /dev/null -w '%{http_code}\n' -H "Authorization: Bearer $TOK" https://demo.novaerp.de/api/v1/users
+  curl -s -w ' %{http_code}\n' -X POST https://demo.novaerp.de/api/v1/users -H "Authorization: Bearer $ANNA" \
+    -H 'Content-Type: application/json' \
+    -d '{"email":"sperrprobe@novaerp.de","first_name":"Sperr","last_name":"Probe","role":"production_staff"}'
   ```
-  Erwartet: `{"detail":"Benutzer nicht gefunden."} 404`, dann `403` (Token-Mandant ≠ Host, `deps.py:76-80`). Als anna heißt ben danach weiter „Ben". Kommt etwas anderes: sofort stoppen, Deploy zurücknehmen, ben in der Admin-Konsole prüfen. Ein Passwort-Reset gegen ein fremdes Konto wird absichtlich nicht probiert (ein Treffer gäbe ein Passwort aus und sperrte ben aus); das deckt `TestPasswort::test_fremd_404_und_kein_schreibzugriff`.
+  Erwartet: `{"detail":"Benutzer nicht gefunden."} 404`, dann `403` (Token-Mandant ≠ Host, `deps.py:76-80`), dann `{"detail":"In der Demo können Benutzer nicht geändert werden."} 403` (Demo-Sperre, greift vor Keycloak; die Oberfläche bietet den Knopf nicht mehr an, E-M6). Als anna heißt ben danach weiter „Ben". Kommt etwas anderes: sofort stoppen, Deploy zurücknehmen, ben in der Admin-Konsole prüfen. Ein Passwort-Reset gegen ein fremdes Konto wird absichtlich nicht probiert (ein Treffer gäbe ein Passwort aus und sperrte ben aus); das deckt `TestPasswort::test_fremd_404_und_kein_schreibzugriff`.
 - **L4 Nicht-Admin** (`demo.novaerp.de`, **ben**, sales, `platform.py:231`, nur lesend): kein Menüpunkt; Strg+K mit „benu" findet „Benutzerverwaltung" nicht; `/users` direkt aufrufen zeigt „Kein Zugriff" (Review Focus 5).
+- **L5 Audit dauerhaft** (E-M1, Task 6b; nach L2 und L3, nur lesend). Auf dem Server im laufenden Backend-Container (Name wechselt je Deploy, Betriebsnotiz Prod-Topologie; Zugang laut Betriebsnotiz SSH, `docker exec -i`):
+  ```bash
+  docker exec -i <backend-container> python - <<'EOF'
+  from app.database import get_tenant_session
+  from app.models import BenutzerAudit
+  with get_tenant_session("abnahme") as s:
+      for a in s.query(BenutzerAudit).order_by(BenutzerAudit.zeitpunkt):
+          print(a.zeitpunkt, a.aktion, a.ziel_email, a.ziel_email_sha256 and "hash", a.details)
+  EOF
+  ```
+  Erwartet am Ende, in dieser Reihenfolge: `BENUTZER_ANGELEGT` (`abnahme-ma@novaerp.de`, `rolle` `production_staff`), `PASSWORT_ZURUECKGESETZT` (`abnahme-ma@novaerp.de`), `BENUTZER_GEAENDERT` (`aenderungen` `{'enabled': [True, False]}`), `FREMDZUGRIFF_ABGEWIESEN` (aus L3, ohne E-Mail). Kein Passwort in `details`. Bei einer Wiederholung von L2 steht statt `BENUTZER_ANGELEGT` ein `ANLAGE_KONFLIKT` mit `hash` und ohne Adresse. Nach dem nächsten Redeploy stehen die Einträge weiter da (das Container-Log nicht mehr).
 
 ## Offene Punkte für Manager und Betrieb
 
-- **M1 Audit nur im Container-Log.** Logs überleben keinen Redeploy (Container werden je Deploy ersetzt, Betriebsnotiz Prod-Topologie). Dauerhafte Alternativen: eigene Tabelle je Mandant (entsteht per `create_all`; Demo-Reset-Risiko 11 aus T5 beachten) oder Keycloak-Admin-Events im Realm (Betriebsschritt). Entscheidung Manager.
+- **M1 Audit nur im Container-Log — erledigt (E-M1, Task 6b).** Jede Audit-Zeile steht zusätzlich in `benutzer_audit` der Mandanten-DB (entsteht per `create_all`). Bleibt bewusst so: keine Oberfläche und kein Endpunkt zum Lesen (Auskunft über den Betrieb, L5); Keycloak-Änderung und Datensatz sind nicht atomar (scheitert das Speichern: 500, die WARNING-Zeile steht trotzdem, Begründung in Task 6b); im Mandanten `demo` leert der nächtliche Reset die Tabelle (dort wird nicht geschrieben). Keycloak-Admin-Events im Realm wären eine zusätzliche, unabhängige Spur (Betriebsschritt, nicht Teil dieses Plans).
 - **M2 Passwort per Mail** (`PUT /users/{id}/execute-actions-email` mit `["UPDATE_PASSWORD"]`) nicht gebaut: braucht SMTP im Realm, im Code nicht prüfbar (`keycloak/realm-export.json` hat kein `smtpServer`). Heute wie beim Onboarding: Einmalpasswort, das der Admin persönlich weitergibt.
-- **M3 E-Mail-Adressen im gemeinsamen Realm.** Ein 409 verrät realmweit, dass es eine Adresse gibt, auch bei einem anderen Mandanten (Kunden sind oft Konkurrenten); die Meldung nennt weder Mandant noch ID, vermeiden lässt es sich bei eindeutigen Benutzernamen nicht. Task 6 bremst das Abklopfen, Task 3 protokolliert jeden Treffer als `ANLAGE_ABGELEHNT`. Umgekehrt kann jeder Admin außerhalb der Demo jede freie Adresse dauerhaft belegen (kein Löschen; Konten entstehen wie beim Onboarding mit `emailVerified: true`). Folge: Das Onboarding eines Neukunden mit dieser Adresse legt den Mandanten ohne Login an (`user_warning`, `platform.py:154-155`), andere Mandanten bekommen 409 für ihre Mitarbeiter. Offen: Obergrenze für Anlagen je Mandant und Tag; `emailVerified: false` (hängt an `verifyEmail` und SMTP im Realm, M2). **Betriebsregel** (ins Betriebshandbuch): Bei einem solchen 409 ein vorhandenes Konto nie auf einen anderen Mandanten umhängen (`tenant_slug` ändern). Wer es angelegt hat, kennt sein Einmalpasswort und käme damit in den neuen Mandanten. Erst klären, wem die Adresse gehört; bis dahin bleibt das Konto deaktiviert, und der Kunde nimmt eine andere Adresse.
+- **M3 E-Mail-Adressen im gemeinsamen Realm.** Ein 409 verrät realmweit, dass es eine Adresse gibt, auch bei einem anderen Mandanten (Kunden sind oft Konkurrenten); die Meldung nennt weder Mandant noch ID, vermeiden lässt es sich bei eindeutigen Benutzernamen nicht. Task 6 bremst das Abklopfen, Task 3 protokolliert jeden Treffer als `ANLAGE_KONFLIKT` mit dem SHA-256 der Adresse (E-M7), Task 6b dauerhaft. Umgekehrt kann jeder Admin außerhalb der Demo jede freie Adresse dauerhaft belegen (kein Löschen; Konten entstehen wie beim Onboarding mit `emailVerified: true`). Folge: Das Onboarding eines Neukunden mit dieser Adresse legt den Mandanten ohne Login an (`user_warning`, `platform.py:154-155`), andere Mandanten bekommen 409 für ihre Mitarbeiter. Offen: Obergrenze für Anlagen je Mandant und Tag; `emailVerified: false` (hängt an `verifyEmail` und SMTP im Realm, M2). **Betriebsregel** (ins Betriebshandbuch): Bei einem solchen 409 ein vorhandenes Konto nie auf einen anderen Mandanten umhängen (`tenant_slug` ändern). Wer es angelegt hat, kennt sein Einmalpasswort und käme damit in den neuen Mandanten. Erst klären, wem die Adresse gehört; bis dahin bleibt das Konto deaktiviert, und der Kunde nimmt eine andere Adresse.
 - **M4 Schon ausgestellte Access-Tokens.** Die App prüft Tokens lokal (`core/security.py:62-82`). Nach Deaktivieren, Rollenwechsel und Reset beendet der Code die Sitzungen (`/logout`), ein laufendes Access-Token gilt aber bis zu seinem Ablauf weiter (**Annahme:** Realm-Standard 5 Minuten, nicht im Code). Der Rückfragetext verspricht deshalb nur, dass keine neue Anmeldung möglich ist. Scheitert `/logout`, schreibt der Code nur eine WARNING, sonst ginge beim Reset das neue Einmalpasswort verloren.
 - **M5 Onboarding-Pfad unverändert.** `create_tenant_user` prüft die Rolle weiterhin erst nach der Anlage (T5 R4, `keycloak_admin.py:147-153`). Bewusst nicht angefasst, um den Plattform-Pfad nicht zu berühren; Kandidat für einen kleinen Folgeschritt (Rolle vorab prüfen wie in `create_user_for_tenant`).
-- **M6 Demo.** Schreiben ist im Demo-Mandanten gesperrt, die öffentlichen Demo-Logins sind es in jedem Mandanten. Lesen bleibt erlaubt: Jeder Besucher sieht **alle** Keycloak-Konten mit `tenant_slug=demo` samt Name und E-Mail, auch nicht öffentliche Test- oder Betreiberkonten, etwa „Mia" aus T5 R4, bevor sie in `DEMO_USERS` steht (D8). Die Oberfläche zeigt in der Demo „Neuer Benutzer", „Bearbeiten", „Deaktivieren" und „Passwort zurücksetzen", und jeder Knopf endet im Toast „In der Demo können Benutzer nicht geändert werden." — funktional richtig, für Interessenten unschön. Ausblenden kann das Frontend heute nicht, weil es den Mandanten nicht kennt (`AuthContextType.user` ohne `tenant_slug`, `frontend/src/context/AuthContext.tsx:8-20`; `Branding` ohne Slug, `frontend/src/context/BrandingContext.tsx`). Möglicher Weg: Das Backend liefert in `BenutzerListResponse` ein Feld `schreibgeschuetzt`, das Frontend blendet danach aus, je S. Zu entscheiden: so lassen und keine nicht öffentlichen Konten in `demo` anlegen, die Liste in der Demo auf `DEMO_USERS` beschränken, oder ausblenden. Soll die Demo das Ändern zeigen, bräuchte es eine Keycloak-seitige Rücksetzung.
-- **M7 Klartext im 409-Audit.** `ANLAGE_ABGELEHNT` enthält `ziel_email` im Klartext, auch wenn die Adresse einem anderen Mandanten gehört. Die verworfene Variante aus dem U2-Nachtrag N2 schrieb stattdessen `ANLAGE_KONFLIKT` mit `ziel_email_sha256` (wiederholtes Abklopfen bleibt erkennbar, keine fremde Adresse im Log). Klartext hilft dem Betrieb bei der Betriebsregel aus M3, Hash schont die Daten des anderen Mandanten. Entscheidung Manager; ein Wechsel ändert `create_user` und `TestAnlegen::test_email_vergeben`, je S.
+- **M6 Demo — erledigt (E-M6, Task 2, 10, 12).** Schreiben ist im Demo-Mandanten gesperrt, die öffentlichen Demo-Logins sind es in jedem Mandanten. Die Liste im Mandanten `demo` zeigt nur die Konten aus `DEMO_USERS` (auch der Einzelabruf), nicht öffentliche Test- oder Betreiberkonten sieht kein Besucher mehr; D8 entfällt. `BenutzerListResponse.schreibgeschuetzt` ist dort `true`, die Oberfläche blendet „Neuer Benutzer" und alle Kartenaktionen aus und zeigt einen Hinweis. Offen bleibt nur: Soll die Demo das Ändern vorführen, bräuchte es eine Keycloak-seitige Rücksetzung.
+- **M7 Klartext im 409-Audit — erledigt (E-M7, Task 3, 6b).** Der 409 steht als `ANLAGE_KONFLIKT` mit `ziel_email_sha256` (SHA-256 der klein geschriebenen Adresse) im Log und in `benutzer_audit`, nie die Adresse. Wiederholtes Abklopfen bleibt am Hash erkennbar; für die Betriebsregel aus M3 prüft der Betrieb eine vermutete Adresse gegen den Hash.
 - **M8 Last.** Liste und Letzter-Admin-Prüfung lesen die Rollen je Benutzer einzeln (N+1 Keycloak-Aufrufe), in synchronen Endpunkten, die sich einen Threadpool mit allen Mandanten teilen; für wenige Dutzend Benutzer unkritisch. Über 1000 Treffer der Attributsuche: 502 statt unvollständiger Liste. Die Schreibbremse zählt je Prozess (Review Focus 3); Lesen ist ungebremst, im Demo-Mandanten kann jeder Besucher die Liste beliebig oft abrufen. Eine Obergrenze an Konten je Mandant gibt es nicht. Offen: `SlowAPIMiddleware` einbinden (wirkt auf alle Routen, eigener Schritt) oder `GET /users` zusätzlich bremsen, Kontenzahl begrenzen; je S.
 - **M9 Wettlauf um den letzten Admin** (Review Focus 2). Wiederherstellung über die Keycloak-Admin-Konsole durch den Plattform-Betrieb.
 - **M10 Supportkonten und Gruppen.** Konten mit Client-Rollen außer `account`, mit Gruppen, mit Realm-Rollen außerhalb der App- und Standardrollen oder mit zusammengesetzten Rollen ändert der Code nicht (409). Bekommen Mandanten-Benutzer in Produktion ihre App-Rollen über Gruppen (D4), kann der Mandanten-Admin sie nur sehen. Dann: Rollen auf direkte Zuordnung umstellen oder die Gruppenprüfung gezielt lockern.
@@ -4153,8 +5053,8 @@ Betriebsschritte des Managers gegen Produktion. Nur lesen, außer im Testmandant
 - **M13 Testmandant `abnahme` bleibt stehen.** `abnahme-ma@novaerp.de` bleibt deaktiviert im Realm, `abnahme-admin@novaerp.de` aktiv, damit D5 (b) und L2 wiederholbar sind; das Passwort liegt nur im Passwortmanager. Gelöscht wird nichts: `DELETE /api/v1/platform/tenants/{slug}` entfernt nur die SQLite-Datei (`platform.py:188-209`), die Keycloak-Konten blieben. Wird der Mandant nicht mehr gebraucht, deaktiviert der Plattform-Betrieb `abnahme-admin` in der Admin-Konsole.
 - **M14 Lokale Entwicklung.** Mit `AUTH_DISABLED` antwortet die Benutzerverwaltung mit 403 („nur mit einem Keycloak-Login dieses Mandanten"), die Seite zeigt dann den Fehlerzustand. Gewollt; echte Abläufe prüft Manager-Abnahme B oder die gemockte Spec.
 - **M15 Admins eines Mandanten sind gleich mächtig.** Jeder Admin kann das Passwort eines anderen Admins zurücksetzen, sieht das Einmalpasswort und kann das Konto übernehmen. Eine technische Sperre (z. B. Reset eines Admins nur durch ihn selbst oder den Support) wäre eine Backend-Änderung, je S. Entscheidung Manager; Gernot wird informiert („Offene Punkte für Gernot" 3).
-- **M16 Schalter `KEYCLOAK_USERS_ALLOW_MASTER_ADMIN` bleibt im Code** (Zusammenführung 1). Er nützt nur Entwicklung und Test; ein versehentlich gesetzter Schalter in Produktion brächte den master-Admin zurück. Alternative: Schalter entfernen (U2-Nachtrag N1), dann braucht auch die lokale Abnahme einen Service-Account (Manager-Abnahme B hat einen). Entscheidung Manager.
-- **M17 `view-realm` für den Service-Account** (Zusammenführung 3). Abweichung von T5 R5 („nur `manage-users` und `view-users`"). Manager-Abnahme B, Zeile K2 misst an Keycloak 22, ob es ohne geht; in Produktion entscheidet D7.
+- **M16 Schalter `KEYCLOAK_USERS_ALLOW_MASTER_ADMIN` — erledigt (E-M16, Task 1).** Der Schalter wird nicht eingebaut; die Benutzerverwaltung nimmt ausschließlich den Service-Account, auch lokal (Manager-Abnahme B hat einen). D7 prüft nur die Service-Account-Variablen.
+- **M17 `view-realm` für den Service-Account — erledigt (E-M17, freigegeben, nur lesend).** Abweichung von T5 R5 („nur `manage-users` und `view-users`"), gebraucht für `GET /roles/<rolle>` vor Anlage und Rollenwechsel. Manager-Abnahme B richtet den Service-Account damit ein; D7 Punkt 1 ebenso.
 
 ## Offene Punkte für Gernot
 
@@ -4163,7 +5063,7 @@ Betriebsschritte des Managers gegen Produktion. Nur lesen, außer im Testmandant
 3. **Vor der Freigabe sagen** (zusammen mit Entscheidung 6):
    - Mitarbeiter-Logins erst anlegen, wenn der B8-Kern aus Paket 3 live ist; vorher bricht die Bestellerfassung für sie ab, und sie könnten abrechnungsrelevante Kundenfelder ändern.
    - Jeder Admin kann das Passwort eines anderen Admins zurücksetzen und das Konto übernehmen; die Admin-Rolle sparsam vergeben (M15).
-   - Das Protokoll dieser Aktionen steht nur im Container-Log und geht beim nächsten Deploy verloren (M1).
+   - Das Protokoll dieser Aktionen liegt dauerhaft in der Datenbank seines Mandanten (E-M1); eine Ansicht in der Oberfläche gibt es nicht, Auskunft gibt der Support.
    - Zwei Admins sollten sich nicht gleichzeitig gegenseitig herabstufen oder deaktivieren; beide Änderungen können durchgehen und den Mandanten ohne Admin lassen, wiederherstellen kann das nur der Plattform-Betrieb (M9).
    - Einmalpasswörter persönlich übergeben, nicht per Chat oder E-Mail; beim ersten Anmelden setzt die Person ein eigenes.
 4. **E-Mail-Adresse nicht änderbar.** Sie ist der Anmeldename. Für eine neue Adresse einen neuen Benutzer anlegen und den bisherigen deaktivieren. Reicht ihm das?
