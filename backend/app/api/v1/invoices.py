@@ -253,6 +253,11 @@ def generate_payment_reminder(
         raise HTTPException(status_code=404, detail="Rechnung nicht gefunden")
     if invoice.status in (InvoiceStatus.BEZAHLT, InvoiceStatus.STORNIERT):
         raise HTTPException(status_code=400, detail="Bezahlte/stornierte Rechnungen können nicht gemahnt werden")
+    if not invoice.mahnfaehig:
+        raise HTTPException(
+            status_code=400,
+            detail="Lastschriftrechnung: der Einzug steht aus oder ist gebucht — Mahnung erst nach einer Rücklastschrift",
+        )
     # Ein Entwurf ist nicht ausgestellt — eine Mahnung trüge den Platzhalter.
     if invoice.status == InvoiceStatus.ENTWURF:
         raise HTTPException(status_code=400, detail="Ein Entwurf kann nicht gemahnt werden — die Rechnung zuerst finalisieren")

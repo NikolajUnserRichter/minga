@@ -45,6 +45,8 @@ def check_overdue_invoices():
                 # Eine Gutschrift/Stornorechnung ist nie überfällig — auch
                 # kein Altbestand, den der frühere Storno auf OFFEN setzte.
                 Invoice.invoice_type != InvoiceType.GUTSCHRIFT,
+                # Lastschrift mit ausstehendem/gebuchtem Einzug: nichts zu überweisen (B10).
+                Invoice.mahnfaehig,
             )
         ).scalars().all()
 
@@ -113,6 +115,8 @@ def send_payment_reminders():
                 Invoice.reminder_level < 3,
                 # Nie eine Mahnung über null oder einen negativen Betrag.
                 Invoice.total > Invoice.paid_amount,
+                # Lastschrift: Mahnung erst nach einer Rücklastschrift (B10).
+                Invoice.mahnfaehig,
                 # Nächste Mahnung fällig ODER noch nie gemahnt
                 (Invoice.next_reminder_date <= today) | (Invoice.next_reminder_date == None),
             )

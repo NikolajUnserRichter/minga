@@ -3690,3 +3690,56 @@ class TestQ5PdfUndMail:
 
         assert r.status_code == 409 and "widerrufen" in r.json()["detail"]
         assert mail == {}
+
+
+class TestQ5Mahnwesen:
+    def _jobs(self):
+        from app.tasks.invoice_tasks import check_overdue_invoices, send_payment_reminders
+        with patch("app.tasks.invoice_tasks.SessionLocal", return_value=TestingSessionLocal()):
+            neu = check_overdue_invoices()["newly_overdue"]
+        mail = MagicMock()
+        mail.send_email.return_value = True
+        with patch("app.tasks.invoice_tasks.email_service", mail), \
+             patch("app.tasks.invoice_tasks.SessionLocal", return_value=TestingSessionLocal()):
+            gesendet = send_payment_reminders()["reminders_sent"]
+        return neu, gesendet
+
+    def test_lastschrift_wird_weder_ueberfaellig_noch_gemahnt(self, client):
+        from app.models.invoice import Invoice, InvoiceStatus
+        kunde, _ = _q5_lastschriftkunde(client)
+        rechnung = _q5_festschreiben(client, _q5_entwurf(client, kunde))
+        _q5_faellig_vor(rechnung["id"], 10)
+
+        assert rechnung["id"] not in {i["id"] for i in client.get("/api/v1/invoices/overdue").json()}
+        assert self._jobs() == (0, 0)
+        assert client.get(f"/api/v1/invoices/{rechnung['id']}").json()["status"] == "OFFEN"
+        r = client.post(f"/api/v1/invoices/{rechnung['id']}/payment-reminder")
+        assert r.status_code == 400 and "Rücklastschrift" in r.json()["detail"]
+        # Auch ein schon gesetztes UEBERFAELLIG (Altbestand) wird nicht gemahnt
+        with TestingSessionLocal() as db:
+            db.get(Invoice, uuid.UUID(rechnung["id"])).status = InvoiceStatus.UEBERFAELLIG
+            db.commit()
+        assert self._jobs()[1] == 0
+
+    def test_is_overdue_false_fuer_lastschrift(self, client):
+        from app.models.invoice import Invoice
+        kunde, _ = _q5_lastschriftkunde(client)
+        rechnung = _q5_festschreiben(client, _q5_entwurf(client, kunde))
+        _q5_faellig_vor(rechnung["id"], 10)
+        with TestingSessionLocal() as db:
+            assert db.get(Invoice, uuid.UUID(rechnung["id"])).is_overdue is False
+        assert client.get(f"/api/v1/invoices/{rechnung['id']}").json()["is_overdue"] is False
+
+    def test_altrechnung_null_bleibt_mahnfaehig(self, client):
+        """NULL-Falle: zahlungsart NULL zählt als Überweisung (Charakterisierung)."""
+        from app.models.invoice import Invoice, InvoiceStatus
+        kunde = _q5_kunde(client, "Altkunde", email="alt@example.com")
+        rechnung = _q5_festschreiben(client, _q5_entwurf(client, kunde))
+        assert rechnung["zahlungsart"] is None
+        _q5_faellig_vor(rechnung["id"], 10)
+
+        assert self._jobs() == (1, 1)
+        with TestingSessionLocal() as db:
+            alt = db.get(Invoice, uuid.UUID(rechnung["id"]))
+            assert (alt.status, alt.reminder_level) == (InvoiceStatus.UEBERFAELLIG, 1)
+            assert alt.is_overdue is True

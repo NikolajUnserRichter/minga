@@ -10,6 +10,8 @@ from typing import Optional
 from sqlalchemy import String, Integer, Numeric, Boolean, DateTime, Date, ForeignKey, Text, Enum as SQLEnum
 from sqlalchemy.types import Uuid, JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.ext.hybrid import hybrid_property
+from sqlalchemy import or_
 
 
 from app.database import Base
@@ -247,10 +249,36 @@ class Invoice(Base):
         """Rechnung vollständig bezahlt?"""
         return self.paid_amount >= self.total
 
+    @hybrid_property
+    def mahnfaehig(self) -> bool:
+        """Darf die Rechnung überfällig und gemahnt werden?
+
+        Nein bei einer Lastschriftrechnung, deren Einzug aussteht oder gebucht
+        ist — der Kunde hat nichts zu überweisen. Ab einer Rücklastschrift ja.
+        zahlungsart NULL (Altbestand) zählt als Überweisung.
+        """
+        return (
+            self.zahlungsart != Zahlungsart.LASTSCHRIFT
+            or self.lastschrift_status == LastschriftStatus.RUECKLASTSCHRIFT
+        )
+
+    @mahnfaehig.expression
+    def mahnfaehig(cls):
+        # NULL ausdrücklich als Überweisung: "zahlungsart != 'LASTSCHRIFT'"
+        # ist bei NULL selbst NULL — ohne is_(None) fielen alle Altrechnungen
+        # aus Überfälligkeit und Mahnlauf.
+        return or_(
+            cls.zahlungsart.is_(None),
+            cls.zahlungsart != Zahlungsart.LASTSCHRIFT,
+            cls.lastschrift_status == LastschriftStatus.RUECKLASTSCHRIFT,
+        )
+
     @property
     def is_overdue(self) -> bool:
         """Rechnung überfällig?"""
         if self.status in (InvoiceStatus.BEZAHLT, InvoiceStatus.STORNIERT):
+            return False
+        if not self.mahnfaehig:
             return False
         return date.today() > self.due_date
 

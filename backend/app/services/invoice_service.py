@@ -903,6 +903,8 @@ class InvoiceService:
                 # Eine Gutschrift/Stornorechnung ist nie überfällig — auch
                 # kein Altbestand, den der frühere Storno auf OFFEN setzte.
                 Invoice.invoice_type != InvoiceType.GUTSCHRIFT,
+                # Lastschrift mit ausstehendem/gebuchtem Einzug: nichts zu überweisen (B10).
+                Invoice.mahnfaehig,
             )
         ).scalars().all()
 
