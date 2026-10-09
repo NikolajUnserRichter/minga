@@ -392,3 +392,72 @@ class TestP4AEntwurfPacken:
         r = client.post(f"/api/v1/sales/orders/{leer['id']}/confirm")
         assert r.status_code == 400
         assert r.json()["detail"] == "Bestellung ohne Positionen kann nicht bestätigt werden"
+
+
+def _p4a_tagesplan(client, tag):
+    r = client.get("/api/v1/production/day-plan", params={"target_date": tag.isoformat()})
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+@pytest.mark.usefixtures("_p4a_ohne_celery")
+class TestP4ATagesplanKnoepfe:
+    """A.4 (G10): Der Tagesplan erfährt vom Server, welche Knöpfe eine Zeile
+    bekommt (gepackt_moeglich, ausgeliefert_moeglich) — dieselbe Regel wie
+    setze_status_im_tagesplan. `packbar` bleibt wie in Paket 2."""
+
+    def test_knoepfe_je_status(self, client):
+        heute = _p4a_heute()
+        # Same-Day: Pack- und Liefertag heute, die Zeile steht in beiden Karten
+        entwurf = _p4a_bestellung(client, heute)
+        bestaetigt = _p4a_bestellung(client, heute, bestaetigen=True)
+        gepackt = _p4a_bestellung(client, heute, bestaetigen=True)
+        geliefert = _p4a_bestellung(client, heute, bestaetigen=True)
+        assert _p4a_status(client, gepackt, "IN_PRODUKTION").status_code == 200
+        assert _p4a_status(client, geliefert, "GELIEFERT").status_code == 200
+
+        plan = _p4a_tagesplan(client, heute)
+        verpacken = {z["order_number"]: z for z in plan["verpacken"]}
+        ausliefern = {z["order_number"]: z for z in plan["ausliefern"]}
+
+        assert sorted(verpacken) == sorted([entwurf["order_number"], bestaetigt["order_number"]])
+        for o in (entwurf, bestaetigt):
+            assert verpacken[o["order_number"]]["gepackt_moeglich"] is True
+        assert verpacken[entwurf["order_number"]]["packbar"] is False
+
+        knoepfe = {
+            nr: (z["gepackt_moeglich"], z["ausgeliefert_moeglich"]) for nr, z in ausliefern.items()
+        }
+        assert knoepfe == {
+            entwurf["order_number"]: (True, True),
+            bestaetigt["order_number"]: (True, True),
+            gepackt["order_number"]: (False, True),
+            geliefert["order_number"]: (False, False),
+        }
+
+    def test_erledigte_bekommen_keinen_knopf(self, client):
+        heute = _p4a_heute()
+        gepackt = _p4a_bestellung(client, heute + timedelta(days=1))
+        assert _p4a_status(client, gepackt, "IN_PRODUKTION", entwurf_bestaetigen=True).status_code == 200
+
+        zeile = _p4a_tagesplan(client, heute)["verpacken_erledigt"][0]
+        assert (zeile["order_number"], zeile["gepackt_moeglich"]) == (gepackt["order_number"], False)
+
+    def test_vergangener_entwurf_bekommt_keinen_knopf(self, client):
+        """Tagesplan eines vergangenen Tages (Prod 09.10.2026: 7 Entwürfe mit
+        Liefertag vor heute): ein Entwurf bekommt weder „Gepackt“ noch
+        „Ausgeliefert“. Eine bestätigte Bestellung desselben Tages behält
+        beide Knöpfe, ihre Lieferung lässt sich nachtragen (Paket 2)."""
+        gestern = _p4a_heute() - timedelta(days=1)
+        # Packtag = Liefertag (Same-Day-Regel beim Anlegen): beide stehen in
+        # Verpacken und Ausliefern von gestern
+        entwurf = _p4a_bestellung(client, gestern)
+        bestaetigt = _p4a_bestellung(client, gestern, bestaetigen=True)
+
+        plan = _p4a_tagesplan(client, gestern)
+        knoepfe = {
+            karte: {z["order_number"]: (z["gepackt_moeglich"], z["ausgeliefert_moeglich"]) for z in plan[karte]}
+            for karte in ("verpacken", "ausliefern")
+        }
+        erwartet = {entwurf["order_number"]: (False, False), bestaetigt["order_number"]: (True, True)}
+        assert knoepfe == {"verpacken": erwartet, "ausliefern": erwartet}

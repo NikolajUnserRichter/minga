@@ -15,6 +15,7 @@ from app.schemas.production import (
 )
 from app.services import growroom_capacity_service
 from app.services.label_service import LabelService
+from app.services.order_status_service import im_tagesplan_moeglich
 
 router = APIRouter(tags=["Produktion"])
 
@@ -554,6 +555,11 @@ def get_day_plan(
             # Der Knopf "Gepackt" setzt BESTAETIGT → IN_PRODUKTION. Ein Entwurf
             # muss erst bestätigt werden; ENTWURF → IN_PRODUKTION ist verboten.
             "packbar": o.status == OrderStatus.BESTAETIGT,
+            # Paket 4 (G10): welche Knöpfe die Zeile bekommt. Ein Entwurf wird
+            # beim Packen bzw. Ausliefern im selben Schritt bestätigt, aber nur
+            # bis zu seinem Liefertag (order_status_service.setze_status_im_tagesplan).
+            "gepackt_moeglich": im_tagesplan_moeglich(o, OrderStatus.IN_PRODUKTION),
+            "ausgeliefert_moeglich": im_tagesplan_moeglich(o, OrderStatus.GELIEFERT),
             # Was zu packen ist — der Mitarbeiter soll dafür nicht in die
             # Bestellungen wechseln müssen.
             "lines": [{
