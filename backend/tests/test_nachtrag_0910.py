@@ -904,3 +904,36 @@ class TestF2FirmendatenSpeichern:
         assert client.get("/api/v1/admin/settings").status_code == 403
         r = client.patch("/api/v1/admin/settings", json={"COMPANY_NAME": "Testfarm GmbH"})
         assert r.status_code == 403, r.text
+@pytest.mark.usefixtures("_f_ohne_umgebung")
+class TestF3MailGruss:
+    """Grußformel: Firmenname, sonst Absendername (EMAILS_FROM_NAME), sonst „Ihr Team"."""
+
+    def test_ohne_firmenname_gruesst_der_absendername(self, client, _f_mails):
+        _f_setze_db(EMAILS_FROM_NAME="Testfarm Versand")
+        assert _f_ab_senden(client, _f_ab(client)).status_code == 200
+        assert _f_mails[0]["body"].endswith("Mit freundlichen Grüßen\nTestfarm Versand")
+
+    def test_rechnungsmail_gruesst_den_absendernamen(self, client, _f_mails):
+        _f_setze_db(EMAILS_FROM_NAME="Testfarm Versand")
+        rechnung = _f_rechnung(client)
+        r = client.post(f"/api/v1/invoices/{rechnung['id']}/send",
+                        json={"to": ["rechnung@oekoring.example"]})
+        assert r.status_code == 200, r.text
+        assert _f_mails[0]["body"].rstrip().endswith("Mit freundlichen Grüßen\nTestfarm Versand")
+
+    def test_firmenname_vor_dem_absendernamen(self, client, _f_mails):
+        _f_setze_db(EMAILS_FROM_NAME="Testfarm Versand", COMPANY_NAME="Testfarm GmbH")
+        assert _f_ab_senden(client, _f_ab(client)).status_code == 200
+        assert _f_mails[0]["body"].endswith("Mit freundlichen Grüßen\nTestfarm GmbH")
+
+    def test_ohne_beides_ihr_team(self, client, _f_mails):
+        assert _f_ab_senden(client, _f_ab(client)).status_code == 200
+        assert _f_mails[0]["body"].endswith("Mit freundlichen Grüßen\nIhr Team")
+
+    def test_betreff_ohne_firmenname_ohne_zusatz(self, client, _f_mails):
+        """Der Absendername steht schon im Von-Feld — der Betreff bekommt
+        seinen Zusatz weiter nur vom Firmennamen."""
+        _f_setze_db(EMAILS_FROM_NAME="Testfarm Versand")
+        ab = _f_ab(client)
+        assert _f_ab_senden(client, ab).status_code == 200
+        assert _f_mails[0]["subject"] == f"Auftragsbestätigung {ab['confirmation_number']}"

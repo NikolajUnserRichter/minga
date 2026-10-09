@@ -133,8 +133,16 @@ def firmenzusatz(db: Session) -> str:
     return f" — {name}" if name else ""
 
 
+def absendername(db: Session) -> str:
+    """Name unter der Grußformel: der Firmenname, sonst der Absender-Name
+    der Mails (EMAILS_FROM_NAME — derselbe Wert wie im Von-Feld, auch aus der
+    Umgebung), sonst leer (Abschnitt F)."""
+    from app.services.settings_service import get_setting
+    return firmenname(db) or (get_setting(db, "EMAILS_FROM_NAME") or "").strip()
+
+
 def gruss(db: Session) -> str:
-    name = firmenname(db)
+    name = absendername(db)
     return f"Mit freundlichen Grüßen\n{name}" if name else "Mit freundlichen Grüßen\nIhr Team"
 
 
