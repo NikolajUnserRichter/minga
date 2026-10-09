@@ -579,6 +579,11 @@ class InvoiceService:
         order_ids = set(self.db.execute(
             select(DeliveryNote.order_id).where(DeliveryNote.invoice_id == invoice.id)
         ).scalars().all())
+        order_ids.update(self.db.execute(
+            select(OrderLine.order_id)
+            .join(InvoiceLine, InvoiceLine.order_item_id == OrderLine.id)
+            .where(InvoiceLine.invoice_id == invoice.id)
+        ).scalars().all())
         if invoice.order_id is not None:
             order_ids.add(invoice.order_id)
         for order_id in sorted(order_ids):

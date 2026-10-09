@@ -2028,3 +2028,32 @@ class TestP4Fix1PDFSeiten:
         assert Decimal(str(rechnung["total"])) == Decimal(anzahl * 10) * Decimal("1.07")
         if art == "rechnung":
             assert f"{anzahl * 10:.2f} €" in " ".join(seiten)
+
+
+@pytest.mark.usefixtures("_p4a_ohne_celery")
+class TestP4Fix2Festschreibung:
+    def test_fakturierter_positionsbezug_sperrt_ohne_nummernverbrauch(self, client):
+        kunde = _p4b_kunde(client)
+        bestellung = _p4b_bestellung(client, kunde)
+        _p4b_status(client, bestellung, "GELIEFERT")
+        position = {"description": "Erbsen", "quantity": 10, "unit": "STK", "unit_price": "2.50",
+                    "order_item_id": bestellung["lines"][0]["id"]}
+        antwort = client.post("/api/v1/invoices", json={
+            "customer_id": kunde["id"], "invoice_date": _p4b_date.today().isoformat(), "lines": [position]})
+        assert antwort.status_code == 201, antwort.text
+        entwurf = antwort.json()
+        assert entwurf["order_id"] is None
+        antwort = client.post("/api/v1/sales/orders/bulk-status", json={
+            "order_ids": [bestellung["id"]], "status": "FAKTURIERT"})
+        assert antwort.status_code == 200, antwort.text
+        antwort = client.post(f"/api/v1/invoices/{entwurf['id']}/finalize")
+        assert antwort.status_code == 409, antwort.text
+        assert antwort.json()["detail"] == _p4b_meldung(bestellung) + " Diesen Entwurf verwerfen."
+        nachher = client.get(f"/api/v1/invoices/{entwurf['id']}").json()
+        assert (nachher["status"], nachher["invoice_number"]) == ("ENTWURF", entwurf["invoice_number"])
+        position.pop("order_item_id")
+        neu = client.post("/api/v1/invoices", json={
+            "customer_id": kunde["id"], "invoice_date": _p4b_date.today().isoformat(), "lines": [position]}).json()
+        fertig = client.post(f"/api/v1/invoices/{neu['id']}/finalize")
+        assert fertig.status_code == 200, fertig.text
+        assert fertig.json()["invoice_number"].endswith("-00001")
