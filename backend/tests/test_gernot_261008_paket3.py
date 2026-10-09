@@ -6107,3 +6107,76 @@ class TestQ7Automatik:
         for job in ("monthly-invoice-proposals", "monthly-invoice-proposals-nachstart"):
             r = client.post(f"/api/v1/admin/scheduler/run/{job}")
             assert r.status_code == 409, r.text
+
+
+# ---------------------------------------------------------------------------
+# Q7.8 — Endpunkte
+# ---------------------------------------------------------------------------
+
+@pytest.mark.usefixtures("_q7_ohne_forecast")
+class TestQ7Endpunkte:
+
+    def test_route_vor_invoice_id(self, client):
+        """Ohne die Reihenfolge fängt GET /{invoice_id} den Pfad ab (422)."""
+        r = client.get(Q7_URL)
+        assert r.status_code == 200, r.text
+        from app.services.monatsrechnung_service import heute_berlin, vormonat
+        assert r.json()["monat"] == vormonat(heute_berlin())
+
+    def test_monat_ungueltig(self, client):
+        assert client.get(Q7_URL, params={"month": "2026-13"}).status_code == 422
+        assert client.post(f"{Q7_URL}/run", params={"month": "03-2026"}).status_code == 422
+
+    def test_lauf_ueber_die_api(self, client):
+        kunde = _q7_monatskunde(client)
+        _q7_geliefert(client, kunde)
+
+        r = client.post(f"{Q7_URL}/run", params={"month": Q7_MONAT})
+
+        assert r.status_code == 201, r.text
+        assert [a["customer_name"] for a in r.json()["angelegt"]] == ["Ökoring Handels GmbH"]
+        v = client.get(Q7_URL, params={"month": Q7_MONAT}).json()
+        assert [(e["customer_name"], e["status"], e["art"]) for e in v["entwuerfe"]] == [
+            ("Ökoring Handels GmbH", "ENTWURF", "WARE")]
+        assert v["letzter_lauf"]["art"] == "MONAT_MANUELL"
+        assert v["letzter_lauf"]["ausgeloest_von"] == "testuser"
+
+    def test_laufender_monat_wird_abgelehnt(self, client):
+        from app.services.monatsrechnung_service import heute_berlin
+        heute = heute_berlin()
+        for monat in (f"{heute.year:04d}-{heute.month:02d}", f"{heute.year + 1:04d}-01"):
+            r = client.post(f"{Q7_URL}/run", params={"month": monat})
+            assert r.status_code == 422, r.text
+        assert _q7_laeufe() == []
+
+    def test_paralleler_lauf_409(self, client):
+        from datetime import datetime, timezone
+        from app.models.billing_run import BillingRun
+        with TestingSessionLocal() as db:
+            db.add(BillingRun(monat=Q7_MONAT, art="MONAT_AUTO", status="LAEUFT",
+                              gestartet_am=datetime.now(timezone.utc).replace(tzinfo=None)))
+            db.commit()
+
+        assert client.post(f"{Q7_URL}/run", params={"month": Q7_MONAT}).status_code == 409
+
+    @pytest.mark.parametrize("rolle,lesen,starten", [
+        ("sales", 200, 403),
+        ("accounting", 200, 403),
+        ("production_staff", 403, 403),
+        ("production_planner", 403, 403),
+    ])
+    def test_rollen(self, client, _q7_rolle, rolle, lesen, starten):
+        _q7_rolle([rolle])
+        assert client.get(Q7_URL, params={"month": Q7_MONAT}).status_code == lesen
+        assert client.post(f"{Q7_URL}/run", params={"month": Q7_MONAT}).status_code == starten
+
+    def test_kunde_einer_monatsrechnung_ist_fest(self, client):
+        kunde = _q7_monatskunde(client)
+        anderer = _q7_kunde(client, "Knuspr")
+        _q7_geliefert(client, kunde)
+        rid = _q7_lauf()["angelegt"][0]["invoice_id"]
+
+        r = client.patch(f"/api/v1/invoices/{rid}", json={"customer_id": anderer["id"]})
+        assert r.status_code == 400, r.text
+        r = client.patch(f"/api/v1/invoices/{rid}", json={"customer_id": kunde["id"], "header_text": "Oktober"})
+        assert r.status_code == 200, r.text

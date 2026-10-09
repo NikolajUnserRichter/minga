@@ -36,6 +36,8 @@ from app.services.pdf_service import load_company_settings
 from app.services.sepa_service import LastschriftNichtMoeglich, versand_pruefen, zahlungszeile_fuer_mail
 from app.services.beleg_dateiname import beleg_dateiname, content_disposition, rechnung_dateiname
 
+from app.api.deps import CurrentUser, require_role
+
 router = APIRouter(prefix="/invoices", tags=["Rechnungen"])
 
 
@@ -134,6 +136,63 @@ def get_revenue_summary(
     return service.get_revenue_summary(from_date, to_date)
 
 
+# ========================================
+# MONATSRECHNUNGEN (B5)
+#
+# Statische Pfade — sie MÜSSEN vor GET /{invoice_id} stehen, sonst fängt die
+# UUID-Route sie ab und antwortet 422 (Nachtrag T4, Gegenprobe P5).
+# ========================================
+
+@router.get("/monthly-proposals")
+def get_monthly_proposals(
+    db: DBSession,
+    month: Optional[str] = Query(None, description="Leistungsmonat JJJJ-MM; Standard: Vormonat (Europe/Berlin)"),
+):
+    """Stand der Monatsrechnungen eines Monats: vorhandene Entwürfe, was ein
+    Lauf jetzt anlegen würde, Hinweise. Schreibt nichts."""
+    from app.services import monatsrechnung_service as monatsrechnung
+    monat = month or monatsrechnung.vormonat(monatsrechnung.heute_berlin())
+    try:
+        return monatsrechnung.vorschau(db, monat)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+
+@router.post(
+    "/monthly-proposals/run",
+    status_code=201,
+    dependencies=[Depends(require_role(["admin"]))],
+)
+def run_monthly_proposals(
+    db: DBSession,
+    user: CurrentUser,
+    month: str = Query(..., description="Leistungsmonat JJJJ-MM (abgeschlossen)"),
+):
+    """Legt die Monatsentwürfe für den gewählten Monat an — nur im eigenen
+    Mandanten, nur Admin. Idempotent: Kunden mit vorhandenem Monatsbeleg
+    werden übersprungen. Nichts wird finalisiert oder versendet."""
+    from app.services import monatsrechnung_service as monatsrechnung
+    try:
+        start, _ = monatsrechnung.monat_grenzen(month)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    if start >= monatsrechnung.heute_berlin().replace(day=1):
+        raise HTTPException(
+            status_code=422,
+            detail="Der Monat ist noch nicht abgeschlossen — Monatsrechnungen gibt es ab dem 1. des Folgemonats.",
+        )
+    ergebnis = monatsrechnung.monatslauf(
+        db, month, monatsrechnung.ART_MANUELL,
+        ausgeloest_von=user.get("username") or user.get("id"),
+    )
+    if ergebnis["status"] == "laeuft_bereits":
+        raise HTTPException(
+            status_code=409,
+            detail="Für diesen Monat läuft gerade ein Lauf. Bitte in einigen Minuten erneut versuchen.",
+        )
+    return ergebnis
+
+
 @router.get("/{invoice_id}", response_model=InvoiceDetailResponse)
 def get_invoice(invoice_id: UUID, db: DBSession):
     """Gibt eine einzelne Rechnung mit allen Details zurück."""
@@ -211,6 +270,13 @@ def update_invoice(
         raise HTTPException(status_code=400, detail="Nur Entwürfe können bearbeitet werden")
 
     update_data = data.model_dump(exclude_unset=True)
+    # Eine Monatsrechnung gehört zu Kunde und Monat (batch_key, Lieferscheine
+    # dieses Kunden). Ein Kundenwechsel hinge fremde Lieferungen an.
+    if invoice.batch_key and update_data.get("customer_id", invoice.customer_id) != invoice.customer_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Monatsrechnung: Kunde nicht änderbar. Entwurf verwerfen und den Monatslauf erneut starten.",
+        )
     for field, value in update_data.items():
         setattr(invoice, field, value)
 
