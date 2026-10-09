@@ -440,6 +440,16 @@ class Subscription(Base):
     # product_id war bisher nur eine FK-Spalte ohne Relation — dadurch konnte
     # die Abo-Liste den Produktnamen nicht auflösen.
     product: Mapped[Optional["Product"]] = relationship("Product", foreign_keys=[product_id])
+    # B6 (Gernot, 08.10.2026): mehrere Produkte je Lieferung. Seit B6 liest
+    # der Abo-Lauf nur noch die Positionen; product_id, product_variant_id,
+    # seed_id, menge und einheit oben spiegeln Position 1 (NOT NULL im
+    # Bestandsschema, Altleser wie die Prognose).
+    positionen: Mapped[list["SubscriptionItem"]] = relationship(
+        "SubscriptionItem",
+        back_populates="subscription",
+        cascade="all, delete-orphan",
+        order_by="SubscriptionItem.position",
+    )
 
     @property
     def ist_aktiv(self) -> bool:
@@ -453,12 +463,80 @@ class Subscription(Base):
             return False
         return True
 
+    def kopf_aus_erster_position(self) -> None:
+        """Kopf-Spiegel: product_id, product_variant_id, seed_id, menge und
+        einheit des Abos = Position 1. Ohne Positionen bleibt der Kopf."""
+        if not self.positionen:
+            return
+        erste = self.positionen[0]
+        self.product_id = erste.product_id
+        self.product_variant_id = erste.product_variant_id
+        self.seed_id = erste.seed_id
+        self.menge = erste.menge
+        self.einheit = erste.einheit
+
     def __repr__(self) -> str:
         return f"<Subscription(id={self.id}, kunde_id={self.kunde_id})>"
+
+
+class SubscriptionItem(Base):
+    """Position eines Abos (B6): Produkt bzw. Verpackungsvariante, Menge, Einheit.
+
+    Der Abo-Lauf legt je Abo und Liefertag EINE Bestellung mit allen
+    Positionen an (subscription_tasks.abo_positionen). Kein Preisfeld: Der
+    Preis kommt wie in create_order aus Sonderpreis, Variante und Basispreis.
+    Paket 3 (Q4) lässt Abos für die Halle offen, weil sie keine Preise tragen.
+    seed_id nur für Legacy-Abos über die Sorte (Migration, Mandanten ohne
+    Produkte).
+    """
+    __tablename__ = "subscription_items"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, primary_key=True, default=uuid.uuid4
+    )
+    subscription_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("subscriptions.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    position: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    product_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid, ForeignKey("products.id", ondelete="SET NULL")
+    )
+    product_variant_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid, ForeignKey("product_variants.id", ondelete="SET NULL")
+    )
+    seed_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid, ForeignKey("seeds.id"), nullable=True
+    )
+    menge: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
+    einheit: Mapped[str] = mapped_column(String(20), nullable=False)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+    subscription: Mapped["Subscription"] = relationship("Subscription", back_populates="positionen")
+    product: Mapped[Optional["Product"]] = relationship("Product", foreign_keys=[product_id])
+    variante: Mapped[Optional["ProductVariant"]] = relationship(
+        "ProductVariant", foreign_keys=[product_variant_id]
+    )
+    seed: Mapped[Optional["Seed"]] = relationship("Seed")
+
+    @property
+    def bezeichnung(self) -> Optional[str]:
+        """Anzeigename wie die Bestellposition: "Produkt — Variante", sonst die Sorte."""
+        produkt = self.product or (self.variante.parent_product if self.variante else None)
+        if produkt is not None:
+            if self.variante is not None and self.variante.name_suffix:
+                return f"{produkt.name} — {self.variante.name_suffix}"
+            return produkt.name
+        if self.seed is not None:
+            return self.seed.name
+        return None
+
+    def __repr__(self) -> str:
+        return f"<SubscriptionItem(subscription_id={self.subscription_id}, position={self.position})>"
 
 
 # Imports für Type Hints (am Ende um zirkuläre Imports zu vermeiden)
 from app.models.order import Order
 from app.models.seed import Seed
-from app.models.product import PriceList, Product
+from app.models.product import PriceList, Product, ProductVariant
 from app.models.invoice import Invoice
