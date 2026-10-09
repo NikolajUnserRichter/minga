@@ -120,6 +120,9 @@ _deps_aufgaben = _rollen(PLANER, PRODUKTION)
 # Ausfall der Betriebsleitung müssen die Mitarbeiter erfassen können
 # (Gernot, 03.09.2026). Die Geldseite bleibt davon getrennt.
 _deps_auftraege = _rollen(SALES, BUCHHALTUNG, PLANER, PRODUKTION)
+# Produktkatalog: die Halle liest ihn für das Bestellformular (Gernot, 08.10.:
+# Mitarbeiter legen Bestellungen an), gepflegt wird er wie bisher kaufmännisch.
+_deps_katalog = _rollen(SALES, BUCHHALTUNG, PLANER, PRODUKTION, schreiben=[SALES, BUCHHALTUNG, PLANER])
 # Übriges Kaufmännisches — ohne die Halle
 _deps_vertrieb = _rollen(SALES, BUCHHALTUNG, PLANER)
 _deps_geld = _rollen(SALES, BUCHHALTUNG)
@@ -741,7 +744,7 @@ app.include_router(
 app.include_router(
     products.router,
     prefix="/api/v1",
-    dependencies=_deps_vertrieb,
+    dependencies=_deps_katalog,
 )
 
 app.include_router(

@@ -1022,3 +1022,176 @@ class TestQ1EmpfaengerFestgeschrieben:
         assert snapshot["festgeschrieben"] is True
         assert (snapshot["name"], snapshot["ust_id"], snapshot["skonto_days"]) == (
             "Bodan Naturkost GmbH", "DE111111111", 10)
+
+
+# =====================================================================
+# Q4 — Mitarbeiterrechte (B8-Kern): Halle liest Produkte, Rechnungen
+#      nur mit Rechnungsrecht, Feldschutz für Konditionen und Empfänger,
+#      Mandantenpflicht, Empfänger auf der Rechnung eingefroren.
+#      Spec 08.10.2026 Entscheidung 6, T3 R4, T5 R1/R2/R3/3.3.
+# =====================================================================
+from datetime import date as _q4_date, timedelta as _q4_timedelta
+from decimal import Decimal
+
+import pytest
+
+from app.api.deps import get_current_user
+from app.main import app
+
+_Q4_USER_ID = "123e4567-e89b-12d3-a456-426614174000"
+_Q4_FREMD = "00000000-0000-0000-0000-0000000000ff"
+# Rollen der Demo-Logins (platform.py DEMO_USERS: anna, ben, clara, paul).
+_Q4_DEMO_ROLLEN = ["admin", "sales", "accounting", "production_planner"]
+_Q4_OHNE_RECHNUNGSRECHT = ["production_staff", "production_planner"]
+_Q4_MIT_RECHNUNGSRECHT = ["admin", "sales", "accounting"]
+
+
+def _q4_als(*rollen):
+    """Login mit genau diesen Rollen (Muster tests/test_rollen.py::_als).
+    Das client-Fixture entfernt die Überschreibung beim Aufräumen."""
+    async def override():
+        return {"id": _Q4_USER_ID, "username": "q4", "email": "q4@example.com",
+                "roles": list(rollen)}
+    app.dependency_overrides[get_current_user] = override
+
+
+def _q4_verwaltung():
+    """Zurück auf das Standard-Login des client-Fixtures (conftest.py)."""
+    _q4_als("admin", "production_planner")
+
+
+def _q4_einheit():
+    from app.models.unit import UnitOfMeasure, UnitCategory
+    from tests.conftest import TestingSessionLocal
+    with TestingSessionLocal() as db:
+        unit = db.query(UnitOfMeasure).filter_by(code="STK").first()
+        if unit is None:
+            unit = UnitOfMeasure(code="STK", name="Stück", symbol="Stk",
+                                 category=UnitCategory.COUNT, is_base_unit=True)
+            db.add(unit)
+            db.commit()
+        return str(unit.id)
+
+
+def _q4_produkt(client, sku="KRESSE-50", name="Kresse 50 g", preis="2.50"):
+    r = client.post("/api/v1/products", json={
+        "sku": sku, "name": name, "base_price": preis,
+        "category": "MICROGREEN", "base_unit_id": _q4_einheit(),
+    })
+    assert r.status_code == 201, r.text
+    return r.json()
+
+
+def _q4_kunde(client, **felder):
+    r = client.post("/api/v1/sales/customers", json={
+        "name": "Ökoring", "typ": "HANDEL", "email": "einkauf@oekoring.de", **felder})
+    assert r.status_code == 201, r.text
+    return r.json()
+
+
+def _q4_bestellung(client, kunde, produkt):
+    r = client.post("/api/v1/sales/orders", json={
+        "customer_id": kunde["id"],
+        "requested_delivery_date": (_q4_date.today() + _q4_timedelta(days=3)).isoformat(),
+        "lines": [{"product_id": produkt["id"], "product_name": produkt["name"],
+                   "quantity": 3, "unit": "STK", "unit_price": "2.50"}],
+    })
+    return r
+
+
+def _q4_kunde_db(kunde_id):
+    from uuid import UUID
+    from app.models.customer import Customer
+    from tests.conftest import TestingSessionLocal
+    with TestingSessionLocal() as db:
+        k = db.get(Customer, UUID(kunde_id))
+        return {"name": k.name, "email": k.email, "discount_percent": k.discount_percent,
+                "pfand_abrechnung": k.pfand_abrechnung.value, "payment_terms": k.payment_terms.value}
+
+
+def _q4_kundenformular(kunde, **aenderungen):
+    """Was Customers.tsx (CustomerForm.handleSubmit) beim Speichern schickt:
+    alle Formularfelder, Prozente als Zahl."""
+    daten = {
+        "name": kunde["name"], "typ": kunde["typ"], "customer_number": kunde["customer_number"],
+        "email": kunde["email"], "telefon": "", "adresse": "", "ust_id": "",
+        "liefertage": [1, 3], "payment_terms": kunde["payment_terms"],
+        "discount_percent": float(kunde["discount_percent"]),
+        "skonto_percent": float(kunde["skonto_percent"]),
+        "skonto_days": kunde["skonto_days"],
+        "packaging_fee_amount": float(kunde["packaging_fee_amount"]),
+        "packaging_fee_percent": float(kunde["packaging_fee_percent"]),
+        "show_prices_on_delivery_note": kunde["show_prices_on_delivery_note"],
+        "aktiv": kunde["aktiv"], "pfand_abrechnung": kunde["pfand_abrechnung"],
+    }
+    daten.update(aenderungen)
+    return daten
+
+
+class TestQ4HalleLiestProdukte:
+    """R1: Das Bestellformular lädt GET /products (CreateOrderModal, EditOrderModal).
+    Für production_staff war das 403 — das Formular zeigte Saatgut statt Produkte."""
+
+    def test_halle_liest_produktliste_und_varianten(self, client):
+        produkt = _q4_produkt(client)
+        _q4_als("production_staff")
+
+        liste = client.get("/api/v1/products", params={"is_active": True, "page_size": 500})
+        varianten = client.get(f"/api/v1/products/{produkt['id']}/variants")
+        einzeln = client.get(f"/api/v1/products/{produkt['id']}")
+
+        assert liste.status_code == 200, liste.text
+        assert [p["id"] for p in liste.json()] == [produkt["id"]]
+        assert varianten.status_code == 200, varianten.text
+        assert einzeln.status_code == 200, einzeln.text
+
+    def test_halle_legt_bestellung_mit_produkt_aus_der_liste_an(self, client):
+        """Der ganze Weg aus dem Formular: Liste lesen, Produkt wählen, speichern."""
+        _q4_produkt(client)
+        kunde = _q4_kunde(client)
+        _q4_als("production_staff")
+        produkt = client.get("/api/v1/products", params={"is_active": True}).json()[0]
+
+        r = _q4_bestellung(client, kunde, produkt)
+
+        assert r.status_code == 201, r.text
+        assert r.json()["lines"][0]["product_id"] == produkt["id"]
+
+    @pytest.mark.parametrize("methode,pfad", [
+        ("POST", "/api/v1/products"),
+        ("PATCH", f"/api/v1/products/{_Q4_FREMD}"),
+        ("DELETE", f"/api/v1/products/{_Q4_FREMD}"),
+        ("POST", f"/api/v1/products/{_Q4_FREMD}/variants"),
+    ])
+    def test_halle_pflegt_den_katalog_nicht(self, client, methode, pfad):
+        _q4_als("production_staff")
+        assert client.request(methode, pfad, json={}).status_code == 403
+
+    @pytest.mark.parametrize("pfad", ["/api/v1/product-groups", "/api/v1/grow-plans", "/api/v1/price-lists"])
+    def test_gruppen_wachstumsplaene_preislisten_bleiben_gesperrt(self, client, pfad):
+        """Nur der Produktrouter wird geöffnet — das Formular braucht nicht mehr."""
+        _q4_als("production_staff")
+        assert client.get(pfad).status_code == 403
+
+    @pytest.mark.parametrize("rolle", _Q4_DEMO_ROLLEN)
+    def test_demo_rollen_unveraendert(self, client, rolle):
+        _q4_als(rolle)
+        assert client.get("/api/v1/products").status_code == 200
+        darf_schreiben = client.post("/api/v1/products", json={}).status_code
+        assert darf_schreiben != 403, f"{rolle} pflegt Produkte weiter (422 auf leeren Body)"
+
+    def test_saatgut_id_als_produkt_endet_mit_404(self, client, sample_seed):
+        """Charakterisierung (bleibt grün): So endete das Speichern mit dem Saatgut-Ersatz
+        des Formulars — die Saatgut-ID ging als product_id an create_order."""
+        kunde = _q4_kunde(client)
+        _q4_als("production_staff")
+
+        r = client.post("/api/v1/sales/orders", json={
+            "customer_id": kunde["id"],
+            "requested_delivery_date": (_q4_date.today() + _q4_timedelta(days=3)).isoformat(),
+            "lines": [{"product_id": sample_seed["id"], "product_name": sample_seed["name"],
+                       "quantity": 1, "unit": "g", "unit_price": "10"}],
+        })
+
+        assert r.status_code == 404
+        assert "nicht gefunden" in r.json()["detail"]
