@@ -191,3 +191,16 @@ def kundenfeldschutz(user: dict, neu: dict, vorher: dict, *, neuanlage: bool = F
             "Empfänger des Kunden ändern nur Verwaltung, Vertrieb, Buchhaltung und Planung",
             KUNDENFELDER_EMPFAENGER, geaendert, neuanlage=False,
         )
+
+
+def konditionen_im_patch_pruefen(user: dict, daten: dict) -> None:
+    """Für die Halle zählt nur die Anwesenheit, nie der gespeicherte Wert."""
+    if sieht_konditionen(user):
+        return
+    felder = {feld: KUNDENFELDER_KAUFMAENNISCH.get(feld, feld)
+              for feld in KUNDENANTWORT_KONDITIONEN if feld in daten}
+    if felder:
+        _ablehnen(
+            "Abrechnungsrelevante Kundenfelder ändern nur Verwaltung, Vertrieb und Buchhaltung",
+            felder, list(felder), neuanlage=False,
+        )

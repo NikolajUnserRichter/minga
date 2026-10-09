@@ -2240,3 +2240,23 @@ class TestP4Fix4Lieferscheinnummer:
                 assert db.query(PackingList).count() == 2
         finally:
             registry.dispose_tenant("fix4retry")
+
+
+class TestP4Fix5Konditionsfelder:
+    @pytest.mark.parametrize("feld", sorted(_P4D_KONDITIONSFELDER))
+    @pytest.mark.parametrize("wertart", ["gleich", "anders"])
+    def test_halle_darf_keine_konditionen_im_body_senden(self, client, feld, wertart):
+        kunde = _p4d_kunde_mit_konditionen(client)
+        wert = kunde.get(feld) if wertart == "gleich" else "anderer Wert"
+        _p4d_als("production_staff")
+        antwort = client.patch(f"/api/v1/sales/customers/{kunde['id']}", json={
+            "telefon": "nicht speichern", feld: wert})
+        assert antwort.status_code == 403, antwort.text
+        assert _p4d_kunde_db(kunde["id"])["telefon"] != "nicht speichern"
+
+    def test_planung_darf_unveraenderte_sichtbare_konditionen_senden(self, client):
+        kunde = _p4d_kunde_mit_konditionen(client)
+        _p4d_als("production_planner")
+        antwort = client.patch(f"/api/v1/sales/customers/{kunde['id']}", json={
+            "payment_terms": "NET_30", "telefon": "089 Test"})
+        assert antwort.status_code == 200, antwort.text

@@ -6,14 +6,14 @@ Erweitert mit ERP-Standard Order Header-Line Architektur
 from datetime import date, datetime, timezone
 from uuid import UUID
 from decimal import Decimal
-from fastapi import APIRouter, Depends, HTTPException, status, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Request, Response
 from sqlalchemy import select, func, or_
 from sqlalchemy.orm import joinedload, selectinload
 
 from app.api.deps import DBSession, Pagination, CurrentUser, require_role
 from app.core.rollen import (
     KAUFMAENNISCHE_ROLLEN, KUNDENANTWORT_KONDITIONEN, ROLLEN_OHNE_HALLE,
-    kundenfeldschutz, sieht_konditionen, standardwerte,
+    kundenfeldschutz, sieht_konditionen, standardwerte, konditionen_im_patch_pruefen,
 )
 from app.models.customer import Customer, CustomerType, Contact, CustomerAddress, AddressType, Subscription, SubscriptionItem
 from app.models.order import Order, OrderLine, OrderStatus, OrderAuditLog, TaxRate, vat_from_lines
@@ -164,7 +164,14 @@ async def create_customer(customer_data: CustomerCreate, db: DBSession, user: Cu
     return CustomerResponse.model_validate(customer)
 
 
-@router.patch("/customers/{customer_id}", response_model=CustomerResponse)
+async def _kunden_patch_konditionen(request: Request, user: CurrentUser):
+    daten = await request.json()
+    if isinstance(daten, dict):
+        konditionen_im_patch_pruefen(user, daten)
+
+
+@router.patch("/customers/{customer_id}", response_model=CustomerResponse,
+              dependencies=[Depends(_kunden_patch_konditionen)])
 async def update_customer(customer_id: UUID, customer_data: CustomerUpdate, db: DBSession, user: CurrentUser):
     """Kunden aktualisieren."""
     customer = db.get(Customer, customer_id)

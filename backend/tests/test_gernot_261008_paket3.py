@@ -1279,9 +1279,8 @@ class TestQ4Kundenfeldschutz:
         assert r.status_code == 403
         assert _q4_kunde_db(kunde["id"])["name"] == "Ökoring"
 
-    def test_volles_formular_mit_unveraenderten_konditionen_geht_durch(self, client):
-        """Gespeicherte Werte 5.00 % / NET_30 / KEINE, das Formular schickt 5 / NET_30 / KEINE
-        und die unveränderte E-Mail."""
+    def test_volles_formular_mit_unveraenderten_konditionen_wird_abgelehnt(self, client):
+        """P4-Fix.5: Auch unveränderte Konditionen sind für die Halle gesperrt."""
         kunde = _q4_kunde(client, discount_percent="5.00", payment_terms="NET_30",
                           pfand_abrechnung="KEINE", skonto_percent="2.5", skonto_days=10)
         _q4_als("production_staff")
@@ -1289,9 +1288,9 @@ class TestQ4Kundenfeldschutz:
         r = client.patch(f"/api/v1/sales/customers/{kunde['id']}",
                          json=_q4_kundenformular(kunde, name="Ökoring eG", telefon="089 123"))
 
-        assert r.status_code == 200, r.text
+        assert r.status_code == 403, r.text
         stand = _q4_kunde_db(kunde["id"])
-        assert stand["name"] == "Ökoring eG"
+        assert stand["name"] == "Ökoring"
         assert stand["pfand_abrechnung"] == "KEINE"
         assert stand["payment_terms"] == "NET_30"
 
@@ -1303,7 +1302,7 @@ class TestQ4Kundenfeldschutz:
                          json=_q4_kundenformular(kunde, discount_percent=7.5))
 
         assert r.status_code == 403, r.text
-        assert ": Jahresrabatt %." in r.json()["detail"]
+        assert "Jahresrabatt %" in r.json()["detail"]
 
     def test_veraltetes_formular_nennt_neu_laden(self, client):
         """Die Halle öffnet das Formular, danach ändert die Verwaltung den Rabatt.
@@ -1416,7 +1415,7 @@ class TestQ4EmpfaengerDesKunden:
         _q4_als("production_staff")
 
         r = client.patch(f"/api/v1/sales/customers/{kunde['id']}",
-                         json=_q4_kundenformular(kunde, telefon="089 1"))
+                         json={"email": kunde["email"], "telefon": "089 1"})
 
         assert r.status_code == 200, r.text
 
@@ -5550,7 +5549,7 @@ class TestQ7Feldschutz:
                                 json={"invoice_mode": "EINZELN", "telefon": "089 123"})
 
         assert geaendert.status_code == 403, geaendert.text
-        assert formular.status_code == 200, formular.text
+        assert formular.status_code == 403, formular.text
         # Seit P4-D.2 liest die Halle invoice_mode nicht mehr (null): Kontrolle als Verwaltung.
         _q7_rolle(["admin"])
         assert client.get(f"/api/v1/sales/customers/{kunde['id']}").json()["invoice_mode"] == "EINZELN"
