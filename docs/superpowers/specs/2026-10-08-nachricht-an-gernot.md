@@ -14,7 +14,7 @@ danke für deine Antworten. Kurz zum Stand und was ich noch von dir brauche.
 - **SEPA-Lastschrift:** Gläubiger-ID in den Einstellungen, Mandat am Kunden. Rechnung und Mail nennen Mandat, Einzugsdatum und die maskierte IBAN. Lastschriftrechnungen laufen nicht ins Mahnwesen. Einzugsliste mit CSV für die Bank.
 - **Leergutkonto:** Je Kunde „Pfand monatlich“: Ausgaben werden mitgezählt, Rücknahmen erfasst du (auch im Tagesplan), einmal im Monat entsteht ein Leergutbeleg als Entwurf.
 - **Monatsrechnung:** Je Kunde „monatliche Sammelrechnung“. Ist der Schalter in den Einstellungen an, liegen am 1. des Folgemonats morgens die Entwürfe bereit. Bis du Monatskunden einstellst, passiert nichts.
-- **Mitarbeiter:** Die Rechte sind vorbereitet (Halle sieht Produkte, aber keine Rechnungen und keine Konditionen). Die Zugänge lege ich an, sobald du mir die Namen schickst.
+- **Mitarbeiter-Zugänge legst du jetzt selbst an:** links unter Admin → Benutzerverwaltung. „Neuer Benutzer“, Name, E-Mail, Rolle wählen — das System zeigt ein Einmalpasswort, das gibst du weiter; beim ersten Login vergibt der Mitarbeiter sein eigenes Passwort. Dort kannst du auch Rollen ändern, Zugänge deaktivieren und Passwörter zurücksetzen. Die Halle (Rolle Produktion) sieht Produkte, Tagesplan und Lieferscheine, aber keine Rechnungen und keine Konditionen.
 
 **Bitte bis zum nächsten Update nicht**
 - keinen DATEV-Export auslösen (der Export ist korrigiert, die Kontierung soll aber erst dein Steuerberater bestätigen),
@@ -29,7 +29,7 @@ danke für deine Antworten. Kurz zum Stand und was ich noch von dir brauche.
 1. Welche Kunden rechnen Pfand über IFCO-Clearing ab? Nur Ökoring und Bodan?
 2. RE-00002 (Ökoring) und RE-00004 (Großer Kern): Schon bezahlt? An welchem Tag wurde tatsächlich geliefert (07. oder 08.10.)? Hast du sie auch an lexoffice übertragen?
 3. Die 46 importierten Bestellungen vom 16.09. bis 07.10.: Hast du die schon im alten System abgerechnet, oder sollen sie über NovaERP abgerechnet werden? Und Klara Düran: Die Rechnung RE-2026-00005 hängt an der Bestellung, die du als doppelten Import storniert hast. Geliefert wurde die zweite Bestellung (BE-20261007-0008, gleiche Positionen). Ich verknüpfe die Rechnung mit der gelieferten Bestellung, damit sie nicht ein zweites Mal berechnet wird — passt das so?
-4. Mitarbeiter-Zugänge: Name und E-Mail je Person. Sollen alle dieselben Rechte haben, oder gibt es ein Hallen-Tablet nur für Tagesplan und Packen?
+4. Mitarbeiter: Legst du die Zugänge selbst an, oder soll ich das für dich übernehmen? Für ein gemeinsames Hallen-Tablet empfehle ich einen eigenen Zugang mit der Rolle Produktion.
 5. Gibt es Teillieferungen, also mehr als einen Lieferschein pro Bestellung?
 6. Welche Kunden sollen monatlich abgerechnet werden? Und Knuspr: Pfand auf jeder Rechnung oder monatlich?
 7. SEPA: Haben deine Kunden eine Basislastschrift (CORE) oder eine Firmenlastschrift (B2B) unterschrieben? Steht im Mandat eine kürzere Frist für die Vorankündigung als 14 Tage? Bitte prüf die Gläubiger-ID, im Beispiel hat sie 17 statt 18 Zeichen. Welche Kunden haben schon ein Mandat?
