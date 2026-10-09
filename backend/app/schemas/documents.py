@@ -48,8 +48,59 @@ class OrderConfirmationCreate(BaseModel):
     notes: Optional[str] = None
 
 
-class OrderConfirmationSend(BaseModel):
-    sent_to_email: Optional[str] = Field(None, description="Empfänger-Email (falls per Email versendet)")
+class BelegVersandRequest(BaseModel):
+    """Versand eines Belegs per E-Mail — EINE Mail, alle Adressen im An-Feld.
+
+    - `to`: Empfänger für genau diesen Versand (Abweichung vom Kundenstamm).
+    - `use_customer_recipients: true`: die beim Kunden hinterlegte Liste der
+      Belegart, ersatzweise die Haupt-E-Mail.
+    - Weder noch (leerer Body `{}`): KEINE Mail — AB bzw. Lieferschein werden
+      nur als versendet bzw. ausgestellt markiert. Mit dieser Bedeutung schickt
+      das bisherige Frontend `{}`; ein leerer Body geht nie an die Kundenliste.
+    """
+    to: Optional[list[str]] = Field(None, description="Empfänger (An)")
+    cc: list[str] = Field(default_factory=list, description="Kopie (Cc), optional")
+    use_customer_recipients: bool = Field(
+        False, description="Hinterlegte Empfänger der Belegart verwenden"
+    )
+
+    @field_validator("to", mode="before")
+    @classmethod
+    def _to_pruefen(cls, v):
+        return pruefe_empfaenger(v, feld="An") if v is not None else None
+
+    @field_validator("cc", mode="before")
+    @classmethod
+    def _cc_pruefen(cls, v):
+        return pruefe_empfaenger(v, feld="Cc")
+
+    @model_validator(mode="after")
+    def _zusammen_pruefen(self):
+        an = self.to or []
+        # Wer im An-Feld steht, bekommt keine zweite Kopie
+        self.cc = [a for a in self.cc if a not in an]
+        if self.cc and not an and not self.use_customer_recipients:
+            raise ValueError("Cc nur zusammen mit Empfängern im An-Feld")
+        if len(an) + len(self.cc) > MAX_EMPFAENGER:
+            raise ValueError(f"Höchstens {MAX_EMPFAENGER} Adressen je Mail (An und Cc zusammen)")
+        return self
+
+
+class OrderConfirmationSend(BelegVersandRequest):
+    """Wie BelegVersandRequest; `sent_to_email` (ein Empfänger) bleibt für
+    ältere Aufrufer erhalten und wird wie `to=[…]` behandelt."""
+    sent_to_email: Optional[str] = Field(
+        None, description="Veraltet: ein Empfänger; neu ist `to`"
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _altes_feld_uebernehmen(cls, daten):
+        # Vor der Feldprüfung: sent_to_email wird zu to=[…] und läuft durch
+        # dieselbe Adressprüfung.
+        if isinstance(daten, dict) and daten.get("sent_to_email") and not daten.get("to"):
+            daten = {**daten, "to": [daten["sent_to_email"]]}
+        return daten
 
 
 class OrderConfirmationResponse(BaseModel):

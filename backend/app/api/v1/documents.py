@@ -30,14 +30,18 @@ from app.models.documents import (
     OrderConfirmation, DeliveryNote, PackingList, PackingListItem,
 )
 from app.services.beleg_dateiname import beleg_dateiname, content_disposition
-from app.models.enums import ConfirmationStatus, DeliveryNoteStatus
+from app.models.enums import ConfirmationStatus, DeliveryNoteStatus, DispatchDocType
 from app.schemas.documents import (
     OrderConfirmationCreate, OrderConfirmationResponse, OrderConfirmationSend,
     DeliveryNoteCreate, DeliveryNoteResponse, DeliveryNoteMarkDelivered,
     PackingListItemCreate,
 )
 from app.services.pdf_service import PDFService, load_company_settings
-from app.services.email_service import send_email, EmailNotConfiguredError
+from app.services.email_service import EmailNotConfiguredError
+from app.services.belegversand import (
+    empfaenger_fuer_versand, erster_nachweis, firmenzusatz, gruss,
+    markiere_ohne_mail, pdf_pruefsumme, versende_beleg,
+)
 from app.services.order_status_service import (
     BestandsbuchungFehler, StatuswechselFehler, heute_berlin, setze_status, trage_lieferdatum_nach,
 )
@@ -113,11 +117,19 @@ def list_confirmations(order_id: UUID, db: DBSession):
 
 
 @router.patch("/confirmations/{conf_id}/send", response_model=OrderConfirmationResponse)
-def send_confirmation(conf_id: UUID, data: OrderConfirmationSend, db: DBSession):
-    """Versendet AB per Email (PDF im Anhang) und markiert sie als VERSENDET.
+def send_confirmation(conf_id: UUID, data: OrderConfirmationSend, db: DBSession, user: CurrentUser):
+    """AB per E-Mail versenden (eine Mail, alle Empfänger im An-Feld) oder nur
+    als versendet markieren.
 
-    Wenn `sent_to_email` leer ist, wird nur der Status gesetzt — z.B. bei
-    persönlicher Übergabe."""
+    - `to` bzw. das ältere `sent_to_email`, oder `use_customer_recipients`
+      (AB-Empfänger des Kunden, sonst Haupt-E-Mail): Mail mit PDF.
+    - Leerer Body: keine Mail, nur Status VERSENDET (persönliche Übergabe).
+    - Eine versendete AB darf erneut per Mail hinaus (etwa an eine vergessene
+      Adresse), aber nur mit unverändertem PDF: Das PDF entsteht bei jedem
+      Abruf aus den aktuellen Bestellpositionen, und unter derselben
+      AB-Nummer darf kein anderer Inhalt hinausgehen.
+    Jeder Versand und jede Markierung steht im Versandprotokoll.
+    """
     conf = db.execute(
         select(OrderConfirmation)
         .options(joinedload(OrderConfirmation.order).joinedload(Order.customer))
@@ -125,37 +137,85 @@ def send_confirmation(conf_id: UUID, data: OrderConfirmationSend, db: DBSession)
     ).unique().scalar_one_or_none()
     if not conf:
         raise HTTPException(status_code=404, detail="Auftragsbestätigung nicht gefunden")
-    if conf.is_locked():
-        raise HTTPException(status_code=400, detail="AB ist bereits versendet")
 
     # Order-Lines explizit laden (vom Mapper nicht eager)
-    _load_order_with_lines(db, conf.order_id)
+    order = _load_order_with_lines(db, conf.order_id)
+    customer = order.customer
 
-    if data.sent_to_email:
-        try:
-            pdf = PDFService.generate_confirmation_pdf(conf, settings=load_company_settings(db), db=db)
-            customer_name = conf.order.customer.name if conf.order and conf.order.customer else "Kunde"
-            send_email(
-                db=db,
-                to=data.sent_to_email,
-                subject=f"Auftragsbestätigung {conf.confirmation_number}",
-                body=(
-                    f"Sehr geehrte Damen und Herren bei {customer_name},\n\n"
-                    f"anbei finden Sie die Auftragsbestätigung {conf.confirmation_number}\n"
-                    f"zu Ihrer Bestellung {conf.order.order_number}.\n\n"
-                    f"Mit freundlichen Grüßen\nIhr Team"
+    try:
+        an, cc = empfaenger_fuer_versand(
+            customer, DispatchDocType.AB,
+            to=data.to, cc=data.cc, use_customer_recipients=data.use_customer_recipients,
+        )
+    except ValueError as e:  # auch KeinEmpfaenger und die Obergrenze An + Cc
+        raise HTTPException(status_code=400, detail=str(e))
+
+    if not an and conf.is_locked():
+        raise HTTPException(status_code=400, detail="AB ist bereits versendet")
+
+    pdf = PDFService.generate_confirmation_pdf(conf, settings=load_company_settings(db), db=db)
+
+    if not an:
+        markiere_ohne_mail(
+            db, doc_type=DispatchDocType.AB, document_number=conf.confirmation_number,
+            pdf=pdf, user=user, customer_id=order.customer_id, order_id=order.id,
+            confirmation_id=conf.id,
+        )
+        conf.status = ConfirmationStatus.VERSENDET
+        db.commit()
+        db.refresh(conf)
+        return conf
+
+    if conf.is_locked():
+        nachweis = erster_nachweis(conf.dispatches)
+        if nachweis is None:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Für AB {conf.confirmation_number} gibt es keinen Versandnachweis mit "
+                    f"Prüfsumme (vor der Umstellung versendet). Bitte eine neue AB anlegen."
                 ),
-                attachment_bytes=pdf,
-                attachment_filename=beleg_dateiname(conf.confirmation_number),
             )
-        except EmailNotConfiguredError as e:
-            raise HTTPException(status_code=503, detail=str(e))
-        except Exception as e:
-            raise HTTPException(status_code=502, detail=f"E-Mail-Versand fehlgeschlagen: {e}")
+        if nachweis.attachment_sha256 != pdf_pruefsumme(pdf):
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Bestellung oder Belegvorlage wurden seit dem ersten Versand von AB "
+                    f"{conf.confirmation_number} geändert. Bitte eine neue AB anlegen."
+                ),
+            )
+
+    customer_name = customer.name if customer else "Kunde"
+    try:
+        eintrag = versende_beleg(
+            db,
+            doc_type=DispatchDocType.AB,
+            document_number=conf.confirmation_number,
+            an=an,
+            cc=cc,
+            betreff=f"Auftragsbestätigung {conf.confirmation_number}{firmenzusatz(db)}",
+            text=(
+                f"Sehr geehrte Damen und Herren bei {customer_name},\n\n"
+                f"anbei finden Sie die Auftragsbestätigung {conf.confirmation_number}\n"
+                f"zu Ihrer Bestellung {order.order_number}.\n\n"
+                f"{gruss(db)}"
+            ),
+            pdf=pdf,
+            user=user,
+            customer_id=order.customer_id,
+            order_id=order.id,
+            confirmation_id=conf.id,
+        )
+    except EmailNotConfiguredError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"E-Mail-Versand fehlgeschlagen: {e}")
 
     conf.status = ConfirmationStatus.VERSENDET
-    conf.sent_at = datetime.now(timezone.utc)
-    conf.sent_to_email = data.sent_to_email
+    # sent_at/sent_to_email: erster MAIL-Versand (Kurzanzeige); maßgeblich ist das Protokoll
+    if conf.sent_at is None:
+        conf.sent_at = eintrag.sent_at
+        conf.sent_to_email = ", ".join(an)[:200]
     db.commit()
     db.refresh(conf)
     return conf

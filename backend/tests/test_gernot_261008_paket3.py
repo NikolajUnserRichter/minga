@@ -1824,7 +1824,9 @@ def _q3_mail_abfangen(monkeypatch) -> dict:
     monkeypatch.setenv("SMTP_USER", "versand@farm.example")
     versendet = {}
     monkeypatch.setattr("app.api.v1.invoices.send_email", lambda **kw: versendet.update(kw))
-    monkeypatch.setattr("app.api.v1.documents.send_email", lambda **kw: versendet.update(kw))
+    # Seit Q2.5 verschickt die AB über app.services.belegversand (erwartet ein VersandErgebnis);
+    # die Rechnungszeile darüber zieht in Q2.7 um.
+    monkeypatch.setattr("app.services.belegversand.send_email", _q2_attrappe(versendet))
     return versendet
 
 
@@ -2452,3 +2454,204 @@ class TestQ2DemoReset:
             pruef.dispose()
             for engine in engines:
                 engine.dispose()
+
+
+
+
+def _q2_text(mail) -> str:
+    return mail["msg"].get_body(preferencelist=("plain",)).get_content()
+
+
+class TestQ2AbVersand:
+    """PATCH /sales/confirmations/{id}/send — mehrere Empfänger, Protokoll, leerer Body."""
+
+    def test_leerer_body_markiert_nur(self, client, _q2_smtp):
+        """Die Bedeutung von {} bleibt (persönliche Übergabe) — auch wenn beim
+        Kunden Adressen hinterlegt sind: KEINE Mail."""
+        kunde = _q2_kunde(client, email="info@oekoring.example",
+                          confirmation_emails=["einkauf@oekoring.example"])
+        ab = _q2_ab(client, _q2_bestellung(client, kunde))
+
+        r = _q2_ab_senden(client, ab, {})
+
+        assert r.status_code == 200, r.text
+        antwort = r.json()
+        assert antwort["status"] == "VERSENDET"
+        assert antwort["sent_at"] is None
+        assert _q2_smtp.gesendet == []
+        [zeile] = antwort["dispatches"]
+        assert zeile["status"] == "NUR_MARKIERT"
+        assert zeile["to_addrs"] == []
+        assert zeile["sent_by_name"] == "testuser"
+        pdf = client.get(f"/api/v1/sales/confirmations/{ab['id']}/pdf").content
+        assert zeile["attachment_sha256"] == _q2_sha(pdf)
+
+    def test_eine_mail_an_mehrere(self, client, _q2_smtp):
+        ab = _q2_ab(client, _q2_bestellung(client, _q2_kunde(client)))
+
+        r = _q2_ab_senden(client, ab, {
+            "to": ["rechnung@oekoring.example", "einkauf@oekoring.example"],
+            "cc": ["chef@oekoring.example"],
+        })
+
+        assert r.status_code == 200, r.text
+        [mail] = _q2_smtp.gesendet
+        assert mail["msg"]["To"] == "rechnung@oekoring.example, einkauf@oekoring.example"
+        assert mail["msg"]["Cc"] == "chef@oekoring.example"
+        dateiname, pdf = _q2_anhang(mail)
+        assert dateiname == f"{ab['confirmation_number']}.pdf"
+        antwort = r.json()
+        assert antwort["status"] == "VERSENDET"
+        assert antwort["sent_at"] is not None
+        assert antwort["sent_to_email"] == "rechnung@oekoring.example, einkauf@oekoring.example"
+        [zeile] = antwort["dispatches"]
+        assert zeile["status"] == "GESENDET"
+        assert zeile["to_addrs"] == ["rechnung@oekoring.example", "einkauf@oekoring.example"]
+        assert zeile["cc_addrs"] == ["chef@oekoring.example"]
+        assert zeile["attachment_sha256"] == _q2_sha(pdf)
+        assert zeile["sent_by_name"] == "testuser"
+        assert zeile["sent_at"].endswith(("Z", "+00:00"))
+
+    def test_hinterlegte_empfaenger(self, client, _q2_smtp):
+        kunde = _q2_kunde(client, email="info@oekoring.example",
+                          confirmation_emails=["einkauf@oekoring.example", "lager@oekoring.example"])
+        ab = _q2_ab(client, _q2_bestellung(client, kunde))
+
+        r = _q2_ab_senden(client, ab, {"use_customer_recipients": True})
+
+        assert r.status_code == 200, r.text
+        assert _q2_smtp.gesendet[0]["umschlag"] == ["einkauf@oekoring.example", "lager@oekoring.example"]
+
+    def test_ohne_hinterlegte_adresse_400(self, client, _q2_smtp):
+        bestellung = _q2_bestellung(client, _q2_kunde(client))
+        ab = _q2_ab(client, bestellung)
+
+        r = _q2_ab_senden(client, ab, {"use_customer_recipients": True})
+
+        assert r.status_code == 400, r.text
+        assert _q2_smtp.gesendet == []
+        assert _q2_abs(client, bestellung)[0]["status"] == "ENTWURF"
+
+    def test_altes_feld_sent_to_email(self, client, _q2_smtp):
+        """Ein nach dem Deploy noch offener Tab mit dem alten Frontend."""
+        ab = _q2_ab(client, _q2_bestellung(client, _q2_kunde(client)))
+
+        r = _q2_ab_senden(client, ab, {"sent_to_email": "Einkauf@Oekoring.example"})
+
+        assert r.status_code == 200, r.text
+        assert _q2_smtp.gesendet[0]["umschlag"] == ["einkauf@oekoring.example"]
+
+    def test_ungueltige_adresse_422_ohne_mail(self, client, _q2_smtp):
+        bestellung = _q2_bestellung(client, _q2_kunde(client))
+        ab = _q2_ab(client, bestellung)
+
+        r = _q2_ab_senden(client, ab, {"to": ["einkäufer@oekoring.example"]})
+
+        assert r.status_code == 422, r.text
+        assert _q2_smtp.gesendet == []
+        assert _q2_abs(client, bestellung)[0]["status"] == "ENTWURF"
+
+    def test_erneut_senden_an_vergessene_adresse(self, client, _q2_smtp):
+        ab = _q2_ab(client, _q2_bestellung(client, _q2_kunde(client)))
+        assert _q2_ab_senden(client, ab, {"to": ["einkauf@oekoring.example"]}).status_code == 200
+
+        r = _q2_ab_senden(client, ab, {"to": ["lager@oekoring.example"]})
+
+        assert r.status_code == 200, r.text
+        assert len(_q2_smtp.gesendet) == 2
+        erste, zweite = r.json()["dispatches"]
+        assert erste["to_addrs"] == ["einkauf@oekoring.example"]
+        assert zweite["to_addrs"] == ["lager@oekoring.example"]
+        assert erste["attachment_sha256"] == zweite["attachment_sha256"]
+        # Kurzanzeige und sent_at bleiben beim ersten Versand
+        assert r.json()["sent_to_email"] == "einkauf@oekoring.example"
+
+    def test_nach_bestellaenderung_409_ohne_mail(self, client, _q2_smtp):
+        bestellung = _q2_bestellung(client, _q2_kunde(client))
+        ab = _q2_ab(client, bestellung)
+        assert _q2_ab_senden(client, ab, {"to": ["einkauf@oekoring.example"]}).status_code == 200
+        _q2_position_nachtragen(client, bestellung)
+
+        r = _q2_ab_senden(client, ab, {"to": ["lager@oekoring.example"]})
+
+        assert r.status_code == 409, r.text
+        assert "neue AB" in r.json()["detail"]
+        assert len(_q2_smtp.gesendet) == 1
+        assert len(_q2_abs(client, bestellung)[0]["dispatches"]) == 1
+
+    def test_versendete_ab_nicht_nochmal_markieren(self, client, _q2_smtp):
+        ab = _q2_ab(client, _q2_bestellung(client, _q2_kunde(client)))
+        assert _q2_ab_senden(client, ab, {}).status_code == 200
+
+        r = _q2_ab_senden(client, ab, {})
+
+        assert r.status_code == 400, r.text
+
+    def test_ohne_smtp_503_und_ab_bleibt_entwurf(self, client, _q2_ohne_smtp):
+        bestellung = _q2_bestellung(client, _q2_kunde(client))
+        ab = _q2_ab(client, bestellung)
+
+        r = _q2_ab_senden(client, ab, {"to": ["einkauf@oekoring.example"]})
+
+        assert r.status_code == 503, r.text
+        gelesen = _q2_abs(client, bestellung)[0]
+        assert (gelesen["status"], gelesen["sent_at"], gelesen["dispatches"]) == ("ENTWURF", None, [])
+
+    def test_teilablehnung_steht_im_protokoll(self, client, _q2_smtp):
+        _q2_smtp.abzulehnen = {"alt@oekoring.example": (550, b"5.1.1 User unknown")}
+        ab = _q2_ab(client, _q2_bestellung(client, _q2_kunde(client)))
+
+        r = _q2_ab_senden(client, ab, {"to": ["neu@oekoring.example", "alt@oekoring.example"]})
+
+        assert r.status_code == 200, r.text
+        [zeile] = r.json()["dispatches"]
+        assert zeile["status"] == "TEILWEISE"
+        assert zeile["refused"] == {"alt@oekoring.example": "550 5.1.1 User unknown"}
+
+    def test_firmenname_aus_den_einstellungen(self, client, _q2_smtp):
+        _q2_firmenname("Testfarm GmbH")
+        ab = _q2_ab(client, _q2_bestellung(client, _q2_kunde(client)))
+
+        assert _q2_ab_senden(client, ab, {"to": ["einkauf@oekoring.example"]}).status_code == 200
+
+        [mail] = _q2_smtp.gesendet
+        assert mail["msg"]["Subject"] == f"Auftragsbestätigung {ab['confirmation_number']} — Testfarm GmbH"
+        assert _q2_text(mail).rstrip().endswith("Testfarm GmbH")
+
+    def test_halle_darf_ab_senden(self, client, _q2_smtp, _q2_rolle):
+        ab = _q2_ab(client, _q2_bestellung(client, _q2_kunde(client)))
+        _q2_rolle(["production_staff"])
+
+        r = _q2_ab_senden(client, ab, {"to": ["einkauf@oekoring.example"]})
+
+        assert r.status_code == 200, r.text
+        assert r.json()["dispatches"][0]["sent_by_name"] == "mia"
+
+    def test_cc_ohne_adressen_aus_der_kundenliste(self, client, _q2_smtp):
+        kunde = _q2_kunde(client, confirmation_emails=["einkauf@oekoring.example", "lager@oekoring.example"])
+        ab = _q2_ab(client, _q2_bestellung(client, kunde))
+
+        r = _q2_ab_senden(client, ab, {"use_customer_recipients": True,
+                                       "cc": ["Einkauf@Oekoring.example", "chef@oekoring.example"]})
+
+        assert r.status_code == 200, r.text
+        [mail] = _q2_smtp.gesendet
+        assert mail["msg"]["To"] == "einkauf@oekoring.example, lager@oekoring.example"
+        assert mail["msg"]["Cc"] == "chef@oekoring.example"
+        assert mail["umschlag"] == ["einkauf@oekoring.example", "lager@oekoring.example",
+                                    "chef@oekoring.example"]
+
+    def test_obergrenze_gilt_auch_fuer_die_kundenliste(self, client, _q2_smtp):
+        """Missbrauch per API: 10 hinterlegte Adressen plus 10 Cc ergäben eine
+        Mail an 20 Empfänger. Abgewiesen — keine Mail, AB bleibt Entwurf."""
+        kunde = _q2_kunde(client, confirmation_emails=[f"a{i}@oekoring.example" for i in range(10)])
+        bestellung = _q2_bestellung(client, kunde)
+        ab = _q2_ab(client, bestellung)
+
+        r = _q2_ab_senden(client, ab, {"use_customer_recipients": True,
+                                       "cc": [f"b{i}@kunde.example" for i in range(10)]})
+
+        assert r.status_code == 400, r.text
+        assert "Höchstens 10" in r.json()["detail"]
+        assert _q2_smtp.gesendet == []
+        assert _q2_abs(client, bestellung)[0]["status"] == "ENTWURF"
