@@ -33,6 +33,7 @@ from app.models.product import Product, BundleComponent
 from app.models.inventory import (
     FinishedGoodsInventory, InventoryMovement, MovementType, InventoryItemType,
 )
+from app.services.leergut_service import SYSTEM_LIEFERUNG, buche_ausgaben
 
 logger = logging.getLogger(__name__)
 
@@ -211,6 +212,11 @@ def deduct_inventory_for_order(db: Session, order: Order, *, dry_run: bool = Fal
             })
 
     if not dry_run:
+        # Leergutkonto (Paket 3, Q6): Kunden mit monatlicher Pfandabrechnung
+        # bekommen je Pfandposition eine AUSGABE — in derselben Transaktion
+        # wie der Bestandsabzug, also einmal beim Übergang nach GELIEFERT,
+        # gleich über welchen Weg (Status, Lieferschein quittieren, Sammelaktion).
+        buche_ausgaben(db, order, erfasst_von=SYSTEM_LIEFERUNG)
         order.inventory_deducted_at = datetime.now(timezone.utc)
         if commit:
             db.commit()

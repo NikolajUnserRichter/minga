@@ -120,3 +120,87 @@ def kunden_mit_konto(db: Session) -> list[dict]:
         for k in kunden
         if k.pfand_abrechnung == PfandAbrechnung.MONATLICH or k.id in stueck
     ]
+
+
+def leistungsdatum(order: Order) -> date:
+    """Liefertag der Bestellung: tatsächlich (setzen Quittieren und Statuswechsel
+    nach GELIEFERT), ersatzweise gewünscht."""
+    return order.actual_delivery_date or order.requested_delivery_date
+
+
+def im_leergutkonto(kunde: Optional[Customer], order: Order) -> bool:
+    """Gehört das Pfand dieser Bestellung ins Leergutkonto?
+    MONATLICH und Lieferung ab dem Stichtag des Kunden."""
+    if kunde is None or kunde.pfand_abrechnung != PfandAbrechnung.MONATLICH:
+        return False
+    return kunde.pfand_monatlich_ab is None or leistungsdatum(order) >= kunde.pfand_monatlich_ab
+
+
+def hat_bewegung(db: Session, order_line_id: UUID) -> bool:
+    return db.execute(
+        select(LeergutBewegung.id).where(LeergutBewegung.order_line_id == order_line_id).limit(1)
+    ).first() is not None
+
+
+def pfandzeile_fakturiert(db: Session, line: OrderLine) -> bool:
+    """Steht diese Bestellposition schon auf einer gültigen Rechnung?
+
+    Rechnung aus Bestellung: über InvoiceLine.order_item_id. Sammelrechnung:
+    über invoice_line_sources (Lieferschein der Bestellung) und das Produkt
+    der Rechnungszeile. Stornierte Rechnungen zählen nicht — ihr Pfand ist
+    wieder offen.
+    """
+    gueltig = (Invoice.status != InvoiceStatus.STORNIERT, Invoice.invoice_type == InvoiceType.RECHNUNG)
+    if db.execute(
+        select(InvoiceLine.id)
+        .join(Invoice, InvoiceLine.invoice_id == Invoice.id)
+        .where(InvoiceLine.order_item_id == line.id, *gueltig)
+        .limit(1)
+    ).first() is not None:
+        return True
+    produkt = produkt_der_position(db, line.product_id, line.product_variant_id)
+    if produkt is None:
+        return False
+    return db.execute(
+        select(InvoiceLine.id)
+        .join(Invoice, InvoiceLine.invoice_id == Invoice.id)
+        .join(InvoiceLineSource, InvoiceLineSource.invoice_line_id == InvoiceLine.id)
+        .join(DeliveryNote, InvoiceLineSource.delivery_note_id == DeliveryNote.id)
+        .where(DeliveryNote.order_id == line.order_id, InvoiceLine.product_id == produkt.id, *gueltig)
+        .limit(1)
+    ).first() is not None
+
+
+def _stueck(menge) -> int:
+    return int(Decimal(str(menge)).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+
+
+def ausgabe_faellig(db: Session, order: Order, line: OrderLine) -> Optional[Product]:
+    """Der Pfandartikel, wenn für diese Position eine AUSGABE fällig ist, sonst None."""
+    produkt = produkt_der_position(db, line.product_id, line.product_variant_id)
+    if not ist_pfandartikel(produkt) or not im_leergutkonto(order.customer, order):
+        return None
+    if _stueck(line.quantity) <= 0 or hat_bewegung(db, line.id) or pfandzeile_fakturiert(db, line):
+        return None
+    return produkt
+
+
+def buche_ausgaben(db: Session, order: Order, *, erfasst_von: str) -> list[LeergutBewegung]:
+    """AUSGABE je fälliger Pfandposition. Idempotent (eine Bewegung je
+    Bestellposition), committet nicht."""
+    neu = []
+    for line in order.lines:
+        produkt = ausgabe_faellig(db, order, line)
+        if produkt is None:
+            continue
+        bewegung = LeergutBewegung(
+            customer_id=order.customer_id, product_id=produkt.id, art=LeergutArt.AUSGABE,
+            menge=_stueck(line.quantity), einzelwert=pfandwert(produkt),
+            leistungsdatum=leistungsdatum(order), order_line_id=line.id,
+            erfasst_von=erfasst_von,
+        )
+        db.add(bewegung)
+        neu.append(bewegung)
+    if neu:
+        db.flush()
+    return neu

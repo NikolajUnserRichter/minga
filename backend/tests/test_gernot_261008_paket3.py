@@ -4544,3 +4544,111 @@ class TestQ6Leergutkonto:
 
         assert "leergut_bewegungen" in inspect(engine).get_table_names()
         engine.dispose()
+
+
+# ------------------------------------------------ Task Q6.4: Ausgabe bei Lieferung
+
+@pytest.mark.usefixtures("_q6_ohne_forecast")
+class TestQ6AusgabeBeiLieferung:
+    def test_lieferung_bucht_ausgabe(self, client):
+        kunde, kiste = _q6_monatskunde(client), _q6_kiste(client)
+        bestellung = _q6_bestellung(client, kunde, _q6_ware(client), kiste)
+
+        _q6_liefern(client, bestellung)
+
+        konto = _q6_konto(client, kunde)
+        [b] = konto["bewegungen"]
+        kistenzeile = next(l for l in bestellung["lines"] if l["product_id"] == kiste["id"])
+        assert (b["art"], b["menge"], _q6_d(b["einzelwert"]), b["leistungsdatum"]) == (
+            "AUSGABE", 10, Decimal("3.00"), Q6_LIEFERTAG.isoformat())
+        assert b["order_line_id"] == kistenzeile["id"]
+        assert konto["salden"][0]["stueck"] == 10
+
+    def test_ausgabe_nur_einmal(self, client):
+        from app.models.order import Order
+        from app.services.leergut_service import buche_ausgaben
+        kunde = _q6_monatskunde(client)
+        bestellung = _q6_bestellung(client, kunde, kiste=_q6_kiste(client))
+        _q6_liefern(client, bestellung)
+
+        with TestingSessionLocal() as db:
+            assert buche_ausgaben(db, db.get(Order, uuid.UUID(bestellung["id"])), erfasst_von="Test") == []
+
+        assert len(_q6_konto(client, kunde)["bewegungen"]) == 1
+
+    def test_je_lieferung_bucht_nichts(self, client):
+        """Charakterisierung (vor dem Fix grün): Kunden ohne Leergutkonto bleiben, wie sie sind."""
+        kunde = _q6_kunde(client)
+        _q6_liefern(client, _q6_bestellung(client, kunde, kiste=_q6_kiste(client)))
+
+        assert _q6_konto(client, kunde)["bewegungen"] == []
+
+    def test_lieferung_vor_dem_stichtag_bucht_nichts(self, client):
+        """Charakterisierung (vor dem Fix grün): Was vor dem Wechsel geliefert
+        wurde, bleibt in der alten Abrechnung."""
+        kunde = _q6_monatskunde(client, stichtag=date(2026, 9, 15))
+        _q6_liefern(client, _q6_bestellung(client, kunde, kiste=_q6_kiste(client)))
+
+        assert _q6_konto(client, kunde)["bewegungen"] == []
+
+    def test_schon_aus_bestellung_berechnet_bucht_nichts(self, client):
+        """Wechsel JE_LIEFERUNG → MONATLICH: die Kiste stand schon auf der Rechnung.
+        Vor dem Fix grün, weil noch gar nichts bucht — danach der eigentliche Schutz."""
+        kunde = _q6_kunde(client)
+        bestellung = _q6_bestellung(client, kunde, _q6_ware(client), _q6_kiste(client))
+        assert client.post(f"/api/v1/invoices/from-order/{bestellung['id']}").status_code == 201
+        client.patch(f"/api/v1/sales/customers/{kunde['id']}", json={"pfand_abrechnung": "MONATLICH"})
+        _q6_stichtag(kunde)
+
+        _q6_liefern(client, bestellung)
+
+        assert _q6_konto(client, kunde)["bewegungen"] == []
+
+    def test_schon_in_sammelrechnung_bucht_nichts(self, client):
+        """Wie oben, aber über die Sammelrechnung: dort fehlt order_item_id,
+        die Kiste hängt über invoice_line_sources am Lieferschein.
+        Vor dem Fix grün, weil noch gar nichts bucht — danach der eigentliche Schutz."""
+        kunde = _q6_kunde(client)
+        bestellung = _q6_bestellung(client, kunde, _q6_ware(client), _q6_kiste(client))
+        _q6_bestaetigen(client, bestellung)
+        ls = _q6_lieferschein(client, bestellung)
+        lauf = client.post("/api/v1/invoices/batch-run/commit",
+                           json={"period_from": "2026-09-01", "period_to": "2026-09-30"})
+        assert lauf.status_code == 201 and len(lauf.json()["rechnungen"]) == 1, lauf.text
+        client.patch(f"/api/v1/sales/customers/{kunde['id']}", json={"pfand_abrechnung": "MONATLICH"})
+        _q6_stichtag(kunde)
+
+        assert _q6_quittieren(client, ls).status_code == 200
+
+        assert _q6_konto(client, kunde)["bewegungen"] == []
+
+    def test_verworfene_rechnung_zaehlt_nicht(self, client):
+        """Ist die Rechnung mit der Kiste verworfen, gehört die Kiste ins Konto."""
+        kunde = _q6_kunde(client)
+        bestellung = _q6_bestellung(client, kunde, _q6_ware(client), _q6_kiste(client))
+        rechnung = client.post(f"/api/v1/invoices/from-order/{bestellung['id']}").json()
+        r = client.post(f"/api/v1/invoices/{rechnung['id']}/cancel",
+                        json={"reason": "Pfand läuft künftig monatlich", "create_credit_note": False})
+        assert r.status_code == 200, r.text
+        client.patch(f"/api/v1/sales/customers/{kunde['id']}", json={"pfand_abrechnung": "MONATLICH"})
+        _q6_stichtag(kunde)
+
+        _q6_liefern(client, bestellung)
+
+        assert [b["menge"] for b in _q6_konto(client, kunde)["bewegungen"]] == [10]
+
+    def test_scheitert_die_buchung_wird_nicht_geliefert(self, client, monkeypatch):
+        """Ausgabe und Bestandsabzug in einer Transaktion: alles oder nichts."""
+        def kaputt(*a, **k):
+            raise RuntimeError("Leergutkonto gesperrt")
+        monkeypatch.setattr("app.services.order_fulfillment_service.buche_ausgaben", kaputt)
+        kunde = _q6_monatskunde(client)
+        bestellung = _q6_bestellung(client, kunde, kiste=_q6_kiste(client))
+        _q6_bestaetigen(client, bestellung)
+        ls = _q6_lieferschein(client, bestellung)
+
+        r = _q6_quittieren(client, ls)
+
+        assert r.status_code == 500
+        assert client.get(f"/api/v1/sales/orders/{bestellung['id']}").json()["status"] == "BESTAETIGT"
+        assert _q6_konto(client, kunde)["bewegungen"] == []
