@@ -112,6 +112,9 @@ class TestFestschreiben:
     def test_nach_storno_sind_die_lieferscheine_wieder_im_lauf(self, client, sample_customer, maerz_lieferungen):
         """R1.6 + R2.5 zusammen: Storno gibt frei, der nächste Lauf nimmt sie."""
         erste = _lauf(client, COMMIT).json()["rechnungen"][0]
+        # Der Lauf legt Entwürfe an (Paket 3, Q1); storniert wird eine finalisierte Rechnung
+        r = client.post(f"/api/v1/invoices/{erste['id']}/finalize")
+        assert r.status_code == 200, r.text
 
         storno = client.post(f"/api/v1/invoices/{erste['id']}/cancel", json={
             "reason": "Preisfehler", "reason_code": "PREISFEHLER",

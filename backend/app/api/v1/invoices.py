@@ -411,6 +411,23 @@ def cancel_invoice(
         raise HTTPException(status_code=400, detail=str(e))
 
 
+@router.delete("/{invoice_id}", status_code=204)
+def discard_invoice_draft(invoice_id: UUID, db: DBSession):
+    """Verwirft einen Entwurf ohne Rechnungsnummer (Platzhalter ENTWURF-…).
+
+    Keine Nummer, also keine Lücke; zugeordnete Lieferscheine werden wieder
+    abrechenbar. Finalisierte Rechnungen und Altentwürfe mit RE-Nummer: 409.
+    """
+    invoice = db.get(Invoice, invoice_id)
+    if not invoice:
+        raise HTTPException(status_code=404, detail="Rechnung nicht gefunden")
+    try:
+        InvoiceService(db).entwurf_verwerfen(invoice)
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    db.commit()
+
+
 # ========================================
 # INVOICE LINES
 # ========================================
@@ -621,8 +638,10 @@ def get_invoice_pdf(
 #
 # Ein Lauf je Zeitraum: alle nicht abgerechneten Lieferscheine der Kunden
 # werden je Artikel + Einheit + Einzelpreis + Steuersatz aggregiert.
-# Vorschau rechnet nur; erst das Festschreiben vergibt Nummern und setzt
-# delivery_notes.invoice_id — der Doppelabrechnungsschutz (R2.5).
+# Vorschau rechnet nur. Der Lauf legt je Kunde einen Rechnungsentwurf an
+# und setzt delivery_notes.invoice_id — der Doppelabrechnungsschutz (R2.5).
+# Die Rechnungsnummer vergibt erst InvoiceService.festschreiben (Spec
+# 08.10.2026, Entscheidung 6).
 # =====================================================================
 
 from pydantic import BaseModel as _BaseModel, Field as _Field
@@ -764,8 +783,11 @@ def batch_run_preview(anfrage: BatchRunRequest, db: DBSession):
 
 @router.post("/batch-run/commit", status_code=201)
 def batch_run_commit(anfrage: BatchRunRequest, db: DBSession):
-    """Schreibt den Lauf fest: eine Rechnung je Kunde, Nummern aus dem
-    regulären Kreis, Lieferscheine fest zugeordnet (R2.1–R2.5)."""
+    """Legt je Kunde einen Rechnungsentwurf an (Platzhalter, keine Nummer)
+    und ordnet die Lieferscheine zu (R2.1–R2.5). Freigabe einzeln über
+    /finalize; ein verworfener Entwurf (DELETE) gibt die Lieferscheine frei.
+    Hat ein gleichzeitiger zweiter Lauf Lieferscheine schon belegt: 409,
+    nichts angelegt."""
     kunden = _aggregiere(db, _abrechenbare_lieferscheine(db, anfrage))
     service = InvoiceService(db)
     rechnungen = []
@@ -804,9 +826,13 @@ def batch_run_commit(anfrage: BatchRunRequest, db: DBSession):
                 ))
 
         # Doppelabrechnungsschutz: ab jetzt hängt der Lieferschein an dieser
-        # Rechnung — der nächste Lauf sieht ihn nicht mehr (R2.5).
-        for note in k["lieferscheine"]:
-            note.invoice_id = invoice.id
+        # Rechnung — der nächste Lauf sieht ihn nicht mehr (R2.5). Nur wenn
+        # er noch frei ist: ein gleichzeitiger zweiter Lauf bekommt 409.
+        try:
+            service.lieferscheine_belegen(invoice, k["lieferscheine"])
+        except BereitsAbgerechnet as e:
+            db.rollback()
+            raise HTTPException(status_code=409, detail=str(e))
 
         # Summen über ALLE Zeilen: die lines-Relationship kann nach dem
         # zeilenweisen add_line noch den alten Stand tragen.
@@ -814,10 +840,8 @@ def batch_run_commit(anfrage: BatchRunRequest, db: DBSession):
         db.refresh(invoice)
         invoice.calculate_totals()
 
-        try:
-            service.finalize_invoice(invoice.id)
-        except BereitsAbgerechnet as e:
-            raise HTTPException(status_code=409, detail=str(e))
+        # Bleibt ENTWURF: Nummer, Rechnungsdatum und Fälligkeit setzt erst
+        # das Festschreiben (Spec 08.10.2026, Entscheidung 6).
         rechnungen.append(invoice)
 
     db.commit()

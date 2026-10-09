@@ -10,7 +10,7 @@ from io import StringIO
 from zoneinfo import ZoneInfo
 import csv
 from sqlalchemy.orm import Session
-from sqlalchemy import select, func, and_, or_, cast, Integer, update
+from sqlalchemy import select, func, and_, or_, cast, Integer, update, delete
 
 from app.models.invoice import (
     Invoice, InvoiceLine, InvoiceLineSource, Payment,
@@ -886,3 +886,74 @@ class InvoiceService:
             .where(Invoice.invoice_number.like(f"{praefix}%"))
         ).scalar()
         return generate_invoice_number(jahr, (hoechste or 0) + 1, "RE")
+
+    def entwurf_verwerfen(self, invoice: Invoice) -> None:
+        """Löscht einen Entwurf ohne Rechnungsnummer samt Positionen.
+
+        Nur ENTWURF mit Platzhalter: er hat keine Nummer, es entsteht keine
+        Lücke. Ein Altentwurf mit RE-Nummer wird nie gelöscht — seine Nummer
+        bleibt belegt (verwerfen dort: Storno ohne Stornorechnung).
+        Geprüft wird unter der Schreibsperre (_sperren_und_neu_lesen): ein
+        gleichzeitiges Finalisieren darf nicht eine eben ausgestellte
+        Rechnung löschen. Zugeordnete Lieferscheine werden ausdrücklich
+        freigegeben: auf bestehenden Mandanten-DBs kam
+        delivery_notes.invoice_id per ADD COLUMN ohne Fremdschlüssel
+        (tenancy._auto_migrate), ON DELETE SET NULL greift dort nicht.
+        Committet nicht.
+        """
+        self._sperren_und_neu_lesen(invoice)
+        if invoice.status != InvoiceStatus.ENTWURF:
+            raise ValueError(
+                "Nur Entwürfe können verworfen werden — eine finalisierte Rechnung wird storniert"
+            )
+        if not ist_entwurfsnummer(invoice.invoice_number):
+            raise ValueError(
+                f"Der Entwurf trägt bereits die Rechnungsnummer {invoice.invoice_number}. "
+                "Damit die Nummer belegt bleibt: ohne Stornorechnung stornieren statt löschen."
+            )
+        if invoice.payments:
+            raise ValueError("Zum Entwurf sind Zahlungen erfasst — Entwurf kann nicht verworfen werden")
+        if invoice.lexoffice_id:
+            raise ValueError(
+                "Der Entwurf wurde an lexoffice übertragen — dort zuerst löschen, dann verwerfen"
+            )
+
+        self.db.execute(
+            update(DeliveryNote).where(DeliveryNote.invoice_id == invoice.id).values(invoice_id=None)
+        )
+        self.db.execute(
+            update(Order).where(Order.invoice_id == invoice.id).values(invoice_id=None)
+        )
+        self.db.execute(
+            delete(InvoiceLineSource).where(
+                InvoiceLineSource.invoice_line_id.in_(
+                    select(InvoiceLine.id).where(InvoiceLine.invoice_id == invoice.id)
+                )
+            )
+        )
+        self.db.delete(invoice)
+        self.db.flush()
+
+    def lieferscheine_belegen(self, invoice: Invoice, lieferscheine: list[DeliveryNote]) -> None:
+        """Ordnet Lieferscheine einer (Sammel-)Rechnung zu — nur, wenn sie noch frei sind.
+
+        Doppelabrechnungsschutz (R2.5) auch gegen einen gleichzeitigen
+        zweiten Lauf (zwei Tabs; später der Monatsjob, Q7): beide haben
+        dieselben Lieferscheine als frei gelesen, der zweite legte sonst
+        einen zweiten Entwurf über dieselbe Lieferung an (T4 L7). Das
+        bedingte UPDATE läuft unter der Schreibsperre dieses Vorgangs und
+        sieht den Commit des anderen. Wirft BereitsAbgerechnet, der Aufrufer
+        rollt zurück. Committet nicht.
+        """
+        ids = [note.id for note in lieferscheine]
+        belegt = self.db.execute(
+            update(DeliveryNote)
+            .where(DeliveryNote.id.in_(ids), DeliveryNote.invoice_id.is_(None))
+            .values(invoice_id=invoice.id)
+            .execution_options(synchronize_session=False)
+        ).rowcount
+        if belegt != len(ids):
+            raise BereitsAbgerechnet(
+                "Ein Teil der Lieferscheine wurde inzwischen abgerechnet (zweiter Lauf zur "
+                "selben Zeit?). Nichts angelegt — Vorschau neu laden und den Lauf wiederholen."
+            )

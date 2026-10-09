@@ -1493,6 +1493,10 @@ class TestNacharbeitStornosperre:
             })
             assert response.status_code == 201, response.text
             rechnung = response.json()["rechnungen"][0]
+            # Der Lauf legt Entwürfe an (Paket 3, Q1); gemeint ist die ausgestellte Sammelrechnung
+            response = client.post(f"/api/v1/invoices/{rechnung['id']}/finalize")
+            assert response.status_code == 200, response.text
+            rechnung = response.json()
         else:
             response = client.post(f"/api/v1/invoices/from-order/{order['id']}")
             assert response.status_code == 201, response.text

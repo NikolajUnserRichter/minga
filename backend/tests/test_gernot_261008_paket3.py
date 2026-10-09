@@ -636,3 +636,161 @@ class TestQ1NebenlaeufigOhneStornorechnung:
             assert [(n, "nur mit Stornorechnung" in e) for n, e in fehler] == [("verwerfen", True)]
         finally:
             registry.dispose_tenant("q1test")
+
+
+def _q1_api_auf(monkeypatch, Session):
+    """Lenkt die API (client) für diesen Test auf die Mandanten-DB."""
+    from app.api.deps import _tenant_db
+    from app.database import get_db
+    from app.main import app
+
+    def db_dep():
+        db = Session()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    monkeypatch.setitem(app.dependency_overrides, _tenant_db, db_dep)
+    monkeypatch.setitem(app.dependency_overrides, get_db, db_dep)
+
+
+class TestQ1SammellaufUndVerwerfen:
+    """Der Sammellauf legt Entwürfe an; ein Entwurf ohne Nummer lässt sich
+    verwerfen, ohne eine Lücke zu reißen."""
+
+    def test_sammellauf_legt_entwuerfe_an(self, client):
+        _q1_bestellung_mit_lieferschein(client, _q1_kunde(client))
+
+        rechnung = _q1_lauf(client)["rechnungen"][0]
+
+        assert rechnung["status"] == "ENTWURF"
+        assert _Q1_PLATZHALTER.match(rechnung["invoice_number"])
+        # die Lieferscheine sind reserviert: der nächste Lauf ist leer
+        assert _q1_lauf(client, "preview")["kunden"] == []
+        assert _q1_finalisieren(client, rechnung)["invoice_number"] == _q1_nr(1)
+
+    def test_entwurf_loeschen_erzeugt_keine_luecke(self, client):
+        kunde = _q1_kunde(client)
+        a, b, c = (_q1_entwurf(client, kunde) for _ in range(3))
+
+        r = client.delete(f"/api/v1/invoices/{b['id']}")
+
+        assert r.status_code == 204, r.text
+        assert client.get(f"/api/v1/invoices/{b['id']}").status_code == 404
+        nummern = [_q1_finalisieren(client, x)["invoice_number"] for x in (a, c)]
+        assert nummern == [_q1_nr(1), _q1_nr(2)]
+
+    def test_verworfener_sammelentwurf_gibt_lieferscheine_frei(self, client):
+        _, ls = _q1_bestellung_mit_lieferschein(client, _q1_kunde(client))
+        rechnung = _q1_lauf(client)["rechnungen"][0]
+
+        assert client.delete(f"/api/v1/invoices/{rechnung['id']}").status_code == 204
+
+        assert [k["anzahl_lieferscheine"] for k in _q1_lauf(client, "preview")["kunden"]] == [1]
+        neu = _q1_lauf(client)["rechnungen"][0]
+        r = client.get(f"/api/v1/invoices/{neu['id']}/delivery-notes")
+        assert [n["delivery_note_number"] for n in r.json()] == [ls["delivery_note_number"]]
+
+    def test_verwerfen_nur_fuer_entwuerfe_ohne_nummer(self, client):
+        kunde = _q1_kunde(client)
+        rechnung = _q1_finalisieren(client, _q1_entwurf(client, kunde))
+        alt_id = _q1_altentwurf(kunde, _q1_nr(7))
+
+        assert client.delete(f"/api/v1/invoices/{rechnung['id']}").status_code == 409
+        r = client.delete(f"/api/v1/invoices/{alt_id}")
+        assert r.status_code == 409, r.text
+        assert _q1_nr(7) in r.json()["detail"]
+        assert client.get(f"/api/v1/invoices/{alt_id}").json()["status"] == "ENTWURF"
+
+
+class TestQ1VerwerfenAufMandantenDb:
+    """Mandanten-DB wie in Produktion (Fremdschlüssel an, WAL), siehe
+    TestQ1Nebenlaeufig."""
+
+    def test_verwerfen_mit_fremdschluesseln(self, client, monkeypatch, tmp_path):
+        registry, Session = _q1_mandanten_db(monkeypatch, tmp_path)
+        try:
+            _q1_api_auf(monkeypatch, Session)
+            _q1_bestellung_mit_lieferschein(client, _q1_kunde(client))
+            rechnung = _q1_lauf(client)["rechnungen"][0]
+
+            r = client.delete(f"/api/v1/invoices/{rechnung['id']}")
+
+            assert r.status_code == 204, r.text
+            assert [k["anzahl_lieferscheine"] for k in _q1_lauf(client, "preview")["kunden"]] == [1]
+        finally:
+            registry.dispose_tenant("q1test")
+
+    def test_verwerfen_gegen_finalisieren(self, monkeypatch, tmp_path):
+        """DELETE läuft gegen ein gleichzeitiges Finalisieren: die eben
+        ausgestellte Rechnung bleibt, ihre Nummer wird nie doppelt vergeben."""
+        from app.models.invoice import Invoice
+        from app.services.invoice_service import InvoiceService
+        registry, Session = _q1_mandanten_db(monkeypatch, tmp_path)
+        try:
+            [inv_id] = _q1_orm_entwuerfe(Session)
+            gesperrt = threading.Event()
+            _q1_langsame_nummer(monkeypatch, gesperrt)
+            geladen = threading.Barrier(2)
+
+            def finalisieren():
+                with Session() as db:
+                    inv = db.get(Invoice, inv_id)
+                    geladen.wait()
+                    InvoiceService(db).festschreiben(inv)
+                    db.commit()
+
+            def verwerfen():
+                with Session() as db:
+                    inv = db.get(Invoice, inv_id)    # noch ENTWURF mit Platzhalter
+                    geladen.wait()
+                    assert gesperrt.wait(5)
+                    InvoiceService(db).entwurf_verwerfen(inv)
+                    db.commit()
+
+            fehler = _q1_gleichzeitig(("finalisieren", finalisieren), ("verwerfen", verwerfen))
+
+            with Session() as db:
+                inv = db.get(Invoice, inv_id)
+                assert inv is not None, "die eben ausgestellte Rechnung wurde gelöscht"
+                assert (inv.invoice_number, inv.status.value) == (_q1_nr(1), "OFFEN")
+            assert [(n, "Nur Entwürfe können verworfen werden" in e) for n, e in fehler] == [("verwerfen", True)]
+        finally:
+            registry.dispose_tenant("q1test")
+
+    def test_doppelter_sammellauf(self, client, monkeypatch, tmp_path):
+        """Zwei gleichzeitige Läufe (zwei Tabs) über dieselben Lieferscheine:
+        genau ein Entwurf, der zweite Lauf meldet 409 und legt nichts an."""
+        from sqlalchemy import select
+        from app.api.v1 import invoices as inv_api
+        from app.models.invoice import Invoice
+        registry, Session = _q1_mandanten_db(monkeypatch, tmp_path)
+        try:
+            _q1_api_auf(monkeypatch, Session)
+            _, ls = _q1_bestellung_mit_lieferschein(client, _q1_kunde(client))
+            original = inv_api._abrechenbare_lieferscheine
+            gelesen = threading.Barrier(2)
+
+            def beide_lesen_zuerst(db, anfrage):
+                ergebnis = original(db, anfrage)
+                gelesen.wait(timeout=10)  # beide Läufe haben gelesen, keiner geschrieben
+                return ergebnis
+
+            monkeypatch.setattr(inv_api, "_abrechenbare_lieferscheine", beide_lesen_zuerst)
+            anfrage = inv_api.BatchRunRequest(period_from=date(2026, 3, 1), period_to=date(2026, 3, 31))
+
+            def lauf():
+                with Session() as db:
+                    inv_api.batch_run_commit(anfrage, db)
+
+            fehler = _q1_gleichzeitig(("A", lauf), ("B", lauf))
+
+            with Session() as db:
+                entwuerfe = db.execute(select(Invoice.id)).scalars().all()
+            assert len(entwuerfe) == 1, entwuerfe
+            assert len(fehler) == 1 and "409" in fehler[0][1], fehler
+            r = client.get(f"/api/v1/invoices/{entwuerfe[0]}/delivery-notes")
+            assert [n["delivery_note_number"] for n in r.json()] == [ls["delivery_note_number"]]
+        finally:
+            registry.dispose_tenant("q1test")
