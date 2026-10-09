@@ -1230,3 +1230,22 @@ class TestUnklaresSchreibergebnis:
         for passwort in kc.passwords.values():
             assert passwort["value"] not in json.dumps(eintrag.details)
             assert passwort["value"] not in caplog.text + antwort.text
+
+
+class TestDemoKontoId:
+    @pytest.mark.parametrize("route", ["anlegen", "aendern", "reset"])
+    @pytest.mark.parametrize("token_name", [None, "unauffaellig@beispielfirma.de"])
+    @pytest.mark.parametrize("kontofeld", ["username", "email"])
+    def test_demo_sub_trotz_anderer_token_claims(self, admin, kc, route, token_name, kontofeld):
+        demo = kc.add_user("unauffaellig@beispielfirma.de", MANDANT, roles={"admin"})
+        kc.users[demo][kontofeld] = "anna@demo.novaerp.de"
+        _als(uid=demo, username=token_name, email="andere@beispielfirma.de")
+        if route == "anlegen":
+            antwort = _neu(admin)
+        elif route == "aendern":
+            antwort = admin.patch(f"/api/v1/users/{ADMIN_ID}", json={"last_name": "Manipuliert"})
+        else:
+            antwort = admin.post(f"/api/v1/users/{ADMIN_ID}/reset-password")
+        assert antwort.status_code == 403, antwort.text
+        assert "Demo-Login" in antwort.json()["detail"]
+        assert kc.schreibende_calls() == []

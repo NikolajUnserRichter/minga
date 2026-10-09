@@ -63,7 +63,7 @@ def _mandant(request: Request, user: CurrentUser, db: DBSession) -> str:
             detail="Benutzerverwaltung nur mit einem Keycloak-Login dieses Mandanten.",
         )
     try:
-        kc.pruefe_aktuellen_admin(host_mandant, str(user["id"]))
+        request.state.benutzerverwaltung_aufrufer = kc.pruefe_aktuellen_admin(host_mandant, str(user["id"]))
     except (kc.KeycloakNichtGefunden, kc.ZugangGeaendert) as fehler:
         _audit(db, "ZUGANG_GEAENDERT_ABGEWIESEN", host_mandant, user)
         raise HTTPException(status_code=403, detail="Ihr Zugang wurde geändert — bitte neu anmelden.") from fehler
@@ -189,10 +189,10 @@ def _ist_demo_login(user: dict) -> bool:
     return any((user.get(k) or "").strip().lower() in DEMO_LOGINS for k in ("username", "email"))
 
 
-def _mandant_schreiben(mandant: Mandant, user: CurrentUser) -> str:
+def _mandant_schreiben(request: Request, mandant: Mandant, user: CurrentUser) -> str:
     if mandant == DEMO_MANDANT:
         raise HTTPException(status_code=403, detail="In der Demo können Benutzer nicht geändert werden.")
-    if _ist_demo_login(user):
+    if _ist_demo_login(user) or _ist_demo_login(request.state.benutzerverwaltung_aufrufer):
         raise HTTPException(status_code=403, detail="Mit einem Demo-Login können Benutzer nicht geändert werden.")
     return mandant
 
