@@ -2,13 +2,17 @@ import { useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { Sprout, Scissors, Package, Truck, Users, Boxes, ListTodo, Plus, FileText, ChevronDown, ChevronRight, CheckCircle, PackageCheck } from 'lucide-react';
-import { productionApi, staffApi, documentsApi, salesApi } from '../services/api';
+import { productionApi, staffApi, documentsApi, salesApi, type DayPlanOrder } from '../services/api';
 import { PageHeader } from '../components/common/Layout';
 import { Input, EmptyState, Badge, OrderStatusBadge, PageLoader, Button, useToast, aussaatStatusLabel } from '../components/ui';
 import { LeergutRuecknahmeKnopf } from '../components/domain/Leergut';
 import { getErrorMessage } from '../services/errors';
 import { invalidateOrderViews } from '../services/orderQueries';
 import { belegHerunterladen } from '../services/belegordner';
+
+// Klick auf „Gepackt“ bzw. „Ausgeliefert“: welche Bestellung, und ob sie ein
+// Entwurf war — der Server bestätigt ihn im selben Schritt (Paket 4, G10).
+type Statusklick = { orderId: string; entwurf: boolean };
 
 /**
  * Tagesplan für Mitarbeiter: was ist heute zu tun?
@@ -64,6 +68,10 @@ export default function Tagesplan() {
   // Welche Verpacken-Bestellung ist aufgeklappt (Positionen sichtbar)
   const [offeneBestellung, setOffeneBestellung] = useState<string | null>(null);
 
+  // Sortenbedarf: Sorten (Bundles aufgelöst, Hauptansicht) oder Artikel wie
+  // bestellt (Bundle-Sicht, Gernot B1 / G12)
+  const [bedarfAnsicht, setBedarfAnsicht] = useState<'sorten' | 'artikel'>('sorten');
+
   // Packliste aus dem Tagesplan heraus: existiert schon ein Lieferschein,
   // nimm dessen Packliste — sonst wird er angelegt (Positionen 1:1 aus der
   // Bestellung) und das PDF öffnet sich direkt.
@@ -88,21 +96,23 @@ export default function Tagesplan() {
   // "Ausgeliefert" in der Karte Ausliefern. Wer einen vergangenen Tag
   // nachträgt, liefert dessen Datum mit — sonst setzt der Server heute.
   const ausgeliefertMutation = useMutation({
-    mutationFn: (orderId: string) =>
-      salesApi.updateOrderStatus(orderId, 'GELIEFERT', undefined, date < today ? date : undefined),
-    onSuccess: async (order) => {
+    mutationFn: ({ orderId }: Statusklick) =>
+      salesApi.updateOrderStatus(orderId, 'GELIEFERT', undefined, date < today ? date : undefined, true),
+    onSuccess: async (order, { entwurf }) => {
       await invalidateOrderViews(queryClient);
-      toast.success(`${order.order_number ?? 'Bestellung'} ausgeliefert`);
+      toast.success(`${order.order_number ?? 'Bestellung'} ${entwurf ? 'bestätigt und ' : ''}ausgeliefert`);
     },
     onError: (e) => toast.error(getErrorMessage(e, 'Status konnte nicht geändert werden')),
   });
 
-  // "Gepackt" = BESTAETIGT → IN_PRODUKTION. Die Bestellung fällt danach aus
-  // Verpacken und Sortenbedarf, bleibt aber unter Ausliefern (A4, 08.10.2026).
+  // "Gepackt" = IN_PRODUKTION, ein Entwurf wird dabei bestätigt (Paket 4, G10).
+  // Die Bestellung fällt danach aus Verpacken und Sortenbedarf, bleibt aber
+  // unter Ausliefern (A4, 08.10.2026).
   const gepacktMutation = useMutation({
-    mutationFn: (orderId: string) =>
-      salesApi.updateOrderStatus(orderId, 'IN_PRODUKTION', 'Im Tagesplan als gepackt markiert'),
-    onSuccess: (order) => toast.success(`${order.order_number ?? 'Bestellung'} als gepackt markiert`),
+    mutationFn: ({ orderId }: Statusklick) =>
+      salesApi.updateOrderStatus(orderId, 'IN_PRODUKTION', 'Im Tagesplan als gepackt markiert', undefined, true),
+    onSuccess: (order, { entwurf }) =>
+      toast.success(`${order.order_number ?? 'Bestellung'} ${entwurf ? 'bestätigt und ' : ''}als gepackt markiert`),
     onError: (error) => toast.error(getErrorMessage(error, 'Konnte nicht als gepackt markiert werden')),
     // Auch nach einem Fehler neu laden — meist hat ein anderes Gerät schon
     // gepackt. Das Promise zurückgeben: isPending bleibt dann true, bis der
@@ -111,11 +121,11 @@ export default function Tagesplan() {
     onSettled: () => invalidateOrderViews(queryClient),
   });
 
-  const statusWechsel = (orderId: string, ziel: 'IN_PRODUKTION' | 'GELIEFERT') => {
+  const statusWechsel = (o: DayPlanOrder, ziel: 'IN_PRODUKTION' | 'GELIEFERT') => {
     if (statuswechselLaeuft.current || (ziel === 'GELIEFERT' && date > today)) return;
     statuswechselLaeuft.current = true;
     const mutation = ziel === 'GELIEFERT' ? ausgeliefertMutation : gepacktMutation;
-    mutation.mutate(orderId, {
+    mutation.mutate({ orderId: o.order_id, entwurf: o.status === 'ENTWURF' }, {
       onSettled: () => { statuswechselLaeuft.current = false; },
     });
   };
@@ -218,22 +228,30 @@ export default function Tagesplan() {
                 <FileText className="w-4 h-4" />
                 Packliste
               </button>
-              {o.packbar ? (
+              {/* Auch für Entwürfe: der Server bestätigt beim Packen (Paket 4, G10).
+                  Einen Entwurf mit vergangenem Liefertag klärt das Büro. */}
+              {o.gepackt_moeglich ? (
                 <Button
                   size="sm"
                   variant="success"
                   icon={<PackageCheck className="w-4 h-4" />}
-                  loading={gepacktMutation.isPending && gepacktMutation.variables === o.order_id}
+                  loading={gepacktMutation.isPending && gepacktMutation.variables?.orderId === o.order_id}
                   disabled={statuswechselPending}
+                  title={o.status === 'ENTWURF' ? 'Entwurf — wird beim Packen bestätigt' : undefined}
                   onClick={(e) => {
                     e.stopPropagation();
-                    statusWechsel(o.order_id, 'IN_PRODUKTION');
+                    statusWechsel(o, 'IN_PRODUKTION');
                   }}
                 >
                   Gepackt
                 </Button>
               ) : (
-                <span className="text-xs text-gray-500 dark:text-gray-400">erst bestätigen</span>
+                <span
+                  className="text-xs text-gray-500 dark:text-gray-400"
+                  title="Liefertag vorbei — in der Bestellliste bestätigen oder stornieren"
+                >
+                  erst bestätigen
+                </span>
               )}
             </div>
           </div>
@@ -274,8 +292,9 @@ export default function Tagesplan() {
       icon: <Truck className="w-5 h-5 text-purple-600 dark:text-purple-400" />,
       count: plan?.ausliefern.length ?? 0,
       empty: 'Keine Auslieferungen an diesem Tag.',
-      // Bestätigt und Gepackt bekommen den Knopf; Geliefert bleibt am Tag
-      // sichtbar (Badge), ein Entwurf muss erst bestätigt werden.
+      // Bestätigt und Gepackt bekommen den Knopf, ein Entwurf nur am Liefertag
+      // heute (der Server bestätigt ihn dabei, Paket 4 / G10; Feld
+      // ausgeliefert_moeglich). Geliefert bleibt am Tag sichtbar (Badge).
       rows: (plan?.ausliefern ?? []).map((o) => (
         <div key={o.order_id} className="flex items-center justify-between p-3 bg-purple-50 dark:bg-purple-900/20 rounded-lg">
           <div>
@@ -284,14 +303,15 @@ export default function Tagesplan() {
           </div>
           <div className="flex items-center gap-2">
             <OrderStatusBadge status={o.status} />
-            {date <= today && (o.status === 'BESTAETIGT' || o.status === 'IN_PRODUKTION') && (
+            {date <= today && o.ausgeliefert_moeglich && (
               <Button
                 size="sm"
                 variant="success"
                 icon={<CheckCircle className="w-4 h-4" />}
-                loading={ausgeliefertMutation.isPending && ausgeliefertMutation.variables === o.order_id}
+                loading={ausgeliefertMutation.isPending && ausgeliefertMutation.variables?.orderId === o.order_id}
                 disabled={statuswechselPending}
-                onClick={() => statusWechsel(o.order_id, 'GELIEFERT')}
+                title={o.status === 'ENTWURF' ? 'Entwurf — wird beim Ausliefern bestätigt' : undefined}
+                onClick={() => statusWechsel(o, 'GELIEFERT')}
               >
                 Ausgeliefert
               </Button>
@@ -438,22 +458,63 @@ export default function Tagesplan() {
                   ohne {plan?.verpacken_erledigt.length} bereits gepackte
                 </span>
               )}
-              <Badge variant="info">{packaging?.komponenten.length}</Badge>
+              {/* G12: Sorten (aufgelöst) oder Artikel wie bestellt (Bundles ganz) */}
+              <div className="inline-flex rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden text-xs">
+                {(['sorten', 'artikel'] as const).map((ansicht) => (
+                  <button
+                    key={ansicht}
+                    type="button"
+                    className={`px-2 py-1 ${bedarfAnsicht === ansicht
+                      ? 'bg-blue-600 text-white'
+                      : 'text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'}`}
+                    aria-pressed={bedarfAnsicht === ansicht}
+                    onClick={() => setBedarfAnsicht(ansicht)}
+                  >
+                    {ansicht === 'sorten' ? 'Sorten' : 'Artikel'}
+                  </button>
+                ))}
+              </div>
+              <Badge variant="info">
+                {bedarfAnsicht === 'sorten' ? packaging?.komponenten.length : packaging?.items.length}
+              </Badge>
             </div>
           </div>
           <div className="card-body">
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
-              {(packaging?.komponenten ?? []).map((k, i) => (
-                <div key={i} className="p-3 rounded-lg bg-blue-50 dark:bg-blue-900/20">
-                  <p className="font-medium text-gray-900 dark:text-white">{k.product_name}</p>
-                  <p className="text-lg font-semibold text-blue-700 dark:text-blue-300">
-                    {Number(k.total_quantity).toLocaleString('de-DE')}
-                  </p>
-                  {k.aus_bundles.length > 0 && (
-                    <p className="text-xs text-gray-500 dark:text-gray-400">inkl. {k.aus_bundles.join(', ')}</p>
-                  )}
-                </div>
-              ))}
+              {bedarfAnsicht === 'sorten'
+                ? (packaging?.komponenten ?? []).map((k, i) => (
+                    <div key={i} className="p-3 rounded-lg bg-blue-50 dark:bg-blue-900/20">
+                      <p className="font-medium text-gray-900 dark:text-white">{k.product_name}</p>
+                      <p className="text-lg font-semibold text-blue-700 dark:text-blue-300">
+                        {Number(k.total_quantity).toLocaleString('de-DE')}
+                      </p>
+                      {k.aus_bundles.length > 0 && (
+                        <p className="text-xs text-gray-500 dark:text-gray-400">inkl. {k.aus_bundles.join(', ')}</p>
+                      )}
+                    </div>
+                  ))
+                : (packaging?.items ?? []).map((a, i) => {
+                    // Einheit nur, wenn alle Positionen dieselbe tragen (Prod:
+                    // Kisten/STK/Stück für denselben Mix, A-E6). Gezählt werden
+                    // Bestellungen, nicht Positionen.
+                    const einheiten = Array.from(new Set<string>(a.orders.map((z: { unit: string }) => z.unit)));
+                    const bestellungen = new Set<string>(a.orders.map((z: { order_number: string }) => z.order_number)).size;
+                    return (
+                      <div key={i} className="p-3 rounded-lg bg-blue-50 dark:bg-blue-900/20">
+                        <p className="font-medium text-gray-900 dark:text-white">{a.product_name}</p>
+                        <p className="text-lg font-semibold text-blue-700 dark:text-blue-300">
+                          {Number(a.total_quantity).toLocaleString('de-DE')}
+                          {einheiten.length === 1 && (
+                            <span className="text-sm font-normal text-gray-500 dark:text-gray-400"> {einheiten[0]}</span>
+                          )}
+                        </p>
+                        <p className="text-xs text-gray-500 dark:text-gray-400">
+                          {bestellungen} {bestellungen === 1 ? 'Bestellung' : 'Bestellungen'}
+                          {einheiten.length > 1 && ` · Einheiten gemischt: ${einheiten.join(', ')}`}
+                        </p>
+                      </div>
+                    );
+                  })}
             </div>
           </div>
         </div>

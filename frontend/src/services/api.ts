@@ -146,8 +146,12 @@ export interface DayPlanOrder {
   status: OrderStatus  // Enum-Wert; Anzeige über orderStatusLabel / OrderStatusBadge
   positionen: number
   lines: Array<{ product_name: string; quantity: number; unit: string }>
-  // Knopf "Gepackt" möglich (BESTAETIGT → IN_PRODUKTION); ein Entwurf muss erst bestätigt werden
+  // Direkter Übergang BESTAETIGT → IN_PRODUKTION möglich (Paket 2; die Oberfläche nutzt gepackt_moeglich)
   packbar: boolean
+  // Knöpfe im Tagesplan (Paket 4, G10) — der Server entscheidet; ein Entwurf
+  // wird beim Packen bzw. Ausliefern im selben Schritt bestätigt
+  gepackt_moeglich: boolean
+  ausgeliefert_moeglich: boolean
 }
 
 export const productionApi = {
@@ -389,10 +393,13 @@ export const salesApi = {
       confirmedDeliveryDate ? { params: { confirmed_delivery_date: confirmedDeliveryDate } } : undefined,
     ).then(r => r.data),
 
-  // actualDeliveryDate nur bei GELIEFERT: tatsächlicher Liefertag (Standard heute)
-  updateOrderStatus: (id: string, status: OrderStatus, reason?: string, actualDeliveryDate?: string) =>
+  // actualDeliveryDate nur bei GELIEFERT: tatsächlicher Liefertag (Standard heute).
+  // entwurfBestaetigen nur aus dem Tagesplan: ein Entwurf wird vor Gepackt bzw.
+  // Geliefert im selben Schritt bestätigt (Paket 4, G10).
+  updateOrderStatus: (id: string, status: OrderStatus, reason?: string, actualDeliveryDate?: string,
+    entwurfBestaetigen?: boolean) =>
     api.post<Order>(`/sales/orders/${id}/status`, {
-      status, reason, actual_delivery_date: actualDeliveryDate,
+      status, reason, actual_delivery_date: actualDeliveryDate, entwurf_bestaetigen: entwurfBestaetigen,
     }).then(r => r.data),
 
   // Sammelaktion: alle oder keine — der Server prüft jeden Übergang vorab
