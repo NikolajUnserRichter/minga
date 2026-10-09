@@ -23,7 +23,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlalchemy.orm import Session
 
-from app.api.deps import CurrentUser, DBSession
+from app.api.deps import CurrentUser, DBSession, SICHERE_METHODEN
 from app.api.v1.platform import DEMO_USERS
 from app.models.benutzer_audit import BenutzerAudit
 from app.schemas.user import (
@@ -189,11 +189,29 @@ def _ist_demo_login(user: dict) -> bool:
     return any((user.get(k) or "").strip().lower() in DEMO_LOGINS for k in ("username", "email"))
 
 
-def _mandant_schreiben(request: Request, mandant: Mandant, user: CurrentUser) -> str:
+def pruefe_demo_schreibzugriff(request: Request, user: CurrentUser, db: DBSession) -> None:
+    if request.method in SICHERE_METHODEN:
+        return
+    mandant = get_request_tenant(request)
+    if not mandant or mandant != user.get("tenant_slug") or not user.get("id"):
+        return
     if mandant == DEMO_MANDANT:
-        raise HTTPException(status_code=403, detail="In der Demo können Benutzer nicht geändert werden.")
-    if _ist_demo_login(user) or _ist_demo_login(request.state.benutzerverwaltung_aufrufer):
-        raise HTTPException(status_code=403, detail="Mit einem Demo-Login können Benutzer nicht geändert werden.")
+        meldung = "In der Demo können Benutzer nicht geändert werden."
+    elif _ist_demo_login(user) or _ist_demo_login(getattr(request.state, "benutzerverwaltung_aufrufer", {})):
+        meldung = "Mit einem Demo-Login können Benutzer nicht geändert werden."
+    else:
+        return
+    try:
+        ziel_id = str(UUID(str(request.path_params.get("user_id"))))
+    except ValueError:
+        ziel_id = None
+    _audit(db, "DEMO_SCHREIBVERSUCH", mandant, user, ziel_id=ziel_id,
+           methode=request.method, route=request.scope["route"].path)
+    raise HTTPException(status_code=403, detail=meldung)
+
+
+def _mandant_schreiben(request: Request, mandant: Mandant, user: CurrentUser, db: DBSession) -> str:
+    pruefe_demo_schreibzugriff(request, user, db)
     return mandant
 
 

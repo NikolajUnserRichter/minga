@@ -840,7 +840,7 @@ app.include_router(
 app.include_router(
     benutzer.router,
     prefix="/api/v1",
-    dependencies=_deps_admin,
+    dependencies=[Depends(benutzer.pruefe_demo_schreibzugriff), *_deps_admin],
 )
 
 app.include_router(

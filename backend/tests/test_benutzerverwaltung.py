@@ -1249,3 +1249,56 @@ class TestDemoKontoId:
         assert antwort.status_code == 403, antwort.text
         assert "Demo-Login" in antwort.json()["detail"]
         assert kc.schreibende_calls() == []
+
+
+class TestAbgewieseneVersuche:
+    @pytest.mark.parametrize("route", ["anlegen", "aendern", "reset"])
+    @pytest.mark.parametrize("art", ["token_admin", "token_sales", "konto_id", "demo_mandant"])
+    def test_demo_schreibversuch_dauerhaft_protokolliert(self, admin, kc, db, monkeypatch, caplog, route, art):
+        from app.api.v1 import users
+        if art == "demo_mandant":
+            monkeypatch.setattr(users, "DEMO_MANDANT", MANDANT)
+        elif art == "konto_id":
+            kc.users[ADMIN_ID]["username"] = "anna@demo.novaerp.de"
+        else:
+            _als(rollen=("sales",) if art == "token_sales" else ("admin",),
+                 username="anna@demo.novaerp.de", email="anna@demo.novaerp.de")
+        ziel = kc.add_user("geheim@fremdfirma.de", FREMD, roles={"sales"})
+        if route == "anlegen":
+            antwort = _neu(admin, email="geheim@fremdfirma.de")
+        elif route == "aendern":
+            antwort = admin.patch(f"/api/v1/users/{ziel}", json={"last_name": "Manipuliert"})
+        else:
+            antwort = admin.post(f"/api/v1/users/{ziel}/reset-password")
+        assert antwort.status_code == 403
+        assert kc.schreibende_calls() == []
+        eintraege = _audit_saetze(db)
+        assert len(eintraege) == 1
+        eintrag = eintraege[0]
+        assert eintrag.aktion == "DEMO_SCHREIBVERSUCH"
+        assert eintrag.ausgefuehrt_von == ADMIN_ID
+        assert eintrag.ziel_user_id == (None if route == "anlegen" else ziel)
+        assert eintrag.ziel_email is None
+        assert "geheim@fremdfirma.de" not in json.dumps(eintrag.details) + caplog.text
+        assert len(_audit_zeilen(caplog)) == 1
+        assert _audit_zeilen(caplog)[0]["mandant"] == MANDANT
+
+    @pytest.mark.parametrize("route", ["einzel", "aendern", "reset"])
+    def test_fremdzugriff_alle_zielrouten_ohne_fremde_email(self, admin, kc, db, caplog, route):
+        ziel = kc.add_user("geheim@fremdfirma.de", FREMD, roles={"sales"})
+        if route == "einzel":
+            antwort = admin.get(f"/api/v1/users/{ziel}")
+        elif route == "aendern":
+            antwort = admin.patch(f"/api/v1/users/{ziel}", json={"enabled": False})
+        else:
+            antwort = admin.post(f"/api/v1/users/{ziel}/reset-password")
+        assert antwort.status_code == 404
+        assert kc.schreibende_calls() == []
+        (eintrag,) = _audit_saetze(db)
+        assert eintrag.aktion == "FREMDZUGRIFF_ABGEWIESEN"
+        assert eintrag.ziel_user_id == ziel
+        assert eintrag.ausgefuehrt_von == ADMIN_ID
+        assert eintrag.ziel_email is None
+        assert "geheim@fremdfirma.de" not in json.dumps(eintrag.details) + caplog.text + antwort.text
+        assert len(_audit_zeilen(caplog)) == 1
+        assert _audit_zeilen(caplog)[0]["mandant"] == MANDANT
