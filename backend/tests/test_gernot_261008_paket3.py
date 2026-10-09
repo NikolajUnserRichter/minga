@@ -6180,3 +6180,38 @@ class TestQ7Endpunkte:
         assert r.status_code == 400, r.text
         r = client.patch(f"/api/v1/invoices/{rid}", json={"customer_id": kunde["id"], "header_text": "Oktober"})
         assert r.status_code == 200, r.text
+
+
+@pytest.mark.usefixtures("_q7_ohne_forecast")
+class TestAbnahmeSammelrechnungKunde:
+    @pytest.mark.parametrize("herkunft", ["lieferschein", "bestellung"])
+    def test_kundenwechsel_mit_belegbezug_abgelehnt(self, client, herkunft):
+        kunde = _q1_kunde(client)
+        anderer = _q1_kunde(client, "Anderer Kunde")
+        bestellung, _ = _q1_bestellung_mit_lieferschein(client, kunde)
+        if herkunft == "lieferschein":
+            rechnung = _q1_lauf(client)["rechnungen"][0]
+        else:
+            response = client.post(f"/api/v1/invoices/from-order/{bestellung['id']}")
+            assert response.status_code == 201, response.text
+            rechnung = response.json()
+
+        response = client.patch(f"/api/v1/invoices/{rechnung['id']}", json={"customer_id": anderer["id"]})
+
+        assert response.status_code == 400, response.text
+        assert response.json()["detail"] == (
+            "Kunde einer Sammelrechnung mit Lieferscheinen ist nicht änderbar — Entwurf verwerfen und neu anlegen"
+        )
+        unveraendert = client.get(f"/api/v1/invoices/{rechnung['id']}").json()
+        assert unveraendert["customer_id"] == kunde["id"]
+        response = client.patch(f"/api/v1/invoices/{rechnung['id']}", json={
+            "customer_id": kunde["id"], "header_text": "Unveränderter Kunde",
+        })
+        assert response.status_code == 200, response.text
+
+    def test_freier_entwurf_erlaubt_kundenwechsel(self, client):
+        rechnung = _q1_entwurf(client, _q1_kunde(client))
+        anderer = _q1_kunde(client, "Anderer Kunde")
+        response = client.patch(f"/api/v1/invoices/{rechnung['id']}", json={"customer_id": anderer["id"]})
+        assert response.status_code == 200, response.text
+        assert response.json()["customer_id"] == anderer["id"]

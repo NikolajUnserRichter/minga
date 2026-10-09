@@ -277,6 +277,14 @@ def update_invoice(
             status_code=400,
             detail="Monatsrechnung: Kunde nicht änderbar. Entwurf verwerfen und den Monatslauf erneut starten.",
         )
+    if update_data.get("customer_id", invoice.customer_id) != invoice.customer_id and (
+        invoice.order_id is not None
+        or db.scalar(select(DeliveryNote.id).where(DeliveryNote.invoice_id == invoice.id).limit(1)) is not None
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="Kunde einer Sammelrechnung mit Lieferscheinen ist nicht änderbar — Entwurf verwerfen und neu anlegen",
+        )
     for field, value in update_data.items():
         setattr(invoice, field, value)
 
