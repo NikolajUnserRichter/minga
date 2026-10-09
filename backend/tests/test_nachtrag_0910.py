@@ -1296,3 +1296,54 @@ class TestF2Steuerzeichen:
         antwort = client.patch("/api/v1/admin/settings", json={schluessel: wert})
         assert antwort.status_code == 200, antwort.text
         assert _d_einstellung(client, schluessel)["value"] == wert
+
+
+class TestDKontoNormalisierung:
+    @pytest.mark.parametrize("aktion", ["anlegen", "aendern"])
+    @pytest.mark.parametrize("konto,erwartet,fehler", [
+        ("8338", None, "rahmen"),
+        (" 8338", None, "rahmen"),
+        ("8338 ", None, "rahmen"),
+        ("8338\t", None, "rahmen"),
+        ("08338", None, "format"),
+        ("８３３８", None, "format"),
+        ("8 338", None, "format"),
+        ("abc", None, "format"),
+        ("123", None, "format"),
+        ("123456789", None, "format"),
+        ("12345678901", None, "format"),
+        ("", None, "format"),
+        ("   ", None, "format"),
+        (" 8300", "4300", None),
+        ("8300", "4300", None),
+        (" 4337\t", "4337", None),
+        ("43370", "43370", None),
+        ("43370000", "43370000", None),
+    ])
+    def test_konto_beim_anlegen_und_aendern(self, client, aktion, konto, erwartet, fehler):
+        _d_setze_rahmen(client, "SKR04")
+        positionen = [("Kresse", 1, "10.00", "REDUZIERT")] if aktion == "aendern" else []
+        rechnung = _d_rechnung(client, _d_kunde(client), positionen, finalisieren=False)
+        url = f"/api/v1/invoices/{rechnung['id']}/lines"
+        if aktion == "anlegen":
+            antwort = client.post(url, json={
+                "description": "Kresse", "quantity": 1, "unit": "STK", "unit_price": "10.00",
+                "tax_rate": "REDUZIERT", "buchungskonto": konto,
+            })
+        else:
+            zeile = _d_positionen(client, rechnung)[0]
+            antwort = client.patch(f"{url}/{zeile['id']}", json={"buchungskonto": konto})
+        if fehler:
+            assert antwort.status_code == 400, antwort.text
+            if fehler == "format":
+                assert antwort.json()["detail"] == f"Erlöskonto {konto.strip()}: nur 4 bis 8 Ziffern"
+            else:
+                assert antwort.json()["detail"] == (
+                    "Erlöskonto 8338 passt nicht zum Kontenrahmen SKR04 "
+                    "(Kontenklasse 8 ist dort kein Erlöskonto)")
+            assert [zeile["buchungskonto"] for zeile in _d_positionen(client, rechnung)] == (
+                ["4300"] if aktion == "aendern" else [])
+        else:
+            assert antwort.status_code == (201 if aktion == "anlegen" else 200), antwort.text
+            assert antwort.json()["buchungskonto"] == erwartet
+            assert _d_positionen(client, rechnung)[0]["buchungskonto"] == erwartet

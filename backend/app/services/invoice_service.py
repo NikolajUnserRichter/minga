@@ -26,7 +26,7 @@ from app.models.enums import DeliveryNoteStatus
 from app.services.steuersatz import produkt_der_position, steuersatz_der_position
 from app.services.leergut_service import gib_bewegungen_frei, hat_bewegung, im_leergutkonto
 from app.services.kontenrahmen import (
-    erloeskonto_fuer, ist_standard_erloeskonto, kontenrahmen, sonderkonto_pruefen,
+    erloeskonto_fuer, erloeskonto_normalisieren, ist_standard_erloeskonto, kontenrahmen, sonderkonto_pruefen,
 )
 
 
@@ -348,6 +348,7 @@ class InvoiceService:
         # Kontenrahmen des Mandanten — dieselbe Regel wie der DATEV-Export.
         # Ein Sonderkonto bleibt, muss aber zum Rahmen passen (Nachtrag 09.10., D).
         rahmen = kontenrahmen(self.db)
+        buchungskonto = erloeskonto_normalisieren(buchungskonto)
         if ist_standard_erloeskonto(buchungskonto):
             buchungskonto = erloeskonto_fuer(tax_rate, rahmen)
         else:

@@ -21,6 +21,7 @@ schon exportierten Belege umkontiert, ist er nach dem ersten Export gesperrt.
 """
 from __future__ import annotations
 
+import re
 from typing import Optional
 
 from sqlalchemy import select
@@ -101,6 +102,15 @@ def sachkonto(rahmen: str, schluessel: str) -> str:
 def erloeskonto_fuer(tax_rate: TaxRate, rahmen: str) -> str:
     """Standard-Erlöskonto zum Steuersatz im Rahmen; unbekannter Satz wie 7 %."""
     return SACHKONTEN[rahmen][_SCHLUESSEL_JE_SATZ.get(tax_rate, "erloes_7")]
+
+
+def erloeskonto_normalisieren(konto: Optional[str]) -> Optional[str]:
+    if konto is None:
+        return None
+    konto = konto.strip()
+    if not re.fullmatch(r"[1-9][0-9]{3,7}", konto):
+        raise ValueError(f"Erlöskonto {konto}: nur 4 bis 8 Ziffern")
+    return konto
 
 
 def ist_standard_erloeskonto(konto: Optional[str]) -> bool:

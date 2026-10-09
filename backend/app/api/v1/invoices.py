@@ -27,6 +27,7 @@ from app.services.invoice_service import InvoiceService, BereitsAbgerechnet, Bes
 from app.services.datev_service import DatevExportAbgelehnt, DatevService
 from app.services.kontenrahmen import (
     BEBUCHTE_KONTEN, erloeskonto_fuer, export_sperre, ist_standard_erloeskonto, kontenrahmen, sachkonto,
+    erloeskonto_normalisieren, sonderkonto_pruefen,
 )
 from app.services.leergut_service import LEERGUTBELEG_FEST, ist_leergutbeleg, mailtext as leergut_mailtext
 from app.services.email_service import EmailNotConfiguredError
@@ -627,6 +628,17 @@ def update_invoice_line(
 
     update_data = data.model_dump(exclude_unset=True)
     satz_vorher = line.tax_rate
+    if "buchungskonto" in update_data:
+        try:
+            konto = erloeskonto_normalisieren(update_data["buchungskonto"])
+            rahmen = kontenrahmen(db)
+            sonderkonto_pruefen(konto, rahmen)
+            update_data["buchungskonto"] = (
+                erloeskonto_fuer(update_data.get("tax_rate", line.tax_rate), rahmen)
+                if ist_standard_erloeskonto(konto) else konto
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
     for field, value in update_data.items():
         setattr(line, field, value)
 

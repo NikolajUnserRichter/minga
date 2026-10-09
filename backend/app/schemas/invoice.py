@@ -41,7 +41,7 @@ class InvoiceLineCreate(InvoiceLineBase):
     order_item_id: Optional[UUID] = Field(None, description="Bestellposition-ID")
     harvest_batch_ids: Optional[list[UUID]] = Field(None, description="Chargen-IDs für Rückverfolgung")
     buchungskonto: Optional[str] = Field(
-        None, max_length=10,
+        None,
         description="Erlöskonto: leer = Standardkonto zu Steuersatz und Kontenrahmen; "
                     "sonst Sonderkonto, das zum Kontenrahmen passen muss",
     )
@@ -63,6 +63,7 @@ class InvoiceLineUpdate(BaseModel):
     unit_price: Optional[Decimal] = Field(None, ge=0)
     discount_percent: Optional[Decimal] = Field(None, ge=0, le=100)
     tax_rate: Optional[TaxRate] = None
+    buchungskonto: Optional[str] = None
 
     @field_validator("description", "quantity", "unit", "unit_price", "discount_percent", "tax_rate")
     @classmethod
