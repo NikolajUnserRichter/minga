@@ -5,7 +5,7 @@ import logging
 from datetime import date, timedelta
 from decimal import Decimal
 
-from sqlalchemy import select, func
+from sqlalchemy import select, func, or_
 
 from app.celery_app import celery_app
 from app.database import SessionLocal
@@ -45,6 +45,9 @@ def check_overdue_invoices():
                 # Eine Gutschrift/Stornorechnung ist nie überfällig — auch
                 # kein Altbestand, den der frühere Storno auf OFFEN setzte.
                 Invoice.invoice_type != InvoiceType.GUTSCHRIFT,
+                # Q6: Ein Leergutbeleg mit Saldo ≤ 0 ist eine Erstattung an den
+                # Kunden, keine Forderung — nie überfällig.
+                or_(Invoice.beleg_art.is_(None), Invoice.total > 0),
                 # Lastschrift mit ausstehendem/gebuchtem Einzug: nichts zu überweisen (B10).
                 Invoice.mahnfaehig,
             )

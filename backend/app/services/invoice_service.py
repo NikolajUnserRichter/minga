@@ -24,7 +24,7 @@ from app.models.product import Product
 from app.models.documents import DeliveryNote
 from app.models.enums import DeliveryNoteStatus
 from app.services.steuersatz import produkt_der_position, steuersatz_der_position
-from app.services.leergut_service import hat_bewegung, im_leergutkonto
+from app.services.leergut_service import gib_bewegungen_frei, hat_bewegung, im_leergutkonto
 from app.services.datev_service import erloeskonto_fuer
 
 
@@ -816,8 +816,14 @@ class InvoiceService:
         ).scalars().all():
             note.invoice_id = None
 
+        # Q6: Leergutbewegungen eines stornierten oder verworfenen
+        # Leergutbelegs sind wieder offen — der nächste Monatslauf rechnet sie ab.
+        gib_bewegungen_frei(self.db, invoice_id)
+
         credit_note = None
-        if create_credit_note and invoice.total > 0:
+        # != 0 statt > 0 (Q6): auch ein Leergutbeleg mit negativem Saldo
+        # (Minderung) braucht als ausgestellter Beleg ein Spiegelbild.
+        if create_credit_note and invoice.total != 0:
             credit_note = self.create_invoice(
                 customer_id=invoice.customer_id,
                 invoice_type=InvoiceType.GUTSCHRIFT,
@@ -920,6 +926,9 @@ class InvoiceService:
                 # Eine Gutschrift/Stornorechnung ist nie überfällig — auch
                 # kein Altbestand, den der frühere Storno auf OFFEN setzte.
                 Invoice.invoice_type != InvoiceType.GUTSCHRIFT,
+                # Q6: Ein Leergutbeleg mit Saldo ≤ 0 ist eine Erstattung an den
+                # Kunden, keine Forderung — nie überfällig.
+                or_(Invoice.beleg_art.is_(None), Invoice.total > 0),
                 # Lastschrift mit ausstehendem/gebuchtem Einzug: nichts zu überweisen (B10).
                 Invoice.mahnfaehig,
             )
@@ -1023,6 +1032,10 @@ class InvoiceService:
         self.db.execute(
             update(Order).where(Order.invoice_id == invoice.id).values(invoice_id=None)
         )
+        # Q6: Bewegungen eines verworfenen Leergutbelegs sind wieder offen.
+        # Ausdrücklich: die Test-Engine prüft den Fremdschlüssel (ON DELETE
+        # SET NULL) nicht, die Produktion nur mit PRAGMA foreign_keys=ON.
+        gib_bewegungen_frei(self.db, invoice.id)
         self.db.execute(
             delete(InvoiceLineSource).where(
                 InvoiceLineSource.invoice_line_id.in_(

@@ -420,3 +420,29 @@ def belege_anlegen(
         service.recalculate_totals(beleg)
         belege.append(beleg)
     return belege, plan["uebersprungen"]
+
+
+# ------------------------------------------------------------ Schutz des Belegs
+
+#: Antwort (409) auf Änderungen an Positionen oder Kunde eines Leergutbelegs
+LEERGUTBELEG_FEST = (
+    "Leergutbeleg: Positionen und Kunde ergeben sich aus dem Leergutkonto und lassen "
+    "sich hier nicht ändern. Zum Korrigieren den Entwurf verwerfen, im Leergutkonto "
+    "korrigieren und die Leergutabrechnung neu anlegen."
+)
+
+
+def ist_leergutbeleg(invoice: Optional[Invoice]) -> bool:
+    """Leergutbeleg oder dessen Stornorechnung (cancel_invoice übernimmt beleg_art)."""
+    return invoice is not None and invoice.beleg_art == BELEG_ART_LEERGUT
+
+
+def gib_bewegungen_frei(db: Session, invoice_id: UUID) -> int:
+    """Storno oder Verwerfen eines Leergutbelegs: seine Bewegungen sind
+    wieder offen, der nächste Monatslauf rechnet sie ab."""
+    bewegungen = db.execute(
+        select(LeergutBewegung).where(LeergutBewegung.invoice_id == invoice_id)
+    ).scalars().all()
+    for b in bewegungen:
+        b.invoice_id = None
+    return len(bewegungen)

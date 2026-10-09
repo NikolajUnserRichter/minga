@@ -25,6 +25,7 @@ from app.schemas.invoice import (
 )
 from app.services.invoice_service import InvoiceService, BereitsAbgerechnet, BestellungStorniert, waehle_vertreter, ist_clearing_pfand, netto_je_lieferschein
 from app.services.datev_service import DatevService, erloeskonto_fuer, ist_standard_erloeskonto
+from app.services.leergut_service import LEERGUTBELEG_FEST, ist_leergutbeleg
 from app.services.email_service import EmailNotConfiguredError
 from app.services.belegversand import empfaenger_fuer_versand, firmenzusatz, gruss, versende_beleg
 from app.core.email_adressen import pruefe_empfaenger
@@ -200,6 +201,12 @@ def update_invoice(
     if not invoice:
         raise HTTPException(status_code=404, detail="Rechnung nicht gefunden")
 
+    # Q6: Ein Leergutbeleg rechnet die Bewegungen genau eines Kunden ab — ein
+    # Kundenwechsel hinge fremde Kisten an. Das Kopfformular schickt den
+    # Kunden unverändert mit; Datum und Texte bleiben änderbar.
+    if ist_leergutbeleg(invoice) and data.customer_id not in (None, invoice.customer_id):
+        raise HTTPException(status_code=409, detail=LEERGUTBELEG_FEST)
+
     if invoice.status != InvoiceStatus.ENTWURF:
         raise HTTPException(status_code=400, detail="Nur Entwürfe können bearbeitet werden")
 
@@ -253,6 +260,12 @@ def generate_payment_reminder(
         raise HTTPException(status_code=404, detail="Rechnung nicht gefunden")
     if invoice.status in (InvoiceStatus.BEZAHLT, InvoiceStatus.STORNIERT):
         raise HTTPException(status_code=400, detail="Bezahlte/stornierte Rechnungen können nicht gemahnt werden")
+    # Q6: Ein Leergutbeleg mit Saldo ≤ 0 ist eine Erstattung, keine Forderung
+    if ist_leergutbeleg(invoice) and invoice.total <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Leergutbeleg ohne Forderung (Saldo 0 oder Minderung) — es gibt nichts zu mahnen",
+        )
     if not invoice.mahnfaehig:
         raise HTTPException(
             status_code=400,
@@ -489,6 +502,9 @@ def add_invoice_line(
     db: DBSession,
 ):
     """Fügt eine Position zur Rechnung hinzu."""
+    # Q6: Positionen eines Leergutbelegs kommen aus dem Leergutkonto
+    if ist_leergutbeleg(db.get(Invoice, invoice_id)):
+        raise HTTPException(status_code=409, detail=LEERGUTBELEG_FEST)
     service = InvoiceService(db)
     try:
         line = service.add_line(
@@ -513,6 +529,9 @@ def update_invoice_line(
     invoice = db.get(Invoice, invoice_id)
     if not invoice:
         raise HTTPException(status_code=404, detail="Rechnung nicht gefunden")
+    # Q6: Positionen eines Leergutbelegs kommen aus dem Leergutkonto
+    if ist_leergutbeleg(invoice):
+        raise HTTPException(status_code=409, detail=LEERGUTBELEG_FEST)
 
     if invoice.status != InvoiceStatus.ENTWURF:
         raise HTTPException(status_code=400, detail="Nur Entwürfe können bearbeitet werden")
@@ -551,6 +570,9 @@ def delete_invoice_line(
     invoice = db.get(Invoice, invoice_id)
     if not invoice:
         raise HTTPException(status_code=404, detail="Rechnung nicht gefunden")
+    # Q6: Positionen eines Leergutbelegs kommen aus dem Leergutkonto
+    if ist_leergutbeleg(invoice):
+        raise HTTPException(status_code=409, detail=LEERGUTBELEG_FEST)
 
     if invoice.status != InvoiceStatus.ENTWURF:
         raise HTTPException(status_code=400, detail="Nur Entwürfe können bearbeitet werden")

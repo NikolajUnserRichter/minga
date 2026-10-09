@@ -133,11 +133,15 @@ def _betrag(wert: Decimal) -> str:
 def _richtung(invoice: Invoice, brutto: Decimal) -> str:
     """Soll/Haben aus Sicht des Debitors.
 
-    Eine Gutschrift mindert immer (H) — die Stornorechnung trägt negative
-    Mengen, die von Hand angelegte Gutschrift positive; beide sind Minderungen.
-    Eine Rechnung bucht S, ein (heute nicht erzeugbarer) negativer Betrag H.
+    Eine Gutschrift mindert (H) — die Stornorechnung trägt negative Mengen,
+    die von Hand angelegte Gutschrift positive; beide sind Minderungen.
+    Ausnahme (Q6): die Stornorechnung zu einem Leergutbeleg mit negativem
+    Saldo trägt positive Beträge und erhöht die Forderung wieder (S).
+    Eine Rechnung bucht S, ein negativer Betrag (Leergut-Minderung) H.
     """
     if invoice.invoice_type == InvoiceType.GUTSCHRIFT:
+        if invoice.original_invoice_id is not None and brutto > 0:
+            return "S"
         return "H"
     return "S" if brutto >= 0 else "H"
 

@@ -5009,3 +5009,132 @@ class TestQ6Monatsabrechnung:
         ruecknahme = next(b for b in _q6_konto(client, kunde)["bewegungen"] if b["art"] == "RUECKNAHME")
 
         assert client.delete(f"/api/v1/leergut/bewegungen/{ruecknahme['id']}").status_code == 400
+
+
+# ------------------------------------------------ Task Q6.8: Storno, Mahnsperre, DATEV
+
+@pytest.mark.usefixtures("_q6_ohne_forecast")
+class TestQ6StornoUndMahnung:
+    def _beleg(self, client, aus=10, zurueck=4):
+        kunde, kiste = _q6_monatskunde(client), _q6_kiste(client)
+        _q6_liefern(client, _q6_bestellung(client, kunde, kiste=kiste, kisten=aus))
+        _q6_ruecknahme(client, kunde, kiste, zurueck)
+        return kunde, _q6_beleg(client)
+
+    def test_verwerfen_gibt_bewegungen_frei(self, client):
+        kunde, beleg = self._beleg(client)
+
+        r = client.post(f"/api/v1/invoices/{beleg['id']}/cancel",
+                        json={"reason": "falsch gezählt", "create_credit_note": False})
+
+        assert r.status_code == 200, r.text
+        assert all(b["invoice_id"] is None for b in _q6_konto(client, kunde)["bewegungen"])
+        neu = _q6_beleg(client)
+        assert neu["id"] != beleg["id"] and _q6_d(neu["total"]) == Decimal("21.42")
+
+    def test_storno_nach_freigabe(self, client):
+        kunde, beleg = self._beleg(client)
+        assert client.post(f"/api/v1/invoices/{beleg['id']}/finalize").status_code == 200
+
+        r = client.post(f"/api/v1/invoices/{beleg['id']}/cancel", json={"reason": "Zählfehler"})
+
+        assert r.status_code == 200, r.text
+        assert _q6_d(r.json()["credit_note"]["total"]) == Decimal("-21.42")
+        assert all(b["invoice_id"] is None for b in _q6_konto(client, kunde)["bewegungen"])
+
+    def test_storno_einer_minderung_hat_spiegelbild(self, client):
+        _, beleg = self._beleg(client, aus=2, zurueck=5)
+        assert client.post(f"/api/v1/invoices/{beleg['id']}/finalize").status_code == 200
+
+        r = client.post(f"/api/v1/invoices/{beleg['id']}/cancel", json={"reason": "Zählfehler"})
+
+        assert r.status_code == 200, r.text
+        assert r.json()["credit_note"] is not None
+        assert _q6_d(r.json()["credit_note"]["total"]) == Decimal("10.71")
+
+    def test_minderung_ist_nie_ueberfaellig(self, client):
+        from app.models.invoice import Invoice
+        from app.tasks.invoice_tasks import check_overdue_invoices
+        _, beleg = self._beleg(client, aus=2, zurueck=5)
+        assert client.post(f"/api/v1/invoices/{beleg['id']}/finalize").status_code == 200
+        with TestingSessionLocal() as db:
+            db.get(Invoice, uuid.UUID(beleg["id"])).due_date = date.today() - timedelta(days=30)
+            db.commit()
+
+        assert beleg["id"] not in {i["id"] for i in client.get("/api/v1/invoices/overdue").json()}
+        with patch("app.tasks.invoice_tasks.SessionLocal", return_value=TestingSessionLocal()):
+            assert check_overdue_invoices()["newly_overdue"] == 0
+        assert _q6_detail(client, beleg)["status"] == "OFFEN"
+
+    def test_datev_richtung(self):
+        from types import SimpleNamespace
+        from app.models.invoice import InvoiceType
+        from app.services.datev_service import _richtung
+
+        storno_der_minderung = SimpleNamespace(invoice_type=InvoiceType.GUTSCHRIFT, original_invoice_id=uuid.uuid4())
+        storno_normal = SimpleNamespace(invoice_type=InvoiceType.GUTSCHRIFT, original_invoice_id=uuid.uuid4())
+        gutschrift_von_hand = SimpleNamespace(invoice_type=InvoiceType.GUTSCHRIFT, original_invoice_id=None)
+        minderung = SimpleNamespace(invoice_type=InvoiceType.RECHNUNG, original_invoice_id=None)
+
+        assert _richtung(storno_der_minderung, Decimal("10.71")) == "S"
+        assert _richtung(storno_normal, Decimal("-21.42")) == "H"
+        assert _richtung(gutschrift_von_hand, Decimal("5.00")) == "H"
+        assert _richtung(minderung, Decimal("-10.71")) == "H"
+
+    def test_verwerfen_per_delete_gibt_bewegungen_frei(self, client):
+        """Q1: DELETE verwirft den Entwurf ohne Nummer. Die Test-Engine prüft
+        keine Fremdschlüssel — entwurf_verwerfen gibt die Bewegungen selbst frei."""
+        kunde, beleg = self._beleg(client)
+
+        r = client.delete(f"/api/v1/invoices/{beleg['id']}")
+
+        assert r.status_code == 204, r.text
+        assert all(b["invoice_id"] is None for b in _q6_konto(client, kunde)["bewegungen"])
+        assert _q6_d(_q6_beleg(client)["total"]) == Decimal("21.42")
+
+    def test_positionen_des_entwurfs_sind_fest(self, client):
+        """Prüfbefund: Zeile „zurückgenommen“ gelöscht und freigegeben — der Kunde
+        zahlte zurückgegebene Kisten, das Konto zeigte sie als abgerechnet."""
+        kunde, beleg = self._beleg(client)
+        vorher = _q6_detail(client, beleg)
+        zurueck = next(l for l in vorher["lines"] if l["description"].startswith("Leergut zurückgenommen"))
+        url = f"/api/v1/invoices/{beleg['id']}/lines"
+
+        antworten = [
+            client.delete(f"{url}/{zurueck['id']}"),
+            client.patch(f"{url}/{zurueck['id']}", json={"quantity": "1"}),
+            client.post(url, json={"description": "Kiste extra", "quantity": "1", "unit": "STK",
+                                   "unit_price": "3.00", "tax_rate": "STANDARD"}),
+        ]
+
+        assert [a.status_code for a in antworten] == [409, 409, 409], [a.text for a in antworten]
+        assert "Leergutkonto" in antworten[0].json()["detail"]
+        nachher = _q6_detail(client, beleg)
+        assert [(l["id"], _q6_d(l["quantity"])) for l in nachher["lines"]] == [
+            (l["id"], _q6_d(l["quantity"])) for l in vorher["lines"]]
+        assert _q6_d(nachher["total"]) == Decimal("21.42")
+        assert all(b["invoice_id"] == beleg["id"] for b in _q6_konto(client, kunde)["bewegungen"])
+
+    def test_kunde_des_entwurfs_ist_fest(self, client):
+        kunde, beleg = self._beleg(client)
+        fremd = _q6_kunde(client, name="Andere")
+
+        r = client.patch(f"/api/v1/invoices/{beleg['id']}", json={"customer_id": fremd["id"]})
+        assert r.status_code == 409, r.text
+
+        # Das Kopfformular schickt den Kunden unverändert mit — das bleibt erlaubt
+        r = client.patch(f"/api/v1/invoices/{beleg['id']}",
+                         json={"customer_id": kunde["id"], "header_text": "Leergut September"})
+        assert r.status_code == 200, r.text
+        assert _q6_detail(client, beleg)["customer_id"] == kunde["id"]
+
+    def test_minderung_nicht_von_hand_mahnbar(self, client):
+        from app.models.invoice import Invoice
+        _, beleg = self._beleg(client, aus=2, zurueck=5)
+        assert client.post(f"/api/v1/invoices/{beleg['id']}/finalize").status_code == 200
+
+        r = client.post(f"/api/v1/invoices/{beleg['id']}/payment-reminder")
+
+        assert r.status_code == 400, r.text
+        with TestingSessionLocal() as db:
+            assert not db.get(Invoice, uuid.UUID(beleg["id"])).reminder_level
