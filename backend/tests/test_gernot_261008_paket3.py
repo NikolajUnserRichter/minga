@@ -3135,3 +3135,52 @@ class TestQ5Datenmodell:
         assert r.status_code == 403, r.text
         q5_rolle(["admin"])
         assert client.get(f"/api/v1/sales/customers/{kunde['id']}").json()["aktiv"] is True
+
+
+class TestQ5Pruefungen:
+    def test_iban_normalisiert_und_geprueft(self):
+        from app.services.sepa_service import iban_pruefen
+        assert iban_pruefen(" de89 3704 0044 0532 0130 00 ") == _Q5_IBAN
+        with pytest.raises(ValueError, match="Prüfziffer"):
+            iban_pruefen("DE89 3704 0044 0532 0130 01")
+        with pytest.raises(ValueError, match="22 Zeichen"):
+            iban_pruefen("DE89 3704 0044 0532 0130 0")
+        # Länge je SEPA-Land, nicht nur für DE; Länder außerhalb SEPA abgelehnt
+        assert iban_pruefen("AT61 1904 3002 3457 3201") == "AT611904300234573201"
+        with pytest.raises(ValueError, match="20 Zeichen"):
+            iban_pruefen("AT61 1904 3002 3457 320")
+        with pytest.raises(ValueError, match="kein SEPA-Land"):
+            iban_pruefen("US12 3456 7890 1234 5678")
+
+    def test_iban_maskiert_wie_gernots_beispiel(self):
+        from app.services.sepa_service import iban_maskiert
+        assert iban_maskiert(_Q5_IBAN) == "DE89 xxxx xxxx xxxx xxxx 00"
+
+    def test_glaeubiger_id(self):
+        from app.services.sepa_service import glaeubiger_id_pruefen
+        assert glaeubiger_id_pruefen("de98 zzz0 9999 9999 99") == _Q5_GID
+        # Gernots Beispiel: Prüfziffer passt, aber 17 statt 18 Zeichen
+        with pytest.raises(ValueError, match="18 Zeichen"):
+            glaeubiger_id_pruefen("DE75ZZZ0002442146")
+        with pytest.raises(ValueError, match="Prüfziffer"):
+            glaeubiger_id_pruefen("DE99ZZZ09999999999")
+        with pytest.raises(ValueError, match="DE"):
+            glaeubiger_id_pruefen("AT98ZZZ09999999999")
+
+    def test_mandatsreferenz(self):
+        from app.services.sepa_service import mandatsreferenz_pruefen
+        assert mandatsreferenz_pruefen("MG-2026/001") == "MG-2026/001"
+        for falsch in ("MG 001", "/MG-001", "MG//001", "x" * 36, "", "+MG-001", "-MG-001"):
+            with pytest.raises(ValueError):
+                mandatsreferenz_pruefen(falsch)
+
+    def test_bankarbeitstag_und_einzugsdatum(self):
+        from app.services.sepa_service import einzugsdatum, naechster_bankarbeitstag
+        assert naechster_bankarbeitstag(date(2027, 3, 26)) == date(2027, 3, 30)  # Karfreitag → Di nach Ostermontag
+        assert naechster_bankarbeitstag(date(2026, 12, 25)) == date(2026, 12, 28)
+        assert naechster_bankarbeitstag(date(2027, 5, 1)) == date(2027, 5, 3)
+        assert naechster_bankarbeitstag(date(2026, 10, 8)) == date(2026, 10, 8)
+        # Frist bestimmt: 12.03. + 14 Tage = Karfreitag → 30.03.
+        assert einzugsdatum(date(2027, 3, 12), 14, 14, date(2027, 3, 12)) == date(2027, 3, 30)
+        # Zahlungsziel bestimmt: 01.10. + 30 = Sa 31.10. → Mo 02.11.
+        assert einzugsdatum(date(2026, 10, 1), 30, 14, date(2026, 10, 8)) == date(2026, 11, 2)
