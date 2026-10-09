@@ -2280,3 +2280,19 @@ class TestP4Fix6LeereBestellungen:
         assert len(zeilen) >= 2
         assert all(zeile["gepackt_moeglich"] is False for zeile in zeilen)
         assert all(zeile["ausgeliefert_moeglich"] is False for zeile in zeilen)
+
+
+class TestP4Fix8KontaktOhneEmail:
+    @pytest.mark.parametrize("daten", [{}, {"email": None}])
+    def test_kontakt_ohne_email_anlegen_und_aendern(self, client, daten):
+        kunde = _p4c_kunde(client, "Kontakt-Testkunde")
+        antwort = client.post(f"/api/v1/sales/customers/{kunde['id']}/contacts", json={
+            "name": "Erika Testkontakt", **daten})
+        assert antwort.status_code == 201, antwort.text
+        kontakt = antwort.json()
+        assert kontakt["email"] is None
+        antwort = client.patch(f"/api/v1/sales/customers/{kunde['id']}/contacts/{kontakt['id']}", json={
+            "telefon": "089 123", **daten})
+        assert antwort.status_code == 200, antwort.text
+        assert antwort.json()["email"] is None
+        assert antwort.json()["telefon"] == "089 123"

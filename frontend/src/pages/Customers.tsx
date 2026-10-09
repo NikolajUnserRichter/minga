@@ -88,8 +88,8 @@ export default function Customers() {
       toast.success('Kunde gelöscht');
       setDeletingCustomer(null);
     },
-    onError: () => {
-      toast.error('Fehler beim Löschen');
+    onError: (error) => {
+      toast.error(getErrorMessage(error, 'Fehler beim Löschen'));
     },
   });
 
@@ -794,7 +794,7 @@ function ContactList({ customerId }: { customerId: string }) {
       setNewContact({ name: '', email: '', telefon: '', role: 'ALLGEMEIN', is_primary: false });
       toast.success('Ansprechpartner hinzugefügt');
     },
-    onError: () => toast.error('Fehler beim Hinzufügen'),
+    onError: (error) => toast.error(getErrorMessage(error, 'Fehler beim Hinzufügen')),
   });
 
   const deleteMutation = useMutation({

@@ -341,6 +341,11 @@ export const staffApi = {
     api.delete(`/staff-tasks/${id}`, { params: { serie } }),
 }
 
+function kundendatenFuerSpeichern<T extends { email?: string | null }>(data: T) {
+  if (data.email === undefined) return data;
+  return { ...data, email: data.email?.trim() || null };
+}
+
 // Sales API
 export const salesApi = {
   listCustomers: (params?: { typ?: string; aktiv?: boolean; search?: string; page_size?: number }) =>
@@ -350,10 +355,10 @@ export const salesApi = {
     api.get<Customer>(`/sales/customers/${id}`).then(r => r.data),
 
   createCustomer: (data: Partial<Customer>) =>
-    api.post<Customer>('/sales/customers', data).then(r => r.data),
+    api.post<Customer>('/sales/customers', kundendatenFuerSpeichern(data)).then(r => r.data),
 
   updateCustomer: (id: string, data: Partial<Customer>) =>
-    api.patch<Customer>(`/sales/customers/${id}`, data).then(r => r.data),
+    api.patch<Customer>(`/sales/customers/${id}`, kundendatenFuerSpeichern(data)).then(r => r.data),
 
   deleteCustomer: (id: string) =>
     api.delete(`/sales/customers/${id}`),
@@ -456,10 +461,10 @@ export const salesApi = {
     api.get<Contact[]>(`/sales/customers/${customerId}/contacts`).then(r => r.data),
 
   createContact: (customerId: string, data: Partial<Contact>) =>
-    api.post<Contact>(`/sales/customers/${customerId}/contacts`, data).then(r => r.data),
+    api.post<Contact>(`/sales/customers/${customerId}/contacts`, kundendatenFuerSpeichern(data)).then(r => r.data),
 
   updateContact: (customerId: string, contactId: string, data: Partial<Contact>) =>
-    api.patch<Contact>(`/sales/customers/${customerId}/contacts/${contactId}`, data).then(r => r.data),
+    api.patch<Contact>(`/sales/customers/${customerId}/contacts/${contactId}`, kundendatenFuerSpeichern(data)).then(r => r.data),
 
   deleteContact: (customerId: string, contactId: string) =>
     api.delete(`/sales/customers/${customerId}/contacts/${contactId}`),
