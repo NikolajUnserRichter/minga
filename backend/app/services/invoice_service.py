@@ -97,7 +97,11 @@ def empfaenger_nachtragen(db: Session) -> int:
         snapshot = {"festgeschrieben": True, "nachgetragen": True, **empfaenger_daten(kunde, order)}
         if alt:
             snapshot["beim_anlegen"] = alt
-        rechnung.billing_address = snapshot
+        db.execute(
+            update(Invoice)
+            .where(Invoice.id == rechnung.id)
+            .values(billing_address=snapshot, updated_at=Invoice.updated_at)
+        )
         anzahl += 1
     db.flush()
     return anzahl

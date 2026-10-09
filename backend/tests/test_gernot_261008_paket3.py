@@ -6237,3 +6237,27 @@ class TestAbnahmeBestellsuche:
         erwartet = [] if suchtext == "unbekannt" else [bestellung["id"]]
         assert response.json()["total"] == len(erwartet)
         assert [order["id"] for order in response.json()["items"]] == erwartet
+
+
+class TestAbnahmeSnapshotZeitstempel:
+    def test_start_nachtrag_erhaelt_updated_at(self, client):
+        from datetime import datetime
+        from app.models.invoice import Invoice
+        from app.tenancy import _auto_migrate
+        from tests.conftest import engine
+        rechnung = _q1_finalisieren(client, _q1_entwurf(client, _q1_kunde(client)))
+        zeitstempel = datetime(2026, 3, 5, 12, 34, 56)
+        with TestingSessionLocal() as db:
+            invoice = db.get(Invoice, uuid.UUID(rechnung["id"]))
+            invoice.billing_address = None
+            invoice.updated_at = zeitstempel
+            db.commit()
+
+        _auto_migrate(engine)
+
+        with TestingSessionLocal() as db:
+            invoice = db.get(Invoice, uuid.UUID(rechnung["id"]))
+            assert invoice.billing_address["festgeschrieben"] is True
+            assert invoice.billing_address["nachgetragen"] is True
+            assert invoice.billing_address["name"] == "Ökoring Handels GmbH"
+            assert invoice.updated_at == zeitstempel
