@@ -158,6 +158,89 @@ def setze_status(
 
 
 
+# Paket 4 (G10, Gernot 08.10.2026): „Gepackt“ und „Ausgeliefert“ im Tagesplan
+# bestätigen einen Entwurf im selben Schritt. Gernot erfasst Bestellungen im
+# Formular als Entwurf (Prod 09.10.: 4 von 6 Lieferungen); bis Paket 4 standen
+# sie im Sortenbedarf, bis jemand sie in der Bestellliste bestätigte.
+# ERLAUBTE_UEBERGAENGE bleibt unverändert: der Entwurf geht über `bestaetigen`
+# (ENTWURF → BESTAETIGT, eigener Audit-Eintrag CONFIRM), danach gilt
+# `setze_status` wie immer. Nur der Tagesplan schickt das Kennzeichen.
+MIT_BESTAETIGUNG: dict[OrderStatus, str] = {
+    OrderStatus.IN_PRODUKTION: "Beim Packen im Tagesplan bestätigt",
+    OrderStatus.GELIEFERT: "Beim Ausliefern im Tagesplan bestätigt",
+}
+
+
+def bestaetigen(
+    db: Session,
+    order: Order,
+    *,
+    user: Optional[dict],
+    reason: Optional[str] = None,
+    bestaetigtes_lieferdatum: Optional[date] = None,
+) -> None:
+    """ENTWURF → BESTAETIGT — der eine Weg zum Bestätigen (POST /confirm und
+    der Tagesplan). Committet NICHT.
+
+    Bestätigt wird nur ein Entwurf mit mindestens einer Position. Das
+    bestätigte Lieferdatum ist ohne Angabe das gewünschte."""
+    if order.status != OrderStatus.ENTWURF:
+        raise StatuswechselFehler(
+            f"Bestellung hat Status {bezeichnung(order.status)}, kann nicht bestätigt werden"
+        )
+    if len(order.lines) == 0:
+        raise StatuswechselFehler("Bestellung ohne Positionen kann nicht bestätigt werden")
+    setze_status(db, order, OrderStatus.BESTAETIGT, user=user, action="CONFIRM", reason=reason)
+    order.confirmed_delivery_date = bestaetigtes_lieferdatum or order.requested_delivery_date
+
+
+def _im_tagesplan_bestaetigbar(order: Order) -> bool:
+    """Ein Entwurf wird im Tagesplan nur bis zu seinem Liefertag bestätigt.
+
+    An vergangenen Tagen stehen Entwürfe, die nie bestätigt wurden (Prod
+    09.10.2026: 7, darunter die falsch erfasste Bierbichler-Bestellung und
+    vier LfA-Abo-Lieferungen). Ein Klick dort würde sie bestätigen und bei
+    „Ausgeliefert“ unumkehrbar liefern: aus GELIEFERT führt nur FAKTURIERT
+    weiter, Bestand und Leergut wären gebucht. Gilt auch für „Gepackt“, sonst
+    führten zwei Klicks (Gepackt, dann Ausgeliefert) zum selben Ergebnis.
+    Solche Entwürfe klärt das Büro in der Bestellliste."""
+    return order.requested_delivery_date >= heute_berlin()
+
+
+def im_tagesplan_moeglich(order: Order, ziel: OrderStatus) -> bool:
+    """Zeigt der Tagesplan den Knopf für `ziel` (Gepackt, Ausgeliefert)?
+    Dieselbe Regel wie setze_status_im_tagesplan."""
+    if order.status == OrderStatus.ENTWURF and ziel in MIT_BESTAETIGUNG:
+        return _im_tagesplan_bestaetigbar(order)
+    return ziel in ERLAUBTE_UEBERGAENGE.get(order.status, ())
+
+
+def setze_status_im_tagesplan(
+    db: Session,
+    order: Order,
+    neu: OrderStatus,
+    *,
+    user: Optional[dict],
+    reason: Optional[str] = None,
+    lieferdatum: Optional[date] = None,
+) -> bool:
+    """Statuswechsel aus dem Tagesplan. Ein Entwurf wird vor „Gepackt“ bzw.
+    „Ausgeliefert“ bestätigt, aber nur bis zu seinem Liefertag; sonst genau
+    setze_status. Gibt zurück, ob bestätigt wurde. Committet NICHT —
+    scheitert der Wechsel, rollt der Aufrufer die Bestätigung mit zurück."""
+    bestaetigt = False
+    if order.status == OrderStatus.ENTWURF and neu in MIT_BESTAETIGUNG:
+        if not _im_tagesplan_bestaetigbar(order):
+            raise StatuswechselFehler(
+                f"Entwurf mit Liefertag {order.requested_delivery_date:%d.%m.%Y} liegt in der "
+                "Vergangenheit — erst in der Bestellliste bestätigen oder stornieren"
+            )
+        bestaetigen(db, order, user=user, reason=MIT_BESTAETIGUNG[neu])
+        bestaetigt = True
+    setze_status(db, order, neu, user=user, reason=reason, lieferdatum=lieferdatum)
+    return bestaetigt
+
+
 def trage_lieferdatum_nach(
     db: Session,
     order: Order,

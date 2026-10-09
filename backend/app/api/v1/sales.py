@@ -36,7 +36,8 @@ from app.services.datev_service import DatevService
 from app.services.invoice_service import InvoiceService
 from app.models.invoice import ist_entwurfsnummer
 from app.services.order_status_service import (
-    BestandsbuchungFehler, StatuswechselFehler, bezeichnung, pruefe_uebergang, setze_status,
+    BestandsbuchungFehler, StatuswechselFehler, bestaetigen, bezeichnung, pruefe_uebergang,
+    setze_status, setze_status_im_tagesplan,
 )
 from app.services.steuersatz import steuersatz_der_position
 
@@ -1249,31 +1250,13 @@ async def confirm_order(
     if not order:
         raise HTTPException(status_code=404, detail="Bestellung nicht gefunden")
 
-    if order.status != OrderStatus.ENTWURF:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Bestellung hat Status {bezeichnung(order.status)}, kann nicht bestätigt werden"
-        )
-
-    if len(order.lines) == 0:
-        raise HTTPException(
-            status_code=400,
-            detail="Bestellung ohne Positionen kann nicht bestätigt werden"
-        )
-
-    old_status = order.status.value
-    order.status = OrderStatus.BESTAETIGT
-    order.confirmed_delivery_date = confirmed_delivery_date or order.requested_delivery_date
-    order.updated_by = UUID(user["id"]) if user else None
-    order.updated_at = datetime.now(timezone.utc)
-
-    _create_audit_log(
-        db, order,
-        user_id=UUID(user["id"]) if user else None,
-        action="CONFIRM",
-        old_values={"status": old_status},
-        new_values={"status": order.status.value}
-    )
+    # Dieselbe Funktion wie der Tagesplan (Paket 4, G10): Prüfungen, Status,
+    # bestätigtes Lieferdatum und Audit-Eintrag CONFIRM an einer Stelle.
+    try:
+        bestaetigen(db, order, user=user, bestaetigtes_lieferdatum=confirmed_delivery_date)
+    except StatuswechselFehler as e:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
 
     db.commit()
 
@@ -1301,13 +1284,23 @@ async def update_order_status(
         raise HTTPException(status_code=404, detail="Bestellung nicht gefunden")
 
     neu = status_update.status
+    bestaetigt = False
     try:
-        setze_status(
-            db, order, neu,
-            user=user,
-            reason=status_update.reason,
-            lieferdatum=status_update.actual_delivery_date,
-        )
+        if status_update.entwurf_bestaetigen:
+            # Tagesplan (Paket 4, G10): ein Entwurf wird im selben Schritt bestätigt
+            bestaetigt = setze_status_im_tagesplan(
+                db, order, neu,
+                user=user,
+                reason=status_update.reason,
+                lieferdatum=status_update.actual_delivery_date,
+            )
+        else:
+            setze_status(
+                db, order, neu,
+                user=user,
+                reason=status_update.reason,
+                lieferdatum=status_update.actual_delivery_date,
+            )
     except StatuswechselFehler as e:
         db.rollback()
         raise HTTPException(status_code=400, detail=str(e))
@@ -1321,6 +1314,9 @@ async def update_order_status(
 
     db.commit()
 
+    # Wie POST /confirm: eine Bestätigung stößt die Prognose an
+    if bestaetigt:
+        _trigger_forecast_update(str(order.id), "CONFIRM")
     # Forecast bei Stornierung triggern
     if neu == OrderStatus.STORNIERT:
         _trigger_forecast_update(str(order.id), "CANCEL")

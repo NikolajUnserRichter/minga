@@ -177,6 +177,11 @@ class OrderStatusUpdate(BaseModel):
     actual_delivery_date: Optional[date] = Field(
         None, description="Nur bei GELIEFERT: tatsächlicher Liefertag (Standard heute, nie in der Zukunft)"
     )
+    entwurf_bestaetigen: bool = Field(
+        False,
+        description="Tagesplan (Paket 4): ein Entwurf wird vor IN_PRODUKTION bzw. GELIEFERT "
+                    "im selben Schritt bestätigt (eigener Audit-Eintrag CONFIRM)",
+    )
 
 
 class OrderResponse(BaseModel):

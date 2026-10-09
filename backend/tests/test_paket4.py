@@ -230,3 +230,165 @@ class TestP4AStueckliste:
         assert gespeichert["is_bundle"] is False
         _p4a_bestellung(client, heute + timedelta(days=1), [(offen, 2)])
         assert _p4a_sortenbedarf(client, heute) == {"BIO Kiste | Erbse (VPE 6)": 2}
+
+
+def _p4a_status(client, order, status, **extra):
+    """Derselbe Aufruf wie die Knöpfe im Tagesplan (salesApi.updateOrderStatus)."""
+    return client.post(f"/api/v1/sales/orders/{order['id']}/status",
+                       json={"status": status, **extra})
+
+
+def _p4a_lesen(client, order):
+    r = client.get(f"/api/v1/sales/orders/{order['id']}")
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def _p4a_positionen_loeschen(order):
+    """Entwurf ohne Positionen. Die Schnittstelle legt keinen an (400), Altbestand
+    und Importe kennen ihn — darum direkt in der DB."""
+    from sqlalchemy import delete
+    from app.models.order import OrderLine
+    with TestingSessionLocal() as db:
+        db.execute(delete(OrderLine).where(OrderLine.order_id == uuid.UUID(order["id"])))
+        db.commit()
+
+
+def _p4a_audit(client, order):
+    """(Aktion, alter Status, neuer Status, Grund) je Statuseintrag, sortiert."""
+    r = client.get(f"/api/v1/sales/orders/{order['id']}/audit-log")
+    assert r.status_code == 200, r.text
+    return sorted(
+        (e["action"], (e["old_values"] or {}).get("status"),
+         (e["new_values"] or {}).get("status"), e["reason"])
+        for e in r.json() if (e["new_values"] or {}).get("status")
+    )
+
+
+@pytest.mark.usefixtures("_p4a_ohne_celery")
+class TestP4AEntwurfPacken:
+    """A.3 (G10): „Gepackt“ und „Ausgeliefert“ im Tagesplan bestätigen einen
+    Entwurf im selben Schritt — über die eine Statusregel (order_status_service),
+    mit eigenem Audit-Eintrag CONFIRM, nur bis zum Liefertag. Ohne das
+    Kennzeichen bleibt alles wie in Paket 2."""
+
+    def test_gepackt_bestaetigt_den_entwurf(self, client):
+        morgen = _p4a_heute() + timedelta(days=1)
+        o = _p4a_bestellung(client, morgen)
+
+        r = _p4a_status(client, o, "IN_PRODUKTION", reason="Im Tagesplan als gepackt markiert",
+                        entwurf_bestaetigen=True)
+        assert r.status_code == 200, r.text
+        assert r.json()["status"] == "IN_PRODUKTION"
+        assert r.json()["confirmed_delivery_date"] == morgen.isoformat()
+        assert _p4a_audit(client, o) == [
+            ("CONFIRM", "ENTWURF", "BESTAETIGT", "Beim Packen im Tagesplan bestätigt"),
+            ("STATUS_CHANGE", "BESTAETIGT", "IN_PRODUKTION", "Im Tagesplan als gepackt markiert"),
+        ]
+
+    def test_ausgeliefert_bestaetigt_den_entwurf(self, client):
+        heute = _p4a_heute()
+        o = _p4a_bestellung(client, heute)
+
+        r = _p4a_status(client, o, "GELIEFERT", entwurf_bestaetigen=True)
+        assert r.status_code == 200, r.text
+        assert (r.json()["status"], r.json()["actual_delivery_date"]) == ("GELIEFERT", heute.isoformat())
+        assert _p4a_audit(client, o) == [
+            ("CONFIRM", "ENTWURF", "BESTAETIGT", "Beim Ausliefern im Tagesplan bestätigt"),
+            ("STATUS_CHANGE", "BESTAETIGT", "GELIEFERT", None),
+        ]
+
+    def test_gepackter_entwurf_verlaesst_den_sortenbedarf(self, client):
+        """Gernot (A4): gepackt → sofort raus aus dem Sortenbedarf, auch als Entwurf."""
+        heute = _p4a_heute()
+        morgen = heute + timedelta(days=1)
+        _p4a_bestellung(client, morgen, [("Erbsen-Schale", 3)])
+        gepackt = _p4a_bestellung(client, morgen, [("Erbsen-Schale", 5)])
+        assert _p4a_sortenbedarf(client, heute) == {"Erbsen-Schale": 8}
+
+        r = _p4a_status(client, gepackt, "IN_PRODUKTION", entwurf_bestaetigen=True)
+        assert r.status_code == 200, r.text
+        assert _p4a_sortenbedarf(client, heute) == {"Erbsen-Schale": 3}
+
+    def test_entwurf_ohne_positionen_wird_nicht_gepackt(self, client):
+        morgen = _p4a_heute() + timedelta(days=1)
+        o = _p4a_bestellung(client, morgen)
+        _p4a_positionen_loeschen(o)
+
+        r = _p4a_status(client, o, "IN_PRODUKTION", entwurf_bestaetigen=True)
+        assert r.status_code == 400
+        assert r.json()["detail"] == "Bestellung ohne Positionen kann nicht bestätigt werden"
+        assert _p4a_lesen(client, o)["status"] == "ENTWURF"
+
+    def test_scheitert_das_liefern_bleibt_der_entwurf(self, client):
+        """Bestätigung und Statuswechsel in einer Transaktion: alles oder nichts."""
+        heute = _p4a_heute()
+        morgen = heute + timedelta(days=1)
+        o = _p4a_bestellung(client, heute)
+
+        r = _p4a_status(client, o, "GELIEFERT", entwurf_bestaetigen=True,
+                        actual_delivery_date=morgen.isoformat())
+        assert r.status_code == 400
+        assert r.json()["detail"] == f"Lieferdatum {morgen:%d.%m.%Y} liegt in der Zukunft"
+        best = _p4a_lesen(client, o)
+        assert (best["status"], best["confirmed_delivery_date"]) == ("ENTWURF", None)
+        assert _p4a_audit(client, o) == []
+
+    def test_vergangener_entwurf_wird_im_tagesplan_nicht_bestaetigt(self, client):
+        """Prod 09.10.2026: 7 Entwürfe mit Liefertag vor heute, u. a. die falsch
+        erfasste Bierbichler-Bestellung (G80) und vier LfA-Abo-Lieferungen. Ein
+        Klick im Tagesplan eines vergangenen Tages darf sie weder bestätigen
+        noch liefern: aus Geliefert führt kein Weg zurück."""
+        gestern = _p4a_heute() - timedelta(days=1)
+        o = _p4a_bestellung(client, gestern)
+        meldung = (f"Entwurf mit Liefertag {gestern:%d.%m.%Y} liegt in der Vergangenheit "
+                   "— erst in der Bestellliste bestätigen oder stornieren")
+
+        # Wie der Tagesplan an einem vergangenen Tag: Lieferdatum = dieser Tag
+        r = _p4a_status(client, o, "GELIEFERT", entwurf_bestaetigen=True,
+                        actual_delivery_date=gestern.isoformat())
+        assert (r.status_code, r.json()["detail"]) == (400, meldung)
+        r = _p4a_status(client, o, "IN_PRODUKTION", entwurf_bestaetigen=True)
+        assert (r.status_code, r.json()["detail"]) == (400, meldung)
+        best = _p4a_lesen(client, o)
+        assert (best["status"], best["confirmed_delivery_date"]) == ("ENTWURF", None)
+        assert _p4a_audit(client, o) == []
+
+    def test_ohne_kennzeichen_gilt_die_regel_aus_paket_2(self, client):
+        """Charakterisierung: Bestellliste, Sammelaktion und Fremd-Clients
+        schicken das Kennzeichen nicht — ENTWURF → Gepackt bleibt verboten."""
+        o = _p4a_bestellung(client, _p4a_heute() + timedelta(days=1))
+
+        r = _p4a_status(client, o, "IN_PRODUKTION")
+        assert r.status_code == 400
+        assert r.json()["detail"] == "Statuswechsel nicht möglich: Entwurf → Gepackt"
+        assert _p4a_lesen(client, o)["status"] == "ENTWURF"
+
+    def test_bestaetigte_bestellung_wird_nicht_nochmal_bestaetigt(self, client):
+        """Charakterisierung: das Kennzeichen wirkt nur auf Entwürfe."""
+        o = _p4a_bestellung(client, _p4a_heute() + timedelta(days=1), bestaetigen=True)
+
+        r = _p4a_status(client, o, "IN_PRODUKTION", entwurf_bestaetigen=True)
+        assert r.status_code == 200, r.text
+        assert [a for a, *_ in _p4a_audit(client, o)] == ["CONFIRM", "STATUS_CHANGE"]
+
+    def test_bestaetigen_ueber_confirm_unveraendert(self, client):
+        """Charakterisierung: POST /confirm läuft jetzt über dieselbe Funktion
+        (order_status_service.bestaetigen) — Antworten wie bisher."""
+        morgen = _p4a_heute() + timedelta(days=1)
+        o = _p4a_bestellung(client, morgen)
+
+        r = client.post(f"/api/v1/sales/orders/{o['id']}/confirm")
+        assert r.status_code == 200, r.text
+        assert (r.json()["status"], r.json()["confirmed_delivery_date"]) == ("BESTAETIGT", morgen.isoformat())
+        assert _p4a_audit(client, o) == [("CONFIRM", "ENTWURF", "BESTAETIGT", None)]
+
+        r = client.post(f"/api/v1/sales/orders/{o['id']}/confirm")
+        assert r.status_code == 400
+        assert r.json()["detail"] == "Bestellung hat Status Bestätigt, kann nicht bestätigt werden"
+
+        leer = _p4a_bestellung(client, morgen)
+        _p4a_positionen_loeschen(leer)
+        r = client.post(f"/api/v1/sales/orders/{leer['id']}/confirm")
+        assert r.status_code == 400
+        assert r.json()["detail"] == "Bestellung ohne Positionen kann nicht bestätigt werden"
