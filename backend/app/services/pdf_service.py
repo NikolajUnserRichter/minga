@@ -108,6 +108,39 @@ def customer_address_lines(customer) -> list[str]:
     return []
 
 
+def empfaenger_daten(kunde, order=None) -> dict:
+    """Empfängerangaben, wie das Rechnungs-PDF sie druckt: Name,
+    Kundennummer, USt-IdNr., Anschrift, Skonto, Auftragsnummer.
+
+    InvoiceService.festschreiben friert genau dieses dict an der Rechnung
+    ein (invoices.billing_address mit "festgeschrieben": True). Werte
+    JSON-tauglich (Skonto als Text).
+    """
+    return {
+        "name": getattr(kunde, "name", None),
+        "kundennummer": getattr(kunde, "customer_number", None),
+        "ust_id": getattr(kunde, "ust_id", None),
+        "anschrift": customer_address_lines(kunde),
+        "skonto_percent": str(getattr(kunde, "skonto_percent", None) or 0),
+        "skonto_days": getattr(kunde, "skonto_days", None) or 0,
+        "auftragsnummer": getattr(order, "customer_reference", None) if order is not None else None,
+    }
+
+
+def rechnungsempfaenger(invoice, ist_entwurf: bool) -> dict:
+    """Empfängerangaben für das Rechnungs-PDF.
+
+    Ausgestellte Rechnung: der beim Festschreiben eingefrorene Stand — das
+    PDF entsteht bei jedem Abruf neu, die Rechnung bleibt trotzdem gleich
+    (GoBD). Entwurf, Rechnung von vor Paket 3 (ohne Snapshot) und
+    Vorlagen-Vorschau: der aktuelle Kunde.
+    """
+    snapshot = getattr(invoice, "billing_address", None)
+    if not ist_entwurf and isinstance(snapshot, dict) and snapshot.get("festgeschrieben"):
+        return snapshot
+    return empfaenger_daten(invoice.customer, getattr(invoice, "order", None))
+
+
 def load_company_settings(db) -> dict[str, str]:
     """Lädt alle COMPANY_*-Settings für PDF-Rendering. Robust gegen None."""
     if db is None:
@@ -231,6 +264,7 @@ class PDFService:
             getattr(invoice, "status", None) == InvoiceStatus.ENTWURF
             or ist_entwurfsnummer(getattr(invoice, "invoice_number", None))
         )
+        empfaenger = rechnungsempfaenger(invoice, ist_entwurf)
 
         # Briefkopf — Logo + Custom-Header oder Settings-Fallback
         custom_header = (tmpl.texts.get("header_text") if (tmpl and tmpl.texts) else None)
@@ -268,11 +302,11 @@ class PDFService:
         if _en(tmpl, "meta_block", default=True):
             meta_data = [
                 ["Datum:", invoice.invoice_date.strftime("%d.%m.%Y")],
-                ["Kunde:", invoice.customer.name],
-                ["Kundennummer:", invoice.customer.customer_number or "-"],
+                ["Kunde:", empfaenger["name"]],
+                ["Kundennummer:", empfaenger["kundennummer"] or "-"],
             ]
-            if getattr(invoice.customer, "ust_id", None):
-                meta_data.append(["Ihre USt-IdNr.:", invoice.customer.ust_id])
+            if empfaenger["ust_id"]:
+                meta_data.append(["Ihre USt-IdNr.:", empfaenger["ust_id"]])
             if invoice.delivery_date:
                 meta_data.append(["Lieferdatum:", invoice.delivery_date.strftime("%d.%m.%Y")])
             # Sammelrechnung: der Leistungszeitraum gehört auf den Beleg (R2.4)
@@ -283,9 +317,9 @@ class PDFService:
                     f"{invoice.service_period_end.strftime('%d.%m.%Y')}",
                 ])
             # Kundenbestellnummer (z.B. EB4475142) aus der zugehörigen Bestellung
-            if invoice.order is not None and invoice.order.customer_reference:
-                meta_data.append(["Auftragsnummer:", invoice.order.customer_reference])
-            addr_lines = customer_address_lines(invoice.customer)
+            if empfaenger["auftragsnummer"]:
+                meta_data.append(["Auftragsnummer:", empfaenger["auftragsnummer"]])
+            addr_lines = empfaenger["anschrift"]
             if addr_lines:
                 meta_data.append([
                     "Anschrift:",
@@ -381,8 +415,8 @@ class PDFService:
 
         # Skonto-Hinweis wenn Customer Skonto hat
         if _en(tmpl, "skonto_hint", default=True):
-            skonto_pct = getattr(invoice.customer, 'skonto_percent', 0) or 0
-            skonto_days = getattr(invoice.customer, 'skonto_days', 0) or 0
+            skonto_pct = Decimal(str(empfaenger["skonto_percent"] or 0))
+            skonto_days = empfaenger["skonto_days"] or 0
             if skonto_pct and skonto_days:
                 skonto_amount = float(invoice.total) * float(skonto_pct) / 100
                 skonto_text = (

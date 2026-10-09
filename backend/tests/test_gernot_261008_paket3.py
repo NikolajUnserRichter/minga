@@ -953,3 +953,72 @@ class TestQ1MeldungenPositionssperre:
         nummer = client.get(f"/api/v1/sales/orders/{bestellung['id']}").json()["rechnung_nummer"]
 
         assert _Q1_PLATZHALTER.match(nummer)
+
+
+class TestQ1EmpfaengerFestgeschrieben:
+    """GoBD: eine ausgestellte Rechnung ändert sich nicht, wenn sich Kunde
+    oder Bestellung ändern. Das PDF entsteht bei jedem Abruf neu — es liest
+    den beim Festschreiben eingefrorenen Stand. Gemessen vorher: die Rolle
+    production_staff bekam auf das PDF 403, änderte per PATCH
+    /sales/customers/{id} aber Name und USt-IdNr., die das PDF einer
+    ausgestellten Rechnung danach zeigte."""
+
+    _VORHER = {"customer_number": "K-Q1-001", "ust_id": "DE111111111",
+               "adresse": "Altweg 1, 80331 Muenchen", "skonto_percent": "2", "skonto_days": 10}
+    _NACHHER = {"name": "Umbenannt GmbH", "customer_number": "K-Q1-999", "ust_id": "DE999999999",
+                "adresse": "Neuweg 9, 10115 Berlin", "skonto_percent": "5", "skonto_days": 20}
+
+    def _pdf(self, client, rechnung):
+        r = client.get(f"/api/v1/invoices/{rechnung['id']}/pdf")
+        assert r.status_code == 200, r.text
+        return _pdf_text(r.content)
+
+    def test_kundenaenderung_aendert_ausgestellte_rechnung_nicht(self, client):
+        kunde = _q1_kunde(client, "Bodan Naturkost GmbH", **self._VORHER)
+        rechnung = _q1_finalisieren(client, _q1_entwurf(client, kunde))
+
+        r = client.patch(f"/api/v1/sales/customers/{kunde['id']}", json=self._NACHHER)
+        assert r.status_code == 200, r.text
+        text = self._pdf(client, rechnung)
+
+        for alt in (b"Bodan Naturkost GmbH", b"K-Q1-001", b"DE111111111", b"Altweg 1", b"2.0% Skonto"):
+            assert alt in text, alt
+        for neu in (b"Umbenannt", b"K-Q1-999", b"DE999999999", b"Neuweg", b"5.0% Skonto"):
+            assert neu not in text, neu
+
+    def test_auftragsnummer_bleibt(self, client):
+        from app.models.order import Order
+        bestellung, _ = _q1_bestellung_mit_lieferschein(client, _q1_kunde(client))
+        with TestingSessionLocal() as db:
+            db.get(Order, uuid.UUID(bestellung["id"])).customer_reference = "EB-ALT-1"
+            db.commit()
+        r = client.post(f"/api/v1/invoices/from-order/{bestellung['id']}")
+        assert r.status_code == 201, r.text
+        rechnung = _q1_finalisieren(client, r.json())
+        with TestingSessionLocal() as db:
+            db.get(Order, uuid.UUID(bestellung["id"])).customer_reference = "EB-NEU-2"
+            db.commit()
+
+        text = self._pdf(client, rechnung)
+
+        assert b"EB-ALT-1" in text and b"EB-NEU-2" not in text
+
+    def test_entwurf_zeigt_den_aktuellen_kunden(self, client):
+        """Die Vorschau eines Entwurfs folgt dem Kunden bis zum Festschreiben."""
+        kunde = _q1_kunde(client, "Bodan Naturkost GmbH", **self._VORHER)
+        entwurf = _q1_entwurf(client, kunde)
+
+        assert client.patch(f"/api/v1/sales/customers/{kunde['id']}", json=self._NACHHER).status_code == 200
+        text = self._pdf(client, entwurf)
+
+        assert b"Umbenannt GmbH" in text and b"DE999999999" in text
+
+    def test_snapshot_steht_an_der_rechnung(self, client):
+        kunde = _q1_kunde(client, "Bodan Naturkost GmbH", **self._VORHER)
+        rechnung = _q1_finalisieren(client, _q1_entwurf(client, kunde))
+
+        snapshot = client.get(f"/api/v1/invoices/{rechnung['id']}").json()["billing_address"]
+
+        assert snapshot["festgeschrieben"] is True
+        assert (snapshot["name"], snapshot["ust_id"], snapshot["skonto_days"]) == (
+            "Bodan Naturkost GmbH", "DE111111111", 10)

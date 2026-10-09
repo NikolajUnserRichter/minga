@@ -546,7 +546,8 @@ class InvoiceService:
            (Europe/Berlin). Nummer und Ausstellungsdatum entstehen zusammen.
            Ein Altentwurf mit RE-Nummer behält Nummer und Datum.
         3. _zahlungsbedingungen_festschreiben: Fälligkeit = Rechnungsdatum +
-           Zahlungsziel des Entwurfs (Haken für SEPA, Paket 3 Q5).
+           Zahlungsziel des Entwurfs (Haken für SEPA, Paket 3 Q5);
+           _empfaenger_festschreiben: Empfängerangaben einfrieren (GoBD).
         4. Status OFFEN.
         5. Platzhalter -> nächste Nummer RE-JJJJ-NNNNN. Gelesen wird unter
            der Sperre aus Schritt 0: kein anderer Vorgang kann bis zu
@@ -582,6 +583,7 @@ class InvoiceService:
         if braucht_nummer:
             invoice.invoice_date = _heute_berlin()
         self._zahlungsbedingungen_festschreiben(invoice, zahlungsziel_tage)
+        self._empfaenger_festschreiben(invoice)
 
         invoice.status = InvoiceStatus.OFFEN
         self.db.flush()
@@ -612,6 +614,21 @@ class InvoiceService:
         eine Ausnahme hier verbraucht keine Nummer.
         """
         invoice.due_date = invoice.invoice_date + timedelta(days=zahlungsziel_tage)
+
+    def _empfaenger_festschreiben(self, invoice: Invoice) -> None:
+        """Empfängerangaben beim Festschreiben einfrieren (GoBD).
+
+        Das Rechnungs-PDF entsteht bei jedem Abruf neu. Ohne Snapshot zeigte
+        eine ausgestellte Rechnung nach jeder Änderung am Kunden (Name,
+        Anschrift, USt-IdNr., Skonto) oder an der Bestellung
+        (Auftragsnummer) andere Angaben als beim Ausstellen. Gespeichert in
+        der vorhandenen JSON-Spalte billing_address (keine Schemaänderung);
+        das PDF liest ihn über pdf_service.rechnungsempfaenger.
+        """
+        from app.services.pdf_service import empfaenger_daten
+        kunde = self.db.get(Customer, invoice.customer_id)
+        order = self.db.get(Order, invoice.order_id) if invoice.order_id else None
+        invoice.billing_address = {"festgeschrieben": True, **empfaenger_daten(kunde, order)}
 
     def record_payment(
         self,
