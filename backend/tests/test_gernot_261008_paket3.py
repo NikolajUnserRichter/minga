@@ -1705,3 +1705,61 @@ class TestQ4AltrechnungenEingefroren:
 
         with TestingSessionLocal() as db:
             assert empfaenger_nachtragen(db) == 0
+
+
+# ============================================================
+# Q3 — Dateinamen der Belege (B7)
+#
+# Ein Beleg heißt wie seine Nummer: RE-2026-00002.pdf, AB-…pdf, LS-…pdf,
+# PL-…pdf. Der Server setzt den Namen (Content-Disposition mit filename und
+# filename* nach RFC 6266/5987), das Frontend übernimmt ihn. Ein
+# Rechnungsentwurf heißt Entwurf-<…>.pdf.
+# ============================================================
+# Importe im Abschnitt: doppelte Importe anderer Abschnitte sind harmlos.
+import uuid  # noqa: E402
+from datetime import date  # noqa: E402
+
+from tests.conftest import TestingSessionLocal  # noqa: E402
+
+# Form des Platzhalters aus Q1 / Spec-Entscheidung 2: "ENTWURF-" + 12 Zeichen
+_Q3_PLATZHALTER = "ENTWURF-AB12CD34EF56"
+
+
+class TestQ3Dateiname:
+    """Die Namensregel, ohne Datenbank."""
+
+    def test_nummer_wird_dateiname(self):
+        from app.services.beleg_dateiname import beleg_dateiname
+        assert beleg_dateiname("RE-2026-00002") == "RE-2026-00002.pdf"
+        assert beleg_dateiname("AB-20261008-0001") == "AB-20261008-0001.pdf"
+
+    def test_platzhalter_heisst_entwurf(self):
+        from app.services.beleg_dateiname import beleg_dateiname
+        assert beleg_dateiname(_Q3_PLATZHALTER) == "Entwurf-AB12CD34EF56.pdf"
+
+    def test_alter_entwurf_mit_re_nummer(self):
+        from app.services.beleg_dateiname import beleg_dateiname
+        assert beleg_dateiname("RE-2026-00003", entwurf=True) == "Entwurf-RE-2026-00003.pdf"
+
+    def test_pfadtrenner_und_anfuehrungszeichen_werden_ersetzt(self):
+        from app.services.beleg_dateiname import beleg_dateiname
+        assert beleg_dateiname('RE/2026\\00"1') == "RE_2026_00_1.pdf"
+        assert beleg_dateiname("") == "Beleg.pdf"
+        assert beleg_dateiname(None) == "Beleg.pdf"
+
+    def test_kopf_mit_umlauten_und_sonderzeichen(self):
+        """RFC 5987: filename* trägt UTF-8, filename einen ASCII-Ersatz. Der
+        Kopf ist reines ASCII — Starlette kodiert Köpfe als latin-1, ein '€'
+        im Kopf endete sonst mit 500 (UnicodeEncodeError)."""
+        from app.services.beleg_dateiname import content_disposition
+        kopf = content_disposition("Entwurf-Bäckerei „Süd“ €.pdf")
+        assert kopf == (
+            "attachment; filename=\"Entwurf-Backerei _Sud_ _.pdf\"; "
+            "filename*=UTF-8''Entwurf-B%C3%A4ckerei%20%E2%80%9ES%C3%BCd%E2%80%9C%20%E2%82%AC.pdf"
+        )
+        kopf.encode("ascii")
+
+    def test_kopf_inline(self):
+        from app.services.beleg_dateiname import content_disposition
+        assert content_disposition("RE-2026-00002.pdf", art="inline").startswith(
+            'inline; filename="RE-2026-00002.pdf"')
