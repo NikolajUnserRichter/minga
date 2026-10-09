@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { sepaApi } from '../../services/api';
 import { getErrorMessage } from '../../services/errors';
 import { Button, Input, useToast } from '../ui';
+import { belegHerunterladen } from '../../services/belegordner';
 
 /**
  * Arbeitsliste „Lastschrift-Einzüge" (B10): festgeschriebene
@@ -63,23 +64,27 @@ export function SepaEinzugsliste() {
 
   const einreichen = async () => {
     const ohneMail = einreichbar.filter((z) => z.ankuendigung !== 'RECHTZEITIG');
-    let bestaetigt = false;
-    if (ohneMail.length > 0) {
-      bestaetigt = confirm(
-        `Für ${ohneMail.map((z) => z.invoice_number).join(', ')} ist keine rechtzeitige Vorabankündigung per Mail belegt. `
-        + 'Wurde sie auf anderem Weg rechtzeitig zugestellt? (Wird an der Rechnung vermerkt.)',
-      );
-      if (!bestaetigt) return;
-    }
-    setReicheEin(true);
     try {
-      const response = await sepaApi.einreichen(einreichbar.map((z) => z.invoice_id), bestaetigt);
-      const url = window.URL.createObjectURL(new Blob([response.data], { type: 'text/csv' }));
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `Lastschrift-Einreichung_${heute}.csv`;
-      a.click();
-      window.URL.revokeObjectURL(url);
+      // Abschnitt O: erst die Ordner-Freigabe (braucht den frischen Klick), dann
+      // die Rückfrage, dann einreichen. Die CSV gibt es nur einmal (zweites
+      // Mal 409): Kann der Ordner nicht schreiben, kommt sie als Download.
+      const ergebnis = await belegHerunterladen(
+        { art: 'Lastschriften', ersatzname: `Lastschrift-Einreichung_${heute}.csv`, mime: 'text/csv' },
+        async () => {
+          let bestaetigt = false;
+          if (ohneMail.length > 0) {
+            bestaetigt = confirm(
+              `Für ${ohneMail.map((z) => z.invoice_number).join(', ')} ist keine rechtzeitige Vorabankündigung per Mail belegt. `
+              + 'Wurde sie auf anderem Weg rechtzeitig zugestellt? (Wird an der Rechnung vermerkt.)',
+            );
+            if (!bestaetigt) return null;
+          }
+          setReicheEin(true);
+          return sepaApi.einreichen(einreichbar.map((z) => z.invoice_id), bestaetigt);
+        },
+        toast,
+      );
+      if (!ergebnis) return;
       toast.success(`${einreichbar.length} Lastschrift(en) als eingereicht vermerkt`);
       neuLaden();
     } catch (e) {

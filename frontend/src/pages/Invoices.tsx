@@ -18,8 +18,8 @@ import {
   Alert,
 } from '../components/ui';
 import { ListPageSkeleton } from '../components/ui/Skeleton';
-import { dateinameAusHeader } from '../services/dateiname';
-import { ladePdfHerunter } from '../services/print';
+import { belegHerunterladen } from '../services/belegordner';
+import { belegartDerRechnung } from '../services/belegpfad';
 import { getErrorMessage } from '../services/errors';
 import { BelegVersandAuftrag } from '../services/api';
 import { VersandFormular, VersandProtokoll, versandMeldung, versandZeile } from '../components/domain/BelegVersand';
@@ -464,11 +464,16 @@ export default function Invoices() {
                         onClick={async (e) => {
                           e.stopPropagation();
                           try {
-                            const response = await invoicesApi.downloadPdf(invoice.id);
-                            // B7: Name vom Server (RE-….pdf bzw. Entwurf-….pdf)
-                            ladePdfHerunter(
-                              response.data,
-                              dateinameAusHeader(response.headers['content-disposition'], `${invoice.invoice_number}.pdf`),
+                            // Abschnitt O: Belegordner nach Belegart und Monat, sonst
+                            // Download-Ordner; Name vom Server (B7: RE-….pdf bzw. Entwurf-….pdf)
+                            await belegHerunterladen(
+                              {
+                                art: belegartDerRechnung(invoice),
+                                datum: invoice.invoice_date,
+                                ersatzname: `${invoice.invoice_number}.pdf`,
+                              },
+                              () => invoicesApi.downloadPdf(invoice.id),
+                              toast,
                             );
                           } catch (err) {
                             toast.error('Fehler beim Laden des PDFs');
@@ -528,15 +533,21 @@ export default function Invoices() {
                           const nextLevel = Math.min(3, (invoice.reminder_level || 0) + 1);
                           const stageLabel = ['Zahlungserinnerung', '1. Mahnung', '2. Mahnung'][nextLevel - 1];
                           const fee = nextLevel === 1 ? 0 : nextLevel === 2 ? 5 : 10;
-                          if (!confirm(`${stageLabel} mit Gebühr €${fee.toFixed(2)} erzeugen?`)) return;
                           try {
-                            const response = await invoicesApi.generatePaymentReminder(invoice.id, nextLevel, fee);
-                            const url = window.URL.createObjectURL(new Blob([response.data]));
-                            const a = document.createElement('a');
-                            a.href = url;
-                            a.download = `Zahlungserinnerung_${invoice.invoice_number}_Stufe${nextLevel}.pdf`;
-                            a.click();
-                            window.URL.revokeObjectURL(url);
+                            // Abschnitt O: erst die Ordner-Freigabe (braucht den frischen
+                            // Klick), dann die Rückfrage, dann erzeugen. Abbrechen → null.
+                            const ergebnis = await belegHerunterladen(
+                              {
+                                art: 'Mahnungen',
+                                ersatzname: `Zahlungserinnerung_${invoice.invoice_number}_Stufe${nextLevel}.pdf`,
+                              },
+                              async () => {
+                                if (!confirm(`${stageLabel} mit Gebühr €${fee.toFixed(2)} erzeugen?`)) return null;
+                                return invoicesApi.generatePaymentReminder(invoice.id, nextLevel, fee);
+                              },
+                              toast,
+                            );
+                            if (!ergebnis) return;
                             queryClient.invalidateQueries({ queryKey: ['invoices'] });
                             toast.success(`${stageLabel} erzeugt`);
                           } catch (err: any) {
@@ -989,25 +1000,28 @@ function DatevExportForm({ onClose }: { onClose: () => void }) {
   const handleExport = async () => {
     setLoading(true);
     try {
-      const result = await invoicesApi.exportDatev(formData);
-      if (result.record_count === 0) {
-        // Bereits exportierte Belege kommen nur mit "erneut exportieren" wieder —
-        // eine leere Datei herunterzuladen hilft niemandem.
-        toast.info('Keine neuen Buchungen im Zeitraum. Bereits exportierte nur über „Erneut exportieren".');
-        return;
-      }
-      toast.success(`Export erfolgreich: ${result.record_count} Datensätze`);
-
-      // Download CSV
-      const blob = new Blob([result.csv_content], { type: 'text/csv' });
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `DATEV_Export_${formData.from_date}_${formData.to_date}.csv`;
-      a.click();
-      window.URL.revokeObjectURL(url);
-
-      onClose();
+      // Abschnitt O: Belegordner DATEV-Exporte/<Monat des Zeitraumendes>, sonst Download-Ordner
+      const ergebnis = await belegHerunterladen(
+        {
+          art: 'DATEV-Exporte',
+          datum: formData.to_date,
+          ersatzname: `DATEV_Export_${formData.from_date}_${formData.to_date}.csv`,
+          mime: 'text/csv',
+        },
+        async () => {
+          const result = await invoicesApi.exportDatev(formData);
+          if (result.record_count === 0) {
+            // Bereits exportierte Belege kommen nur mit "erneut exportieren" wieder —
+            // eine leere Datei herunterzuladen hilft niemandem.
+            toast.info('Keine neuen Buchungen im Zeitraum. Bereits exportierte nur über „Erneut exportieren".');
+            return null;
+          }
+          toast.success(`Export erfolgreich: ${result.record_count} Datensätze`);
+          return { data: result.csv_content };
+        },
+        toast,
+      );
+      if (ergebnis) onClose();
     } catch (error) {
       // 409 mit Klartext: Sperre oder Sonderkonto, das nicht zum Kontenrahmen passt
       toast.error(getErrorMessage(error, 'Fehler beim Export'));
