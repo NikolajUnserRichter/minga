@@ -214,6 +214,8 @@ def _im_tagesplan_bestaetigbar(order: Order) -> bool:
 def im_tagesplan_moeglich(order: Order, ziel: OrderStatus) -> bool:
     """Zeigt der Tagesplan den Knopf für `ziel` (Gepackt, Ausgeliefert)?
     Dieselbe Regel wie setze_status_im_tagesplan."""
+    if not order.lines:
+        return False
     if order.status == OrderStatus.ENTWURF and ziel in MIT_BESTAETIGUNG:
         return _im_tagesplan_bestaetigbar(order)
     return ziel in ERLAUBTE_UEBERGAENGE.get(order.status, ())

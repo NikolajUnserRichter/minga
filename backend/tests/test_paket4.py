@@ -2260,3 +2260,23 @@ class TestP4Fix5Konditionsfelder:
         antwort = client.patch(f"/api/v1/sales/customers/{kunde['id']}", json={
             "payment_terms": "NET_30", "telefon": "089 Test"})
         assert antwort.status_code == 200, antwort.text
+
+
+@pytest.mark.usefixtures("_p4a_ohne_celery")
+class TestP4Fix6LeereBestellungen:
+    @pytest.mark.parametrize("status", ["ENTWURF", "BESTAETIGT", "IN_PRODUKTION"])
+    def test_keine_gepackt_oder_ausgeliefert_knoepfe(self, client, status):
+        from app.models.order import Order, OrderStatus
+        heute = _p4a_heute()
+        bestellung = _p4a_bestellung(client, heute)
+        with TestingSessionLocal() as db:
+            order = db.get(Order, uuid.UUID(bestellung["id"]))
+            order.lines.clear()
+            order.status = OrderStatus(status)
+            db.commit()
+        plan = _p4a_tagesplan(client, heute)
+        zeilen = [zeile for karte in ("verpacken", "verpacken_erledigt", "ausliefern")
+                  for zeile in plan[karte] if zeile["order_number"] == bestellung["order_number"]]
+        assert len(zeilen) >= 2
+        assert all(zeile["gepackt_moeglich"] is False for zeile in zeilen)
+        assert all(zeile["ausgeliefert_moeglich"] is False for zeile in zeilen)
