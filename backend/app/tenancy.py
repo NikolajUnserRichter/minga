@@ -359,6 +359,23 @@ def _auto_migrate(engine: Engine) -> None:
     except Exception as e:
         logger.error(f"[auto-migrate] failed: {e}")
 
+    # Empfänger-Snapshot (Paket 3, Q4.9): Rechnungen, die vor Paket 3
+    # festgeschrieben wurden, frieren den heutigen Kundenstamm ein — ihr PDF
+    # bleibt, wie es heute aussieht, und folgt späteren Stammdatenänderungen
+    # nicht mehr. Idempotent (nur Rechnungen ohne Snapshot); eigener
+    # try-Block. Der Korrekturblock A3 darunter bleibt der letzte Block.
+    try:
+        from sqlalchemy.orm import Session as _SnapshotSession
+        from app.services.invoice_service import empfaenger_nachtragen
+        if inspector.has_table("invoices") and inspector.has_table("customers"):
+            with _SnapshotSession(engine) as session:
+                anzahl = empfaenger_nachtragen(session)
+                session.commit()
+            if anzahl:
+                logger.info(f"[auto-migrate] Empfänger-Snapshot für {anzahl} Rechnungen nachgetragen")
+    except Exception as e:
+        logger.error(f"[auto-migrate] Empfänger-Snapshot fehlgeschlagen: {e}")
+
     # Einmalige Datenkorrektur (A3, 08.10.2026): Steuersatz offener
     # Bestellpositionen an den Produktstamm angleichen. Eigener try-Block —
     # scheitert sie, laufen die Schema-Migrationen trotzdem, und ohne Marker

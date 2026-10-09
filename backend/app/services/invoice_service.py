@@ -67,6 +67,41 @@ class BereitsAbgerechnet(ValueError):
     """
 
 
+def empfaenger_nachtragen(db: Session) -> int:
+    """Empfänger-Snapshot für Rechnungen, die vor Paket 3 festgeschrieben
+    wurden (Paket 3, Q4.9; GoBD).
+
+    Seit Q1.6 friert festschreiben die Empfängerangaben in billing_address
+    ein. Ältere Rechnungen haben keinen Snapshot, ihr PDF folgte dem
+    Kundenstamm. Sie bekommen den heutigen Stand — das PDF sieht danach aus
+    wie vorher und folgt späteren Änderungen nicht mehr. "nachgetragen"
+    kennzeichnet den Snapshot als nachträglich; ein vorhandener Wert der
+    Spalte (Adresse beim Anlegen) bleibt unter "beim_anlegen" erhalten.
+    Entwürfe und ohne Stornorechnung verworfene Entwürfe (Platzhalter)
+    bleiben ohne Snapshot. Idempotent; committet nicht.
+    """
+    from app.services.pdf_service import empfaenger_daten
+    anzahl = 0
+    rechnungen = db.execute(
+        select(Invoice).where(Invoice.status != InvoiceStatus.ENTWURF)
+    ).scalars().all()
+    for rechnung in rechnungen:
+        alt = rechnung.billing_address
+        if ist_entwurfsnummer(rechnung.invoice_number):
+            continue
+        if isinstance(alt, dict) and alt.get("festgeschrieben"):
+            continue
+        kunde = db.get(Customer, rechnung.customer_id)
+        order = db.get(Order, rechnung.order_id) if rechnung.order_id else None
+        snapshot = {"festgeschrieben": True, "nachgetragen": True, **empfaenger_daten(kunde, order)}
+        if alt:
+            snapshot["beim_anlegen"] = alt
+        rechnung.billing_address = snapshot
+        anzahl += 1
+    db.flush()
+    return anzahl
+
+
 def waehle_vertreter(lieferscheine):
     """Der Lieferschein, der eine Bestellung in der Abrechnung vertritt.
 

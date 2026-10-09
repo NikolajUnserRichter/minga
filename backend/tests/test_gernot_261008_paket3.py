@@ -1640,3 +1640,68 @@ class TestQ4PositionsrabattImAudit:
         assert r.status_code == 201, r.text
         eintrag = self._audit(client, bestellung, "ADD_LINE")
         assert Decimal(eintrag["new_values"]["discount_percent"]) == 100
+
+
+class TestQ4AltrechnungenEingefroren:
+    """Befund B2 (GoBD), Rest nach Q1.6: Rechnungen, die vor dem Deploy von
+    Paket 3 festgeschrieben wurden, haben keinen Empfänger-Snapshot. Ihr PDF
+    folgte weiter dem Kundenstamm, den auch die Halle pflegt. _auto_migrate
+    trägt beim Start den heutigen Stand nach (Paket 3, Q4.9)."""
+
+    _VORHER = {"customer_number": "K-Q4-001", "ust_id": "DE111111111",
+               "adresse": "Altweg 1, 80331 Muenchen", "skonto_percent": "2", "skonto_days": 10}
+
+    def _altrechnung(self, client):
+        """Festgeschrieben wie vor Paket 3: ohne Snapshot (billing_address leer)."""
+        from app.models.invoice import Invoice
+        kunde = _q1_kunde(client, "Fruchthof Nagel", **self._VORHER)
+        rechnung = _q1_finalisieren(client, _q1_entwurf(client, kunde))
+        with TestingSessionLocal() as db:
+            db.get(Invoice, uuid.UUID(rechnung["id"])).billing_address = None
+            db.commit()
+        return kunde, rechnung
+
+    def test_start_traegt_snapshot_nach_pdf_folgt_dem_kunden_nicht_mehr(self, client):
+        from app.tenancy import _auto_migrate
+        from tests.conftest import engine
+        kunde, rechnung = self._altrechnung(client)
+        entwurf = _q1_entwurf(client, kunde)
+
+        _auto_migrate(engine)
+        r = client.patch(f"/api/v1/sales/customers/{kunde['id']}",
+                         json={"name": "Fremdfirma GmbH", "ust_id": "DE999999999"})
+        assert r.status_code == 200, r.text
+
+        snapshot = client.get(f"/api/v1/invoices/{rechnung['id']}").json()["billing_address"]
+        assert (snapshot["festgeschrieben"], snapshot["nachgetragen"], snapshot["name"]) == (
+            True, True, "Fruchthof Nagel")
+        text = _pdf_text(client.get(f"/api/v1/invoices/{rechnung['id']}/pdf").content)
+        assert b"Fruchthof Nagel" in text and b"DE111111111" in text
+        assert b"Fremdfirma" not in text and b"DE999999999" not in text
+        entwurf_ba = client.get(f"/api/v1/invoices/{entwurf['id']}").json()["billing_address"]
+        assert not (entwurf_ba or {}).get("festgeschrieben")
+
+    def test_nachtragen_ist_idempotent_und_laesst_snapshots_stehen(self, client):
+        from app.services.invoice_service import empfaenger_nachtragen
+        kunde, _ = self._altrechnung(client)
+        neu = _q1_finalisieren(client, _q1_entwurf(client, kunde))
+
+        with TestingSessionLocal() as db:
+            erster = empfaenger_nachtragen(db)
+            db.commit()
+        with TestingSessionLocal() as db:
+            zweiter = empfaenger_nachtragen(db)
+
+        assert (erster, zweiter) == (1, 0)
+        assert "nachgetragen" not in client.get(f"/api/v1/invoices/{neu['id']}").json()["billing_address"]
+
+    def test_verworfener_entwurf_bekommt_keinen_snapshot(self, client):
+        """Ohne Stornorechnung verworfen: STORNIERT mit Platzhalter, nie ausgestellt."""
+        from app.services.invoice_service import empfaenger_nachtragen
+        entwurf = _q1_entwurf(client, _q1_kunde(client))
+        r = client.post(f"/api/v1/invoices/{entwurf['id']}/cancel",
+                        json={"reason": "Doppelt angelegt", "create_credit_note": False})
+        assert r.status_code == 200, r.text
+
+        with TestingSessionLocal() as db:
+            assert empfaenger_nachtragen(db) == 0
