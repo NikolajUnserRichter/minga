@@ -228,3 +228,259 @@ class TestQ1MandantPflicht:
     def test_mandanten_host_unveraendert(self, client):
         """Gegenprobe: der Mandant aus der Subdomain (Tests: localhost) bleibt."""
         assert client.get("/api/v1/invoices").status_code == 200
+
+
+class TestQ1Platzhalter:
+    """Jeder neue Entwurf trägt ENTWURF-… statt einer Rechnungsnummer."""
+
+    def test_neuer_entwurf_traegt_platzhalter(self, client):
+        entwurf = _q1_entwurf(client, _q1_kunde(client))
+
+        assert entwurf["status"] == "ENTWURF"
+        assert _Q1_PLATZHALTER.match(entwurf["invoice_number"]), entwurf["invoice_number"]
+        assert len(entwurf["invoice_number"]) == 20  # invoice_number ist String(20)
+
+    def test_platzhalter_sind_eindeutig(self, client):
+        kunde = _q1_kunde(client)
+        nummern = {_q1_entwurf(client, kunde)["invoice_number"] for _ in range(5)}
+        assert len(nummern) == 5
+
+    def test_rechnung_aus_bestellung_entsteht_mit_platzhalter(self, client):
+        bestellung, _ = _q1_bestellung_mit_lieferschein(client, _q1_kunde(client))
+        r = client.post(f"/api/v1/invoices/from-order/{bestellung['id']}")
+        assert r.status_code == 201, r.text
+        assert _Q1_PLATZHALTER.match(r.json()["invoice_number"])
+
+    def test_liste_neueste_zuerst_auch_bei_platzhaltern(self, client):
+        """Entscheidung 6: am selben Tag nach Anlagezeitpunkt, nicht nach dem
+        zufälligen Platzhalter."""
+        kunde = _q1_kunde(client)
+        ids = [_q1_entwurf(client, kunde)["id"] for _ in range(4)]
+
+        liste = client.get("/api/v1/invoices").json()
+
+        assert [x["id"] for x in liste] == list(reversed(ids))
+
+
+class TestQ1Festschreiben:
+    """Nummer, Rechnungsdatum und Fälligkeit entstehen beim Finalisieren."""
+
+    def test_nummern_in_der_reihenfolge_des_finalisierens(self, client):
+        kunde = _q1_kunde(client)
+        a = _q1_entwurf(client, kunde)
+        b = _q1_entwurf(client, kunde)
+
+        b = _q1_finalisieren(client, b)
+        a = _q1_finalisieren(client, a)
+
+        assert (b["invoice_number"], a["invoice_number"]) == (_q1_nr(1), _q1_nr(2))
+        assert a["status"] == b["status"] == "OFFEN"
+
+    def test_finalisieren_setzt_sent_at_nicht(self, client):
+        """Spec B2: sent_at heißt 'per Mail versendet'."""
+        rechnung = _q1_finalisieren(client, _q1_entwurf(client, _q1_kunde(client)))
+        assert rechnung["sent_at"] is None
+
+    def test_ausstellung_wird_vermerkt(self, client):
+        """Wer hat wann ausgestellt — sent_at sagt das nicht mehr (Spec B2)."""
+        rechnung = _q1_finalisieren(client, _q1_entwurf(client, _q1_kunde(client)))
+
+        notiz = client.get(f"/api/v1/invoices/{rechnung['id']}").json()["internal_notes"]
+
+        assert re.search(
+            rf"Ausgestellt am \d\d\.\d\d\.\d{{4}} \d\d:\d\d als {_q1_nr(1)} von testuser", notiz or ""
+        ), notiz
+
+    def test_datum_und_faelligkeit_beim_finalisieren(self, client):
+        vor_zehn = date.today() - timedelta(days=10)
+        entwurf = _q1_entwurf(client, _q1_kunde(client),
+                              invoice_date=vor_zehn.isoformat(),
+                              due_date=(vor_zehn + timedelta(days=21)).isoformat())
+
+        rechnung = _q1_finalisieren(client, entwurf)
+
+        heute = _q1_heute()
+        assert rechnung["invoice_date"] == heute.isoformat()
+        # Zahlungsziel des Entwurfs (21 Tage) bleibt, ab dem Ausstellungstag
+        assert rechnung["due_date"] == (heute + timedelta(days=21)).isoformat()
+
+    def test_summen_werden_final_berechnet(self, client):
+        """Charakterisierung: wie bisher rechnet das Finalisieren die Summen neu."""
+        from app.models.invoice import Invoice
+        entwurf = _q1_entwurf(client, _q1_kunde(client))
+        with TestingSessionLocal() as db:
+            db.get(Invoice, uuid.UUID(entwurf["id"])).total = Decimal("1.00")
+            db.commit()
+
+        rechnung = _q1_finalisieren(client, entwurf)
+
+        assert Decimal(str(rechnung["total"])) == Decimal("26.75")
+
+    def test_altentwurf_behaelt_re_nummer_und_datum(self, client):
+        """Entscheidung 2: bestehende Entwürfe behalten ihre RE-Nummer."""
+        kunde = _q1_kunde(client)
+        alt_id = _q1_altentwurf(kunde, _q1_nr(3))
+        vorher = client.get(f"/api/v1/invoices/{alt_id}").json()
+
+        alt = _q1_finalisieren(client, {"id": alt_id})
+        neu = _q1_finalisieren(client, _q1_entwurf(client, kunde))
+
+        assert alt["invoice_number"] == _q1_nr(3)
+        assert (alt["invoice_date"], alt["due_date"]) == (vorher["invoice_date"], vorher["due_date"])
+        assert neu["invoice_number"] == _q1_nr(4)
+
+    def test_neues_jahr_beginnt_bei_eins(self, client, monkeypatch):
+        kunde = _q1_kunde(client)
+        _q1_finalisieren(client, _q1_entwurf(client, kunde))
+        naechstes = _q1_jahr() + 1
+        monkeypatch.setattr("app.services.invoice_service._heute_berlin",
+                            lambda: date(naechstes, 1, 2))
+
+        rechnung = _q1_finalisieren(client, _q1_entwurf(client, kunde))
+
+        assert rechnung["invoice_number"] == _q1_nr(1, jahr=naechstes)
+        assert rechnung["invoice_date"] == f"{naechstes}-01-02"
+
+    def test_hoechste_nummer_numerisch(self, client):
+        from app.services.invoice_service import InvoiceService
+        kunde = _q1_kunde(client)
+        _q1_altentwurf(kunde, "RE-2031-99999")
+        _q1_altentwurf(kunde, "RE-2031-100000")
+        with TestingSessionLocal() as db:
+            assert InvoiceService(db)._naechste_rechnungsnummer(2031) == "RE-2031-100001"
+
+    def test_leerer_entwurf_wird_abgelehnt_ohne_nummer(self, client):
+        r = client.post("/api/v1/invoices", json={
+            "customer_id": _q1_kunde(client)["id"], "invoice_date": date.today().isoformat(),
+        })
+        leer = r.json()
+
+        r = client.post(f"/api/v1/invoices/{leer['id']}/finalize")
+
+        assert r.status_code == 400, r.text
+        detail = client.get(f"/api/v1/invoices/{leer['id']}").json()
+        assert detail["status"] == "ENTWURF"
+        assert _Q1_PLATZHALTER.match(detail["invoice_number"])
+
+    def test_stornorechnung_bekommt_ihre_nummer_beim_festschreiben(self, client):
+        rechnung = _q1_finalisieren(client, _q1_entwurf(client, _q1_kunde(client)))
+
+        r = client.post(f"/api/v1/invoices/{rechnung['id']}/cancel",
+                        json={"reason": "Preisfehler", "reason_code": "PREISFEHLER"})
+
+        assert r.status_code == 200, r.text
+        storno = r.json()["credit_note"]
+        assert storno["invoice_number"] == _q1_nr(2)
+        assert storno["status"] == "STORNIERT"
+        assert storno["sent_at"] is None
+        assert storno["due_date"] == storno["invoice_date"]
+        assert f"als {_q1_nr(2)} von testuser" in storno["internal_notes"]
+
+
+class TestQ1Nebenlaeufig:
+    """Gleichzeitige Vorgänge auf einer Mandanten-DB wie in Produktion (Datei,
+    WAL, Engine aus tenancy). Die Test-DB (in-memory, StaticPool) kann das
+    nicht zeigen. Der zweite Vorgang liest seinen Stand, BEVOR der erste
+    committet — so wie zwei Requests, die sich überholen."""
+
+    def test_zwei_gleichzeitige_finalisierungen(self, monkeypatch, tmp_path):
+        """Zwei VERSCHIEDENE Entwürfe: verschiedene, lückenlose Nummern."""
+        from app.models.invoice import Invoice
+        from app.services.invoice_service import InvoiceService
+        registry, Session = _q1_mandanten_db(monkeypatch, tmp_path)
+        try:
+            ids = _q1_orm_entwuerfe(Session, 2)
+            # Nummer lesen, dann warten: ohne Schreibsperre läsen beide
+            # Vorgänge dieselbe höchste Nummer (gegengeprüft: UNIQUE-Fehler).
+            _q1_langsame_nummer(monkeypatch, pause=0.3)
+            start = threading.Barrier(2)
+            ergebnis = {}
+
+            def finalisieren(invoice_id):
+                def fn():
+                    with Session() as db:
+                        start.wait()
+                        inv = InvoiceService(db).festschreiben(db.get(Invoice, invoice_id))
+                        db.commit()
+                        ergebnis[invoice_id] = inv.invoice_number
+                return (str(invoice_id), fn)
+
+            fehler = _q1_gleichzeitig(*(finalisieren(i) for i in ids))
+
+            assert fehler == []
+            assert sorted(ergebnis.values()) == [_q1_nr(1), _q1_nr(2)]
+        finally:
+            registry.dispose_tenant("q1test")
+
+    def test_derselbe_entwurf_zweimal_gleichzeitig(self, monkeypatch, tmp_path):
+        """Zwei Tabs, Doppelklick oder "Mailen" neben "Finalisieren" auf
+        DENSELBEN Entwurf: der zweite Vorgang scheitert, die gemeldete Nummer
+        ist die gespeicherte, keine Lücke."""
+        from app.models.invoice import Invoice
+        from app.services.invoice_service import InvoiceService
+        registry, Session = _q1_mandanten_db(monkeypatch, tmp_path)
+        try:
+            [inv_id] = _q1_orm_entwuerfe(Session)
+            gesperrt = threading.Event()
+            _q1_langsame_nummer(monkeypatch, gesperrt)
+            geladen = threading.Barrier(2)
+            gemeldet = {}
+
+            def finalisieren(name, warten):
+                def fn():
+                    with Session() as db:
+                        inv = db.get(Invoice, inv_id)  # beide sehen den Entwurf
+                        geladen.wait()
+                        if warten:
+                            assert gesperrt.wait(5)    # A hält die Sperre
+                        InvoiceService(db).festschreiben(inv)
+                        db.commit()
+                        gemeldet[name] = inv.invoice_number
+                return (name, fn)
+
+            fehler = _q1_gleichzeitig(finalisieren("A", False), finalisieren("B", True))
+
+            with Session() as db:
+                gespeichert = db.get(Invoice, inv_id).invoice_number
+            assert gemeldet == {"A": _q1_nr(1)}
+            assert gespeichert == _q1_nr(1)
+            assert [(n, "Nur Entwürfe können finalisiert werden" in e) for n, e in fehler] == [("B", True)]
+        finally:
+            registry.dispose_tenant("q1test")
+
+    def test_zwei_gleichzeitige_stornos(self, monkeypatch, tmp_path):
+        """Zwei Stornos derselben Rechnung: genau eine Stornorechnung."""
+        from sqlalchemy import select
+        from app.models.invoice import Invoice
+        from app.services.invoice_service import InvoiceService
+        registry, Session = _q1_mandanten_db(monkeypatch, tmp_path)
+        try:
+            [inv_id] = _q1_orm_entwuerfe(Session)
+            with Session() as db:
+                InvoiceService(db).festschreiben(db.get(Invoice, inv_id))
+                db.commit()
+            gesperrt = threading.Event()
+            _q1_langsame_nummer(monkeypatch, gesperrt)
+            geladen = threading.Barrier(2)
+
+            def stornieren(name, warten):
+                def fn():
+                    with Session() as db:
+                        db.get(Invoice, inv_id)        # beide sehen OFFEN
+                        geladen.wait()
+                        if warten:
+                            assert gesperrt.wait(5)
+                        InvoiceService(db).cancel_invoice(inv_id, f"Storno {name}")
+                        db.commit()
+                return (name, fn)
+
+            fehler = _q1_gleichzeitig(stornieren("A", False), stornieren("B", True))
+
+            with Session() as db:
+                storni = db.execute(
+                    select(Invoice.invoice_number).where(Invoice.original_invoice_id == inv_id)
+                ).scalars().all()
+            assert storni == [_q1_nr(2)]
+            assert [(n, "bereits storniert" in e) for n, e in fehler] == [("B", True)]
+        finally:
+            registry.dispose_tenant("q1test")

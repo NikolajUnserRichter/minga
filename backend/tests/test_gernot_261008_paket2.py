@@ -868,6 +868,17 @@ def _a2_rechnung(client, kunde, *, ueberfaellig=False):
         entwurf = _a2_entwurf(client, kunde, faellig=heute + timedelta(days=14))
     r = client.post(f"/api/v1/invoices/{entwurf['id']}/finalize")
     assert r.status_code == 200, r.text
+    if ueberfaellig:
+        # Seit Paket 3 (Q1) setzt das Finalisieren Rechnungsdatum (heute) und
+        # Fälligkeit neu. Überfällig wird die Rechnung wie ein Altbestand:
+        # die Daten an der ausgestellten Rechnung zurücksetzen.
+        from app.models.invoice import Invoice
+        with TestingSessionLocal() as db:
+            inv = db.get(Invoice, uuid.UUID(entwurf["id"]))
+            inv.invoice_date = heute - timedelta(days=30)
+            inv.due_date = heute - timedelta(days=1)
+            db.commit()
+        return client.get(f"/api/v1/invoices/{entwurf['id']}").json()
     return r.json()
 
 
@@ -1489,6 +1500,8 @@ class TestNacharbeitStornosperre:
             if rechnungsart == "offen":
                 response = client.post(f"/api/v1/invoices/{rechnung['id']}/finalize")
                 assert response.status_code == 200, response.text
+                # Die Rechnungsnummer vergibt erst das Finalisieren (Paket 3, Q1)
+                rechnung = response.json()
 
         def stornieren():
             if weg == "status":

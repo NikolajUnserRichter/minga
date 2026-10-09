@@ -327,7 +327,8 @@ class TestInvoices:
         data = response.json()
         assert data["customer_id"] == sample_customer["id"]
         assert data["status"] == "ENTWURF"
-        assert data["invoice_number"].startswith("RE-")
+        # Nummer erst beim Finalisieren (Paket 3, Q1) — der Entwurf trägt einen Platzhalter
+        assert data["invoice_number"].startswith("ENTWURF-")
 
     def test_get_invoice(self, client, sample_customer):
         # Erstellen

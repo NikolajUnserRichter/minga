@@ -411,6 +411,23 @@ def generate_invoice_number(year: int, sequence: int, prefix: str = "RE") -> str
     return f"{prefix}-{year}-{sequence:05d}"
 
 
+#: Platzhalter-Präfix für Rechnungsentwürfe (Spec 08.10.2026, Entscheidung 2).
+#: Die Rechnungsnummer vergibt erst InvoiceService.festschreiben. "ENTWURF-"
+#: plus 12 Hexzeichen der Rechnungs-ID = 20 Zeichen, passt in
+#: invoice_number (String(20), unique, NOT NULL).
+ENTWURF_PRAEFIX = "ENTWURF-"
+
+
+def entwurfsnummer(invoice_id: uuid.UUID) -> str:
+    """Platzhalter eines Entwurfs, z. B. ENTWURF-1A2B3C4D5E6F."""
+    return f"{ENTWURF_PRAEFIX}{invoice_id.hex[:12].upper()}"
+
+
+def ist_entwurfsnummer(nummer: Optional[str]) -> bool:
+    """True, solange die Rechnung noch keine Rechnungsnummer hat."""
+    return bool(nummer) and nummer.startswith(ENTWURF_PRAEFIX)
+
+
 # Standard-Buchungskonten (SKR03)
 STANDARD_ACCOUNTS = {
     "erloes_7": "8300",      # Erlöse 7% USt

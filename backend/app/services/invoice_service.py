@@ -5,16 +5,18 @@ Mit deutscher MwSt-Berechnung und DATEV-Export
 """
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
-from uuid import UUID
+from uuid import UUID, uuid4
 from io import StringIO
+from zoneinfo import ZoneInfo
 import csv
 from sqlalchemy.orm import Session
-from sqlalchemy import select, func, and_, or_
+from sqlalchemy import select, func, and_, or_, cast, Integer, update
 
 from app.models.invoice import (
     Invoice, InvoiceLine, InvoiceLineSource, Payment,
     InvoiceStatus, InvoiceType, TaxRate, PaymentMethod,
-    generate_invoice_number, STANDARD_ACCOUNTS
+    generate_invoice_number, STANDARD_ACCOUNTS,
+    entwurfsnummer, ist_entwurfsnummer,
 )
 from app.models.customer import Customer, AddressType, PfandAbrechnung
 from app.models.order import Order, OrderLine, OrderStatus
@@ -28,6 +30,17 @@ from app.services.datev_service import erloeskonto_fuer
 def _euro(betrag: Decimal) -> str:
     """Betrag mit deutschem Dezimalkomma: Decimal("5") -> "5,00 €"."""
     return f"{Decimal(betrag):.2f} €".replace(".", ",")
+
+
+def _heute_berlin() -> date:
+    """Heutiges Datum in Europe/Berlin — der Container läuft auf UTC.
+
+    Rechnungsdatum und Nummernjahr beim Festschreiben. Dieselbe Regel wie
+    order_status_service.heute_berlin (Paket 2) und imports._today_berlin;
+    Zusammenlegen ist ein späterer Aufräumschritt. Eigene Modulfunktion,
+    damit Tests das Datum festsetzen.
+    """
+    return datetime.now(ZoneInfo("Europe/Berlin")).date()
 
 
 class BestellungStorniert(ValueError):
@@ -162,8 +175,12 @@ class InvoiceService:
                     f"Zur Korrektur die Rechnung stornieren und danach neu ausstellen."
                 )
 
-        # Rechnungsnummer generieren
-        invoice_number = self._generate_next_invoice_number(invoice_type)
+        # Keine Rechnungsnummer beim Anlegen: der Entwurf trägt einen
+        # Platzhalter, die Nummer vergibt erst festschreiben() (Spec
+        # 08.10.2026, Entscheidung 2). Ein verworfener Entwurf verbraucht so
+        # keine Nummer, der Nummernkreis bleibt lückenlos.
+        neue_id = uuid4()
+        invoice_number = entwurfsnummer(neue_id)
 
         # Fälligkeitsdatum berechnen
         inv_date = invoice_date or date.today()
@@ -197,6 +214,7 @@ class InvoiceService:
             }
 
         invoice = Invoice(
+            id=neue_id,
             invoice_number=invoice_number,
             invoice_type=invoice_type,
             customer_id=customer_id,
@@ -462,30 +480,117 @@ class InvoiceService:
                     f"{andere.invoice_number} — diesen Entwurf verwerfen oder die andere Rechnung erst stornieren"
                 )
 
-    def finalize_invoice(self, invoice_id: UUID) -> Invoice:
-        """
-        Finalisiert eine Rechnung (Entwurf -> Offen).
-        """
+    def finalize_invoice(self, invoice_id: UUID, von: Optional[str] = None) -> Invoice:
+        """Finalisiert eine Rechnung (Entwurf -> Offen) über festschreiben()."""
         invoice = self.db.get(Invoice, invoice_id)
         if not invoice:
             raise ValueError("Rechnung nicht gefunden")
+        return self.festschreiben(invoice, von=von)
 
+    def _sperren_und_neu_lesen(self, invoice: Invoice) -> None:
+        """Schreibsperre der Mandanten-DB holen, dann die Rechnung neu lesen.
+
+        SQLite kennt kein SELECT ... FOR UPDATE, und pysqlite beginnt die
+        Transaktion erst mit dem ersten Schreibzugriff. Ein vorher per
+        db.get geladenes Objekt kann deshalb veraltet sein: ein zweiter
+        Vorgang (zweiter Tab, "Mailen" neben "Finalisieren", Doppelklick)
+        hat die Rechnung inzwischen finalisiert, storniert oder gelöscht.
+        Dieses UPDATE ändert nichts, holt aber die Sperre — ein zweiter
+        Vorgang wartet hier bis zu unserem Commit (Busy-Timeout 5 s). Danach
+        liest refresh den Stand unter der Sperre; erst darauf prüfen die
+        Aufrufer (festschreiben, entwurf_verwerfen, cancel_invoice).
+        """
+        self.db.flush()
+        getroffen = self.db.execute(
+            update(Invoice)
+            .where(Invoice.id == invoice.id)
+            .values(status=Invoice.status)
+            .execution_options(synchronize_session=False)
+        ).rowcount
+        if not getroffen:
+            raise ValueError("Rechnung nicht gefunden — sie wurde inzwischen verworfen")
+        self.db.refresh(invoice)
+
+    def festschreiben(self, invoice: Invoice, von: Optional[str] = None) -> Invoice:
+        """Der einzige Weg aus dem Entwurf: ENTWURF -> OFFEN.
+
+        Aufrufer: finalize_invoice (/finalize), /send für Entwürfe und die
+        Stornorechnung in cancel_invoice. Der Sammellauf legt nur Entwürfe
+        an; PATCH, Zahlung, Mahnung und lexoffice lassen Entwürfe nicht durch.
+
+        0. Schreibsperre holen und den Stand darunter neu lesen
+           (_sperren_und_neu_lesen) — erst dann prüfen.
+        1. Summen final aus den Positionen (recalculate_totals).
+        2. Trägt der Entwurf den Platzhalter: Rechnungsdatum = heute
+           (Europe/Berlin). Nummer und Ausstellungsdatum entstehen zusammen.
+           Ein Altentwurf mit RE-Nummer behält Nummer und Datum.
+        3. _zahlungsbedingungen_festschreiben: Fälligkeit = Rechnungsdatum +
+           Zahlungsziel des Entwurfs (Haken für SEPA, Paket 3 Q5).
+        4. Status OFFEN.
+        5. Platzhalter -> nächste Nummer RE-JJJJ-NNNNN. Gelesen wird unter
+           der Sperre aus Schritt 0: kein anderer Vorgang kann bis zu
+           unserem Commit eine Nummer speichern.
+        6. Ausstellungsvermerk in internal_notes (wann, welche Nummer, wer).
+
+        sent_at bleibt unberührt — es heißt "per Mail versendet" und wird nur
+        von /send gesetzt (Spec B2). Committet nicht. Bei einer Ausnahme
+        rollt der Aufrufer zurück; eine Nummer ist dann nicht verbraucht.
+        """
+        self._sperren_und_neu_lesen(invoice)
         if invoice.status != InvoiceStatus.ENTWURF:
             raise ValueError("Nur Entwürfe können finalisiert werden")
+        # Paket 2.1 (c397337): Steckt eine Bestellung dieses Entwurfs schon in
+        # einer festgeschriebenen Rechnung (Altfall: zwei Entwürfe mit
+        # RE-Nummer), wird nicht festgeschrieben — BereitsAbgerechnet, 409.
+        # Geprüft unter der Sperre. Nicht für die Stornorechnung: deren
+        # Original ist in diesem Moment noch nicht storniert.
+        if invoice.invoice_type == InvoiceType.RECHNUNG:
+            self.pruefe_festschreibung(invoice)
 
-        self.pruefe_festschreibung(invoice)
-
+        # Summen final berechnen — lädt die Positionen frisch aus der DB
+        self.recalculate_totals(invoice)
         if not invoice.lines:
             raise ValueError("Rechnung hat keine Positionen")
 
-        # Summen final berechnen
-        invoice.calculate_totals()
+        # Zahlungsziel des Entwurfs in Tagen: beim Anlegen aus dem Kunden,
+        # im Entwurf von Hand änderbar (PATCH due_date). Es bleibt erhalten,
+        # wenn sich das Rechnungsdatum verschiebt.
+        zahlungsziel_tage = max((invoice.due_date - invoice.invoice_date).days, 0)
 
-        # Status ändern
+        braucht_nummer = ist_entwurfsnummer(invoice.invoice_number)
+        if braucht_nummer:
+            invoice.invoice_date = _heute_berlin()
+        self._zahlungsbedingungen_festschreiben(invoice, zahlungsziel_tage)
+
         invoice.status = InvoiceStatus.OFFEN
-        invoice.sent_at = datetime.now(timezone.utc)
+        self.db.flush()
+
+        if braucht_nummer:
+            invoice.invoice_number = self._naechste_rechnungsnummer(invoice.invoice_date.year)
+
+        # Wer hat wann ausgestellt — sent_at sagt das nicht mehr (Spec B2),
+        # updated_at ändert sich mit jeder Zahlung. internal_notes ist nach
+        # dem Festschreiben nur noch durch Anhängen änderbar (Storno).
+        zeitpunkt = datetime.now(ZoneInfo("Europe/Berlin")).strftime("%d.%m.%Y %H:%M")
+        vermerk = f"Ausgestellt am {zeitpunkt} als {invoice.invoice_number}"
+        if von:
+            vermerk += f" von {von}"
+        invoice.internal_notes = f"{invoice.internal_notes or ''}\n\n{vermerk}".strip()
+        self.db.flush()
 
         return invoice
+
+    def _zahlungsbedingungen_festschreiben(self, invoice: Invoice, zahlungsziel_tage: int) -> None:
+        """Fälligkeit beim Festschreiben — zugleich der Haken für SEPA (Q5).
+
+        Heute: Fälligkeit = Rechnungsdatum + Zahlungsziel des Entwurfs.
+        Q5 ergänzt hier Zahlungsart und Mandat des AKTUELLEN Kunden, das
+        Einzugsdatum und den eingefrorenen Lastschrifthinweis (für
+        Gutschriften nichts). Läuft unter der Schreibsperre, nach der
+        Summenberechnung (der Betrag steht fest) und vor der Nummernvergabe;
+        eine Ausnahme hier verbraucht keine Nummer.
+        """
+        invoice.due_date = invoice.invoice_date + timedelta(days=zahlungsziel_tage)
 
     def record_payment(
         self,
@@ -535,7 +640,8 @@ class InvoiceService:
         self,
         invoice_id: UUID,
         reason: str,
-        create_credit_note: bool = True
+        create_credit_note: bool = True,
+        von: Optional[str] = None,
     ) -> tuple[Invoice, Optional[Invoice]]:
         """
         Storniert eine Rechnung und erstellt optional eine Stornorechnung.
@@ -550,6 +656,9 @@ class InvoiceService:
         invoice = self.db.get(Invoice, invoice_id)
         if not invoice:
             raise ValueError("Rechnung nicht gefunden")
+        # Alle Prüfungen auf dem Stand unter der Schreibsperre: zwei
+        # gleichzeitige Stornos ergäben sonst zwei Stornorechnungen.
+        self._sperren_und_neu_lesen(invoice)
 
         # R1.7 vor der Statusprüfung: auch die Stornorechnung steht auf
         # STORNIERT, die Meldung soll trotzdem den eigentlichen Grund nennen.
@@ -639,7 +748,9 @@ class InvoiceService:
                     buchungskonto=line.buchungskonto,
                     is_deposit=line.is_deposit,
                 ))
-            self.recalculate_totals(credit_note)
+            # Nummer, Datum und Summen wie jede Rechnung: festschreiben()
+            # vergibt die nächste Nummer aus dem regulären Kreis (R1.1).
+            self.festschreiben(credit_note, von=von)
 
             # Ausgeglichen: STORNIERT ist der einzige bestehende Status, den
             # Überfälligkeit, Mahnlauf, offene Posten, Umsatzauswertungen,
@@ -647,7 +758,6 @@ class InvoiceService:
             # auslassen. PDF und Versand per API bleiben möglich
             # (invoices.py /pdf und /send).
             credit_note.status = InvoiceStatus.STORNIERT
-            credit_note.sent_at = datetime.now(timezone.utc)
 
         return invoice, credit_note
 
@@ -741,32 +851,22 @@ class InvoiceService:
             "open_amount": open_amount,
         }
 
-    def _generate_next_invoice_number(self, invoice_type: InvoiceType) -> str:
+    def _naechste_rechnungsnummer(self, jahr: int) -> str:
+        """Nächste Nummer RE-JJJJ-NNNNN: höchste gespeicherte des Jahres + 1.
+
+        Nur aus festschreiben() aufrufen: dort hält die Transaktion die
+        Schreibsperre der Mandanten-DB (WAL), kein anderer Vorgang kann bis
+        zum Commit eine Nummer speichern.
+
+        Lückenlos: Platzhalter zählen nicht, eine Nummer existiert nur an
+        einer gespeicherten Rechnung, ein Rollback gibt sie zurück.
+        Numerisch verglichen, damit RE-2026-100000 nach RE-2026-99999 kommt.
+        Auch die Stornorechnung läuft in diesem Kreis (R1.1); Alt-Belege mit
+        GS-Präfix bleiben unberührt.
         """
-        Generiert die nächste Rechnungsnummer.
-        Format: RE-2026-00001 oder GS-2026-00001 (Gutschrift)
-
-        Uses SELECT ... FOR UPDATE to prevent duplicate numbers under
-        concurrent access.
-        """
-        year = date.today().year
-        # Auch die Stornorechnung (GUTSCHRIFT) läuft im regulären Kreis (R1.1):
-        # EIN lückenloser, fortlaufender Nummernkreis für alle Belege — keine
-        # eigene GS-Nummernwelt. Alt-Belege mit GS-Präfix bleiben unberührt.
-        prefix = "RE"
-
-        # Lock the latest invoice row to prevent concurrent duplicates
-        last_invoice = self.db.execute(
-            select(Invoice)
-            .where(Invoice.invoice_number.like(f"{prefix}-{year}-%"))
-            .order_by(Invoice.invoice_number.desc())
-            .with_for_update()
-            .limit(1)
-        ).scalar_one_or_none()
-
-        if last_invoice:
-            sequence = int(last_invoice.invoice_number.split("-")[-1]) + 1
-        else:
-            sequence = 1
-
-        return generate_invoice_number(year, sequence, prefix)
+        praefix = f"RE-{jahr}-"
+        hoechste = self.db.execute(
+            select(func.max(cast(func.substr(Invoice.invoice_number, len(praefix) + 1), Integer)))
+            .where(Invoice.invoice_number.like(f"{praefix}%"))
+        ).scalar()
+        return generate_invoice_number(jahr, (hoechste or 0) + 1, "RE")

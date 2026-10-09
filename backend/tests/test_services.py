@@ -87,7 +87,8 @@ class TestInvoiceService:
         assert invoice is not None
         assert invoice.customer_id == sample_customer_model.id
         assert invoice.status == InvoiceStatus.ENTWURF
-        assert invoice.invoice_number.startswith("RE-")
+        # Nummer erst beim Finalisieren (Paket 3, Q1) — der Entwurf trägt einen Platzhalter
+        assert invoice.invoice_number.startswith("ENTWURF-")
 
     def test_invoice_number_generation(self, db, sample_customer_model):
         """Test: Rechnungsnummern werden korrekt generiert"""

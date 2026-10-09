@@ -1575,7 +1575,10 @@ class TestDatevKontierung:
         r = client.patch(f"/api/v1/invoices/{rechnung['id']}/lines/{zeile['id']}",
                          json={"tax_rate": "STANDARD"})
         assert r.status_code == 200, r.text
-        assert client.post(f"/api/v1/invoices/{rechnung['id']}/finalize").status_code == 200
+        r = client.post(f"/api/v1/invoices/{rechnung['id']}/finalize")
+        assert r.status_code == 200, r.text
+        # Die Rechnungsnummer vergibt erst das Finalisieren (Paket 3, Q1)
+        rechnung = r.json()
 
         _, _, zeilen = _datev_export(client)
 

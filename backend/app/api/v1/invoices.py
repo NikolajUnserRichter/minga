@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import select, or_
 
 from app.api.deps import DBSession, Pagination
+from app.api.deps import CurrentUser
 from app.models.invoice import (
     Invoice, InvoiceLine, Payment,
     InvoiceStatus, InvoiceType, PaymentMethod
@@ -28,6 +29,11 @@ from app.services.email_service import send_email, EmailNotConfiguredError
 from app.services.pdf_service import load_company_settings
 
 router = APIRouter(prefix="/invoices", tags=["Rechnungen"])
+
+
+def _benutzername(user: dict) -> Optional[str]:
+    """Name für den Ausstellungsvermerk (InvoiceService.festschreiben)."""
+    return (user or {}).get("username") or (user or {}).get("email")
 
 
 # ========================================
@@ -79,10 +85,13 @@ def list_invoices(
     if to_date:
         query = query.where(Invoice.invoice_date <= to_date)
 
-    # Neueste zuerst, stabil: am selben Tag entscheidet die Nummer. Nur nach
-    # Datum sortiert lieferte SQLite gleiche Tage in Einfügereihenfolge, und
-    # die neueste Rechnung des Tages stand hinten oder fiel aus der Seite.
-    query = query.order_by(Invoice.invoice_date.desc(), Invoice.invoice_number.desc())
+    # Neueste zuerst, stabil. Am selben Tag entscheidet der Zeitpunkt der
+    # Anlage: Entwürfe tragen einen zufälligen Platzhalter (ENTWURF-…), die
+    # Nummer sortiert sie nicht (Spec 08.10.2026, Entscheidung 6). Die
+    # Nummer bleibt letzter Schlüssel für gleiche Zeitstempel.
+    query = query.order_by(
+        Invoice.invoice_date.desc(), Invoice.created_at.desc(), Invoice.invoice_number.desc()
+    )
     query = query.offset(pagination.offset).limit(pagination.page_size)
 
     invoices = db.execute(query).scalars().unique().all()
@@ -210,11 +219,11 @@ def update_invoice(
 
 
 @router.post("/{invoice_id}/finalize", response_model=InvoiceResponse)
-def finalize_invoice(invoice_id: UUID, db: DBSession):
+def finalize_invoice(invoice_id: UUID, db: DBSession, user: CurrentUser):
     """Finalisiert eine Rechnung (Entwurf -> Offen)."""
     service = InvoiceService(db)
     try:
-        invoice = service.finalize_invoice(invoice_id)
+        invoice = service.finalize_invoice(invoice_id, von=_benutzername(user))
         db.commit()
         db.refresh(invoice)
         return invoice
@@ -359,6 +368,7 @@ def cancel_invoice(
     invoice_id: UUID,
     data: InvoiceCancelRequest,
     db: DBSession,
+    user: CurrentUser,
 ):
     """Storniert eine Rechnung und erstellt optional eine Stornorechnung.
 
@@ -373,6 +383,7 @@ def cancel_invoice(
             invoice_id=invoice_id,
             reason=grund,
             create_credit_note=data.create_credit_note,
+            von=_benutzername(user),
         )
         db.commit()
         return {
