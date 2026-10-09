@@ -794,3 +794,74 @@ class TestQ1VerwerfenAufMandantenDb:
             assert [n["delivery_note_number"] for n in r.json()] == [ls["delivery_note_number"]]
         finally:
             registry.dispose_tenant("q1test")
+
+
+class TestQ1Entwurfsbeleg:
+    """Was ein Entwurf darf: Vorschau-PDF mit Wasserzeichen ja, DATEV nie."""
+
+    def test_entwurf_pdf_mit_wasserzeichen_ohne_nummer(self, client):
+        entwurf = _q1_entwurf(client, _q1_kunde(client))
+
+        r = client.get(f"/api/v1/invoices/{entwurf['id']}/pdf")
+
+        assert r.status_code == 200, r.text
+        text = _pdf_text(r.content)
+        assert b"(ENTWURF) Tj" in text
+        assert entwurf["invoice_number"].encode() not in text
+        assert b"Rechnung Nr." not in text
+
+    def test_verworfener_entwurf_bleibt_vorschau(self, client):
+        """Ohne Stornorechnung verworfen: STORNIERT, aber weiter ohne Nummer —
+        das PDF bleibt eine Vorschau mit Wasserzeichen."""
+        entwurf = _q1_entwurf(client, _q1_kunde(client))
+        r = client.post(f"/api/v1/invoices/{entwurf['id']}/cancel",
+                        json={"reason": "verworfen", "create_credit_note": False})
+        assert r.status_code == 200, r.text
+
+        text = _pdf_text(client.get(f"/api/v1/invoices/{entwurf['id']}/pdf").content)
+
+        assert b"(ENTWURF) Tj" in text
+        assert entwurf["invoice_number"].encode() not in text
+
+    def test_finalisierte_rechnung_ohne_wasserzeichen(self, client):
+        rechnung = _q1_finalisieren(client, _q1_entwurf(client, _q1_kunde(client)))
+
+        text = _pdf_text(client.get(f"/api/v1/invoices/{rechnung['id']}/pdf").content)
+
+        assert b"ENTWURF" not in text
+        assert f"Rechnung Nr. {_q1_nr(1)}".encode() in text
+
+    def test_gemailtes_pdf_ohne_wasserzeichen(self, client, monkeypatch):
+        entwurf = _q1_entwurf(client, _q1_kunde(client))
+        gesendet = _q1_mailversand(monkeypatch)
+
+        r = client.post(f"/api/v1/invoices/{entwurf['id']}/send",
+                        params={"to_email": "einkauf@oekoring.example"})
+
+        assert r.status_code == 200, r.text
+        assert b"ENTWURF" not in _pdf_text(gesendet["attachment_bytes"])
+
+    def test_datev_exportiert_nie_einen_beleg_ohne_nummer(self, client):
+        from app.models.invoice import Invoice, InvoiceStatus
+        kunde = _q1_kunde(client)
+        _q1_entwurf(client, kunde)
+        verworfen = _q1_entwurf(client, kunde)
+        r = client.post(f"/api/v1/invoices/{verworfen['id']}/cancel",
+                        json={"reason": "verworfen", "create_credit_note": False})
+        assert r.status_code == 200, r.text
+        # Schutz auch gegen einen Platzhalter außerhalb von ENTWURF (Altlast, Fehler)
+        kaputt = _q1_entwurf(client, kunde)
+        with TestingSessionLocal() as db:
+            db.get(Invoice, uuid.UUID(kaputt["id"])).status = InvoiceStatus.OFFEN
+            db.commit()
+        rechnung = _q1_finalisieren(client, _q1_entwurf(client, kunde))
+
+        # Zeitraum = Rechnungsdatum beim Festschreiben (Berlin), nicht date.today()
+        heute = _q1_heute().isoformat()
+        r = client.post("/api/v1/invoices/datev-export", json={
+            "from_date": heute, "to_date": heute, "include_payments": False,
+        })
+
+        assert r.status_code == 200, r.text
+        assert "ENTWURF-" not in r.json()["csv_content"]
+        assert rechnung["invoice_number"] in r.json()["csv_content"]

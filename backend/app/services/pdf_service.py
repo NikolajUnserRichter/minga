@@ -7,7 +7,9 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, Tabl
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 from reportlab.lib.units import cm
-from app.models.invoice import Invoice, InvoiceType, steuer_je_satz, steuerausweis_stimmt
+from app.models.invoice import (
+    Invoice, InvoiceStatus, InvoiceType, ist_entwurfsnummer, steuer_je_satz, steuerausweis_stimmt,
+)
 from app.models.order import Order
 from app.models.documents import OrderConfirmation, DeliveryNote, PackingList
 from app.models.document_template import DocumentType, DEFAULT_SECTIONS, DEFAULT_COLUMNS
@@ -183,6 +185,19 @@ def render_company_footer_block(settings: dict[str, str]):
     return Paragraph("<br/>".join(parts), style)
 
 
+def _wasserzeichen_entwurf(canvas, doc) -> None:
+    """Diagonales "ENTWURF" hinter dem Inhalt jeder Seite eines
+    Rechnungsentwurfs — die Vorschau ist kein Beleg."""
+    canvas.saveState()
+    canvas.setFont("Helvetica-Bold", 96)
+    canvas.setFillColor(colors.Color(0.85, 0.85, 0.85))
+    breite, hoehe = doc.pagesize
+    canvas.translate(breite / 2, hoehe / 2)
+    canvas.rotate(45)
+    canvas.drawCentredString(0, 0, "ENTWURF")
+    canvas.restoreState()
+
+
 class PDFService:
     @staticmethod
     def generate_invoice_pdf(invoice: Invoice, settings: Optional[dict] = None, *, db=None) -> bytes:
@@ -208,6 +223,14 @@ class PDFService:
 
         styles = getSampleStyleSheet()
         elements = []
+        # Entwurf: Vorschau mit Wasserzeichen, nie ein Beleg — auch ein ohne
+        # Stornorechnung verworfener Entwurf (STORNIERT, trägt weiter den
+        # Platzhalter). getattr, weil die Vorlagen-Vorschau ein Ersatzobjekt
+        # ohne status übergibt (document_template_service.build_dummy_invoice).
+        ist_entwurf = (
+            getattr(invoice, "status", None) == InvoiceStatus.ENTWURF
+            or ist_entwurfsnummer(getattr(invoice, "invoice_number", None))
+        )
 
         # Briefkopf — Logo + Custom-Header oder Settings-Fallback
         custom_header = (tmpl.texts.get("header_text") if (tmpl and tmpl.texts) else None)
@@ -224,7 +247,15 @@ class PDFService:
                 title = "Stornorechnung"
             else:
                 title = "Gutschrift"
-            elements.append(Paragraph(f"{title} Nr. {invoice.invoice_number}", styles['Heading2']))
+            if ist_entwurf:
+                # Ohne Nummer, solange der Platzhalter steht — die Nummer
+                # vergibt erst das Festschreiben.
+                kopf = f"Entwurf — {title}"
+                if not ist_entwurfsnummer(invoice.invoice_number):
+                    kopf += f" Nr. {invoice.invoice_number}"
+            else:
+                kopf = f"{title} Nr. {invoice.invoice_number}"
+            elements.append(Paragraph(kopf, styles['Heading2']))
             if title == "Stornorechnung" and invoice.original_invoice is not None:
                 elements.append(Paragraph(
                     f"Stornorechnung zur Rechnung Nr. {invoice.original_invoice.invoice_number} "
@@ -444,7 +475,10 @@ class PDFService:
                     footer_style = ParagraphStyle('Footer', parent=styles['Normal'], fontSize=8, textColor=colors.grey)
                     elements.append(Paragraph("Minga Greens - Microgreens Farm München", footer_style))
 
-        doc.build(elements)
+        if ist_entwurf:
+            doc.build(elements, onFirstPage=_wasserzeichen_entwurf, onLaterPages=_wasserzeichen_entwurf)
+        else:
+            doc.build(elements)
         pdf = buffer.getvalue()
         buffer.close()
         return pdf

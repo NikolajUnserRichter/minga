@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session, aliased
 
 from app.models.invoice import (
     Invoice, InvoiceLine, InvoiceStatus, InvoiceType, Payment, PaymentMethod,
-    TaxRate, STANDARD_ACCOUNTS, steuer_je_satz,
+    TaxRate, STANDARD_ACCOUNTS, steuer_je_satz, ENTWURF_PRAEFIX,
 )
 from app.models.customer import Customer
 
@@ -188,6 +188,9 @@ class DatevService:
         query = select(Invoice).where(
             Invoice.invoice_date.between(from_date, to_date),
             Invoice.status != InvoiceStatus.ENTWURF,
+            # Nie ein Beleg ohne Rechnungsnummer (Platzhalter ENTWURF-…),
+            # gleich in welchem Status (Spec 08.10.2026, Entscheidung 2).
+            ~Invoice.invoice_number.startswith(ENTWURF_PRAEFIX),
             Invoice.invoice_type.in_(EXPORTIERBARE_TYPEN),
             or_(
                 ist_stornorechnung,
