@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session
 
 from app.models.order import Order, OrderAuditLog, OrderStatus
 from app.services.order_fulfillment_service import deduct_inventory_for_order
+from app.services.lieferschein_service import lieferschein_beim_ausliefern
 from app.services.invoice_service import InvoiceService
 from app.services.invoice_service import entwurf_bezeichnung
 from app.models.enums import InvoiceStatus
@@ -150,6 +151,9 @@ def setze_status(
     ))
 
     if neu == OrderStatus.GELIEFERT:
+        # Jede gelieferte Bestellung hat einen Lieferschein — Monats- und
+        # Sammellauf rechnen über ihn ab (Paket 4, B; G31, X07).
+        lieferschein_beim_ausliefern(db, order)
         try:
             deduct_inventory_for_order(db, order, commit=False)
         except Exception as e:  # noqa: BLE001 — jeder Fehler muss zum Rollback führen

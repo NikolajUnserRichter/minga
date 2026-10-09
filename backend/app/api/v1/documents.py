@@ -28,16 +28,17 @@ from sqlalchemy.orm import joinedload
 from app.api.deps import DBSession, CurrentUser
 from app.models.order import Order, OrderStatus
 from app.models.documents import (
-    OrderConfirmation, DeliveryNote, PackingList, PackingListItem,
+    OrderConfirmation, DeliveryNote, PackingList,
 )
 from app.services.beleg_dateiname import beleg_dateiname, content_disposition
 from app.models.enums import ConfirmationStatus, DeliveryNoteStatus, DispatchDocType
 from app.schemas.documents import (
     OrderConfirmationCreate, OrderConfirmationResponse, OrderConfirmationSend,
     DeliveryNoteCreate, DeliveryNoteResponse, DeliveryNoteMarkDelivered,
-    PackingListItemCreate, BelegVersandRequest,
+    BelegVersandRequest,
 )
 from app.services.pdf_service import PDFService, load_company_settings
+from app.services.lieferschein_service import lieferschein_anlegen, naechste_belegnummer
 from app.services.email_service import EmailNotConfiguredError
 from app.services.belegversand import (
     empfaenger_fuer_versand, erster_nachweis, firmenzusatz, gruss,
@@ -52,18 +53,8 @@ router = APIRouter()
 
 # ==================== Helpers ====================
 
-def _next_document_number(db, model, number_col, prefix: str, today: date) -> str:
-    """Generiert {PREFIX}-YYYYMMDD-NNNN sequenziell."""
-    date_part = today.strftime("%Y%m%d")
-    full_prefix = f"{prefix}-{date_part}"
-    last = db.execute(
-        select(model)
-        .where(number_col.like(f"{full_prefix}-%"))
-        .order_by(number_col.desc())
-        .limit(1)
-    ).scalar_one_or_none()
-    next_num = (int(getattr(last, number_col.key).split("-")[-1]) + 1) if last else 1
-    return f"{full_prefix}-{next_num:04d}"
+# {PREFIX}-YYYYMMDD-NNNN: eine Nummernregel für AB, LS und PL (Paket 4, B)
+_next_document_number = naechste_belegnummer
 
 
 def _load_order_with_lines(db, order_id: UUID) -> Order:
@@ -290,63 +281,14 @@ def create_delivery_note(
             ),
         )
 
-    today = date.today()
-    ls_number = _next_document_number(
-        db, DeliveryNote, DeliveryNote.delivery_note_number, "LS", today
-    )
-    pl_number = _next_document_number(
-        db, PackingList, PackingList.packing_list_number, "PL", today
-    )
-
-    note = DeliveryNote(
-        order_id=order.id,
-        delivery_note_number=ls_number,
-        status=DeliveryNoteStatus.ENTWURF,
+    # Paket 4, B: dieselbe Anlage wie beim Ausliefern (lieferschein_service)
+    note = lieferschein_anlegen(
+        db, order,
         notes=data.notes,
-    )
-    db.add(note)
-    db.flush()  # note.id
-
-    packing = PackingList(
-        delivery_note_id=note.id,
-        packing_list_number=pl_number,
+        packing_items=data.packing_items,
         total_weight_g=data.total_weight_g,
         total_packages=data.total_packages,
     )
-    db.add(packing)
-    db.flush()  # packing.id
-
-    # Items: explizite Liste ODER 1:1 aus Order-Lines
-    if data.packing_items:
-        items_to_create = data.packing_items
-    else:
-        items_to_create = [
-            PackingListItemCreate(
-                order_line_id=line.id,
-                product_name=line.beschreibung or "Position",
-                quantity=line.quantity,
-                unit=line.unit,
-                batch_number=line.batch_number,
-                harvest_id=line.harvest_id,
-                sort_order=line.position,
-            )
-            for line in order.lines
-        ]
-
-    for idx, item in enumerate(items_to_create, start=1):
-        db.add(PackingListItem(
-            packing_list_id=packing.id,
-            order_line_id=item.order_line_id,
-            sort_order=item.sort_order or idx,
-            product_name=item.product_name,
-            quantity=item.quantity,
-            unit=item.unit,
-            batch_number=item.batch_number,
-            harvest_id=item.harvest_id,
-            is_returnable_container=item.is_returnable_container,
-            container_type=item.container_type,
-            container_count=item.container_count,
-        ))
 
     db.commit()
     db.refresh(note)

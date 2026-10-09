@@ -694,3 +694,135 @@ class TestP4BAusstellungsdatum:
 
         assert rechnung["invoice_number"] == "RE-2026-00001"
         assert (rechnung["invoice_date"], rechnung["due_date"]) == ("2026-10-09", "2026-10-23")
+
+
+def _p4b_lieferscheine(client, bestellung):
+    r = client.get(f"/api/v1/sales/orders/{bestellung['id']}/delivery-notes")
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def _p4b_monat(client, monat):
+    r = client.get("/api/v1/invoices/monthly-proposals", params={"month": monat})
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+class TestP4BLieferscheinBeimAusliefern:
+    """G31/X07: Jede gelieferte Bestellung hat einen Lieferschein. Monats- und
+    Sammellauf rechnen über Lieferscheine ab (Paket 3); ohne Lieferschein
+    fehlte eine im Tagesplan ausgelieferte Bestellung still."""
+
+    def test_ausliefern_legt_den_lieferschein_an(self, client):
+        kunde = _p4b_kunde(client)
+        bestellung = _p4b_bestellung(client, kunde)
+
+        geliefert = _p4b_status(client, bestellung, "GELIEFERT")
+
+        scheine = _p4b_lieferscheine(client, bestellung)
+        assert len(scheine) == 1
+        ls = scheine[0]
+        assert ls["delivery_note_number"].startswith("LS-")
+        assert ls["status"] == "ENTWURF"
+        assert ls["notes"] is None
+        assert ls["actual_delivery_date"] == geliefert["actual_delivery_date"]
+        assert [(p["product_name"], _P4B_Decimal(str(p["quantity"])))
+                for p in ls["packing_list"]["items"]] == [("Erbsen-Schale", _P4B_Decimal("10"))]
+
+    def test_nachgetragener_liefertag(self, client):
+        """Tagesplan eines vergangenen Tages: der Lieferschein trägt dessen Datum."""
+        kunde = _p4b_kunde(client)
+        tag = _p4b_date.today() - _p4b_timedelta(days=3)
+        bestellung = _p4b_bestellung(client, kunde, liefertag=tag)
+
+        _p4b_status(client, bestellung, "GELIEFERT", actual_delivery_date=tag.isoformat())
+
+        assert [ls["actual_delivery_date"] for ls in _p4b_lieferscheine(client, bestellung)] == [tag.isoformat()]
+
+    def test_vorhandener_lieferschein_bleibt_der_einzige(self, client):
+        """Wächter: Packliste aus dem Tagesplan legte ihn schon an."""
+        kunde = _p4b_kunde(client)
+        bestellung = _p4b_bestellung(client, kunde)
+        r = client.post(f"/api/v1/sales/orders/{bestellung['id']}/delivery-notes", json={})
+        assert r.status_code == 201, r.text
+
+        _p4b_status(client, bestellung, "GELIEFERT")
+
+        assert [ls["id"] for ls in _p4b_lieferscheine(client, bestellung)] == [r.json()["id"]]
+
+    def test_sammelaktion_legt_je_bestellung_einen_an(self, client):
+        kunde = _p4b_kunde(client)
+        erste, zweite = _p4b_bestellung(client, kunde), _p4b_bestellung(client, kunde)
+
+        r = client.post("/api/v1/sales/orders/bulk-status",
+                        json={"order_ids": [erste["id"], zweite["id"]], "status": "GELIEFERT"})
+
+        assert r.status_code == 200, r.text
+        assert [len(_p4b_lieferscheine(client, b)) for b in (erste, zweite)] == [1, 1]
+        nummern = {_p4b_lieferscheine(client, b)[0]["delivery_note_number"] for b in (erste, zweite)}
+        assert len(nummern) == 2
+
+    def test_quittieren_legt_keinen_zweiten_an(self, client):
+        """Wächter: Quittieren setzt die Bestellung auf Geliefert — über denselben Weg."""
+        kunde = _p4b_kunde(client)
+        bestellung = _p4b_bestellung(client, kunde)
+        r = client.post(f"/api/v1/sales/orders/{bestellung['id']}/delivery-notes", json={})
+        assert r.status_code == 201, r.text
+
+        r = client.patch(f"/api/v1/sales/delivery-notes/{r.json()['id']}/mark-delivered",
+                         json={"signed_by": "Küche"})
+
+        assert r.status_code == 200, r.text
+        assert [ls["status"] for ls in _p4b_lieferscheine(client, bestellung)] == ["GELIEFERT"]
+
+    def test_monatslauf_nimmt_die_ausgelieferte_bestellung_auf(self, client):
+        """Monatskunde, im Tagesplan „Ausgeliefert“, ohne Packliste. (Die
+        Abo-Entwürfe von KD-10022 erreichen „Ausgeliefert“ erst mit
+        Paket-4-Abschnitt A, G10; hier eine bestätigte Bestellung.)"""
+        kunde = _p4b_kunde(client, "LfA Förderbank Bayern", invoice_mode="MONATLICH")
+        bestellung = _p4b_bestellung(client, kunde, liefertag=_p4b_date(2026, 3, 2))
+        _p4b_status(client, bestellung, "GELIEFERT", actual_delivery_date="2026-03-02")
+
+        stand = _p4b_monat(client, "2026-03")
+        assert [h["art"] for h in stand["hinweise"] if h["customer_id"] == kunde["id"]] == ["NICHT_QUITTIERT"]
+        assert [(v["customer_id"], v["anzahl_lieferscheine"]) for v in stand["vorgeschlagen"]] == [(kunde["id"], 1)]
+
+        r = client.post("/api/v1/invoices/monthly-proposals/run", params={"month": "2026-03"})
+
+        assert r.status_code == 201, r.text
+        assert [(a["customer_id"], a["art"]) for a in r.json()["angelegt"]] == [(kunde["id"], "WARE")]
+        rechnung = client.get(f"/api/v1/invoices/{r.json()['angelegt'][0]['invoice_id']}").json()
+        assert _P4B_Decimal(str(rechnung["subtotal"])) == _P4B_Decimal("25.00")
+
+    def test_einzelkunde_erscheint_im_monatsdialog(self, client):
+        """X07: Eine künftig ausgelieferte Bestellung eines Einzelkunden wird
+        im Monatsdialog sichtbar (Hinweis EINZELABRECHNUNG mit Lieferschein).
+        Der Altfall BE-20261008-0002 (GELIEFERT vor B, ohne Lieferschein)
+        bleibt hier unsichtbar — ihn zeigt erst der Belegstatus (Abschnitt C)."""
+        kunde = _p4b_kunde(client)
+        bestellung = _p4b_bestellung(client, kunde, liefertag=_p4b_date(2026, 3, 4))
+        _p4b_status(client, bestellung, "GELIEFERT", actual_delivery_date="2026-03-04")
+        ls = _p4b_lieferscheine(client, bestellung)[0]
+
+        hinweise = [h for h in _p4b_monat(client, "2026-03")["hinweise"] if h["customer_id"] == kunde["id"]]
+
+        assert [(h["art"], h["belege"]) for h in hinweise] == [("EINZELABRECHNUNG", [ls["delivery_note_number"]])]
+
+    def test_rechnung_aus_bestellung_belegt_den_lieferschein(self, client):
+        """Kein zweiter Weg zur Doppelabrechnung: Der Lieferschein hängt an der
+        Rechnung, der Sammellauf sieht die Bestellung nicht mehr."""
+        from app.models.documents import DeliveryNote
+        kunde = _p4b_kunde(client)
+        bestellung = _p4b_bestellung(client, kunde)
+        _p4b_status(client, bestellung, "GELIEFERT")
+
+        r = client.post(f"/api/v1/invoices/from-order/{bestellung['id']}")
+
+        assert r.status_code == 201, r.text
+        ls_id = _p4b_uuid.UUID(_p4b_lieferscheine(client, bestellung)[0]["id"])
+        with _P4B_Session() as db:
+            assert str(db.get(DeliveryNote, ls_id).invoice_id) == r.json()["id"]
+        heute = _p4b_date.today()
+        r = client.post("/api/v1/invoices/batch-run/preview", json={
+            "period_from": (heute - _p4b_timedelta(days=31)).isoformat(), "period_to": heute.isoformat()})
+        assert r.json()["kunden"] == []
