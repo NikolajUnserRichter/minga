@@ -8,6 +8,7 @@ import { Input, EmptyState, Badge, OrderStatusBadge, PageLoader, Button, useToas
 import { LeergutRuecknahmeKnopf } from '../components/domain/Leergut';
 import { getErrorMessage } from '../services/errors';
 import { invalidateOrderViews } from '../services/orderQueries';
+import { belegHerunterladen } from '../services/belegordner';
 
 /**
  * Tagesplan für Mitarbeiter: was ist heute zu tun?
@@ -70,7 +71,16 @@ export default function Tagesplan() {
     mutationFn: async (orderId: string) => {
       const notes = await documentsApi.listDeliveryNotes(orderId);
       const note = notes[0] ?? (await documentsApi.createDeliveryNote(orderId, {}));
-      await documentsApi.downloadPackingListPdf(note);
+      // Abschnitt O: Belegordner, sonst Download-Ordner
+      await belegHerunterladen(
+        {
+          art: 'Packlisten',
+          datum: note.packing_list?.created_at ?? note.issued_at,
+          ersatzname: `${note.packing_list?.packing_list_number || note.delivery_note_number}.pdf`,
+        },
+        () => documentsApi.packingListPdf(note),
+        toast,
+      );
     },
     onError: () => toast.error('Packliste konnte nicht geöffnet werden'),
   });

@@ -7,7 +7,8 @@ import { Button, Input, useToast } from '../ui';
 import { documentsApi, invoicesApi, salesApi, OrderConfirmation, DeliveryNote, BelegVersandAuftrag } from '../../services/api';
 import { VersandFormular, VersandProtokoll, versandMeldung } from './BelegVersand';
 import { Order, Invoice } from '../../types';
-import { dateinameAusHeader } from '../../services/dateiname';
+import { belegHerunterladen, type BelegAngaben, type Geladen } from '../../services/belegordner';
+import { belegartDerRechnung } from '../../services/belegpfad';
 import { getErrorMessage } from '../../services/errors';
 import { rechnungsnummerAnzeige, FINALISIEREN_RUECKFRAGE } from '../../services/rechnungsnummer';
 import { belegStatusLabel } from '../ui/statusLabels';
@@ -86,25 +87,19 @@ export function OrderDocumentsModal({ open, onClose, order }: Props) {
     onError: (e: any) => toast.error(getErrorMessage(e, 'Fehler beim Finalisieren')),
   });
 
-  const downloadInvoicePdf = async (inv: Invoice) => {
-    try {
-      const res = await invoicesApi.downloadPdf(inv.id);
-      const blob = new Blob([res.data], { type: 'application/pdf' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.target = '_blank';
-      a.rel = 'noopener';
-      // B7: Name vom Server (RE-….pdf bzw. Entwurf-….pdf)
-      a.download = dateinameAusHeader(res.headers['content-disposition'], `${inv.invoice_number}.pdf`);
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 5000);
-    } catch (e: any) {
+  // Abschnitt O: alle PDFs dieses Dialogs über die eine Download-Funktion
+  // (Belegordner, sonst Download-Ordner; Name vom Server, B7)
+  const belegPdf = (angaben: BelegAngaben, laden: () => Promise<Geladen | null>) =>
+    belegHerunterladen(angaben, laden, toast).catch((e) => {
       toast.error(getErrorMessage(e, 'PDF-Download fehlgeschlagen'));
-    }
-  };
+      return null;
+    });
+
+  const downloadInvoicePdf = (inv: Invoice) =>
+    belegPdf(
+      { art: belegartDerRechnung(inv), datum: inv.invoice_date, ersatzname: `${inv.invoice_number}.pdf` },
+      () => invoicesApi.downloadPdf(inv.id),
+    );
 
   // Belegversand (Paket 3, Q2): offenes Versandformular 'AB:<id>', 'LS:<id>' oder 'RE:<id>'
   const [versandOffen, setVersandOffen] = useState<string | null>(null);
@@ -272,7 +267,10 @@ export function OrderDocumentsModal({ open, onClose, order }: Props) {
                       size="sm"
                       variant="secondary"
                       icon={<Download className="w-3 h-3" />}
-                      onClick={() => documentsApi.downloadConfirmationPdf(c)}
+                      onClick={() => belegPdf(
+                        { art: 'Auftragsbestätigungen', datum: c.issued_at, ersatzname: `${c.confirmation_number}.pdf` },
+                        () => documentsApi.confirmationPdf(c),
+                      )}
                     >
                       PDF
                     </Button>
@@ -338,7 +336,10 @@ export function OrderDocumentsModal({ open, onClose, order }: Props) {
                         size="sm"
                         variant="secondary"
                         icon={<Download className="w-3 h-3" />}
-                        onClick={() => documentsApi.downloadDeliveryNotePdf(n)}
+                        onClick={() => belegPdf(
+                          { art: 'Lieferscheine', datum: n.issued_at, ersatzname: `${n.delivery_note_number}.pdf` },
+                          () => documentsApi.deliveryNotePdf(n),
+                        )}
                       >
                         LS-PDF
                       </Button>
@@ -347,7 +348,14 @@ export function OrderDocumentsModal({ open, onClose, order }: Props) {
                           size="sm"
                           variant="secondary"
                           icon={<Package className="w-3 h-3" />}
-                          onClick={() => documentsApi.downloadPackingListPdf(n)}
+                          onClick={() => belegPdf(
+                            {
+                              art: 'Packlisten',
+                              datum: n.packing_list?.created_at ?? n.issued_at,
+                              ersatzname: `${n.packing_list?.packing_list_number || n.delivery_note_number}.pdf`,
+                            },
+                            () => documentsApi.packingListPdf(n),
+                          )}
                         >
                           Packliste
                         </Button>

@@ -1394,8 +1394,9 @@ export const documentsApi = {
   sendConfirmation: (confId: string, data: BelegVersandAuftrag) =>
     api.patch<OrderConfirmation>(`/sales/confirmations/${confId}/send`, data).then(r => r.data),
 
-  downloadConfirmationPdf: (conf: OrderConfirmation) =>
-    _openPdfFromResponse(`/sales/confirmations/${conf.id}/pdf`, `${conf.confirmation_number}.pdf`),
+  // Abschnitt O: nur laden — ablegen bzw. herunterladen macht belegHerunterladen
+  confirmationPdf: (conf: OrderConfirmation) =>
+    api.get(`/sales/confirmations/${conf.id}/pdf`, { responseType: 'blob' }),
 
   // Lieferscheine + Packlisten
   listDeliveryNotes: (orderId: string) =>
@@ -1414,11 +1415,12 @@ export const documentsApi = {
   markDelivered: (noteId: string, data: { signed_by?: string; actual_delivery_date?: string }) =>
     api.patch<DeliveryNote>(`/sales/delivery-notes/${noteId}/mark-delivered`, data).then(r => r.data),
 
-  downloadDeliveryNotePdf: (note: DeliveryNote) =>
-    _openPdfFromResponse(`/sales/delivery-notes/${note.id}/pdf`, `${note.delivery_note_number}.pdf`),
+  // Abschnitt O: nur laden — ablegen bzw. herunterladen macht belegHerunterladen
+  deliveryNotePdf: (note: DeliveryNote) =>
+    api.get(`/sales/delivery-notes/${note.id}/pdf`, { responseType: 'blob' }),
 
-  downloadPackingListPdf: (note: DeliveryNote) =>
-    _openPdfFromResponse(`/sales/delivery-notes/${note.id}/packing-list/pdf`, `${note.packing_list?.packing_list_number || note.delivery_note_number}.pdf`),
+  packingListPdf: (note: DeliveryNote) =>
+    api.get(`/sales/delivery-notes/${note.id}/packing-list/pdf`, { responseType: 'blob' }),
 }
 
 // =============================================================================
