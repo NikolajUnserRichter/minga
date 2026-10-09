@@ -707,7 +707,8 @@ async def list_orders(
     kunde_id: Optional[UUID] = None,
     status_filter: Optional[str] = Query(None, alias="status"),
     von_datum: Optional[date] = None,
-    bis_datum: Optional[date] = None
+    bis_datum: Optional[date] = None,
+    search: Optional[str] = None,
 ):
     """
     Bestellungen abrufen.
@@ -717,6 +718,7 @@ async def list_orders(
     - **status**: ENTWURF, BESTAETIGT, IN_PRODUKTION, GELIEFERT, FAKTURIERT, STORNIERT
       oder Sammelfilter OFFEN (= ENTWURF + BESTAETIGT + IN_PRODUKTION)
     - **von_datum** / **bis_datum**: Lieferdatum-Zeitraum
+    - **search**: Bestellnummer, Kundenbestellnummer oder Kundenname
     """
     # Status-Filter auflösen: "OFFEN" ist ein Sammelfilter, kein Enum-Wert
     status_values: Optional[list[OrderStatus]] = None
@@ -749,6 +751,15 @@ async def list_orders(
 
     # Total Count (ohne joins)
     count_query = select(func.count(Order.id))
+    if search and search.strip():
+        suchmuster = f"%{search.strip()}%"
+        suchfilter = or_(
+            Order.order_number.ilike(suchmuster),
+            Order.customer_reference.ilike(suchmuster),
+            Order.customer.has(Customer.name.ilike(suchmuster)),
+        )
+        query = query.where(suchfilter)
+        count_query = count_query.where(suchfilter)
     if kunde_id:
         count_query = count_query.where(Order.customer_id == kunde_id)
     if status_values:

@@ -67,11 +67,12 @@ export default function Orders() {
 
   // Fetch orders
   const { data: ordersData, isLoading, isError, error, refetch, isFetching } = useQuery({
-    queryKey: ['orders', { status: statusFilter }],
+    queryKey: ['orders', { status: statusFilter, search }],
     queryFn: () =>
       salesApi.listOrders({
         status: statusFilter === 'all' ? undefined : (statusFilter as OrderStatus),
         page_size: LISTENGRENZE,
+        search: search.trim() || undefined,
       }),
     retry: 2,                              // bis zu 2x re-tryen
     retryDelay: (n) => Math.min(2000 * n, 5000),
@@ -94,11 +95,7 @@ export default function Orders() {
     (o) => o.liefer_datum > tomorrow
   );
 
-  const filteredOrders = orders.filter(
-    (order) =>
-      order.kunde_name?.toLowerCase().includes(search.toLowerCase()) ||
-      order.id.toLowerCase().includes(search.toLowerCase())
-  );
+  const filteredOrders = orders;
 
   const handleConfirm = async (order: Order) => {
     try {

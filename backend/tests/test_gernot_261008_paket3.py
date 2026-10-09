@@ -6215,3 +6215,25 @@ class TestAbnahmeSammelrechnungKunde:
         response = client.patch(f"/api/v1/invoices/{rechnung['id']}", json={"customer_id": anderer["id"]})
         assert response.status_code == 200, response.text
         assert response.json()["customer_id"] == anderer["id"]
+
+
+@pytest.mark.usefixtures("_q7_ohne_forecast")
+class TestAbnahmeBestellsuche:
+    @pytest.mark.parametrize("suchtext", ["be-2026-87654", "87654", "rahmen-abc", "hANDELSHAUS", "unbekannt"])
+    def test_suche_nummer_referenz_und_kunde(self, client, suchtext):
+        from app.models.order import Order
+        kunde = _q1_kunde(client, "Handelshaus Nord")
+        bestellung, _ = _q1_bestellung_mit_lieferschein(client, kunde)
+        _q1_bestellung_mit_lieferschein(client, _q1_kunde(client, "Anderer Kunde"))
+        with TestingSessionLocal() as db:
+            order = db.get(Order, uuid.UUID(bestellung["id"]))
+            order.order_number = "BE-2026-87654"
+            order.customer_reference = "Rahmen-ABC-42"
+            db.commit()
+
+        response = client.get("/api/v1/sales/orders", params={"search": suchtext, "page_size": 1})
+
+        assert response.status_code == 200, response.text
+        erwartet = [] if suchtext == "unbekannt" else [bestellung["id"]]
+        assert response.json()["total"] == len(erwartet)
+        assert [order["id"] for order in response.json()["items"]] == erwartet
