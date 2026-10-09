@@ -328,3 +328,230 @@ class TestDKontierungBeimAnlegen:
             "Erlöskonto 8338 passt nicht zum Kontenrahmen SKR04 "
             "(Kontenklasse 8 ist dort kein Erlöskonto)")
         assert _d_positionen(client, rechnung) == []
+
+
+def _d_export_roh(client, zahlungen=False, download=False):
+    pfad = "/api/v1/invoices/datev-export" + ("/download" if download else "")
+    return client.post(pfad, json={
+        "from_date": date.today().isoformat(), "to_date": date.today().isoformat(),
+        "include_payments": zahlungen,
+    })
+
+
+def _d_export(client, zahlungen=False):
+    r = _d_export_roh(client, zahlungen)
+    assert r.status_code == 200, r.text
+    daten = r.json()
+    zeilen = list(csv.reader(io.StringIO(daten["csv_content"]), delimiter=";"))
+    return daten, zeilen[0], zeilen[1:]
+
+
+def _d_zeile(betrag, sh, konto, gegenkonto, belegnr, text, belegfeld2=""):
+    """Eine erwartete Buchungszeile, Spalte für Spalte in Kopf-Reihenfolge."""
+    return [betrag, sh, "EUR", "", "", konto, gegenkonto, "",
+            date.today().strftime("%d%m"), belegnr, belegfeld2, text]
+
+
+def _d_exportiert(rechnung_id):
+    from app.models.invoice import Invoice
+    with TestingSessionLocal() as db:
+        return db.get(Invoice, uuid.UUID(rechnung_id)).datev_exported
+
+
+def _d_zahlung(client, rechnung, betrag, methode="UEBERWEISUNG", referenz=None):
+    body = {"amount": betrag, "payment_date": date.today().isoformat(), "payment_method": methode}
+    if referenz:
+        body["reference"] = referenz
+    r = client.post(f"/api/v1/invoices/{rechnung['id']}/payments", json=body)
+    assert r.status_code == 201, r.text
+
+
+class TestDExportSkr04:
+    """Spaltengenau im SKR04: Erlöse 4300/4400, Bank 1800, Kasse 1600."""
+
+    def test_gemischte_rechnung_spaltengenau(self, client):
+        _d_setze_rahmen(client, "SKR04")
+        rechnung = _d_rechnung(client, _d_kunde(client), _D_GEMISCHT)
+        nr = rechnung["invoice_number"]
+
+        daten, kopf, zeilen = _d_export(client)
+
+        assert kopf == _D_KOPF
+        assert zeilen == [
+            _d_zeile("26,75", "S", "10008", "4300", nr, "Rechnung 7 % Ökoring Testkunde"),
+            _d_zeile("7,14", "S", "10008", "4400", nr, "Rechnung 19 % Ökoring Testkunde"),
+        ]
+        assert daten["record_count"] == 2
+        assert Decimal(str(daten["total_amount"])) == Decimal("33.89")
+
+    def test_bestandsrechnung_wird_abgebildet_nicht_umgeschrieben(self, client):
+        """GoBD: die Rechnung aus der SKR03-Zeit behält 8300/8400 an ihren
+        Positionen; erst der Export bildet sie auf SKR04 ab."""
+        rechnung = _d_rechnung(client, _d_kunde(client), _D_GEMISCHT)
+        nr = rechnung["invoice_number"]
+        vorher = client.get(f"/api/v1/invoices/{rechnung['id']}").json()
+        assert [l["buchungskonto"] for l in vorher["lines"]] == ["8300", "8400"]
+        _d_setze_rahmen(client, "SKR04")
+
+        _, _, zeilen = _d_export(client)
+
+        assert zeilen == [
+            _d_zeile("26,75", "S", "10008", "4300", nr, "Rechnung 7 % Ökoring Testkunde"),
+            _d_zeile("7,14", "S", "10008", "4400", nr, "Rechnung 19 % Ökoring Testkunde"),
+        ]
+        nachher = client.get(f"/api/v1/invoices/{rechnung['id']}").json()
+        assert nachher["lines"] == vorher["lines"]
+        for feld in ("subtotal", "tax_amount", "total", "status", "invoice_number"):
+            assert nachher[feld] == vorher[feld], feld
+
+    def test_storno_spaltengenau(self, client):
+        """Storno einer Bestandsrechnung nach dem Wechsel: die Stornorechnung
+        spiegelt die Konten des Originals (8300/8400), beide landen auf
+        4300/4400 und heben sich auf."""
+        rechnung = _d_rechnung(client, _d_kunde(client), _D_GEMISCHT)
+        _d_setze_rahmen(client, "SKR04")
+        r = client.post(f"/api/v1/invoices/{rechnung['id']}/cancel",
+                        json={"reason": "Pfand mit 7 % berechnet"})
+        assert r.status_code == 200, r.text
+        storno = r.json()["credit_note"]
+        nr, snr = rechnung["invoice_number"], storno["invoice_number"]
+        assert [p["buchungskonto"] for p in _d_positionen(client, storno)] == ["8300", "8400"]
+
+        daten, _, zeilen = _d_export(client)
+
+        assert zeilen == [
+            _d_zeile("26,75", "S", "10008", "4300", nr, "Rechnung 7 % Ökoring Testkunde"),
+            _d_zeile("7,14", "S", "10008", "4400", nr, "Rechnung 19 % Ökoring Testkunde"),
+            _d_zeile("26,75", "H", "10008", "4300", snr, f"Storno {nr} 7 % Ökoring Testkunde"),
+            _d_zeile("7,14", "H", "10008", "4400", snr, f"Storno {nr} 19 % Ökoring Testkunde"),
+        ]
+        assert Decimal(str(daten["total_amount"])) == Decimal("0.00")
+
+    def test_zahlungen_spaltengenau(self, client):
+        _d_setze_rahmen(client, "SKR04")
+        rechnung = _d_rechnung(client, _d_kunde(client), _D_GEMISCHT)
+        nr = rechnung["invoice_number"]
+        _d_zahlung(client, rechnung, "20.00", referenz="Überweisung 1")
+        _d_zahlung(client, rechnung, "13.89", methode="BAR")
+
+        daten, _, zeilen = _d_export(client, zahlungen=True)
+
+        assert zeilen[:2] == [
+            _d_zeile("26,75", "S", "10008", "4300", nr, "Rechnung 7 % Ökoring Testkunde"),
+            _d_zeile("7,14", "S", "10008", "4400", nr, "Rechnung 19 % Ökoring Testkunde"),
+        ]
+        assert sorted(zeilen[2:]) == sorted([
+            _d_zeile("20,00", "S", "1800", "10008", nr, "Zahlung Ökoring Testkunde", "Überweisung 1"),
+            _d_zeile("13,89", "S", "1600", "10008", nr, "Zahlung Ökoring Testkunde"),
+        ])
+        assert daten["record_count"] == 4
+
+    def test_ruecklastschrift_auf_die_bank_des_rahmens(self, client):
+        """SEPA (B10): Einzug S, Rücklastschrift als Gegenbuchung H — beide 1800."""
+        from app.models.invoice import Payment, PaymentMethod
+        _d_setze_rahmen(client, "SKR04")
+        rechnung = _d_rechnung(client, _d_kunde(client), _D_GEMISCHT)
+        nr = rechnung["invoice_number"]
+        with TestingSessionLocal() as db:
+            for betrag, referenz in (("33.89", "MANDAT-1"), ("-33.89", "Rücklastschrift MANDAT-1")):
+                db.add(Payment(invoice_id=uuid.UUID(rechnung["id"]), payment_date=date.today(),
+                               amount=Decimal(betrag), payment_method=PaymentMethod.LASTSCHRIFT,
+                               reference=referenz))
+            db.commit()
+
+        _, _, zeilen = _d_export(client, zahlungen=True)
+
+        assert sorted(zeilen[2:]) == [
+            _d_zeile("33,89", "H", "1800", "10008", nr, "Zahlung Ökoring Testkunde",
+                     "Rücklastschrift MANDAT-1"),
+            _d_zeile("33,89", "S", "1800", "10008", nr, "Zahlung Ökoring Testkunde", "MANDAT-1"),
+        ]
+
+    def test_leergutbeleg_mit_minderung(self, client):
+        """Paket 3, Q6: Leergutbeleg (Pfand 19 %) mit negativem Saldo bucht H
+        auf das 19-%-Konto des Rahmens — auch mit 8400 aus der SKR03-Zeit."""
+        from app.models.invoice import Invoice, InvoiceLine, TaxRate
+        rechnung = _d_rechnung(client, _d_kunde(client), [], finalisieren=False)
+        with TestingSessionLocal() as db:
+            beleg = db.get(Invoice, uuid.UUID(rechnung["id"]))
+            beleg.beleg_art = "LEERGUT"
+            for nr_pos, (text, menge) in enumerate(
+                (("Leergut ausgegeben: IFCO", "1"), ("Leergut zurückgenommen: IFCO", "-4")), start=1
+            ):
+                zeile = InvoiceLine(
+                    invoice_id=beleg.id, position=nr_pos, description=text,
+                    quantity=Decimal(menge), unit="STK", unit_price=Decimal("3.00"),
+                    discount_percent=Decimal("0"),
+                    tax_rate=TaxRate.STANDARD, is_deposit=True, buchungskonto="8400",
+                )
+                zeile.calculate_line_total()
+                db.add(zeile)
+            db.commit()
+        _d_setze_rahmen(client, "SKR04")
+        r = client.post(f"/api/v1/invoices/{rechnung['id']}/finalize")
+        assert r.status_code == 200, r.text
+        beleg = r.json()
+        assert Decimal(str(beleg["total"])) == Decimal("-10.71")
+
+        _, _, zeilen = _d_export(client)
+
+        assert zeilen == [
+            _d_zeile("10,71", "H", "10008", "4400", beleg["invoice_number"],
+                     "Rechnung 19 % Ökoring Testkunde"),
+        ]
+
+    def test_sonderkonto_des_rahmens_bleibt(self, client):
+        _d_setze_rahmen(client, "SKR04")
+        rechnung = _d_rechnung(client, _d_kunde(client), [
+            ("Erbsen-Schale", 10, "2.50", "REDUZIERT"),
+            ("Kresse Sonderaktion", 1, "10.00", "REDUZIERT", "4337"),
+        ])
+        nr = rechnung["invoice_number"]
+
+        _, _, zeilen = _d_export(client)
+
+        assert zeilen == [
+            _d_zeile("26,75", "S", "10008", "4300", nr, "Rechnung 7 % Ökoring Testkunde"),
+            _d_zeile("10,70", "S", "10008", "4337", nr, "Rechnung 7 % Ökoring Testkunde"),
+        ]
+
+    def test_sonderkonto_aus_skr03_bricht_den_export_ab(self, client):
+        """Ein SKR03-Sonderkonto lässt sich nicht abbilden. Statt es still in
+        den SKR04-Bestand zu schreiben, bricht der Export ab und markiert nichts."""
+        kunde = _d_kunde(client)
+        sonder = _d_rechnung(client, kunde, [("Kresse Sonderaktion", 1, "10.00", "REDUZIERT", "8338")])
+        normal = _d_rechnung(client, kunde, _D_GEMISCHT)
+        _d_setze_rahmen(client, "SKR04")
+
+        r = _d_export_roh(client)
+
+        assert r.status_code == 409, r.text
+        assert r.json()["detail"] == (
+            "DATEV-Export abgebrochen, nichts exportiert: Sonderkonten passen nicht "
+            f"zum Kontenrahmen SKR04 — {sonder['invoice_number']} Pos. 1 (8338). "
+            "Kontierung mit dem Steuerberater klären.")
+        assert _d_export_roh(client, download=True).status_code == 409
+        assert _d_exportiert(sonder["id"]) is False
+        assert _d_exportiert(normal["id"]) is False
+
+
+class TestDExportSkr03:
+    """Regression: ausdrücklich SKR03 = Bestand (8300/8400, Bank 1200, Kasse 1000)."""
+
+    def test_spaltengenau_mit_zahlungen(self, client):
+        _d_setze_rahmen(client, "SKR03")
+        rechnung = _d_rechnung(client, _d_kunde(client), _D_GEMISCHT)
+        nr = rechnung["invoice_number"]
+        _d_zahlung(client, rechnung, "20.00", referenz="Überweisung 1")
+        _d_zahlung(client, rechnung, "13.89", methode="BAR")
+
+        _, _, zeilen = _d_export(client, zahlungen=True)
+
+        assert zeilen[:2] == [
+            _d_zeile("26,75", "S", "10008", "8300", nr, "Rechnung 7 % Ökoring Testkunde"),
+            _d_zeile("7,14", "S", "10008", "8400", nr, "Rechnung 19 % Ökoring Testkunde"),
+        ]
+        assert sorted(zeilen[2:]) == sorted([
+            _d_zeile("20,00", "S", "1200", "10008", nr, "Zahlung Ökoring Testkunde", "Überweisung 1"),
+            _d_zeile("13,89", "S", "1000", "10008", nr, "Zahlung Ökoring Testkunde"),
+        ])

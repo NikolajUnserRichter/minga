@@ -24,7 +24,7 @@ from app.schemas.invoice import (
     DatevExportRequest, DatevExportResponse,
 )
 from app.services.invoice_service import InvoiceService, BereitsAbgerechnet, BestellungStorniert, waehle_vertreter, ist_clearing_pfand, netto_je_lieferschein
-from app.services.datev_service import DatevService
+from app.services.datev_service import DatevExportAbgelehnt, DatevService
 from app.services.kontenrahmen import erloeskonto_fuer, ist_standard_erloeskonto, kontenrahmen
 from app.services.leergut_service import LEERGUTBELEG_FEST, ist_leergutbeleg, mailtext as leergut_mailtext
 from app.services.email_service import EmailNotConfiguredError
@@ -716,12 +716,15 @@ def export_datev(
 ):
     """Exportiert Rechnungen im DATEV-Format."""
     service = DatevService(db)
-    csv_content, record_count, total_amount = service.export_invoices_csv(
-        from_date=data.from_date,
-        to_date=data.to_date,
-        include_payments=data.include_payments,
-        erneut_exportieren=data.erneut_exportieren,
-    )
+    try:
+        csv_content, record_count, total_amount = service.export_invoices_csv(
+            from_date=data.from_date,
+            to_date=data.to_date,
+            include_payments=data.include_payments,
+            erneut_exportieren=data.erneut_exportieren,
+        )
+    except DatevExportAbgelehnt as e:
+        raise HTTPException(status_code=409, detail=str(e))
     db.commit()
 
     return DatevExportResponse(
@@ -740,12 +743,15 @@ def download_datev_export(
 ):
     """Exportiert Rechnungen als DATEV CSV-Datei zum Download."""
     service = DatevService(db)
-    csv_content, record_count, total_amount = service.export_invoices_csv(
-        from_date=data.from_date,
-        to_date=data.to_date,
-        include_payments=data.include_payments,
-        erneut_exportieren=data.erneut_exportieren,
-    )
+    try:
+        csv_content, record_count, total_amount = service.export_invoices_csv(
+            from_date=data.from_date,
+            to_date=data.to_date,
+            include_payments=data.include_payments,
+            erneut_exportieren=data.erneut_exportieren,
+        )
+    except DatevExportAbgelehnt as e:
+        raise HTTPException(status_code=409, detail=str(e))
     db.commit()
 
     filename = f"DATEV_Export_{data.from_date}_{data.to_date}.csv"

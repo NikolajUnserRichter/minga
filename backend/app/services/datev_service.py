@@ -1,6 +1,6 @@
 from datetime import date, datetime, timezone
 from decimal import Decimal, ROUND_HALF_UP
-from typing import Optional
+
 import csv
 from io import StringIO
 
@@ -9,9 +9,15 @@ from sqlalchemy.orm import Session, aliased
 
 from app.models.invoice import (
     Invoice, InvoiceLine, InvoiceStatus, InvoiceType, Payment, PaymentMethod,
-    TaxRate, STANDARD_ACCOUNTS, steuer_je_satz, ENTWURF_PRAEFIX,
+    steuer_je_satz, ENTWURF_PRAEFIX,
 )
 from app.models.customer import Customer
+# Kontentabelle je Rahmen (Nachtrag 09.10., D). erloeskonto_fuer und
+# ist_standard_erloeskonto bleiben auch über dieses Modul importierbar.
+from app.services.kontenrahmen import (  # noqa: F401
+    erloeskonto_fuer, ist_standard_erloeskonto, kontenrahmen, sachkonto,
+    sonderkonto_pruefen,
+)
 
 # ---------------------------------------------------------------------------
 # Kontierung des Rechnungsexports.
@@ -22,8 +28,12 @@ from app.models.customer import Customer
 #
 # - Je Rechnung und (Steuersatz, Erlöskonto) genau eine Buchungszeile.
 # - Konto = Debitor, Gegenkonto = Erlöskonto, BU-Schlüssel leer:
-#   8300/8400 sind in SKR03 Automatikkonten, DATEV rechnet die USt aus dem
-#   Bruttobetrag heraus.
+#   8300/8400 (SKR03) bzw. 4300/4400 (SKR04) sind Automatikkonten, DATEV
+#   rechnet die USt aus dem Bruttobetrag heraus.
+# - Kontenrahmen je Mandant (Einstellung DATEV_KONTENRAHMEN, ohne Eintrag
+#   SKR03; Nachtrag 09.10., D). Alle Sachkonten aus app.services.kontenrahmen.
+#   Standard-Erlöskonten bildet der Export beim Export aus Steuersatz und
+#   Rahmen ab; festgeschriebene Positionen werden nie umgeschrieben (GoBD).
 # - Umsatz immer positiv; die Richtung steht im Soll/Haben-Kennzeichen und
 #   bezieht sich auf das Konto (den Debitor): Rechnung S, Gutschrift H.
 # - Keine Zeile auf 1400: das Sammelkonto Forderungen führt DATEV aus den
@@ -42,11 +52,6 @@ DATEV_KOPF = [
 #: Debitor für Kunden ohne hinterlegtes DATEV-Konto (Bestandsverhalten).
 SAMMELDEBITOR = "10000"
 
-ERLOESKONTO_JE_SATZ = {
-    TaxRate.REDUZIERT: STANDARD_ACCOUNTS["erloes_7"],
-    TaxRate.STANDARD: STANDARD_ACCOUNTS["erloes_19"],
-    TaxRate.STEUERFREI: STANDARD_ACCOUNTS["erloes_steuerfrei"],
-}
 
 #: Proforma ist kein Buchungsbeleg; Abschlagsrechnungen brauchen eine eigene
 #: Kontierung (erhaltene Anzahlungen) und sind in der Oberfläche nicht anlegbar.
@@ -55,35 +60,26 @@ EXPORTIERBARE_TYPEN = (InvoiceType.RECHNUNG, InvoiceType.GUTSCHRIFT)
 _CENT = Decimal("0.01")
 
 
-def erloeskonto_fuer(tax_rate: TaxRate) -> str:
-    """Standard-Erlöskonto (SKR03) zum Steuersatz: 8300 / 8400 / 8100, unbekannt 8300."""
-    return ERLOESKONTO_JE_SATZ.get(tax_rate, STANDARD_ACCOUNTS["erloes_7"])
+class DatevExportAbgelehnt(ValueError):
+    """Export nicht möglich (Sperre, Kontierung) — die API antwortet 409.
+    Ausgelöst, bevor eine Zeile geschrieben oder ein Beleg markiert ist."""
 
 
-def ist_standard_erloeskonto(konto: Optional[str]) -> bool:
-    """Leer oder eines der drei Standardkonten: dann folgt das Konto dem Satz.
+def erloeskonto(line: InvoiceLine, rahmen: str) -> str:
+    """Erlöskonto einer Rechnungsposition im Kontenrahmen ``rahmen``.
 
-    Jedes andere Konto ist ein Sonderkonto und bleibt stehen — im Export
-    (erloeskonto) wie beim Satzwechsel im Entwurf (update_invoice_line,
-    Task 25). Bestätigung durch den Steuerberater steht aus.
-    """
-    return not konto or konto in ERLOESKONTO_JE_SATZ.values()
-
-
-def erloeskonto(line: InvoiceLine) -> str:
-    """Erlöskonto einer Rechnungsposition.
-
-    Die drei Standardkonten folgen immer dem Steuersatz der Position: wird der
-    Satz eines Entwurfs nachträglich geändert, bleibt das in add_line gesetzte
-    Konto sonst auf dem alten Satz stehen. Ein ausdrücklich gesetztes
-    Sonderkonto bleibt erhalten.
+    Die Standardkonten beider Rahmen (SKR03 8300/8400/8100, SKR04
+    4300/4400/4100) folgen immer dem Steuersatz der Position und dem Rahmen
+    des Mandanten — so wird eine Rechnung aus der SKR03-Zeit im SKR04
+    exportiert, ohne dass ihre Positionen geändert werden (GoBD). Ein
+    ausdrücklich gesetztes Sonderkonto bleibt erhalten.
     """
     if ist_standard_erloeskonto(line.buchungskonto):
-        return erloeskonto_fuer(line.tax_rate)
+        return erloeskonto_fuer(line.tax_rate, rahmen)
     return line.buchungskonto
 
 
-def erloesgruppen(invoice: Invoice) -> list[dict]:
+def erloesgruppen(invoice: Invoice, rahmen: str) -> list[dict]:
     """Netto, Steuer und Brutto je (Erlöskonto, Steuersatz), mit Vorzeichen.
 
     Rechenregel steuer_je_satz() aus app.models.invoice — dieselbe wie
@@ -105,7 +101,7 @@ def erloesgruppen(invoice: Invoice) -> list[dict]:
     rabatt = invoice.discount_percent
     zeilen_je_konto: dict[str, list[InvoiceLine]] = {}
     for line in invoice.lines:
-        zeilen_je_konto.setdefault(erloeskonto(line), []).append(line)
+        zeilen_je_konto.setdefault(erloeskonto(line, rahmen), []).append(line)
 
     gruppen = [
         {"satz": s["rate"], "konto": konto, "netto": s["base"], "steuer": s["tax"]}
@@ -158,6 +154,32 @@ class DatevService:
 
     def __init__(self, db: Session):
         self.db = db
+
+    def _rahmen(self) -> str:
+        """Kontenrahmen des Mandanten; ein unlesbarer Eintrag bricht ab."""
+        try:
+            return kontenrahmen(self.db)
+        except ValueError as e:
+            raise DatevExportAbgelehnt(f"DATEV-Kontenrahmen: {e}") from e
+
+    @staticmethod
+    def _sonderkonten_pruefen(invoices: list[Invoice], rahmen: str) -> None:
+        """Ein Sonderkonto aus dem anderen Rahmen (z. B. 8338 aus der
+        SKR03-Zeit im SKR04) lässt sich nicht abbilden. Statt es still zu
+        exportieren, bricht der Export ab — vor der ersten Zeile."""
+        konflikte = []
+        for invoice in invoices:
+            for line in sorted(invoice.lines, key=lambda l: l.position):
+                try:
+                    sonderkonto_pruefen(line.buchungskonto, rahmen)
+                except ValueError:
+                    konflikte.append(f"{invoice.invoice_number} Pos. {line.position} ({line.buchungskonto})")
+        if konflikte:
+            raise DatevExportAbgelehnt(
+                "DATEV-Export abgebrochen, nichts exportiert: Sonderkonten passen nicht "
+                f"zum Kontenrahmen {rahmen} — {', '.join(konflikte)}. "
+                "Kontierung mit dem Steuerberater klären."
+            )
 
     def _rechnungen(
         self, from_date: date, to_date: date, erneut_exportieren: bool = False
@@ -223,7 +245,9 @@ class DatevService:
         nimmt bereits exportierte im Zeitraum wieder auf — für eine verlorene
         oder vom Steuerberater zurückgewiesene Datei.
         """
+        rahmen = self._rahmen()
         invoices = self._rechnungen(from_date, to_date, erneut_exportieren)
+        self._sonderkonten_pruefen(invoices, rahmen)
 
         output = StringIO()
         writer = csv.writer(output, delimiter=';', quoting=csv.QUOTE_MINIMAL)
@@ -242,7 +266,7 @@ class DatevService:
             else:
                 art = "Rechnung"
 
-            for gruppe in erloesgruppen(invoice):
+            for gruppe in erloesgruppen(invoice, rahmen):
                 if gruppe["brutto"] == 0:
                     continue
                 sh = _richtung(invoice, gruppe["brutto"])
@@ -282,11 +306,13 @@ class DatevService:
                 invoice = payment.invoice
                 customer = self.db.get(Customer, invoice.customer_id)
 
-                bank_account = STANDARD_ACCOUNTS.get("bank", "1200")
+                # Bar auf die Kasse, alles andere (Überweisung, EC, Karte,
+                # PayPal, Lastschrift) wie bisher auf die Bank — je Rahmen.
+                bank_account = sachkonto(rahmen, "bank")
                 if payment.payment_method == PaymentMethod.BAR:
-                    bank_account = STANDARD_ACCOUNTS.get("kasse", "1000")
+                    bank_account = sachkonto(rahmen, "kasse")
 
-                # Booking: Bank (1200) S an Debitor H
+                # Booking: Bank (SKR03 1200 / SKR04 1800) S an Debitor H
                 row_payment = [
                     # Rücklastschrift (B10): Gegenbuchung mit negativem Betrag.
                     # DATEV erwartet den Umsatz positiv; die Richtung steht im
