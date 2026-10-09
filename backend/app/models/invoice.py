@@ -9,6 +9,7 @@ from enum import Enum
 from typing import Optional
 from sqlalchemy import String, Integer, Numeric, Boolean, DateTime, Date, ForeignKey, Text, Enum as SQLEnum
 from sqlalchemy.types import Uuid, JSON
+from sqlalchemy import Index, text as sql_text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy import or_
@@ -95,6 +96,17 @@ class Invoice(Base):
     Rechnung - Vollständige deutsche Rechnung mit MwSt und DATEV-Feldern
     """
     __tablename__ = "invoices"
+    __table_args__ = (
+        # Monatsrechnung (B5): je Kunde und Monat höchstens eine nicht
+        # stornierte Rechnung mit diesem Schlüssel. Nach Storno oder Verwerfen
+        # ist eine neue erlaubt; Rechnungen ohne batch_key zählen nicht.
+        # Bestehende Mandanten-DBs bekommen den Index über
+        # tenancy._auto_migrate (gleicher Name, gleiche Bedingung).
+        Index(
+            "ux_invoices_monatsrechnung", "customer_id", "batch_key", unique=True,
+            sqlite_where=sql_text("batch_key IS NOT NULL AND status != 'STORNIERT'"),
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         Uuid, primary_key=True, default=uuid.uuid4
@@ -133,6 +145,9 @@ class Invoice(Base):
     # auf den Beleg, wenn über mehrere Lieferungen abgerechnet wird.
     service_period_start: Mapped[Optional[date]] = mapped_column(Date)
     service_period_end: Mapped[Optional[date]] = mapped_column(Date)
+    # Monatsrechnung (B5): MONAT-JJJJ-MM, gesetzt vom Monatslauf
+    # (monatsrechnung_service). NULL bei allen anderen Rechnungen.
+    batch_key: Mapped[Optional[str]] = mapped_column(String(20))
 
     # Status
     status: Mapped[InvoiceStatus] = mapped_column(

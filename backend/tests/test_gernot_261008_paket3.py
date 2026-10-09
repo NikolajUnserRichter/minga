@@ -5569,3 +5569,84 @@ class TestQ7Feldschutz:
         r = client.patch(f"/api/v1/sales/customers/{kunde['id']}", json={"invoice_mode": "MONATLICH"})
 
         assert r.status_code == 200, r.text
+
+
+# ---------------------------------------------------------------------------
+# Q7.3 — Monatsschlüssel, Laufprotokoll, Schalter
+# ---------------------------------------------------------------------------
+
+class TestQ7Datenmodell:
+
+    def _rechnung(self, db, kunde_id, schluessel, status=None):
+        from app.models.invoice import Invoice, InvoiceStatus
+        inv = Invoice(invoice_number=f"T-{uuid.uuid4().hex[:10]}", customer_id=kunde_id,
+                      invoice_date=date(2026, 4, 1), due_date=date(2026, 4, 15),
+                      status=status or InvoiceStatus.ENTWURF, batch_key=schluessel)
+        db.add(inv)
+        db.flush()
+        return inv
+
+    def test_ein_aktiver_monatsbeleg_je_kunde_und_schluessel(self, client):
+        from sqlalchemy.exc import IntegrityError
+        from app.models.invoice import InvoiceStatus
+        kunde_id = uuid.UUID(_q7_monatskunde(client)["id"])
+        with TestingSessionLocal() as db:
+            erste = self._rechnung(db, kunde_id, "MONAT-2026-03")
+            self._rechnung(db, kunde_id, "LEERGUT-2026-03")      # anderer Schlüssel: erlaubt
+            self._rechnung(db, kunde_id, None)                    # normale Rechnung: zählt nicht
+            self._rechnung(db, kunde_id, None)
+            db.commit()
+            with pytest.raises(IntegrityError):
+                self._rechnung(db, kunde_id, "MONAT-2026-03")
+            db.rollback()
+            # nach Storno ist ein neuer erlaubt
+            from app.models.invoice import Invoice
+            db.get(Invoice, erste.id).status = InvoiceStatus.STORNIERT
+            db.commit()
+            self._rechnung(db, kunde_id, "MONAT-2026-03")
+            db.commit()
+
+    def test_auto_migrate_legt_spalte_und_index_an(self, tmp_path):
+        from sqlalchemy import create_engine, inspect, text
+        from sqlalchemy.exc import IntegrityError
+        from app.tenancy import _auto_migrate
+
+        engine = create_engine(f"sqlite:///{tmp_path / 'alt.db'}")
+        with engine.begin() as conn:
+            conn.execute(text(
+                "CREATE TABLE invoices (id CHAR(32) PRIMARY KEY, customer_id CHAR(32), "
+                "status VARCHAR(20), invoice_number VARCHAR(20))"))
+
+        _auto_migrate(engine)
+
+        assert "batch_key" in {c["name"] for c in inspect(engine).get_columns("invoices")}
+        assert "ux_invoices_monatsrechnung" in {i["name"] for i in inspect(engine).get_indexes("invoices")}
+        einfuegen = text("INSERT INTO invoices (id, customer_id, status, invoice_number, batch_key) "
+                         "VALUES (:id, 'k', :status, :nr, 'MONAT-2026-03')")
+        with engine.begin() as conn:
+            conn.execute(einfuegen, {"id": "1", "status": "ENTWURF", "nr": "A"})
+            conn.execute(einfuegen, {"id": "2", "status": "STORNIERT", "nr": "B"})
+        with pytest.raises(IntegrityError):
+            with engine.begin() as conn:
+                conn.execute(einfuegen, {"id": "3", "status": "OFFEN", "nr": "C"})
+        engine.dispose()
+
+    def test_ein_laufender_lauf_je_monat(self, client):
+        from datetime import datetime
+        from sqlalchemy.exc import IntegrityError
+        from app.models.billing_run import BillingRun
+        jetzt = datetime(2026, 4, 1, 4, 30)
+        with TestingSessionLocal() as db:
+            db.add(BillingRun(monat="2026-03", art="MONAT_AUTO", status="FERTIG", gestartet_am=jetzt))
+            db.add(BillingRun(monat="2026-03", art="MONAT_AUTO", status="LAEUFT", gestartet_am=jetzt))
+            db.add(BillingRun(monat="2026-02", art="MONAT_MANUELL", status="LAEUFT", gestartet_am=jetzt))
+            db.commit()
+            db.add(BillingRun(monat="2026-03", art="MONAT_MANUELL", status="LAEUFT", gestartet_am=jetzt))
+            with pytest.raises(IntegrityError):
+                db.commit()
+
+    def test_schalter_ist_pflegbar(self, client):
+        _q7_schalter(client, "true")
+        werte = {s["key"]: s for s in client.get("/api/v1/admin/settings").json()}
+        assert werte["MONATSRECHNUNG_AUTO"]["value"] == "true"
+        assert werte["MONATSRECHNUNG_AUTO"]["source"] == "db"

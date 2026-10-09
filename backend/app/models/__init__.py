@@ -108,6 +108,8 @@ from app.models.print_job import PrintJob, PrintJobStatus
 
 # Import-Läufe (Historien-Import mit Rollback)
 from app.models.import_run import ImportRun
+# Monatsläufe der Monatsrechnungen (B5)
+from app.models.billing_run import BillingRun
 
 # Leergutkonto (Paket 3, Q6): Pfandkisten je Kunde, monatlich abgerechnet
 from app.models.leergut import LeergutBewegung, LeergutArt
@@ -219,6 +221,8 @@ __all__ = [
     "PrintJobStatus",
     # Import-Läufe
     "ImportRun",
+    # Monatsläufe
+    "BillingRun",
     # Leergutkonto
     "LeergutBewegung",
     "LeergutArt",

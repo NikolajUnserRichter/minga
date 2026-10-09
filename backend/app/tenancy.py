@@ -309,6 +309,8 @@ def _auto_migrate(engine: Engine) -> None:
         _add_col_if_missing("customers", "pfand_abrechnung", "VARCHAR(20)", "'JE_LIEFERUNG'")
         # Abrechnungsart je Kunde (B5): Bestandskunden EINZELN
         _add_col_if_missing("customers", "invoice_mode", "VARCHAR(20)", "'EINZELN'")
+        # Monatsrechnung (B5): Schlüssel MONAT-JJJJ-MM
+        _add_col_if_missing("invoices", "batch_key", "VARCHAR(20)")
         # Leergutkonto (Paket 3, Q6): Stichtag je Kunde
         _add_col_if_missing("customers", "pfand_monatlich_ab", "DATE")
         # SEPA-Lastschrift (B10): NULL = Überweisung (Altkunden, Altrechnungen).
@@ -400,6 +402,21 @@ def _auto_migrate(engine: Engine) -> None:
                 logger.info(f"[auto-migrate] Empfänger-Snapshot für {anzahl} Rechnungen nachgetragen")
     except Exception as e:
         logger.error(f"[auto-migrate] Empfänger-Snapshot fehlgeschlagen: {e}")
+
+    # Monatsrechnung (B5): höchstens eine aktive Monatsrechnung je Kunde und
+    # Monat. Eigener try-Block — ein scheiternder CREATE UNIQUE INDEX bräche
+    # im ersten Block alle folgenden Schritte still ab (Nachtrag T4, Risiko
+    # 14). Name und Bedingung wie Invoice.__table_args__ (dort für create_all).
+    try:
+        if inspector.has_table("invoices"):
+            with engine.begin() as conn:
+                conn.execute(text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS ux_invoices_monatsrechnung "
+                    "ON invoices (customer_id, batch_key) "
+                    "WHERE batch_key IS NOT NULL AND status != 'STORNIERT'"
+                ))
+    except Exception as e:
+        logger.error(f"[auto-migrate] Index ux_invoices_monatsrechnung fehlgeschlagen: {e}")
 
     # Einmalige Datenkorrektur (A3, 08.10.2026): Steuersatz offener
     # Bestellpositionen an den Produktstamm angleichen. Eigener try-Block —

@@ -202,6 +202,8 @@ class InvoiceResponse(InvoiceBase):
     # Leistungszeitraum (gesetzt bei Sammelrechnungen)
     service_period_start: Optional[date] = None
     service_period_end: Optional[date] = None
+    # Monatsrechnung (B5): MONAT-JJJJ-MM, sonst None
+    batch_key: Optional[str] = None
     # Belegart innerhalb RECHNUNG: "LEERGUT" = monatliche Leergutabrechnung (Q6)
     beleg_art: Optional[str] = None
 

@@ -53,6 +53,8 @@ KNOWN_SETTINGS: dict[str, dict] = {
     "SHOPIFY_ACCESS_TOKEN":  {"is_secret": True,  "label": "Shopify Access-Token"},
     # Produktion: Saisonzyklus — WINTER addiert Seed.winter_extra_tage aufs Erntefenster
     "SEASON_MODE":           {"is_secret": False, "label": "Saisonzyklus (SOMMER | WINTER)"},
+    # Monatsrechnungen (B5): am 1. des Folgemonats 06:30 Entwürfe anlegen
+    "MONATSRECHNUNG_AUTO":   {"is_secret": False, "label": "Monatsrechnungen automatisch als Entwurf (true | false)"},
 }
 
 
