@@ -72,9 +72,13 @@ async def get_current_user(
     # Verhindert dass ein User mit Token für Tenant A bei Tenant B reinkommt.
     from app.tenancy import get_request_tenant
     request_tenant = get_request_tenant(request)
+    if not request_tenant:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Anmeldung nur über die Adresse des eigenen Arbeitsbereichs möglich.",
+        )
     token_tenant = payload.get("tenant_slug")
 
-    # Wenn beide leer → ok (z.B. Dev-Localhost-Default-Tenant)
     if request_tenant and token_tenant and request_tenant != token_tenant:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
