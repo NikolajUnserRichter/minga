@@ -5650,3 +5650,28 @@ class TestQ7Datenmodell:
         werte = {s["key"]: s for s in client.get("/api/v1/admin/settings").json()}
         assert werte["MONATSRECHNUNG_AUTO"]["value"] == "true"
         assert werte["MONATSRECHNUNG_AUTO"]["source"] == "db"
+
+
+# ---------------------------------------------------------------------------
+# Q7.4 — gemeinsame Anlage der Sammelrechnung
+# ---------------------------------------------------------------------------
+
+@pytest.mark.usefixtures("_q7_ohne_forecast")
+class TestQ7SammelrechnungAnlegen:
+
+    def test_committet_nicht(self, client):
+        """Der Monatslauf rollt einen gescheiterten Kunden zurück — das geht
+        nur, wenn die gemeinsame Anlage selbst nicht committet."""
+        from app.api.v1.invoices import (BatchRunRequest, _abrechenbare_lieferscheine,
+                                         _aggregiere, _sammelrechnung_anlegen)
+        from app.services.invoice_service import InvoiceService
+        kunde = _q7_monatskunde(client)
+        _, ls = _q7_geliefert(client, kunde)
+        anfrage = BatchRunRequest(period_from=date(2026, 3, 1), period_to=date(2026, 3, 31))
+        with TestingSessionLocal() as db:
+            k = _aggregiere(db, _abrechenbare_lieferscheine(db, anfrage))[uuid.UUID(kunde["id"])]
+            _sammelrechnung_anlegen(db, InvoiceService(db), k, anfrage)
+            db.rollback()
+
+        assert _q7_rechnungen(kunde) == []
+        assert _q7_ls_frei(ls)

@@ -858,6 +858,66 @@ def batch_run_preview(anfrage: BatchRunRequest, db: DBSession):
     }
 
 
+def _sammelrechnung_anlegen(db, service: InvoiceService, k: dict, anfrage: BatchRunRequest) -> Invoice:
+    """Legt die Sammelrechnung EINES Kunden aus seinem Eintrag von _aggregiere an.
+
+    Gemeinsam für den Sammellauf (batch_run_commit) und den Monatslauf
+    (monatsrechnung_service, Q7): Positionen, Herkunft je Lieferschein
+    (invoice_line_sources), Zuordnung der Lieferscheine, Summen. Committet
+    nicht — das macht der Aufrufer.
+    """
+    invoice = service.create_invoice(
+        customer_id=k["customer_id"],
+        invoice_date=anfrage.invoice_date or date.today(),
+        header_text=(
+            f"Sammelrechnung — Leistungszeitraum "
+            f"{anfrage.period_from.strftime('%d.%m.%Y')}–{anfrage.period_to.strftime('%d.%m.%Y')}"
+        ),
+    )
+    invoice.service_period_start = anfrage.period_from
+    invoice.service_period_end = anfrage.period_to
+
+    for (beschreibung, unit, preis, steuersatz, produkt_id, rabatt), pos in sorted(
+        k["positionen"].items(), key=lambda e: (e[0][0], e[0][2])
+    ):
+        line = service.add_line(
+            invoice_id=invoice.id,
+            description=beschreibung,
+            quantity=pos["menge"],
+            unit=unit,
+            unit_price=preis,
+            product_id=produkt_id,
+            discount_percent=rabatt,
+            tax_rate=steuersatz,
+        )
+        db.flush()
+        for note_id, menge in pos["quellen"]:
+            db.add(InvoiceLineSource(
+                invoice_line_id=line.id,
+                delivery_note_id=note_id,
+                quantity=menge,
+            ))
+
+    # Doppelabrechnungsschutz: ab jetzt hängt der Lieferschein an dieser
+    # Rechnung — der nächste Lauf sieht ihn nicht mehr (R2.5). Nur wenn
+    # er noch frei ist: ein gleichzeitiger zweiter Lauf bekommt 409.
+    try:
+        service.lieferscheine_belegen(invoice, k["lieferscheine"])
+    except BereitsAbgerechnet as e:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(e))
+
+    # Summen über ALLE Zeilen: die lines-Relationship kann nach dem
+    # zeilenweisen add_line noch den alten Stand tragen.
+    db.flush()
+    db.refresh(invoice)
+    invoice.calculate_totals()
+
+    # Bleibt ENTWURF: Nummer, Rechnungsdatum und Fälligkeit setzt erst
+    # das Festschreiben (Spec 08.10.2026, Entscheidung 6).
+    return invoice
+
+
 @router.post("/batch-run/commit", status_code=201)
 def batch_run_commit(anfrage: BatchRunRequest, db: DBSession):
     """Legt je Kunde einen Rechnungsentwurf an (Platzhalter, keine Nummer)
@@ -870,55 +930,7 @@ def batch_run_commit(anfrage: BatchRunRequest, db: DBSession):
     rechnungen = []
 
     for k in kunden.values():
-        invoice = service.create_invoice(
-            customer_id=k["customer_id"],
-            invoice_date=anfrage.invoice_date or date.today(),
-            header_text=(
-                f"Sammelrechnung — Leistungszeitraum "
-                f"{anfrage.period_from.strftime('%d.%m.%Y')}–{anfrage.period_to.strftime('%d.%m.%Y')}"
-            ),
-        )
-        invoice.service_period_start = anfrage.period_from
-        invoice.service_period_end = anfrage.period_to
-
-        for (beschreibung, unit, preis, steuersatz, produkt_id, rabatt), pos in sorted(
-            k["positionen"].items(), key=lambda e: (e[0][0], e[0][2])
-        ):
-            line = service.add_line(
-                invoice_id=invoice.id,
-                description=beschreibung,
-                quantity=pos["menge"],
-                unit=unit,
-                unit_price=preis,
-                product_id=produkt_id,
-                discount_percent=rabatt,
-                tax_rate=steuersatz,
-            )
-            db.flush()
-            for note_id, menge in pos["quellen"]:
-                db.add(InvoiceLineSource(
-                    invoice_line_id=line.id,
-                    delivery_note_id=note_id,
-                    quantity=menge,
-                ))
-
-        # Doppelabrechnungsschutz: ab jetzt hängt der Lieferschein an dieser
-        # Rechnung — der nächste Lauf sieht ihn nicht mehr (R2.5). Nur wenn
-        # er noch frei ist: ein gleichzeitiger zweiter Lauf bekommt 409.
-        try:
-            service.lieferscheine_belegen(invoice, k["lieferscheine"])
-        except BereitsAbgerechnet as e:
-            db.rollback()
-            raise HTTPException(status_code=409, detail=str(e))
-
-        # Summen über ALLE Zeilen: die lines-Relationship kann nach dem
-        # zeilenweisen add_line noch den alten Stand tragen.
-        db.flush()
-        db.refresh(invoice)
-        invoice.calculate_totals()
-
-        # Bleibt ENTWURF: Nummer, Rechnungsdatum und Fälligkeit setzt erst
-        # das Festschreiben (Spec 08.10.2026, Entscheidung 6).
+        invoice = _sammelrechnung_anlegen(db, service, k, anfrage)
         rechnungen.append(invoice)
 
     db.commit()
