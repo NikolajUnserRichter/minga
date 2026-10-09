@@ -18,7 +18,7 @@ from fastapi import APIRouter, Body, HTTPException, Query
 from pydantic import BaseModel
 
 from app.api.deps import DBSession
-from app.services.settings_service import KNOWN_SETTINGS, firmendaten_pruefen, get_setting, set_setting
+from app.services.settings_service import FIRMENDATEN_KEYS, KNOWN_SETTINGS, firmendaten_normalisieren, firmendaten_pruefen, get_setting, set_setting
 from app.services.email_service import send_email, EmailNotConfiguredError
 from app.services import kontenrahmen
 from app.services.sepa_service import einstellung_pruefen
@@ -91,6 +91,10 @@ def update_settings(db: DBSession, updates: dict[str, Optional[str]] = Body(...)
                 db.delete(existing)
                 changed += 1
             continue
+        if key in FIRMENDATEN_KEYS:
+            gespeichert = get_setting(db, key, env_fallback=False)
+            if gespeichert is not None and firmendaten_normalisieren(key, raw_value) == firmendaten_normalisieren(key, gespeichert):
+                continue
         # Inhaltsprüfung je Schlüssel (Firmendaten, Gläubiger-ID). Bei Fehler wird
         # nichts committet — auch kein anderer Schlüssel dieses Aufrufs.
         try:

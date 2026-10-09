@@ -75,6 +75,13 @@ FIRMENDATEN_KEYS = (
 FIRMENDATEN_MAX_LAENGE = 200
 
 
+def firmendaten_normalisieren(key: str, wert: str) -> str:
+    wert = wert.strip()
+    if key in ("COMPANY_IBAN", "COMPANY_BIC"):
+        return "".join(wert.split()).upper()
+    return wert
+
+
 def firmendaten_pruefen(key: str, wert: str) -> str:
     """Prüfer für PATCH /admin/settings (nicht leerer Wert), läuft vor
     sepa_service.einstellung_pruefen: gibt den zu speichernden Wert zurück

@@ -1224,3 +1224,34 @@ gleich(await w.bo.belegordnerName(), null);
 gleich(await w.re('PDF'), { ort: 'download', dateiname: 'RE-2026-00006.pdf' });
 gleich(w.wurzel.eintraege.size, 0);
 """)
+
+
+class TestF2UnveraenderteBestandswerte:
+    @pytest.mark.parametrize("telefon", ["+49 89 1234", "+49 89 5678"])
+    def test_ungueltige_bestands_bic_blockiert_karte_nicht(self, client, telefon):
+        _f_setze_db(**{**_F_FIRMA, "COMPANY_BIC": "DEMODEXXX"})
+        antwort = client.patch("/api/v1/admin/settings", json={
+            **_F_FIRMA, "COMPANY_BIC": "DEMODEXXX", "COMPANY_PHONE": telefon,
+        })
+        assert antwort.status_code == 200, antwort.text
+        assert _d_einstellung(client, "COMPANY_BIC")["value"] == "DEMODEXXX"
+        assert _d_einstellung(client, "COMPANY_PHONE")["value"] == telefon
+
+    @pytest.mark.parametrize("schluessel,bestand,eingabe", [
+        ("COMPANY_BIC", "  de mode xxx ", "DEMODEXXX"),
+        ("COMPANY_IBAN", "de89 3704 0044 0532 0130 01", "DE89370400440532013001"),
+    ])
+    def test_normalisiert_gleicher_bestand_bleibt_unveraendert(self, client, schluessel, bestand, eingabe):
+        _f_setze_db(**{schluessel: bestand})
+        antwort = client.patch("/api/v1/admin/settings", json={schluessel: eingabe})
+        assert antwort.status_code == 200, antwort.text
+        assert _d_einstellung(client, schluessel)["value"] == bestand
+
+    def test_geaenderte_bic_wird_weiter_geprueft(self, client):
+        _f_setze_db(**{**_F_FIRMA, "COMPANY_BIC": "DEMODEXXX"})
+        antwort = client.patch("/api/v1/admin/settings", json={
+            **_F_FIRMA, "COMPANY_PHONE": "+49 89 5678", "COMPANY_BIC": "XYZ",
+        })
+        assert antwort.status_code == 422, antwort.text
+        assert antwort.json()["detail"] == "BIC: BIC hat kein gültiges Format (8 oder 11 Zeichen)"
+        assert _d_einstellung(client, "COMPANY_PHONE")["value"] == "+49 89 1234"
