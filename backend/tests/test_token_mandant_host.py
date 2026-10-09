@@ -1,9 +1,31 @@
+import asyncio
+
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
+from starlette.requests import Request
 
 from app import database, main, tenancy
 from app.api import deps
 from app.core import security
+
+
+@pytest.fixture
+def token_payload(monkeypatch):
+    payload = {
+        "sub": "123e4567-e89b-12d3-a456-426614174000",
+        "preferred_username": "testuser",
+        "email": "test@example.com",
+        "realm_access": {"roles": ["admin"]},
+    }
+
+    def verify_token(token):
+        return payload
+
+    monkeypatch.setattr(deps.settings, "auth_disabled", False)
+    for module in (deps, main, security):
+        monkeypatch.setattr(module, "verify_token", verify_token)
+    return payload
 
 
 @pytest.fixture
@@ -35,64 +57,53 @@ def tenant_client(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize(
-    "host, token_tenant, expected_status, expected_detail",
+    "host, token_tenant, expected_statuses, expected_detail",
     [
         pytest.param(
-            "novaerp.de", "demo", 403,
-            "Anmeldung nur ueber die Adresse des eigenen Arbeitsbereichs moeglich.",
+            "novaerp.de", "demo", (403, 404), None,
             id="a_apex_demo_token",
         ),
         pytest.param(
-            "admin.novaerp.de", "demo", 403,
-            "Anmeldung nur ueber die Adresse des eigenen Arbeitsbereichs moeglich.",
+            "admin.novaerp.de", "demo", (403, 404), None,
             id="b_admin_demo_token",
         ),
         pytest.param(
-            "novaerp.de", None, 403,
-            "Anmeldung nur ueber die Adresse des eigenen Arbeitsbereichs moeglich.",
+            "novaerp.de", None, (403, 404), None,
             id="c_apex_token_without_tenant",
         ),
         pytest.param(
-            "minga.novaerp.de", "minga", 200, None,
+            "minga.novaerp.de", "minga", (200,), None,
             id="d_minga_matching_token",
         ),
         pytest.param(
-            "minga.novaerp.de", "demo", 403,
+            "minga.novaerp.de", "demo", (403,),
             "Token gehört zu Tenant 'demo', Request ist für Tenant 'minga'.",
             id="e_minga_demo_token",
         ),
         pytest.param(
-            "demo.novaerp.de", "demo", 200, None,
+            "demo.novaerp.de", "demo", (200,), None,
             id="f_demo_matching_token",
         ),
     ],
 )
 def test_token_requires_matching_tenant_host(
-    tenant_client, monkeypatch, host, token_tenant, expected_status, expected_detail,
+    tenant_client, token_payload, host, token_tenant, expected_statuses, expected_detail,
 ):
-    payload = {
-        "sub": "123e4567-e89b-12d3-a456-426614174000",
-        "preferred_username": "testuser",
-        "email": "test@example.com",
-        "realm_access": {"roles": ["admin"]},
-    }
     if token_tenant is not None:
-        payload["tenant_slug"] = token_tenant
-
-    def verify_token(token):
-        return payload
-
-    for module in (deps, main, security):
-        monkeypatch.setattr(module, "verify_token", verify_token)
+        token_payload["tenant_slug"] = token_tenant
 
     response = tenant_client.get(
         "/api/v1/sales/customers",
         headers={"Host": host, "Authorization": "Bearer x"},
     )
 
-    assert response.status_code == expected_status, response.text
-    if expected_detail is not None:
-        assert response.json()["detail"] == expected_detail
+    assert response.status_code in expected_statuses, response.text
+    if response.status_code in (403, 404):
+        assert set(response.json()) == {"detail"}
+        assert isinstance(response.json()["detail"], str)
+        assert response.json()["detail"]
+        if expected_detail is not None:
+            assert response.json()["detail"] == expected_detail
     else:
         assert response.json() == {"items": [], "total": 0}
 
@@ -101,3 +112,32 @@ def test_g_apex_health_without_token(tenant_client):
     response = tenant_client.get("/health", headers={"Host": "novaerp.de"})
 
     assert response.status_code == 200, response.text
+
+
+@pytest.mark.parametrize("host", ["novaerp.de", "admin.novaerp.de"])
+@pytest.mark.parametrize("token_tenant", ["demo", None])
+def test_get_current_user_rejects_request_without_tenant(host, token_tenant, token_payload):
+    request = Request({"type": "http", "headers": [(b"host", host.encode())]})
+    if token_tenant is not None:
+        token_payload["tenant_slug"] = token_tenant
+
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(deps.get_current_user(request, token="x"))
+
+    assert exc_info.value.status_code == 403
+    assert exc_info.value.detail == (
+        "Anmeldung nur ueber die Adresse des eigenen Arbeitsbereichs moeglich."
+    )
+
+
+def test_get_current_user_accepts_matching_tenant(token_payload):
+    request = Request({"type": "http", "headers": [(b"host", b"minga.novaerp.de")]})
+    tenancy.set_request_tenant(request, "minga")
+    token_payload["tenant_slug"] = "minga"
+
+    user = asyncio.run(deps.get_current_user(request, token="x"))
+
+    assert user["id"] == "123e4567-e89b-12d3-a456-426614174000"
+    assert user["username"] == "testuser"
+    assert user["tenant_slug"] == "minga"
+    assert user["roles"] == ["admin"]
