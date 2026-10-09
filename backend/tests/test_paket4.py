@@ -1464,3 +1464,20 @@ class TestP4CBelegstatus:
         app.dependency_overrides[get_current_user] = benutzer
 
         assert client.get("/api/v1/belegstatus").status_code == code
+
+
+class TestP4CBelegstatusAnzeige:
+    """Anzeige der Spalten (frontend/src/services/belegstatus.ts): die
+    Node-Prüfung läuft im Vollauf mit (wie die Node-Tests aus Paket 3 und O)."""
+
+    def test_node_pruefung(self):
+        import os
+        import subprocess
+        from pathlib import Path
+        r = subprocess.run(
+            ["node", "tests/unit/belegstatus.check.ts"],
+            cwd=Path(__file__).resolve().parents[2] / "frontend",
+            env={**os.environ, "TZ": "UTC"}, capture_output=True, text=True, timeout=60,
+        )
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert r.stdout.strip() == "belegstatus.check: 29 Fälle ok"
