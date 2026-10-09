@@ -343,6 +343,12 @@ def _auto_migrate(engine: Engine) -> None:
         # Inventur: Typ + Vier-Augen-Feld
         _add_col_if_missing("inventory_counts", "typ", "VARCHAR(20)", "'STICHPROBE'")
         _add_col_if_missing("inventory_counts", "geprueft_von", "VARCHAR(100)")
+        # Belegversand (Paket 3, Q2): Empfänger je Belegart; NULL = Haupt-E-Mail.
+        # Typname wie bei create_all für sqlalchemy.JSON; die Tabelle
+        # document_dispatches legt create_all an.
+        _add_col_if_missing("customers", "confirmation_emails", "JSON")
+        _add_col_if_missing("customers", "delivery_note_emails", "JSON")
+        _add_col_if_missing("customers", "invoice_emails", "JSON")
         from sqlalchemy.orm import Session
         from app.services.saatgut_verknuepfung import verknuepfe_saatgutbestaende
         if inspector.has_table("seed_inventory") and inspector.has_table("seed_batches"):

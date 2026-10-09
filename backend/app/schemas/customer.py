@@ -11,6 +11,22 @@ from pydantic import BaseModel, Field, ConfigDict, EmailStr, field_validator
 from app.models.customer import CustomerType, SubscriptionInterval, PaymentTerms, AddressType, PfandAbrechnung
 
 
+from app.core.email_adressen import pruefe_empfaenger
+
+# Belegversand (Paket 3, Q2): Empfängerlisten je Belegart
+_EMPFAENGER_FELDER = ("confirmation_emails", "delivery_note_emails", "invoice_emails")
+_EMPFAENGER_TITEL = {
+    "confirmation_emails": "Empfänger Auftragsbestätigung",
+    "delivery_note_emails": "Empfänger Lieferschein",
+    "invoice_emails": "Empfänger Rechnung",
+}
+
+
+def _empfaengerliste(v, info):
+    """None/[] = Haupt-E-Mail; sonst geprüft, klein geschrieben, ohne Dubletten."""
+    return pruefe_empfaenger(v, feld=_EMPFAENGER_TITEL[info.field_name])
+
+
 # ============================================================
 # CUSTOMER ADDRESS SCHEMAS
 # ============================================================
@@ -123,6 +139,13 @@ class CustomerCreate(CustomerBase):
     # DATEV
     datev_account: Optional[str] = Field(None, max_length=10, description="DATEV-Kontonummer")
 
+    # Belegversand: Empfänger je Belegart (leer = Haupt-E-Mail)
+    confirmation_emails: list[str] = Field(default_factory=list, description="Empfänger Auftragsbestätigung")
+    delivery_note_emails: list[str] = Field(default_factory=list, description="Empfänger Lieferschein")
+    invoice_emails: list[str] = Field(default_factory=list, description="Empfänger Rechnung")
+
+    _empfaenger_pruefen = field_validator(*_EMPFAENGER_FELDER, mode="before")(_empfaengerliste)
+
     # Notizen
     notizen: Optional[str] = Field(None, description="Interne Notizen")
 
@@ -184,6 +207,13 @@ class CustomerUpdate(BaseModel):
     # DATEV
     datev_account: Optional[str] = None
 
+    # Belegversand: Empfänger je Belegart (null oder [] = Haupt-E-Mail)
+    confirmation_emails: Optional[list[str]] = None
+    delivery_note_emails: Optional[list[str]] = None
+    invoice_emails: Optional[list[str]] = None
+
+    _empfaenger_pruefen = field_validator(*_EMPFAENGER_FELDER, mode="before")(_empfaengerliste)
+
     # Notizen
     notizen: Optional[str] = None
 
@@ -220,6 +250,16 @@ class CustomerResponse(CustomerBase):
 
     # Expandierte Felder
     price_list_name: Optional[str] = None
+
+    # Belegversand (Paket 3, Q2): Empfänger je Belegart; Bestandskunden NULL → []
+    confirmation_emails: list[str] = []
+    delivery_note_emails: list[str] = []
+    invoice_emails: list[str] = []
+
+    @field_validator(*_EMPFAENGER_FELDER, mode="before")
+    @classmethod
+    def _empfaenger_leer(cls, v):
+        return v or []
 
     # Berechnete Felder
     payment_days: Optional[int] = None

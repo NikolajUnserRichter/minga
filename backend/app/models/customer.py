@@ -204,6 +204,12 @@ class Customer(Base):
     # DATEV-Kontonummer (Debitor)
     datev_account: Mapped[Optional[str]] = mapped_column(String(10))  # z.B. 10001
 
+    # Belegversand (Paket 3, Q2): Empfänger je Belegart, eine Mail an alle.
+    # Leer/NULL = Haupt-E-Mail (email). Geprüft über app.core.email_adressen.
+    confirmation_emails: Mapped[Optional[list[str]]] = mapped_column(JSON)
+    delivery_note_emails: Mapped[Optional[list[str]]] = mapped_column(JSON)
+    invoice_emails: Mapped[Optional[list[str]]] = mapped_column(JSON)
+
     # Notizen
     notizen: Mapped[Optional[str]] = mapped_column(Text)
 

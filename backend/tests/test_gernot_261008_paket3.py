@@ -2220,3 +2220,75 @@ class TestQ2PdfReproduzierbar:
             eins, zwei = client.get(url).content, client.get(url).content
             assert eins.startswith(b"%PDF"), url
             assert _q2_sha(eins) == _q2_sha(zwei), url
+
+
+
+
+class TestQ2Empfaengerlisten:
+    """Empfänger je Kunde und Belegart (AB, Lieferschein, Rechnung)."""
+
+    def test_anlage_und_aenderung(self, client):
+        kunde = _q2_kunde(client, email="info@oekoring.example",
+                          invoice_emails=["Rechnung@Oekoring.example", "rechnung@oekoring.example"])
+        assert kunde["invoice_emails"] == ["rechnung@oekoring.example"]
+        assert kunde["confirmation_emails"] == []
+        assert kunde["delivery_note_emails"] == []
+
+        r = client.patch(f"/api/v1/sales/customers/{kunde['id']}", json={
+            "confirmation_emails": ["einkauf@oekoring.example", "lager@oekoring.example"],
+        })
+        assert r.status_code == 200, r.text
+        gelesen = client.get(f"/api/v1/sales/customers/{kunde['id']}").json()
+        assert gelesen["confirmation_emails"] == ["einkauf@oekoring.example", "lager@oekoring.example"]
+        assert gelesen["invoice_emails"] == ["rechnung@oekoring.example"]
+
+    def test_null_leert_die_liste(self, client):
+        kunde = _q2_kunde(client, delivery_note_emails=["lager@oekoring.example"])
+
+        r = client.patch(f"/api/v1/sales/customers/{kunde['id']}", json={"delivery_note_emails": None})
+
+        assert r.status_code == 200, r.text
+        assert r.json()["delivery_note_emails"] == []
+
+    @pytest.mark.parametrize("liste", [
+        ["einkäufer@oekoring.example"],
+        ["kein-at-zeichen"],
+        [f"a{i}@oekoring.example" for i in range(11)],
+    ])
+    def test_ungueltige_liste_wird_abgewiesen(self, client, liste):
+        kunde = _q2_kunde(client)
+
+        r = client.patch(f"/api/v1/sales/customers/{kunde['id']}", json={"invoice_emails": liste})
+
+        assert r.status_code == 422, r.text
+        assert client.get(f"/api/v1/sales/customers/{kunde['id']}").json()["invoice_emails"] == []
+
+    def test_bestandskunde_ohne_listen(self, client):
+        """Altdaten: Spalten NULL → die API liefert leere Listen."""
+        from app.models.customer import Customer
+        kunde = _q2_kunde(client)
+        with TestingSessionLocal() as db:
+            k = db.get(Customer, uuid.UUID(kunde["id"]))
+            k.confirmation_emails = k.delivery_note_emails = k.invoice_emails = None
+            db.commit()
+
+        gelesen = client.get(f"/api/v1/sales/customers/{kunde['id']}").json()
+        assert (gelesen["confirmation_emails"], gelesen["delivery_note_emails"],
+                gelesen["invoice_emails"]) == ([], [], [])
+
+    def test_auto_migrate_ergaenzt_spalten(self, tmp_path):
+        from sqlalchemy import create_engine, inspect, text
+        from app.tenancy import _auto_migrate
+
+        engine = create_engine(f"sqlite:///{tmp_path / 'alt.db'}")
+        with engine.begin() as conn:
+            conn.execute(text("CREATE TABLE customers (id CHAR(32) PRIMARY KEY, name VARCHAR(200))"))
+            conn.execute(text("INSERT INTO customers (id, name) VALUES ('a', 'Ökoring')"))
+
+        _auto_migrate(engine)
+
+        spalten = {c["name"] for c in inspect(engine).get_columns("customers")}
+        assert {"confirmation_emails", "delivery_note_emails", "invoice_emails"} <= spalten
+        with engine.connect() as conn:
+            assert conn.execute(text("SELECT invoice_emails FROM customers")).scalar() is None
+        engine.dispose()
