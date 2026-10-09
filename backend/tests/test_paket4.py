@@ -1665,3 +1665,287 @@ class TestP4DKundeAktivSchalter:
 
         assert r.status_code == 200, r.text
         assert _p4d_kunde_db(kunde["id"])["telefon"] == "089 123"
+
+
+from decimal import Decimal
+
+# Konditionen eines Kunden in Antworten (app.core.rollen.KUNDENANTWORT_KONDITIONEN):
+# die Felder aus KUNDENFELDER_KAUFMAENNISCH plus die nur lesbaren Ableitungen.
+_P4D_KONDITIONSFELDER = {
+    "payment_terms", "credit_limit", "price_list_id", "discount_percent", "skonto_percent",
+    "skonto_days", "packaging_fee_amount", "packaging_fee_percent", "datev_account",
+    "pfand_abrechnung", "invoice_mode",
+    "price_list_name", "payment_days", "pfand_monatlich_ab", "zahlungsart",
+}
+
+
+def _p4d_preisliste():
+    from app.models.product import PriceList
+    from tests.conftest import TestingSessionLocal
+    with TestingSessionLocal() as db:
+        liste = PriceList(name="Gastro 2026", code="GASTRO26")
+        db.add(liste)
+        db.commit()
+        return str(liste.id)
+
+
+def _p4d_kunde_mit_konditionen(client, **felder):
+    konditionen = {
+        "payment_terms": "NET_30", "discount_percent": "5", "skonto_percent": "2",
+        "skonto_days": 10, "credit_limit": "5000", "packaging_fee_amount": "4.5",
+        "packaging_fee_percent": "1", "datev_account": "10077",
+        "pfand_abrechnung": "MONATLICH", "invoice_mode": "MONATLICH",
+        "price_list_id": _p4d_preisliste(),
+    }
+    return _p4d_kunde(client, **{**konditionen, **felder})
+
+
+def _p4d_produkt(client, sku="KRESSE-50", preis="2.50"):
+    from app.models.unit import UnitOfMeasure, UnitCategory
+    from tests.conftest import TestingSessionLocal
+    with TestingSessionLocal() as db:
+        unit = db.query(UnitOfMeasure).filter_by(code="STK").first()
+        if unit is None:
+            unit = UnitOfMeasure(code="STK", name="Stück", symbol="Stk",
+                                 category=UnitCategory.COUNT, is_base_unit=True)
+            db.add(unit)
+            db.commit()
+        unit_id = str(unit.id)
+    _p4d_verwaltung()
+    r = client.post("/api/v1/products", json={
+        "sku": sku, "name": "Kresse 50 g", "base_price": preis,
+        "category": "MICROGREEN", "base_unit_id": unit_id})
+    assert r.status_code == 201, r.text
+    return r.json()
+
+
+def _p4d_bestellung(client, kunde, produkt, preis="2.50"):
+    from datetime import date, timedelta
+    return client.post("/api/v1/sales/orders", json={
+        "customer_id": kunde["id"],
+        "requested_delivery_date": (date.today() + timedelta(days=3)).isoformat(),
+        "lines": [{"product_id": produkt["id"], "product_name": produkt["name"],
+                   "quantity": 3, "unit": "STK", "unit_price": preis}],
+    })
+
+
+class TestP4DKonditionenAusgeblendet:
+    """Gernot, 09.10. („Rolle Produktion ohne Rechnungen/Konditionen“: „Danke!“):
+    Kundenantworten an die Halle tragen keine Konditionen — weder Liste noch
+    Detail noch die Antwort auf eine Änderung. Reaktivieren darf sie nicht (P4-D.1)."""
+
+    def test_konditionsliste_deckt_den_feldschutz_ab(self):
+        from app.core.rollen import KUNDENANTWORT_KONDITIONEN, KUNDENFELDER_KAUFMAENNISCH
+        assert set(KUNDENFELDER_KAUFMAENNISCH) <= set(KUNDENANTWORT_KONDITIONEN)
+        assert set(KUNDENANTWORT_KONDITIONEN) == _P4D_KONDITIONSFELDER
+
+    def test_halle_sieht_in_liste_und_detail_keine_konditionen(self, client):
+        kunde = _p4d_kunde_mit_konditionen(client)
+        _p4d_als("production_staff")
+
+        liste = client.get("/api/v1/sales/customers", params={"search": "Großer Kern"})
+        detail = client.get(f"/api/v1/sales/customers/{kunde['id']}")
+
+        assert liste.status_code == 200, liste.text
+        assert detail.status_code == 200, detail.text
+        for antwort in (liste.json()["items"][0], detail.json()):
+            assert {f: antwort[f] for f in _P4D_KONDITIONSFELDER} == dict.fromkeys(_P4D_KONDITIONSFELDER)
+            # Was die Halle für Bestellung und Belegversand braucht, bleibt.
+            assert antwort["id"] == kunde["id"]
+            assert antwort["name"] == "Großer Kern"
+            assert antwort["customer_number"] == kunde["customer_number"]
+            assert antwort["email"] == "kueche@grosser-kern.de"
+            assert antwort["confirmation_emails"] == ["ab@grosser-kern.de"]
+            assert antwort["liefertage"] == [1, 3]
+            assert antwort["aktiv"] is True
+
+    def test_halle_bekommt_beim_speichern_keine_konditionen_zurueck(self, client):
+        kunde = _p4d_kunde_mit_konditionen(client)
+        _p4d_als("production_staff")
+
+        r = client.patch(f"/api/v1/sales/customers/{kunde['id']}", json={"telefon": "089 777"})
+
+        assert r.status_code == 200, r.text
+        assert {f: r.json()[f] for f in _P4D_KONDITIONSFELDER} == dict.fromkeys(_P4D_KONDITIONSFELDER)
+        gespeichert = _p4d_kunde_db(kunde["id"])
+        assert gespeichert["telefon"] == "089 777"
+        assert str(gespeichert["discount_percent"]) == "5.00"
+        assert gespeichert["payment_terms"] == "NET_30"
+
+    def test_halle_neuanlage_zeigt_nur_standardkonditionen_danach_keine(self, client):
+        """Die Halle legt nur mit Standardkonditionen an (Paket 3, kundenfeldschutz);
+        die Antwort darauf verrät nichts und bleibt wie bisher (Paket-3-Test
+        test_halle_legt_kunden_mit_standardkonditionen_an). Danach liest sie den
+        Kunden ohne Konditionen."""
+        _p4d_als("production_staff")
+
+        r = client.post("/api/v1/sales/customers", json={"name": "Fruchthof Nagel", "typ": "HANDEL"})
+
+        assert r.status_code == 201, r.text
+        k = r.json()
+        assert (k["payment_terms"], k["discount_percent"], k["pfand_abrechnung"], k["invoice_mode"],
+                k["credit_limit"], k["price_list_id"]) == ("NET_14", "0.00", "JE_LIEFERUNG", "EINZELN", None, None)
+        detail = client.get(f"/api/v1/sales/customers/{k['id']}").json()
+        assert {f: detail[f] for f in _P4D_KONDITIONSFELDER} == dict.fromkeys(_P4D_KONDITIONSFELDER)
+
+    @pytest.mark.parametrize("rolle", _P4D_OHNE_HALLE)
+    def test_rollen_ohne_halle_sehen_die_konditionen(self, client, rolle):
+        kunde = _p4d_kunde_mit_konditionen(client)
+        _p4d_als(rolle)
+
+        k = client.get(f"/api/v1/sales/customers/{kunde['id']}").json()
+
+        assert (k["payment_terms"], k["discount_percent"], k["credit_limit"], k["datev_account"]) == (
+            "NET_30", "5.00", "5000.00", "10077")
+        assert (k["payment_days"], k["pfand_abrechnung"], k["invoice_mode"]) == (30, "MONATLICH", "MONATLICH")
+        assert k["price_list_id"] == kunde["price_list_id"] is not None
+        assert k["pfand_monatlich_ab"] is not None
+
+    def test_halle_mit_zusaetzlicher_vertriebsrolle_sieht_die_konditionen(self, client):
+        kunde = _p4d_kunde_mit_konditionen(client)
+        _p4d_als("production_staff", "sales")
+
+        assert client.get(f"/api/v1/sales/customers/{kunde['id']}").json()["discount_percent"] == "5.00"
+
+    def test_halle_speichert_das_formular_ohne_konditionen(self, client):
+        """Kundenformular der Halle (P4-D.3, Customers.tsx mit ohneKonditionen):
+        dieselben Felder wie das Formular, ohne Konditionen — gespeichert wird,
+        die Konditionen bleiben. Schickt ein Client stattdessen die Vorgaben des
+        Formulars (aus null wird NET_14 und 0), lehnt der Server ab (E-D3)."""
+        kunde = _p4d_kunde_mit_konditionen(client)
+        _p4d_als("production_staff")
+        k = client.get(f"/api/v1/sales/customers/{kunde['id']}").json()
+        formular = {
+            "name": k["name"], "typ": k["typ"], "customer_number": k["customer_number"] or "",
+            "email": k["email"] or "", "telefon": "089 555", "adresse": k["adresse"] or "",
+            "ust_id": k["ust_id"] or "", "liefertage": k["liefertage"],
+            "show_prices_on_delivery_note": k["show_prices_on_delivery_note"],
+            "confirmation_emails": k["confirmation_emails"],
+            "delivery_note_emails": k["delivery_note_emails"],
+            "invoice_emails": k["invoice_emails"], "aktiv": k["aktiv"],
+        }
+
+        r = client.patch(f"/api/v1/sales/customers/{kunde['id']}", json=formular)
+
+        assert r.status_code == 200, r.text
+        gespeichert = _p4d_kunde_db(kunde["id"])
+        assert (gespeichert["telefon"], gespeichert["payment_terms"], str(gespeichert["discount_percent"])) == (
+            "089 555", "NET_30", "5.00")
+        vorgaben = client.patch(f"/api/v1/sales/customers/{kunde['id']}",
+                                json={**formular, "payment_terms": "NET_14", "discount_percent": 0})
+        assert vorgaben.status_code == 403, vorgaben.text
+
+
+class TestP4DSonderpreiseUndBestellung:
+    """Sonderpreise sind Konditionen: die Liste je Kunde liest die Halle nicht mehr.
+    Den einen gültigen Preis je Produkt für das Bestellformular liest sie weiter
+    (Paket 3, test_halle_liest_sonderpreis_fuers_bestellformular) — Bestellungen
+    und AB tragen Preise (Gernot, 08.10. B8)."""
+
+    def _sonderpreis(self, client, kunde, produkt):
+        _p4d_verwaltung()
+        r = client.post(f"/api/v1/sales/customers/{kunde['id']}/prices",
+                        json={"product_id": produkt["id"], "unit_price": "1.99"})
+        assert r.status_code == 201, r.text
+
+    def test_halle_liest_keine_sonderpreisliste(self, client):
+        kunde = _p4d_kunde(client)
+        produkt = _p4d_produkt(client)
+        self._sonderpreis(client, kunde, produkt)
+        _p4d_als("production_staff")
+
+        r = client.get(f"/api/v1/sales/customers/{kunde['id']}/prices")
+
+        assert r.status_code == 403, r.text
+        r = client.get(f"/api/v1/sales/customers/{kunde['id']}/effective-price/{produkt['id']}")
+        assert r.status_code == 200, r.text
+        assert Decimal(r.json()["unit_price"]) == Decimal("1.99")
+
+    @pytest.mark.parametrize("rolle", _P4D_OHNE_HALLE)
+    def test_rollen_ohne_halle_lesen_die_sonderpreisliste(self, client, rolle):
+        kunde = _p4d_kunde(client)
+        produkt = _p4d_produkt(client)
+        self._sonderpreis(client, kunde, produkt)
+        _p4d_als(rolle)
+
+        r = client.get(f"/api/v1/sales/customers/{kunde['id']}/prices")
+
+        assert r.status_code == 200, r.text
+        assert [Decimal(p["unit_price"]) for p in r.json()] == [Decimal("1.99")]
+
+    def test_halle_legt_bestellung_mit_lieferadresse_an(self, client):
+        """Ablauf des Bestellformulars (CreateOrderModal): Kundenliste, gültiger
+        Preis, Speichern. Die Lieferadresse setzt der Server aus dem Kundenstamm."""
+        kunde = _p4d_kunde_mit_konditionen(client, credit_limit=None)
+        _p4d_adresse(client, kunde)
+        produkt = _p4d_produkt(client)
+        _p4d_als("production_staff")
+
+        ids = [k["id"] for k in client.get("/api/v1/sales/customers").json()["items"]]
+        preis = client.get(f"/api/v1/sales/customers/{kunde['id']}/effective-price/{produkt['id']}")
+        r = _p4d_bestellung(client, kunde, produkt, preis.json()["unit_price"])
+
+        assert kunde["id"] in ids
+        assert r.status_code == 201, r.text
+        assert r.json()["delivery_address"]["strasse"] == "Lieferhof"
+        assert r.json()["customer_name"] == "Großer Kern"
+
+    def test_kreditlimit_meldung_ohne_betraege_fuer_die_halle(self, client):
+        kunde = _p4d_kunde(client, credit_limit="1")
+        produkt = _p4d_produkt(client)
+        _p4d_als("production_staff")
+
+        r = _p4d_bestellung(client, kunde, produkt)
+
+        assert r.status_code == 400, r.text
+        assert r.json()["detail"] == (
+            "Kreditlimit des Kunden überschritten. Bitte Verwaltung, Vertrieb oder Buchhaltung fragen.")
+        _p4d_verwaltung()
+        r = _p4d_bestellung(client, kunde, produkt)
+        assert r.status_code == 400, r.text
+        assert r.json()["detail"].startswith("Kreditlimit überschritten: Limit 1.00 EUR")
+
+
+class TestP4DHalleOhneGeldUndKonditionen:
+    """Wachhund (G41: kein Rechnungswesen, kein DATEV; G60: keine Konditionen):
+    jede Route der Geldseite und jede Konditionsroute antwortet der Halle mit 403
+    — auch Routen, die später dazukommen (z. B. GET /invoices/datev-export/einstellungen
+    aus dem Nachtrag 09.10.)."""
+
+    # /api/v1/belegstatus: Belegstatus aus Paket 4, C.3 (_deps_geld wie /invoices)
+    _PRAEFIXE = ("/api/v1/invoices", "/api/v1/price-lists", "/api/v1/sepa", "/api/v1/analytics", "/api/v1/belegstatus")
+    _EINZELN = {
+        "/api/v1/sales/customers/export/datev",
+        "/api/v1/sales/customers/{customer_id}/prices",
+        "/api/v1/sales/customer-prices/{price_id}",
+        "/api/v1/products/{product_id}/price",
+    }
+
+    def test_jede_geld_und_konditionsroute_sperrt_die_halle(self, client):
+        import re
+        from fastapi.routing import APIRoute
+        _p4d_als("production_staff")
+        geprueft, offen = [], []
+        for route in app.routes:
+            if not isinstance(route, APIRoute):
+                continue
+            if not (route.path.startswith(self._PRAEFIXE) or route.path in self._EINZELN):
+                continue
+            pfad = re.sub(r"\{[^}]+\}", "00000000-0000-0000-0000-0000000000ff", route.path)
+            for methode in sorted(route.methods - {"HEAD", "OPTIONS"}):
+                geprueft.append(f"{methode} {route.path}")
+                code = client.request(methode, pfad, json={}).status_code
+                if code != 403:
+                    offen.append(f"{methode} {route.path} -> {code}")
+
+        assert offen == []
+        assert len(geprueft) >= 50, geprueft
+
+    def test_produktdetail_zeigt_der_halle_keine_preislistenpositionen(self, client):
+        produkt = _p4d_produkt(client)
+        _p4d_als("production_staff")
+
+        r = client.get(f"/api/v1/products/{produkt['id']}")
+
+        assert r.status_code == 200, r.text
+        assert r.json()["prices"] is None

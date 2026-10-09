@@ -11,7 +11,10 @@ from sqlalchemy import select, func, or_
 from sqlalchemy.orm import joinedload, selectinload
 
 from app.api.deps import DBSession, Pagination, CurrentUser, require_role
-from app.core.rollen import KAUFMAENNISCHE_ROLLEN, ROLLEN_OHNE_HALLE, kundenfeldschutz, standardwerte
+from app.core.rollen import (
+    KAUFMAENNISCHE_ROLLEN, KUNDENANTWORT_KONDITIONEN, ROLLEN_OHNE_HALLE,
+    kundenfeldschutz, sieht_konditionen, standardwerte,
+)
 from app.models.customer import Customer, CustomerType, Contact, CustomerAddress, AddressType, Subscription, SubscriptionItem
 from app.models.order import Order, OrderLine, OrderStatus, OrderAuditLog, TaxRate, vat_from_lines
 from app.models.seed import Seed
@@ -64,12 +67,26 @@ _nur_kaufmaennisch = [Depends(require_role(KAUFMAENNISCHE_ROLLEN))]
 _ohne_halle = [Depends(require_role(ROLLEN_OHNE_HALLE))]
 
 
+def _kundenantwort(customer: Customer, user: dict) -> CustomerResponse:
+    """Kundenantwort; an die Halle ohne Konditionen (P4-D.2).
+
+    Gernot, 09.10.: Rolle „Produktion“ ohne Rechnungen und Konditionen. Die Halle
+    liest Kunden weiter für Bestellformular und Belegversand (Name, Nummer,
+    E-Mail-Empfänger, Liefertage), die Konditionen kommen als null.
+    """
+    antwort = CustomerResponse.model_validate(customer)
+    if sieht_konditionen(user):
+        return antwort
+    return antwort.model_copy(update=dict.fromkeys(KUNDENANTWORT_KONDITIONEN))
+
+
 # ============== Customer Endpoints ==============
 
 @router.get("/customers", response_model=CustomerListResponse)
 async def list_customers(
     db: DBSession,
     pagination: Pagination,
+    user: CurrentUser,
     typ: Optional[CustomerType] = None,
     aktiv: Optional[bool] = None,
     search: Optional[str] = None
@@ -105,13 +122,13 @@ async def list_customers(
     customers = db.execute(query).scalars().all()
 
     return CustomerListResponse(
-        items=[CustomerResponse.model_validate(c) for c in customers],
+        items=[_kundenantwort(c, user) for c in customers],
         total=total
     )
 
 
 @router.get("/customers/{customer_id}", response_model=CustomerResponse)
-async def get_customer(customer_id: UUID, db: DBSession):
+async def get_customer(customer_id: UUID, db: DBSession, user: CurrentUser):
     """Einzelnen Kunden abrufen."""
     customer = db.get(Customer, customer_id)
     if not customer:
@@ -119,7 +136,7 @@ async def get_customer(customer_id: UUID, db: DBSession):
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Kunde nicht gefunden"
         )
-    return CustomerResponse.model_validate(customer)
+    return _kundenantwort(customer, user)
 
 
 @router.post("/customers", response_model=CustomerResponse, status_code=status.HTTP_201_CREATED)
@@ -141,6 +158,9 @@ async def create_customer(customer_data: CustomerCreate, db: DBSession, user: Cu
     db.add(customer)
     db.commit()
     db.refresh(customer)
+    # Auch an die Halle mit Konditionen: sie legt nur mit Standardkonditionen an
+    # (kundenfeldschutz oben), die Antwort verrät also nichts (P4-D.2). Liste,
+    # Detail und Änderung blenden sie aus (_kundenantwort).
     return CustomerResponse.model_validate(customer)
 
 
@@ -162,7 +182,7 @@ async def update_customer(customer_id: UUID, customer_data: CustomerUpdate, db: 
 
     db.commit()
     db.refresh(customer)
-    return CustomerResponse.model_validate(customer)
+    return _kundenantwort(customer, user)
 
 
 # Löschen/Deaktivieren nur kaufmännisch (Q4-Liste): seit .unique() unten wirkt
@@ -307,7 +327,9 @@ def _enrich_price(db, price: CustomerPrice) -> CustomerPriceResponse:
     return resp
 
 
-@router.get("/customers/{customer_id}/prices", response_model=list[CustomerPriceResponse])
+# Sonderpreise sind Konditionen: die Liste liest die Halle nicht (P4-D.2). Den
+# gültigen Preis je Produkt fürs Bestellformular liefert get_effective_price.
+@router.get("/customers/{customer_id}/prices", response_model=list[CustomerPriceResponse], dependencies=_ohne_halle)
 async def list_customer_prices(customer_id: UUID, db: DBSession):
     """Listet alle Sonderpreise eines Kunden, sortiert nach Produktname."""
     customer = db.get(Customer, customer_id)
@@ -966,6 +988,13 @@ async def create_order(order_data: OrderCreate, db: DBSession, user: CurrentUser
             estimated_total += line_net + (line_net * tax_rate)
 
         if open_order_total + estimated_total > customer.credit_limit:
+            # Das Limit ist eine Kondition: die Halle erfährt, dass es
+            # überschritten ist, aber keine Beträge (P4-D.2).
+            if not sieht_konditionen(user):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Kreditlimit des Kunden überschritten. Bitte Verwaltung, Vertrieb oder Buchhaltung fragen.",
+                )
             raise HTTPException(
                 status_code=400,
                 detail=(

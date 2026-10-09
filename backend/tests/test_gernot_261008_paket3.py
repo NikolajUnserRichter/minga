@@ -1496,7 +1496,8 @@ class TestQ4SonderpreiseDatevKatalogpreis:
     """T5 R2, soweit Gernots Entscheidung vom 03.09. (Kunden und Bestellungen
     erfassen) unberührt bleibt: Sonderpreise pflegen alle außer der Halle, den
     DATEV-Debitorenexport ziehen nur Verwaltung, Vertrieb und Buchhaltung.
-    Lesen der Sonderpreise bleibt offen (Bestellformular)."""
+    Den gültigen Preis je Produkt liest die Halle fürs Bestellformular; die
+    Sonderpreisliste des Kunden seit P4-D.2 nicht mehr (Konditionen, Gernot 09.10.)."""
 
     def _sonderpreis(self, client):
         produkt = _q4_produkt(client)
@@ -1527,7 +1528,7 @@ class TestQ4SonderpreiseDatevKatalogpreis:
         liste = client.get(f"/api/v1/sales/customers/{kunde['id']}/prices")
         wirksam = client.get(f"/api/v1/sales/customers/{kunde['id']}/effective-price/{produkt['id']}")
 
-        assert liste.status_code == 200, liste.text
+        assert liste.status_code == 403, liste.text  # seit P4-D.2 (vorher 200)
         assert wirksam.status_code == 200, wirksam.text
 
     @pytest.mark.parametrize("rolle", _Q4_OHNE_RECHNUNGSRECHT)
@@ -5550,6 +5551,8 @@ class TestQ7Feldschutz:
 
         assert geaendert.status_code == 403, geaendert.text
         assert formular.status_code == 200, formular.text
+        # Seit P4-D.2 liest die Halle invoice_mode nicht mehr (null): Kontrolle als Verwaltung.
+        _q7_rolle(["admin"])
         assert client.get(f"/api/v1/sales/customers/{kunde['id']}").json()["invoice_mode"] == "EINZELN"
 
     def test_halle_legt_keinen_monatskunden_an(self, client, _q7_rolle):

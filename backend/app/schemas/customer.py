@@ -259,19 +259,22 @@ class CustomerResponse(CustomerBase):
     ansprechpartner_telefon: Optional[str]
     ust_id: Optional[str]
     steuernummer: Optional[str]
-    payment_terms: PaymentTerms
+    # Konditionen: Logins ohne ROLLEN_OHNE_HALLE (die Halle) bekommen sie als
+    # null (app.core.rollen.KUNDENANTWORT_KONDITIONEN, sales._kundenantwort;
+    # P4-D.2). Deshalb Optional, auch wo der Kundenstamm immer einen Wert hat.
+    payment_terms: Optional[PaymentTerms]
     credit_limit: Optional[Decimal]
     price_list_id: Optional[UUID]
-    discount_percent: Decimal
-    skonto_percent: Decimal = Decimal("0")
-    skonto_days: int = 0
-    packaging_fee_amount: Decimal = Decimal("0")
-    packaging_fee_percent: Decimal = Decimal("0")
+    discount_percent: Optional[Decimal]
+    skonto_percent: Optional[Decimal] = Decimal("0")
+    skonto_days: Optional[int] = 0
+    packaging_fee_amount: Optional[Decimal] = Decimal("0")
+    packaging_fee_percent: Optional[Decimal] = Decimal("0")
     show_prices_on_delivery_note: bool = False
-    pfand_abrechnung: PfandAbrechnung = PfandAbrechnung.JE_LIEFERUNG
+    pfand_abrechnung: Optional[PfandAbrechnung] = PfandAbrechnung.JE_LIEFERUNG
     # Stichtag des Leergutkontos (nur bei MONATLICH, vom Server gesetzt)
     pfand_monatlich_ab: Optional[date] = None
-    invoice_mode: InvoiceMode = InvoiceMode.EINZELN
+    invoice_mode: Optional[InvoiceMode] = InvoiceMode.EINZELN
 
     datev_account: Optional[str]
     # Nur lesend (B10): geändert über PUT /sepa/kunden/{id}/zahlungsart.

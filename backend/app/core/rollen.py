@@ -84,12 +84,29 @@ KUNDENFELDER_EMPFAENGER = {
 # ausgeblendet.
 KUNDENFELD_AKTIV = {"aktiv": "Aktiv"}
 
+# Konditionen in Kundenantworten (P4-D.2; Gernot 09.10. zu „Rolle Produktion
+# ohne Rechnungen/Konditionen“: „Danke!“). Logins ohne ROLLEN_OHNE_HALLE
+# bekommen sie als null: alle Felder aus KUNDENFELDER_KAUFMAENNISCH (ein neues
+# Feld dort ist damit auch ausgeblendet) und die nur lesbaren Ableitungen.
+KUNDENANTWORT_KONDITIONEN = (
+    *KUNDENFELDER_KAUFMAENNISCH,
+    "price_list_name",     # Name der Preisliste
+    "payment_days",        # Zahlungsziel in Tagen (aus payment_terms)
+    "pfand_monatlich_ab",  # Stichtag des Leergutkontos
+    "zahlungsart",         # Überweisung oder Lastschrift (B10)
+)
+
 _HINWEIS_VERALTET = " Nicht selbst geändert? Dann ist das Formular veraltet – bitte neu laden."
 
 
 def hat_rolle(user: dict, rollen: Iterable[str]) -> bool:
     """True, wenn das Login mindestens eine der Rollen hat."""
     return bool(set(user.get("roles", [])) & set(rollen))
+
+
+def sieht_konditionen(user: dict) -> bool:
+    """Sieht das Login die Konditionen eines Kunden? Alle außer der Halle (P4-D.2)."""
+    return hat_rolle(user, ROLLEN_OHNE_HALLE)
 
 
 def _vergleichswert(wert: Any, *, klein: bool = False) -> Any:
