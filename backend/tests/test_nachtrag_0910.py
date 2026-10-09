@@ -1347,3 +1347,90 @@ class TestDKontoNormalisierung:
             assert antwort.status_code == (201 if aktion == "anlegen" else 200), antwort.text
             assert antwort.json()["buchungskonto"] == erwartet
             assert _d_positionen(client, rechnung)[0]["buchungskonto"] == erwartet
+
+
+def _d_datev_oberflaeche(komponente, zustand):
+    import html
+    import json
+    import subprocess
+    from pathlib import Path
+
+    script = r"""
+const fs = require('node:fs');
+const vm = require('node:vm');
+const ts = require('typescript');
+const React = require('react');
+const { renderToStaticMarkup } = require('react-dom/server');
+const query = require('@tanstack/react-query');
+const { komponente, zustand } = JSON.parse(process.argv[1]);
+function laden(quelltext, datei, globals = {}) {
+    const exports = {};
+    const code = ts.transpileModule(quelltext, { compilerOptions: {
+        module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020,
+        jsx: ts.JsxEmit.ReactJSX,
+    }}).outputText;
+    vm.runInNewContext(code, { exports, require, Error, ...globals }, { filename: datei });
+    return exports;
+}
+function modul(datei) { return laden(fs.readFileSync(datei, 'utf8'), datei); }
+const datei = komponente === 'DatevExportForm' ? 'src/pages/Invoices.tsx' : 'src/pages/Settings.tsx';
+const quelle = ts.createSourceFile(datei, fs.readFileSync(datei, 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+const funktion = quelle.statements.find(statement => ts.isFunctionDeclaration(statement) && statement.name?.text === komponente);
+if (!funktion) throw new Error('DATEV-Komponente fehlt');
+const client = new query.QueryClient({ defaultOptions: { queries: { retry: false, retryOnMount: false, gcTime: Infinity } } });
+const fehler = zustand.startsWith('fehler');
+const daten = zustand === 'geladen' || zustand === 'gesperrt' || zustand === 'fehler-cache'
+    ? { kontenrahmen: 'SKR04', konten: [{ bezeichnung: 'Erlöse 7 %', konto: '4300' }],
+        sperrgrund: zustand === 'gesperrt' ? 'Steuerberater-Freigabe fehlt' : null }
+    : undefined;
+const error = zustand === 'fehler-validierung'
+    ? { response: { data: { detail: [{ loc: ['query', 'mandant'], msg: 'nicht erreichbar' }] } } }
+    : { response: { data: { detail: 'Dienst nicht erreichbar' } } };
+client.getQueryCache().build(client, { queryKey: ['datev-einstellungen'] }).setState({
+    data: daten, status: fehler ? 'error' : daten ? 'success' : 'pending',
+    error: fehler ? error : null, fetchStatus: 'idle', dataUpdatedAt: daten ? Date.now() : 0,
+});
+const keinNetzwerk = () => { throw new Error('Kein API-Aufruf beim Rendern erlaubt'); };
+const globals = {
+    useState: React.useState, useQuery: query.useQuery, useMutation: query.useMutation,
+    useQueryClient: query.useQueryClient, useToast: () => ({}),
+    ...modul('src/components/ui/Button.tsx'), ...modul('src/components/ui/Input.tsx'),
+    ...modul('src/services/errors.ts'), Download: require('lucide-react').Download,
+    invoicesApi: { datevEinstellungen: keinNetzwerk }, adminApi: { updateSettings: keinNetzwerk },
+};
+const Component = laden(funktion.getText(quelle) + '\nexports.Komponente = ' + komponente + ';', datei, globals).Komponente;
+const markup = renderToStaticMarkup(React.createElement(query.QueryClientProvider, { client },
+    React.createElement(Component, { onClose() {} })));
+const text = markup.replace(/<[^>]*>/g, '');
+const buttons = [...markup.matchAll(/<button\b([^>]*)>([\s\S]*?)<\/button>/g)].map(match => ({
+    text: match[2].replace(/<[^>]*>/g, ''), disabled: /\bdisabled=""/.test(match[1]),
+}));
+client.clear();
+console.log(JSON.stringify({ text, buttons }));
+"""
+    ergebnis = subprocess.run(
+        ["node", "-e", script, json.dumps({"komponente": komponente, "zustand": zustand})],
+        cwd=Path(__file__).resolve().parents[2] / "frontend", capture_output=True, text=True, timeout=30,
+    )
+    assert ergebnis.returncode == 0, ergebnis.stderr
+    return json.loads(html.unescape(ergebnis.stdout))
+
+
+class TestDDatevLadefehler:
+    @pytest.mark.parametrize("komponente", ["DatevExportForm", "DatevSettingsCard"])
+    @pytest.mark.parametrize("zustand", [
+        "laden", "geladen", "gesperrt", "fehler", "fehler-cache", "fehler-validierung",
+    ])
+    def test_ladezustand_meldet_fehler_und_sperrt_aktionen(self, komponente, zustand):
+        ansicht = _d_datev_oberflaeche(komponente, zustand)
+        if zustand.startswith("fehler"):
+            detail = "mandant: nicht erreichbar" if zustand == "fehler-validierung" else "Dienst nicht erreichbar"
+            assert f"DATEV-Einstellungen ließen sich nicht laden: {detail}" in ansicht["text"]
+        else:
+            assert "DATEV-Einstellungen ließen sich nicht laden:" not in ansicht["text"]
+        knopftexte = ["Exportieren"] if komponente == "DatevExportForm" else ["SKR03", "SKR04"]
+        knoepfe = [knopf for knopf in ansicht["buttons"] if knopf["text"] in knopftexte]
+        assert len(knoepfe) == len(knopftexte)
+        gesperrt = zustand == "laden" or zustand.startswith("fehler") or (
+            zustand == "gesperrt" and komponente == "DatevExportForm")
+        assert all(knopf["disabled"] == gesperrt for knopf in knoepfe), ansicht["buttons"]

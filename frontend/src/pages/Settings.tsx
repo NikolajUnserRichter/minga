@@ -527,7 +527,7 @@ export function DatevSettingsCard() {
   const toast = useToast();
   const queryClient = useQueryClient();
 
-  const { data } = useQuery({
+  const { data, isError, error } = useQuery({
     queryKey: ['datev-einstellungen'],
     queryFn: () => invoicesApi.datevEinstellungen(),
   });
@@ -555,12 +555,17 @@ export function DatevSettingsCard() {
         <p className="text-sm text-gray-500 dark:text-gray-400">
           Kontenrahmen der Buchhaltung in DATEV. Nach dem ersten Export nicht mehr änderbar.
         </p>
+        {isError && (
+          <p role="alert" className="text-sm text-red-600 dark:text-red-400">
+            DATEV-Einstellungen ließen sich nicht laden: {getErrorMessage(error)}
+          </p>
+        )}
         <div className="flex gap-2 max-w-md">
           {(['SKR03', 'SKR04'] as const).map((rahmen) => (
             <button
               key={rahmen}
               type="button"
-              disabled={!data || saveMutation.isPending}
+              disabled={!data || isError || saveMutation.isPending}
               onClick={() => rahmen !== data?.kontenrahmen && saveMutation.mutate(rahmen)}
               className={`flex-1 p-2 rounded-lg border-2 text-sm transition-colors ${data?.kontenrahmen === rahmen
                 ? 'border-minga-500 bg-minga-50 dark:bg-minga-900/30 font-medium'

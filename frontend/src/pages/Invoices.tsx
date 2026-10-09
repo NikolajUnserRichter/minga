@@ -985,7 +985,7 @@ function DatevExportForm({ onClose }: { onClose: () => void }) {
   const [loading, setLoading] = useState(false);
   // Kontenrahmen und Sperre des Mandanten (Nachtrag 09.10., D). Das Backend
   // lehnt einen gesperrten Export ohnehin mit 409 ab; der Dialog sagt es vorher.
-  const { data: einstellungen } = useQuery({
+  const { data: einstellungen, isError, error } = useQuery({
     queryKey: ['datev-einstellungen'],
     queryFn: () => invoicesApi.datevEinstellungen(),
   });
@@ -1032,6 +1032,11 @@ function DatevExportForm({ onClose }: { onClose: () => void }) {
 
   return (
     <div className="space-y-4">
+      {isError && (
+        <p role="alert" className="text-sm text-red-600 dark:text-red-400">
+          DATEV-Einstellungen ließen sich nicht laden: {getErrorMessage(error)}
+        </p>
+      )}
       {einstellungen && (
         <div className="rounded-lg border border-gray-200 dark:border-gray-700 p-3 text-sm text-gray-600 dark:text-gray-300">
           <div className="font-medium text-gray-800 dark:text-gray-100">
@@ -1094,7 +1099,7 @@ function DatevExportForm({ onClose }: { onClose: () => void }) {
         <Button type="button" variant="secondary" onClick={onClose}>
           Abbrechen
         </Button>
-        <Button onClick={handleExport} loading={loading} disabled={!!sperrgrund} fullWidth icon={<Download className="w-4 h-4" />}>
+        <Button onClick={handleExport} loading={loading} disabled={!einstellungen || isError || !!sperrgrund} fullWidth icon={<Download className="w-4 h-4" />}>
           Exportieren
         </Button>
       </div>
