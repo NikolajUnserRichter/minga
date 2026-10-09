@@ -11,6 +11,8 @@ from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
 
 from app.api.deps import DBSession
+from app.models.enums import InvoiceStatus
+from app.models.invoice import ist_entwurfsnummer
 from app.services.lexoffice_service import (
     LexofficeConnector,
     LexofficeError,
@@ -106,6 +108,10 @@ async def lexoffice_push_invoice(invoice_id: UUID, db: DBSession, force: bool = 
     invoice = db.get(Invoice, invoice_id)
     if not invoice:
         raise HTTPException(status_code=404, detail="Rechnung nicht gefunden")
+    # Ein Beleg ohne Rechnungsnummer verlässt das System nicht — auch kein
+    # ohne Stornorechnung verworfener Entwurf (STORNIERT mit Platzhalter).
+    if invoice.status == InvoiceStatus.ENTWURF or ist_entwurfsnummer(invoice.invoice_number):
+        raise HTTPException(status_code=409, detail="Ein Entwurf wird nicht übertragen — die Rechnung zuerst finalisieren")
     customer = db.get(Customer, invoice.customer_id) if invoice.customer_id else None
     customer_name = customer.name if customer else "Kunde"
 
@@ -239,6 +245,10 @@ async def lexoffice_pull_status(invoice_id: UUID, db: DBSession):
     invoice = db.get(Invoice, invoice_id)
     if not invoice:
         raise HTTPException(status_code=404, detail="Rechnung nicht gefunden")
+    # pull_payment_status setzt BEZAHLT — aus einem Entwurf hieße das: ohne
+    # Rechnungsnummer am Festschreiben vorbei.
+    if invoice.status == InvoiceStatus.ENTWURF or ist_entwurfsnummer(invoice.invoice_number):
+        raise HTTPException(status_code=409, detail="Ein Entwurf hat keinen Zahlungsstatus — die Rechnung zuerst finalisieren")
     try:
         return pull_payment_status(db, invoice, LexofficeConnector(key))
     except LexofficeError as e:

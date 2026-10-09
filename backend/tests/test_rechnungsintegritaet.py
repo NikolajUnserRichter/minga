@@ -44,7 +44,9 @@ def _festschreiben(client, invoice, weg):
 
 
 class TestFestschreiben:
-    @pytest.mark.parametrize("weg", ["finalize", "send", "patch"])
+    # PATCH mit status gibt es seit Paket 3 (Q1) nicht mehr: 422, siehe
+    # test_patch_umgeht_keine_zahlung_oder_stornierung.
+    @pytest.mark.parametrize("weg", ["finalize", "send"])
     @pytest.mark.parametrize("status", ["OFFEN", "BEZAHLT", "TEILBEZAHLT", "UEBERFAELLIG", "MAHNVERFAHREN"])
     def test_altfall_andere_aktive_rechnung_blockiert(self, client, weg, status):
         order = _bestellung(client, _kunde(client))
@@ -71,7 +73,7 @@ class TestFestschreiben:
         assert response.status_code == 200, response.text
         assert response.json()["status"] == "OFFEN"
 
-    @pytest.mark.parametrize("status", ["BEZAHLT", "TEILBEZAHLT", "STORNIERT", "UEBERFAELLIG", "MAHNVERFAHREN"])
+    @pytest.mark.parametrize("status", ["OFFEN", "BEZAHLT", "TEILBEZAHLT", "STORNIERT", "UEBERFAELLIG", "MAHNVERFAHREN"])
     def test_patch_umgeht_keine_zahlung_oder_stornierung(self, client, status):
         order = _bestellung(client, _kunde(client))
         entwurf = _altrechnung(order, "RE-2026-00003", "ENTWURF")

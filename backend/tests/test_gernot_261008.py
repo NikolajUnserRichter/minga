@@ -1042,6 +1042,10 @@ def _s2_alte_summen_setzen(invoice_id):
 
 def _s2_mailen(client, monkeypatch, invoice_id) -> dict:
     """POST /invoices/{id}/send mit abgefangenem Versand; liefert die Mail-Argumente."""
+    # Seit Paket 3 (Q1) prüft "Mailen" eines Entwurfs die SMTP-Einstellungen
+    # vor dem Festschreiben — hier über die Umgebung "konfiguriert".
+    monkeypatch.setenv("SMTP_HOST", "smtp.farm.example")
+    monkeypatch.setenv("SMTP_USER", "versand@farm.example")
     versendet = {}
     monkeypatch.setattr("app.api.v1.invoices.send_email", lambda **kw: versendet.update(kw))
     r = client.post(f"/api/v1/invoices/{invoice_id}/send",

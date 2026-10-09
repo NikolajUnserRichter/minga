@@ -26,6 +26,7 @@ from app.schemas.invoice import (
 from app.services.invoice_service import InvoiceService, BereitsAbgerechnet, BestellungStorniert, waehle_vertreter, ist_clearing_pfand, netto_je_lieferschein
 from app.services.datev_service import DatevService, erloeskonto_fuer, ist_standard_erloeskonto
 from app.services.email_service import send_email, EmailNotConfiguredError
+from app.services.email_service import pruefe_smtp_konfiguration
 from app.services.pdf_service import load_company_settings
 
 router = APIRouter(prefix="/invoices", tags=["Rechnungen"])
@@ -197,17 +198,8 @@ def update_invoice(
         raise HTTPException(status_code=400, detail="Nur Entwürfe können bearbeitet werden")
 
     update_data = data.model_dump(exclude_unset=True)
-    neuer_status = update_data.pop("status", None)
     for field, value in update_data.items():
         setattr(invoice, field, value)
-
-    if neuer_status == InvoiceStatus.OFFEN:
-        try:
-            InvoiceService(db).finalize_invoice(invoice.id)
-        except BereitsAbgerechnet as e:
-            raise HTTPException(status_code=409, detail=str(e))
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e))
 
     # Ein geänderter Einmalrabatt muss sofort in den Summen landen — sonst
     # zeigt die Rechnung den alten Betrag, bis irgendwann eine Zeile angefasst wird.
@@ -255,6 +247,9 @@ def generate_payment_reminder(
         raise HTTPException(status_code=404, detail="Rechnung nicht gefunden")
     if invoice.status in (InvoiceStatus.BEZAHLT, InvoiceStatus.STORNIERT):
         raise HTTPException(status_code=400, detail="Bezahlte/stornierte Rechnungen können nicht gemahnt werden")
+    # Ein Entwurf ist nicht ausgestellt — eine Mahnung trüge den Platzhalter.
+    if invoice.status == InvoiceStatus.ENTWURF:
+        raise HTTPException(status_code=400, detail="Ein Entwurf kann nicht gemahnt werden — die Rechnung zuerst finalisieren")
 
     pdf = PDFService.generate_payment_reminder_pdf(invoice, reminder_level=level, dunning_fee=dunning_fee, settings=load_company_settings(db), db=db)
 
@@ -277,12 +272,14 @@ def generate_payment_reminder(
 def send_invoice_email(
     invoice_id: UUID,
     db: DBSession,
+    user: CurrentUser,
     to_email: str = Query(..., description="Empfänger-Adresse"),
 ):
     """Sendet die Rechnung als PDF-Anhang per E-Mail.
 
-    Setzt zusätzlich sent_at; bei ENTWURF-Status wird automatisch nach OFFEN
-    überführt (gleicher Effekt wie /finalize)."""
+    Ein Entwurf wird vorher über InvoiceService.festschreiben ausgestellt
+    (wie /finalize) und committet — aber nur, wenn SMTP konfiguriert ist.
+    sent_at setzt nur ein erfolgreicher Versand."""
     from app.models.invoice import Invoice as InvoiceModel  # local import to avoid cycle
     from app.services.pdf_service import PDFService
     from datetime import datetime as _dt, timezone as _tz
@@ -305,20 +302,41 @@ def send_invoice_email(
     if not invoice.lines:
         raise HTTPException(status_code=400, detail="Rechnung hat keine Positionen")
 
-    # Mit dem Versand wird ein Entwurf ausgestellt (ENTWURF -> OFFEN, unten),
-    # genau wie bei /finalize. Deshalb die Summen vorher final berechnen, wie
-    # InvoiceService.finalize_invoice. Sonst ginge ein Entwurf, dessen Summen
-    # noch mit der früheren Rundung gespeichert sind, mit der pauschalen
-    # Zeile "USt:" statt mit Steuer je Satz hinaus (§ 14 Abs. 4 Nr. 8 UStG).
-    # Festgeschriebene Rechnungen (jeder andere Status) werden NIE neu
-    # berechnet (GoBD). Scheitert der Versand, wird nicht committet und die
-    # Neuberechnung verfällt mit der Session.
-    if invoice.status == InvoiceStatus.ENTWURF:
+    # Mailen eines Entwurfs stellt ihn aus — mit derselben Funktion wie
+    # /finalize (Summen, Datum, Nummer, Status). Festgeschrieben und
+    # committet wird VOR dem Versand: Betreff, Dateiname und PDF tragen die
+    # echte Rechnungsnummer, und die Schreibsperre der Mandanten-DB ist
+    # während des SMTP-Versands wieder frei. Scheitert der Versand, bleibt
+    # die Rechnung festgeschrieben und unversendet (sent_at leer); eine
+    # vergebene Nummer wird nie zurückgenommen (lückenlos, GoBD).
+    # Ohne SMTP-Einstellungen scheiterte der Versand sicher: dann wird gar
+    # nicht erst festgeschrieben, der Entwurf bleibt Entwurf.
+    vorher_entwurf = invoice.status == InvoiceStatus.ENTWURF
+    if vorher_entwurf:
+        # Paket 2.1: Gibt es zur Bestellung schon eine festgeschriebene
+        # Rechnung, antwortet /send mit 409 — vor der SMTP-Prüfung, damit
+        # die Meldung auch ohne SMTP die richtige ist. festschreiben prüft
+        # dasselbe noch einmal unter der Schreibsperre.
         try:
             InvoiceService(db).pruefe_festschreibung(invoice)
         except BereitsAbgerechnet as e:
             raise HTTPException(status_code=409, detail=str(e))
-        invoice.calculate_totals()
+        try:
+            pruefe_smtp_konfiguration(db)
+        except EmailNotConfiguredError as e:
+            raise HTTPException(status_code=503, detail=f"{e} Der Entwurf bleibt Entwurf.")
+        try:
+            InvoiceService(db).festschreiben(invoice, von=_benutzername(user))
+        except BereitsAbgerechnet as e:
+            raise HTTPException(status_code=409, detail=str(e))
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        db.commit()
+        db.refresh(invoice)
+    nicht_versendet = (
+        f"Rechnung {invoice.invoice_number} ist finalisiert, aber nicht versendet. "
+        if vorher_entwurf else ""
+    )
 
     try:
         pdf = PDFService.generate_invoice_pdf(invoice, settings=load_company_settings(db), db=db)
@@ -351,13 +369,11 @@ def send_invoice_email(
             attachment_filename=f"{invoice.invoice_number}.pdf",
         )
     except EmailNotConfiguredError as e:
-        raise HTTPException(status_code=503, detail=str(e))
+        raise HTTPException(status_code=503, detail=f"{nicht_versendet}{e}")
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"E-Mail-Versand fehlgeschlagen: {e}")
+        raise HTTPException(status_code=502, detail=f"{nicht_versendet}E-Mail-Versand fehlgeschlagen: {e}")
 
     invoice.sent_at = _dt.now(_tz.utc)
-    if invoice.status == InvoiceStatus.ENTWURF:
-        invoice.status = InvoiceStatus.OFFEN
     db.commit()
     db.refresh(invoice)
     return {"invoice_number": invoice.invoice_number, "sent_to": to_email, "sent_at": invoice.sent_at}

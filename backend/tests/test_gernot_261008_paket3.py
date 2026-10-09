@@ -484,3 +484,155 @@ class TestQ1Nebenlaeufig:
             assert [(n, "bereits storniert" in e) for n, e in fehler] == [("B", True)]
         finally:
             registry.dispose_tenant("q1test")
+
+
+class TestQ1AndereWege:
+    """Jeder andere Weg aus dem Entwurf führt über festschreiben — oder ist zu."""
+
+    def test_mailen_eines_entwurfs_schreibt_fest_mit_echter_nummer(self, client, monkeypatch):
+        entwurf = _q1_entwurf(client, _q1_kunde(client))
+        gesendet = _q1_mailversand(monkeypatch)
+
+        r = client.post(f"/api/v1/invoices/{entwurf['id']}/send",
+                        params={"to_email": "einkauf@oekoring.example"})
+
+        assert r.status_code == 200, r.text
+        assert r.json()["invoice_number"] == _q1_nr(1)
+        assert _q1_nr(1) in gesendet["subject"]
+        assert gesendet["attachment_filename"] == f"{_q1_nr(1)}.pdf"
+        detail = client.get(f"/api/v1/invoices/{entwurf['id']}").json()
+        assert detail["status"] == "OFFEN"
+        assert detail["sent_at"] is not None
+
+    def test_versandfehler_laesst_rechnung_finalisiert_und_unversendet(self, client, monkeypatch):
+        entwurf = _q1_entwurf(client, _q1_kunde(client))
+        _q1_mailversand(monkeypatch, fehler=ConnectionError("SMTP nicht erreichbar"))
+
+        r = client.post(f"/api/v1/invoices/{entwurf['id']}/send",
+                        params={"to_email": "einkauf@oekoring.example"})
+
+        assert r.status_code == 502, r.text
+        assert r.json()["detail"].startswith(f"Rechnung {_q1_nr(1)} ist finalisiert, aber nicht versendet.")
+        detail = client.get(f"/api/v1/invoices/{entwurf['id']}").json()
+        assert (detail["status"], detail["invoice_number"]) == ("OFFEN", _q1_nr(1))
+        assert detail["sent_at"] is None
+        # die Nummer ist vergeben, die nächste schließt lückenlos an
+        naechste = _q1_finalisieren(client, _q1_entwurf(client, _q1_kunde(client, "Bodan")))
+        assert naechste["invoice_number"] == _q1_nr(2)
+
+    def test_mailen_ohne_smtp_bleibt_entwurf(self, client, monkeypatch):
+        """Ohne SMTP-Einstellungen scheitert der Versand sicher — dann wird
+        nicht festgeschrieben, keine Nummer verbraucht."""
+        for schluessel in ("SMTP_HOST", "SMTP_USER"):
+            monkeypatch.delenv(schluessel, raising=False)
+        entwurf = _q1_entwurf(client, _q1_kunde(client))
+
+        r = client.post(f"/api/v1/invoices/{entwurf['id']}/send",
+                        params={"to_email": "einkauf@oekoring.example"})
+
+        assert r.status_code == 503, r.text
+        assert "Der Entwurf bleibt Entwurf" in r.json()["detail"]
+        detail = client.get(f"/api/v1/invoices/{entwurf['id']}").json()
+        assert detail["status"] == "ENTWURF"
+        assert _Q1_PLATZHALTER.match(detail["invoice_number"])
+        assert _q1_finalisieren(client, entwurf)["invoice_number"] == _q1_nr(1)
+
+    def test_patch_mit_status_wird_abgelehnt(self, client):
+        entwurf = _q1_entwurf(client, _q1_kunde(client))
+
+        r = client.patch(f"/api/v1/invoices/{entwurf['id']}", json={"status": "OFFEN"})
+
+        assert r.status_code == 422, r.text
+        assert client.get(f"/api/v1/invoices/{entwurf['id']}").json()["status"] == "ENTWURF"
+
+    def test_zahlung_auf_entwurf_wird_abgelehnt(self, client):
+        entwurf = _q1_entwurf(client, _q1_kunde(client))
+
+        r = client.post(f"/api/v1/invoices/{entwurf['id']}/payments", json={
+            "amount": "26.75", "payment_date": date.today().isoformat(),
+        })
+
+        assert r.status_code == 400, r.text
+        assert client.get(f"/api/v1/invoices/{entwurf['id']}").json()["status"] == "ENTWURF"
+
+    def test_mahnung_auf_entwurf_wird_abgelehnt(self, client):
+        entwurf = _q1_entwurf(client, _q1_kunde(client))
+
+        r = client.post(f"/api/v1/invoices/{entwurf['id']}/payment-reminder")
+
+        assert r.status_code == 400, r.text
+        from app.models.invoice import Invoice
+        with TestingSessionLocal() as db:
+            assert not db.get(Invoice, uuid.UUID(entwurf["id"])).reminder_level
+
+    def test_lexoffice_nimmt_keinen_beleg_ohne_nummer(self, client, monkeypatch):
+        def kein_netz(*args, **kwargs):
+            raise AssertionError("lexoffice darf für einen Beleg ohne Nummer nicht angefragt werden")
+        monkeypatch.setattr("app.api.v1.integrations.LexofficeConnector", kein_netz)
+        r = client.put("/api/v1/integrations/lexoffice", json={"api_key": "test-key"})
+        assert r.status_code == 200, r.text
+        kunde = _q1_kunde(client)
+        entwurf = _q1_entwurf(client, kunde)
+        verworfen = _q1_entwurf(client, kunde)
+        r = client.post(f"/api/v1/invoices/{verworfen['id']}/cancel",
+                        json={"reason": "verworfen", "create_credit_note": False})
+        assert r.status_code == 200, r.text  # STORNIERT, trägt weiter den Platzhalter
+
+        for beleg in (entwurf, verworfen):
+            for pfad in ("", "/pull-status"):
+                r = client.post(f"/api/v1/integrations/lexoffice/invoices/{beleg['id']}{pfad}")
+                assert r.status_code == 409, (pfad, r.text)
+        assert client.get(f"/api/v1/invoices/{entwurf['id']}").json()["status"] == "ENTWURF"
+
+    def test_ausgestellte_rechnung_nie_ohne_stornorechnung(self, client):
+        """§ 14c UStG: eine ausgestellte Rechnung verschwindet nur mit
+        Gegenbeleg. Ohne Stornorechnung verworfen wird nur ein Entwurf."""
+        rechnung = _q1_finalisieren(client, _q1_entwurf(client, _q1_kunde(client)))
+
+        r = client.post(f"/api/v1/invoices/{rechnung['id']}/cancel",
+                        json={"reason": "verwerfen", "create_credit_note": False})
+
+        assert r.status_code == 400, r.text
+        assert "nur mit Stornorechnung" in r.json()["detail"]
+        assert client.get(f"/api/v1/invoices/{rechnung['id']}").json()["status"] == "OFFEN"
+
+
+class TestQ1NebenlaeufigOhneStornorechnung:
+    """Mandanten-DB wie in Produktion, siehe TestQ1Nebenlaeufig."""
+
+    def test_storno_ohne_stornorechnung_gegen_finalisieren(self, monkeypatch, tmp_path):
+        """'Ohne Stornorechnung verwerfen' gegen ein gleichzeitiges
+        Finalisieren: die Rechnung bleibt ausgestellt (OFFEN) — nie
+        STORNIERT ohne Gegenbeleg."""
+        from app.models.invoice import Invoice
+        from app.services.invoice_service import InvoiceService
+        registry, Session = _q1_mandanten_db(monkeypatch, tmp_path)
+        try:
+            [inv_id] = _q1_orm_entwuerfe(Session)
+            gesperrt = threading.Event()
+            _q1_langsame_nummer(monkeypatch, gesperrt)
+            geladen = threading.Barrier(2)
+
+            def finalisieren():
+                with Session() as db:
+                    inv = db.get(Invoice, inv_id)
+                    geladen.wait()
+                    InvoiceService(db).festschreiben(inv)
+                    db.commit()
+
+            def verwerfen():
+                with Session() as db:
+                    db.get(Invoice, inv_id)          # sieht den Entwurf
+                    geladen.wait()
+                    assert gesperrt.wait(5)
+                    InvoiceService(db).cancel_invoice(inv_id, "verwerfen", create_credit_note=False)
+                    db.commit()
+
+            fehler = _q1_gleichzeitig(("finalisieren", finalisieren), ("verwerfen", verwerfen))
+
+            with Session() as db:
+                inv = db.get(Invoice, inv_id)
+                assert (inv.invoice_number, inv.status.value) == (_q1_nr(1), "OFFEN")
+            assert [(n, "nur mit Stornorechnung" in e) for n, e in fehler] == [("verwerfen", True)]
+        finally:
+            registry.dispose_tenant("q1test")

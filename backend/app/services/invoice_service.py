@@ -612,6 +612,13 @@ class InvoiceService:
         if invoice.status == InvoiceStatus.STORNIERT:
             raise ValueError("Stornierte Rechnungen können nicht bezahlt werden")
 
+        # Ein Entwurf ist nicht ausgestellt. Über BEZAHLT/TEILBEZAHLT
+        # verließe er sonst den Entwurf ohne Rechnungsnummer.
+        if invoice.status == InvoiceStatus.ENTWURF:
+            raise ValueError(
+                "Ein Entwurf kann nicht bezahlt werden — die Rechnung zuerst finalisieren"
+            )
+
         payment = Payment(
             invoice_id=invoice_id,
             payment_date=payment_date or date.today(),
@@ -684,6 +691,15 @@ class InvoiceService:
             raise ValueError(
                 "Die Rechnung wurde bereits an DATEV exportiert und kann nur mit "
                 "Stornorechnung storniert werden"
+            )
+
+        # Eine ausgestellte Rechnung verschwindet nie ohne Gegenbeleg — sie
+        # kann längst beim Kunden sein (§ 14c UStG). Ohne Stornorechnung
+        # verworfen wird nur ein Entwurf; einer ohne Nummer besser per
+        # DELETE /invoices/{id} (Paket 3, Q1).
+        if not create_credit_note and invoice.status != InvoiceStatus.ENTWURF:
+            raise ValueError(
+                "Eine ausgestellte Rechnung wird nur mit Stornorechnung storniert"
             )
 
         # Original stornieren

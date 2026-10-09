@@ -37,6 +37,21 @@ def _truthy(s: Optional[str]) -> bool:
     return (s or "").strip().lower() in ("true", "1", "yes", "ja")
 
 
+def pruefe_smtp_konfiguration(db: Session) -> None:
+    """Wirft EmailNotConfiguredError, wenn SMTP nicht konfiguriert ist.
+
+    Dieselbe Prüfung wie in send_email, als eigene Funktion: "Mailen" eines
+    Rechnungsentwurfs prüft VOR dem Festschreiben (Paket 3, Q1). Sonst
+    hinterließe ein Mandant ohne SMTP eine ausgestellte, unversendete
+    Rechnung — bei jedem Klick, nicht nur bei einer Störung.
+    """
+    host = get_setting(db, "SMTP_HOST")
+    if not host or host == "localhost" or not get_setting(db, "SMTP_USER"):
+        raise EmailNotConfiguredError(
+            "SMTP-Versand nicht konfiguriert — bitte im Admin-Center unter Einstellungen die SMTP-Daten hinterlegen."
+        )
+
+
 def send_email(
     db: Session,
     to: str,
@@ -62,10 +77,7 @@ def send_email(
     from_email = get_setting(db, "EMAILS_FROM_EMAIL") or user
     from_name = get_setting(db, "EMAILS_FROM_NAME") or ""
 
-    if not host or host == "localhost" or not user:
-        raise EmailNotConfiguredError(
-            "SMTP-Versand nicht konfiguriert — bitte im Admin-Center unter Einstellungen die SMTP-Daten hinterlegen."
-        )
+    pruefe_smtp_konfiguration(db)
 
     try:
         port = int(port_raw)

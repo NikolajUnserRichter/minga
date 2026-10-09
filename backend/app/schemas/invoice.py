@@ -163,12 +163,18 @@ class InvoiceCreate(InvoiceBase):
 
 
 class InvoiceUpdate(BaseModel):
-    """Schema zum Aktualisieren einer Rechnung"""
+    """Schema zum Aktualisieren einer Rechnung (nur Entwürfe).
+
+    Kein Feld status: aus dem Entwurf führt nur /finalize bzw. /send über
+    InvoiceService.festschreiben (Nummer, Datum, Summen). extra="forbid"
+    lehnt einen mitgeschickten status mit 422 ab, statt ihn still zu
+    übergehen (Spec 08.10.2026, Entscheidung 2)."""
+    model_config = ConfigDict(extra="forbid")
+
     customer_id: Optional[UUID] = None
     invoice_date: Optional[date] = None
     delivery_date: Optional[date] = None
     due_date: Optional[date] = None
-    status: Optional[Literal[InvoiceStatus.ENTWURF, InvoiceStatus.OFFEN]] = None
     discount_percent: Optional[Decimal] = None
     header_text: Optional[str] = None
     footer_text: Optional[str] = None
