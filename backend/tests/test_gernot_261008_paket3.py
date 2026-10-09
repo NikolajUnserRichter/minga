@@ -4713,3 +4713,122 @@ class TestQ6KeinPfandAufLieferrechnung:
         d = _q6_detail(client, client.post(f"/api/v1/invoices/from-order/{bestellung['id']}").json())
 
         assert [l["description"] for l in d["lines"]] == ["Erbsen-Schale"]
+
+
+# ------------------------------------------------ Task Q6.6: Rücknahmen und Korrekturen
+
+@pytest.mark.usefixtures("_q6_ohne_forecast")
+class TestQ6Ruecknahmen:
+    def test_ruecknahme_erfassen(self, client):
+        kunde, kiste = _q6_monatskunde(client), _q6_kiste(client)
+
+        [b] = _q6_ruecknahme(client, kunde, kiste, 4)
+
+        assert (b["art"], b["menge"], _q6_d(b["einzelwert"]), b["leistungsdatum"], b["erfasst_von"]) == (
+            "RUECKNAHME", 4, Decimal("3.00"), "2026-09-20", "testuser")
+        assert _q6_konto(client, kunde)["salden"][0]["stueck"] == -4
+
+    def test_halle_erfasst_ruecknahme_aber_keine_korrektur(self, client, _q6_als):
+        kunde, kiste = _q6_monatskunde(client), _q6_kiste(client)
+        _q6_als(["production_staff"])
+
+        r = client.post(f"/api/v1/leergut/kunden/{kunde['id']}/ruecknahmen",
+                        json={"positionen": [{"product_id": kiste["id"], "menge": 3}]})
+        assert r.status_code == 201, r.text
+        assert r.json()[0]["leistungsdatum"] == _q6_heute().isoformat()
+
+        r = client.post(f"/api/v1/leergut/kunden/{kunde['id']}/korrekturen", json={
+            "art": "KORREKTUR_MINUS", "product_id": kiste["id"], "menge": 1, "notiz": "verzählt"})
+        assert r.status_code == 403, r.text
+
+    def test_nur_mit_leergutkonto(self, client):
+        kunde, kiste = _q6_kunde(client), _q6_kiste(client)
+
+        r = client.post(f"/api/v1/leergut/kunden/{kunde['id']}/ruecknahmen",
+                        json={"positionen": [{"product_id": kiste["id"], "menge": 3}]})
+
+        assert r.status_code == 400, r.text
+        assert "Leergutkonto" in r.json()["detail"]
+
+    def test_nur_pfandartikel(self, client):
+        kunde, ware = _q6_monatskunde(client), _q6_ware(client)
+
+        r = client.post(f"/api/v1/leergut/kunden/{kunde['id']}/ruecknahmen",
+                        json={"positionen": [{"product_id": ware["id"], "menge": 3}]})
+
+        assert r.status_code == 400, r.text
+        assert _q6_konto(client, kunde)["bewegungen"] == []
+
+    def test_nicht_in_der_zukunft(self, client):
+        kunde, kiste = _q6_monatskunde(client), _q6_kiste(client)
+
+        r = client.post(f"/api/v1/leergut/kunden/{kunde['id']}/ruecknahmen", json={
+            "leistungsdatum": (_q6_heute() + timedelta(days=2)).isoformat(),
+            "positionen": [{"product_id": kiste["id"], "menge": 3}]})
+
+        assert r.status_code == 400, r.text
+
+    @pytest.mark.parametrize("menge", [0, -2])
+    def test_menge_positiv(self, client, menge):
+        kunde, kiste = _q6_monatskunde(client), _q6_kiste(client)
+
+        r = client.post(f"/api/v1/leergut/kunden/{kunde['id']}/ruecknahmen",
+                        json={"positionen": [{"product_id": kiste["id"], "menge": menge}]})
+
+        assert r.status_code == 422, r.text
+
+    def test_lieferschein_eines_anderen_kunden(self, client):
+        kunde, kiste = _q6_monatskunde(client), _q6_kiste(client)
+        fremd = _q6_lieferschein(client, _q6_bestellung(client, _q6_kunde(client, name="Andere"), kiste=kiste))
+
+        r = client.post(f"/api/v1/leergut/kunden/{kunde['id']}/ruecknahmen", json={
+            "positionen": [{"product_id": kiste["id"], "menge": 3}], "delivery_note_id": fremd["id"]})
+
+        assert r.status_code == 400, r.text
+
+    def test_anfangsbestand_und_korrektur(self, client):
+        kunde, kiste = _q6_monatskunde(client), _q6_kiste(client)
+        url = f"/api/v1/leergut/kunden/{kunde['id']}/korrekturen"
+
+        r1 = client.post(url, json={"art": "ANFANGSBESTAND", "product_id": kiste["id"], "menge": 5,
+                                    "leistungsdatum": "2026-08-31", "notiz": "Zählung 31.08."})
+        r2 = client.post(url, json={"art": "KORREKTUR_MINUS", "product_id": kiste["id"], "menge": 1,
+                                    "notiz": "eine Kiste doppelt gezählt"})
+
+        assert (r1.status_code, r2.status_code) == (201, 201), (r1.text, r2.text)
+        assert r1.json()[0]["bereits_berechnet"] is True
+        [saldo] = _q6_konto(client, kunde)["salden"]
+        assert (saldo["stueck"], saldo["offen_stueck"]) == (4, -1)
+
+    def test_korrektur_braucht_begruendung(self, client):
+        kunde, kiste = _q6_monatskunde(client), _q6_kiste(client)
+
+        r = client.post(f"/api/v1/leergut/kunden/{kunde['id']}/korrekturen",
+                        json={"art": "KORREKTUR_PLUS", "product_id": kiste["id"], "menge": 1})
+
+        assert r.status_code == 422, r.text
+
+    def test_offene_ruecknahme_loeschen(self, client):
+        kunde, kiste = _q6_monatskunde(client), _q6_kiste(client)
+        [b] = _q6_ruecknahme(client, kunde, kiste, 4)
+
+        assert client.delete(f"/api/v1/leergut/bewegungen/{b['id']}").status_code == 204
+
+        assert _q6_konto(client, kunde)["bewegungen"] == []
+
+    def test_ausgabe_nicht_loeschbar(self, client):
+        kunde = _q6_monatskunde(client)
+        _q6_liefern(client, _q6_bestellung(client, kunde, kiste=_q6_kiste(client)))
+        [b] = _q6_konto(client, kunde)["bewegungen"]
+
+        r = client.delete(f"/api/v1/leergut/bewegungen/{b['id']}")
+
+        assert r.status_code == 400, r.text
+
+    def test_halle_loescht_keine_korrektur(self, client, _q6_als):
+        kunde, kiste = _q6_monatskunde(client), _q6_kiste(client)
+        [b] = client.post(f"/api/v1/leergut/kunden/{kunde['id']}/korrekturen", json={
+            "art": "KORREKTUR_PLUS", "product_id": kiste["id"], "menge": 1, "notiz": "nachgezählt"}).json()
+        _q6_als(["production_staff"])
+
+        assert client.delete(f"/api/v1/leergut/bewegungen/{b['id']}").status_code == 403

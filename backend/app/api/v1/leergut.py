@@ -107,3 +107,84 @@ def list_kunden_mit_konto(db: DBSession):
 @router.get("/kunden/{customer_id}", response_model=LeergutKonto)
 def get_konto(customer_id: UUID, db: DBSession):
     return leergut.konto(db, _kunde(db, customer_id))
+
+
+class LeergutMenge(BaseModel):
+    product_id: UUID
+    menge: int = Field(..., gt=0, le=10000)
+
+
+class RuecknahmeCreate(BaseModel):
+    leistungsdatum: Optional[date] = Field(None, description="Rückgabetag, leer = heute")
+    positionen: list[LeergutMenge] = Field(..., min_length=1)
+    delivery_note_id: Optional[UUID] = None
+    notiz: Optional[str] = Field(None, max_length=500)
+
+
+class KorrekturCreate(BaseModel):
+    art: Literal["KORREKTUR_PLUS", "KORREKTUR_MINUS", "ANFANGSBESTAND"]
+    product_id: UUID
+    menge: int = Field(..., gt=0, le=10000)
+    leistungsdatum: Optional[date] = None
+    notiz: str = Field(..., min_length=3, max_length=500, description="Begründung, Pflicht")
+    bereits_berechnet: bool = Field(
+        True, description="Nur ANFANGSBESTAND: Kisten wurden schon berechnet (Altsystem, Rechnung)")
+
+
+def _wer(user: dict) -> Optional[str]:
+    return (user or {}).get("username") or (user or {}).get("email")
+
+
+@router.post("/kunden/{customer_id}/ruecknahmen", response_model=list[LeergutBewegungResponse],
+             status_code=status.HTTP_201_CREATED)
+def create_ruecknahme(customer_id: UUID, data: RuecknahmeCreate, db: DBSession, user: CurrentUser):
+    """Rückgabe als Stückzahl je Kistenart — auch von der Halle."""
+    try:
+        neu = leergut.erfasse(
+            db, _kunde(db, customer_id), LeergutArt.RUECKNAHME,
+            [(p.product_id, p.menge) for p in data.positionen],
+            tag=data.leistungsdatum, erfasst_von=_wer(user), notiz=data.notiz,
+            delivery_note_id=data.delivery_note_id,
+        )
+    except leergut.LeergutFehler as e:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+    db.commit()
+    return neu
+
+
+@router.post("/kunden/{customer_id}/korrekturen", response_model=list[LeergutBewegungResponse],
+             status_code=status.HTTP_201_CREATED,
+             dependencies=[Depends(require_role(_VERWALTUNG))])
+def create_korrektur(customer_id: UUID, data: KorrekturCreate, db: DBSession, user: CurrentUser):
+    """Gegenbuchung (abgerechnete Bewegungen sind unveränderlich) oder
+    Anfangsbestand vor dem Stichtag."""
+    try:
+        neu = leergut.erfasse(
+            db, _kunde(db, customer_id), LeergutArt(data.art), [(data.product_id, data.menge)],
+            tag=data.leistungsdatum, erfasst_von=_wer(user), notiz=data.notiz,
+            bereits_berechnet=data.bereits_berechnet,
+        )
+    except leergut.LeergutFehler as e:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+    db.commit()
+    return neu
+
+
+@router.delete("/bewegungen/{bewegung_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_bewegung(bewegung_id: UUID, db: DBSession, user: CurrentUser):
+    """Nur offene Rücknahmen (alle) bzw. offene Korrekturen und Anfangsbestände
+    (Verwaltung). Ausgaben entstehen aus Lieferungen und werden per Gegenbuchung
+    berichtigt; abgerechnete Bewegungen sind unveränderlich."""
+    bewegung = db.get(LeergutBewegung, bewegung_id)
+    if bewegung is None:
+        raise HTTPException(status_code=404, detail="Bewegung nicht gefunden")
+    if bewegung.invoice_id is not None:
+        raise HTTPException(status_code=400, detail="Abgerechnete Bewegungen lassen sich nur per Korrektur berichtigen")
+    if bewegung.art == LeergutArt.AUSGABE:
+        raise HTTPException(status_code=400, detail="Ausgaben entstehen aus Lieferungen — Korrektur über eine Gegenbuchung")
+    if bewegung.art != LeergutArt.RUECKNAHME and not set((user or {}).get("roles", [])) & set(_VERWALTUNG):
+        raise HTTPException(status_code=403, detail="Keine Berechtigung für diese Aktion")
+    db.delete(bewegung)
+    db.commit()

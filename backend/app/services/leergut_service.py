@@ -204,3 +204,53 @@ def buche_ausgaben(db: Session, order: Order, *, erfasst_von: str) -> list[Leerg
     if neu:
         db.flush()
     return neu
+
+
+def hat_leergutkonto(db: Session, kunde: Customer) -> bool:
+    return kunde.pfand_abrechnung == PfandAbrechnung.MONATLICH or db.execute(
+        select(LeergutBewegung.id).where(LeergutBewegung.customer_id == kunde.id).limit(1)
+    ).first() is not None
+
+
+def erfasse(
+    db: Session,
+    kunde: Customer,
+    art: LeergutArt,
+    positionen: list[tuple[UUID, int]],
+    *,
+    tag: Optional[date],
+    erfasst_von: Optional[str],
+    notiz: Optional[str] = None,
+    delivery_note_id: Optional[UUID] = None,
+    bereits_berechnet: bool = False,
+) -> list[LeergutBewegung]:
+    """Rücknahme, Korrektur oder Anfangsbestand von Hand. Committet nicht."""
+    if art == LeergutArt.AUSGABE:
+        raise LeergutFehler("Ausgaben entstehen aus Lieferungen")
+    if not hat_leergutkonto(db, kunde):
+        raise LeergutFehler(
+            f"{kunde.name} rechnet Pfand nicht über das Leergutkonto ab — "
+            "erst die Pfandabrechnung des Kunden auf „monatlich“ stellen"
+        )
+    tag = tag or heute_berlin()
+    if tag > heute_berlin():
+        raise LeergutFehler(f"Datum {tag:%d.%m.%Y} liegt in der Zukunft")
+    if delivery_note_id is not None:
+        note = db.get(DeliveryNote, delivery_note_id)
+        if note is None or note.order is None or note.order.customer_id != kunde.id:
+            raise LeergutFehler("Lieferschein gehört nicht zu diesem Kunden")
+    neu = []
+    for product_id, menge in positionen:
+        produkt = db.get(Product, product_id)
+        if not ist_pfandartikel(produkt):
+            raise LeergutFehler("Kein Pfandartikel")
+        bewegung = LeergutBewegung(
+            customer_id=kunde.id, product_id=produkt.id, art=art, menge=menge,
+            einzelwert=pfandwert(produkt), leistungsdatum=tag,
+            delivery_note_id=delivery_note_id, erfasst_von=erfasst_von, notiz=notiz,
+            bereits_berechnet=bereits_berechnet and art == LeergutArt.ANFANGSBESTAND,
+        )
+        db.add(bewegung)
+        neu.append(bewegung)
+    db.flush()
+    return neu
