@@ -9,6 +9,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field, ConfigDict, EmailStr, field_validator
 
 from app.models.customer import CustomerType, SubscriptionInterval, PaymentTerms, AddressType, PfandAbrechnung
+from app.models.customer import InvoiceMode
 from app.models.sepa_mandate import Zahlungsart
 
 
@@ -140,6 +141,12 @@ class CustomerCreate(CustomerBase):
         ),
     )
 
+    # Abrechnungsart (B5): EINZELN oder MONATLICH (Monats-Sammelrechnung)
+    invoice_mode: InvoiceMode = Field(
+        default=InvoiceMode.EINZELN,
+        description="EINZELN: Rechnung je Lieferung; MONATLICH: Monats-Sammelrechnung als Entwurf am 1. des Folgemonats",
+    )
+
     # DATEV
     datev_account: Optional[str] = Field(None, max_length=10, description="DATEV-Kontonummer")
 
@@ -208,6 +215,18 @@ class CustomerUpdate(BaseModel):
             raise ValueError("pfand_abrechnung darf nicht leer sein")
         return v
 
+    # Abrechnungsart (weglassen = unverändert; null wird abgewiesen)
+    invoice_mode: Optional[InvoiceMode] = None
+
+    @field_validator("invoice_mode")
+    @classmethod
+    def _invoice_mode_nicht_leer(cls, v):
+        # NOT-NULL-Spalte: ein ausdrückliches null ergäbe beim Commit einen
+        # Datenbankfehler (500). Ein weggelassenes Feld erreicht den Validator nicht.
+        if v is None:
+            raise ValueError("invoice_mode darf nicht leer sein")
+        return v
+
     # DATEV
     datev_account: Optional[str] = None
 
@@ -248,6 +267,8 @@ class CustomerResponse(CustomerBase):
     pfand_abrechnung: PfandAbrechnung = PfandAbrechnung.JE_LIEFERUNG
     # Stichtag des Leergutkontos (nur bei MONATLICH, vom Server gesetzt)
     pfand_monatlich_ab: Optional[date] = None
+    invoice_mode: InvoiceMode = InvoiceMode.EINZELN
+
     datev_account: Optional[str]
     # Nur lesend (B10): geändert über PUT /sepa/kunden/{id}/zahlungsart.
     # NULL = Überweisung. Bankdaten stehen nie im Kunden-Schema.

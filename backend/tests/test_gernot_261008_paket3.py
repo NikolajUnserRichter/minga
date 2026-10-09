@@ -5488,3 +5488,84 @@ class TestQ7Voraussetzungen:
         parameter = inspect.signature(leergut_service.belege_anlegen).parameters
         assert list(parameter) == ["db", "monat", "customer_ids", "erfasst_von"]
         assert parameter["erfasst_von"].kind is inspect.Parameter.KEYWORD_ONLY
+
+
+# ---------------------------------------------------------------------------
+# Q7.2 — Kundenfeld invoice_mode mit Feldschutz
+# ---------------------------------------------------------------------------
+
+class TestQ7Kundenfeld:
+
+    def test_standard_einzeln_und_pflegbar(self, client):
+        kunde = _q7_kunde(client)
+        assert kunde["invoice_mode"] == "EINZELN"
+
+        r = client.patch(f"/api/v1/sales/customers/{kunde['id']}", json={"invoice_mode": "MONATLICH"})
+
+        assert r.status_code == 200, r.text
+        assert client.get(f"/api/v1/sales/customers/{kunde['id']}").json()["invoice_mode"] == "MONATLICH"
+
+    def test_anlage_mit_monatlich(self, client):
+        assert _q7_monatskunde(client)["invoice_mode"] == "MONATLICH"
+
+    @pytest.mark.parametrize("wert", ["EINZEL", "monatlich", None])
+    def test_unbekannter_wert_und_null_werden_abgewiesen(self, client, wert):
+        kunde = _q7_kunde(client)
+
+        r = client.patch(f"/api/v1/sales/customers/{kunde['id']}", json={"invoice_mode": wert})
+
+        assert r.status_code == 422, r.text
+        assert client.get(f"/api/v1/sales/customers/{kunde['id']}").json()["invoice_mode"] == "EINZELN"
+
+    def test_auto_migrate_ergaenzt_spalte(self, tmp_path):
+        from sqlalchemy import create_engine, inspect, text
+        from app.tenancy import _auto_migrate
+
+        engine = create_engine(f"sqlite:///{tmp_path / 'alt.db'}")
+        with engine.begin() as conn:
+            conn.execute(text("CREATE TABLE customers (id CHAR(32) PRIMARY KEY, name VARCHAR(200))"))
+            conn.execute(text("INSERT INTO customers (id, name) VALUES ('a', 'Ökoring')"))
+
+        _auto_migrate(engine)
+
+        assert "invoice_mode" in {c["name"] for c in inspect(engine).get_columns("customers")}
+        with engine.connect() as conn:
+            assert conn.execute(text("SELECT invoice_mode FROM customers")).scalar() == "EINZELN"
+        engine.dispose()
+
+
+class TestQ7Feldschutz:
+    """Abrechnungsart ist abrechnungsrelevant (Spec Entscheidung 6): die Halle
+    legt Kunden an und pflegt Stammdaten, ändert invoice_mode aber nicht."""
+
+    def test_halle_aendert_die_abrechnungsart_nicht(self, client, _q7_rolle):
+        kunde = _q7_kunde(client)
+        _q7_rolle(["production_staff"])
+
+        geaendert = client.patch(f"/api/v1/sales/customers/{kunde['id']}", json={"invoice_mode": "MONATLICH"})
+        formular = client.patch(f"/api/v1/sales/customers/{kunde['id']}",
+                                json={"invoice_mode": "EINZELN", "telefon": "089 123"})
+
+        assert geaendert.status_code == 403, geaendert.text
+        assert formular.status_code == 200, formular.text
+        assert client.get(f"/api/v1/sales/customers/{kunde['id']}").json()["invoice_mode"] == "EINZELN"
+
+    def test_halle_legt_keinen_monatskunden_an(self, client, _q7_rolle):
+        _q7_rolle(["production_staff"])
+
+        monatlich = client.post("/api/v1/sales/customers",
+                                json={"name": "Neu GmbH", "typ": "GASTRO", "invoice_mode": "MONATLICH"})
+        standard = client.post("/api/v1/sales/customers", json={"name": "Neu2 GmbH", "typ": "GASTRO"})
+
+        assert monatlich.status_code == 403, monatlich.text
+        assert standard.status_code == 201, standard.text
+        assert standard.json()["invoice_mode"] == "EINZELN"
+
+    @pytest.mark.parametrize("rolle", ["sales", "accounting"])
+    def test_kaufmaennische_rollen_duerfen(self, client, _q7_rolle, rolle):
+        kunde = _q7_kunde(client)
+        _q7_rolle([rolle])
+
+        r = client.patch(f"/api/v1/sales/customers/{kunde['id']}", json={"invoice_mode": "MONATLICH"})
+
+        assert r.status_code == 200, r.text

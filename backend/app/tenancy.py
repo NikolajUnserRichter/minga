@@ -307,6 +307,8 @@ def _auto_migrate(engine: Engine) -> None:
         _add_col_if_missing("customers", "show_prices_on_delivery_note", "BOOLEAN", "0")
         # Pfandabrechnung je Kunde (Spec 08.10.2026): Bestandskunden JE_LIEFERUNG
         _add_col_if_missing("customers", "pfand_abrechnung", "VARCHAR(20)", "'JE_LIEFERUNG'")
+        # Abrechnungsart je Kunde (B5): Bestandskunden EINZELN
+        _add_col_if_missing("customers", "invoice_mode", "VARCHAR(20)", "'EINZELN'")
         # Leergutkonto (Paket 3, Q6): Stichtag je Kunde
         _add_col_if_missing("customers", "pfand_monatlich_ab", "DATE")
         # SEPA-Lastschrift (B10): NULL = Überweisung (Altkunden, Altrechnungen).

@@ -58,6 +58,8 @@ KUNDENFELDER_KAUFMAENNISCH = {
     "packaging_fee_percent": "Verpackungsrabatt %",
     "datev_account": "DATEV-Konto",
     "pfand_abrechnung": "Pfandabrechnung",
+    # Monats-Sammelrechnung ja/nein (Paket 3, Q7)
+    "invoice_mode": "Abrechnung",
 }
 
 # Empfänger des Kunden; ändern nur ROLLEN_OHNE_HALLE, bei der Neuanlage frei

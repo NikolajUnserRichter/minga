@@ -83,6 +83,17 @@ def _heute_berlin() -> date:
     return datetime.now(ZoneInfo("Europe/Berlin")).date()
 
 
+class InvoiceMode(str, Enum):
+    """Abrechnungsart eines Kunden (B5, Spec 08.10.2026).
+
+    EINZELN: Rechnung je Lieferung bzw. Bestellung (bisheriges Verhalten).
+    MONATLICH: eine Sammelrechnung je Kalendermonat; der Monatslauf legt sie
+        am 1. des Folgemonats als Entwurf an (monatsrechnung_service).
+    """
+    EINZELN = "EINZELN"
+    MONATLICH = "MONATLICH"
+
+
 class CustomerAddress(Base):
     """
     Kundenadresse - Separate Rechnungs- und Lieferadressen
@@ -222,6 +233,14 @@ class Customer(Base):
     # CustomerCreate/CustomerUpdate, sonst könnte die Halle sie umschalten.
     zahlungsart: Mapped[Optional[Zahlungsart]] = mapped_column(
         SQLEnum(Zahlungsart, length=20), nullable=True
+    )
+
+    # Abrechnungsart (B5): EINZELN oder MONATLICH (Monats-Sammelrechnung als
+    # Entwurf am 1. des Folgemonats). Abrechnungsrelevant — Feldschutz wie
+    # pfand_abrechnung (app/core/rollen.py).
+    invoice_mode: Mapped[InvoiceMode] = mapped_column(
+        SQLEnum(InvoiceMode, length=20), nullable=False,
+        default=InvoiceMode.EINZELN, server_default=InvoiceMode.EINZELN.value,
     )
 
     # DATEV-Kontonummer (Debitor)
