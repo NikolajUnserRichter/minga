@@ -40,7 +40,11 @@ class InvoiceLineCreate(InvoiceLineBase):
     product_id: Optional[UUID] = Field(None, description="Produkt-ID")
     order_item_id: Optional[UUID] = Field(None, description="Bestellposition-ID")
     harvest_batch_ids: Optional[list[UUID]] = Field(None, description="Chargen-IDs für Rückverfolgung")
-    buchungskonto: Optional[str] = Field(None, max_length=10, description="Erlöskonto (SKR03)")
+    buchungskonto: Optional[str] = Field(
+        None, max_length=10,
+        description="Erlöskonto: leer = Standardkonto zu Steuersatz und Kontenrahmen; "
+                    "sonst Sonderkonto, das zum Kontenrahmen passen muss",
+    )
 
 
 class InvoiceLineUpdate(BaseModel):

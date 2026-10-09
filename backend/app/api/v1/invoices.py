@@ -24,7 +24,8 @@ from app.schemas.invoice import (
     DatevExportRequest, DatevExportResponse,
 )
 from app.services.invoice_service import InvoiceService, BereitsAbgerechnet, BestellungStorniert, waehle_vertreter, ist_clearing_pfand, netto_je_lieferschein
-from app.services.datev_service import DatevService, erloeskonto_fuer, ist_standard_erloeskonto
+from app.services.datev_service import DatevService
+from app.services.kontenrahmen import erloeskonto_fuer, ist_standard_erloeskonto, kontenrahmen
 from app.services.leergut_service import LEERGUTBELEG_FEST, ist_leergutbeleg, mailtext as leergut_mailtext
 from app.services.email_service import EmailNotConfiguredError
 from app.services.belegversand import empfaenger_fuer_versand, firmenzusatz, gruss, versende_beleg
@@ -627,11 +628,12 @@ def update_invoice_line(
     for field, value in update_data.items():
         setattr(line, field, value)
 
-    # Das Erlöskonto hängt am Steuersatz (8300/8400/8100). Ohne Nachziehen
-    # buchte der DATEV-Export eine auf 19 % korrigierte Zeile weiter auf 8300.
-    # Ein Sonderkonto bleibt — dieselbe Regel wie der DATEV-Export (S4).
+    # Das Erlöskonto hängt am Steuersatz und am Kontenrahmen des Mandanten
+    # (SKR03 8300/8400/8100, SKR04 4300/4400/4100). Ohne Nachziehen buchte der
+    # DATEV-Export eine auf 19 % korrigierte Zeile weiter auf 7 %.
+    # Ein Sonderkonto bleibt — dieselbe Regel wie der DATEV-Export (S4, D).
     if line.tax_rate != satz_vorher and ist_standard_erloeskonto(line.buchungskonto):
-        line.buchungskonto = erloeskonto_fuer(line.tax_rate)
+        line.buchungskonto = erloeskonto_fuer(line.tax_rate, kontenrahmen(db))
 
     # Zeile und Rechnung neu berechnen
     line.calculate_line_total()

@@ -25,7 +25,9 @@ from app.models.documents import DeliveryNote
 from app.models.enums import DeliveryNoteStatus
 from app.services.steuersatz import produkt_der_position, steuersatz_der_position
 from app.services.leergut_service import gib_bewegungen_frei, hat_bewegung, im_leergutkonto
-from app.services.datev_service import erloeskonto_fuer
+from app.services.kontenrahmen import (
+    erloeskonto_fuer, ist_standard_erloeskonto, kontenrahmen, sonderkonto_pruefen,
+)
 
 
 def _euro(betrag: Decimal) -> str:
@@ -342,10 +344,14 @@ class InvoiceService:
             .where(InvoiceLine.invoice_id == invoice_id)
         ).scalar() or 0
 
-        # Buchungskonto basierend auf Steuersatz — dieselbe Regel wie der
-        # DATEV-Export (datev_service.erloeskonto_fuer)
-        if not buchungskonto:
-            buchungskonto = erloeskonto_fuer(tax_rate)
+        # Erlöskonto: ein Standardkonto (oder keins) folgt Steuersatz und
+        # Kontenrahmen des Mandanten — dieselbe Regel wie der DATEV-Export.
+        # Ein Sonderkonto bleibt, muss aber zum Rahmen passen (Nachtrag 09.10., D).
+        rahmen = kontenrahmen(self.db)
+        if ist_standard_erloeskonto(buchungskonto):
+            buchungskonto = erloeskonto_fuer(tax_rate, rahmen)
+        else:
+            sonderkonto_pruefen(buchungskonto, rahmen)
 
         line = InvoiceLine(
             invoice_id=invoice_id,

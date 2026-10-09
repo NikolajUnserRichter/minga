@@ -236,3 +236,95 @@ class TestDEinstellung:
         assert r.status_code == 200, r.text
         with TestingSessionLocal() as db:
             assert export_sperre(db) is None
+
+
+class TestDKontierungBeimAnlegen:
+    """Neue Positionen und der Satzwechsel im Entwurf nehmen das Konto des
+    Rahmens. Gespeichert ist es nur ein Vorschlag — maßgeblich bildet der
+    Export ab (TestDExport)."""
+
+    def test_skr03_wie_bisher(self, client):
+        rechnung = _d_rechnung(client, _d_kunde(client), _D_GEMISCHT, finalisieren=False)
+        assert [p["buchungskonto"] for p in _d_positionen(client, rechnung)] == ["8300", "8400"]
+
+    def test_skr04_neue_positionen(self, client):
+        _d_setze_rahmen(client, "SKR04")
+        rechnung = _d_rechnung(client, _d_kunde(client), _D_GEMISCHT + [
+            ("Kresse Export", 1, "5.00", "STEUERFREI"),
+        ], finalisieren=False)
+        assert [p["buchungskonto"] for p in _d_positionen(client, rechnung)] == ["4300", "4400", "4100"]
+
+    def test_satzwechsel_im_entwurf_skr04(self, client):
+        _d_setze_rahmen(client, "SKR04")
+        rechnung = _d_rechnung(client, _d_kunde(client), [("Pfandkiste", 1, "10.00", "REDUZIERT")],
+                               finalisieren=False)
+        zeile = _d_positionen(client, rechnung)[0]
+        assert zeile["buchungskonto"] == "4300"
+        url = f"/api/v1/invoices/{rechnung['id']}/lines/{zeile['id']}"
+
+        r = client.patch(url, json={"tax_rate": "STANDARD"})
+
+        assert r.status_code == 200, r.text
+        assert r.json()["buchungskonto"] == "4400"
+        assert client.patch(url, json={"tax_rate": "STEUERFREI"}).json()["buchungskonto"] == "4100"
+
+    def test_entwurf_aus_der_skr03_zeit_folgt_dem_neuen_rahmen(self, client):
+        rechnung = _d_rechnung(client, _d_kunde(client), [("Pfandkiste", 1, "10.00", "REDUZIERT")],
+                               finalisieren=False)
+        zeile = _d_positionen(client, rechnung)[0]
+        assert zeile["buchungskonto"] == "8300"
+        _d_setze_rahmen(client, "SKR04")
+
+        r = client.patch(f"/api/v1/invoices/{rechnung['id']}/lines/{zeile['id']}",
+                         json={"tax_rate": "STANDARD"})
+
+        assert r.status_code == 200, r.text
+        assert r.json()["buchungskonto"] == "4400"
+
+    def test_entwurf_aus_der_skr04_zeit_folgt_skr03(self, client):
+        """Auch 4300 gilt als Standardkonto (vor dem ersten Export ist der
+        Rahmen noch wählbar)."""
+        _d_setze_rahmen(client, "SKR04")
+        rechnung = _d_rechnung(client, _d_kunde(client), [("Pfandkiste", 1, "10.00", "REDUZIERT")],
+                               finalisieren=False)
+        zeile = _d_positionen(client, rechnung)[0]
+        assert zeile["buchungskonto"] == "4300"
+        _d_setze_rahmen(client, "SKR03")
+
+        r = client.patch(f"/api/v1/invoices/{rechnung['id']}/lines/{zeile['id']}",
+                         json={"tax_rate": "STANDARD"})
+
+        assert r.json()["buchungskonto"] == "8400"
+
+    def test_ausdrueckliches_standardkonto_folgt_dem_satz(self, client):
+        """Ein mitgeschicktes Standardkonto (z. B. 8400 aus einem alten Client)
+        ist kein Sonderkonto: es folgt Satz und Rahmen."""
+        _d_setze_rahmen(client, "SKR04")
+        rechnung = _d_rechnung(client, _d_kunde(client),
+                               [("Erbsen-Schale", 1, "2.50", "REDUZIERT", "8400")], finalisieren=False)
+        assert [p["buchungskonto"] for p in _d_positionen(client, rechnung)] == ["4300"]
+
+    def test_sonderkonto_des_rahmens_bleibt(self, client):
+        _d_setze_rahmen(client, "SKR04")
+        rechnung = _d_rechnung(client, _d_kunde(client),
+                               [("Kresse Sonderaktion", 1, "10.00", "REDUZIERT", "4337")],
+                               finalisieren=False)
+        zeile = _d_positionen(client, rechnung)[0]
+        assert zeile["buchungskonto"] == "4337"
+        r = client.patch(f"/api/v1/invoices/{rechnung['id']}/lines/{zeile['id']}",
+                         json={"tax_rate": "STANDARD"})
+        assert r.json()["buchungskonto"] == "4337"
+
+    def test_sonderkonto_aus_dem_anderen_rahmen_400(self, client):
+        _d_setze_rahmen(client, "SKR04")
+        rechnung = _d_rechnung(client, _d_kunde(client), [], finalisieren=False)
+
+        r = client.post(f"/api/v1/invoices/{rechnung['id']}/lines", json={
+            "description": "Kresse", "quantity": 1, "unit": "STK", "unit_price": "10.00",
+            "tax_rate": "REDUZIERT", "buchungskonto": "8338"})
+
+        assert r.status_code == 400, r.text
+        assert r.json()["detail"] == (
+            "Erlöskonto 8338 passt nicht zum Kontenrahmen SKR04 "
+            "(Kontenklasse 8 ist dort kein Erlöskonto)")
+        assert _d_positionen(client, rechnung) == []
