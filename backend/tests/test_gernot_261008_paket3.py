@@ -6002,3 +6002,108 @@ class TestQ7Monatslauf:
         assert [(a["customer_name"], a["art"]) for a in ergebnis["angelegt"]] == [("Ökoring Handels GmbH", "WARE")]
         assert [(f["customer_name"], f["fehler"]) for f in ergebnis["fehler"]] == [("Bodan", "Pfandwert fehlt")]
         assert _q7_rechnungen(kaputt) == []
+
+
+# ---------------------------------------------------------------------------
+# Q7.7 — Automatik und Scheduler
+# ---------------------------------------------------------------------------
+
+@pytest.mark.usefixtures("_q7_ohne_forecast")
+class TestQ7Automatik:
+
+    def _auto(self, heute):
+        from app.services.monatsrechnung_service import automatischer_lauf
+        with TestingSessionLocal() as db:
+            return automatischer_lauf(db, heute=heute)
+
+    def test_ohne_schalter_passiert_nichts(self, client):
+        _q7_geliefert(client, _q7_monatskunde(client))
+
+        assert self._auto(date(2026, 4, 1)) == {"status": "aus"}
+        assert _q7_laeufe() == [] and _q7_rechnungen() == []
+
+    def test_umgebungsvariable_schaltet_nicht_ein(self, client, monkeypatch):
+        monkeypatch.setenv("MONATSRECHNUNG_AUTO", "true")
+        _q7_geliefert(client, _q7_monatskunde(client))
+
+        assert self._auto(date(2026, 4, 1)) == {"status": "aus"}
+        assert _q7_rechnungen() == []
+
+    def test_am_ersten_einmal_dann_erledigt(self, client):
+        kunde = _q7_monatskunde(client)
+        _q7_geliefert(client, kunde)
+        _q7_schalter(client, "true")
+
+        erster = self._auto(date(2026, 4, 1))
+        assert erster["status"] == "ok" and erster["monat"] == "2026-03"
+        assert len(erster["angelegt"]) == 1
+
+        assert self._auto(date(2026, 4, 1)) == {"status": "erledigt", "monat": "2026-03"}
+        assert self._auto(date(2026, 4, 2)) == {"status": "erledigt", "monat": "2026-03"}
+        assert len(_q7_rechnungen(kunde)) == 1
+        assert _q7_laeufe() == [("2026-03", "MONAT_AUTO", "FERTIG")]
+
+    def test_nachholen_nur_in_der_ersten_woche(self, client):
+        _q7_geliefert(client, _q7_monatskunde(client))
+        _q7_schalter(client, "true")
+
+        assert self._auto(date(2026, 4, 8)) == {"status": "ausserhalb_fenster"}
+        assert self._auto(date(2026, 4, 7))["status"] == "ok"
+
+    def test_manueller_lauf_ersetzt_den_automatischen_nicht(self, client):
+        """Ein Admin-Lauf vor dem 1. Automatiklauf: der Automatiklauf läuft
+        trotzdem, legt aber nichts doppelt an."""
+        kunde = _q7_monatskunde(client)
+        _q7_geliefert(client, kunde)
+        _q7_schalter(client, "true")
+        _q7_lauf()
+
+        auto = self._auto(date(2026, 4, 1))
+
+        assert auto["status"] == "ok" and auto["angelegt"] == []
+        assert len(_q7_rechnungen(kunde)) == 1
+
+    def test_task_schreibt_nie_in_den_golden_seed(self, client, monkeypatch):
+        import app.tasks.monatsrechnung_tasks as tasks
+        from app.tenancy import set_current_tenant
+        geoeffnet = []
+        monkeypatch.setattr(tasks, "SessionLocal", lambda: geoeffnet.append(1))
+        set_current_tenant("demo.seed")
+        try:
+            assert tasks.monatsrechnungen_vorschlagen() == {"status": "kein_mandant"}
+        finally:
+            set_current_tenant(None)
+        assert geoeffnet == []
+
+    def test_task_laeuft_im_mandanten(self, client, monkeypatch):
+        import app.tasks.monatsrechnung_tasks as tasks
+        from app.tenancy import set_current_tenant
+        monkeypatch.setattr(tasks, "SessionLocal", TestingSessionLocal)
+        set_current_tenant("minga")
+        try:
+            assert tasks.monatsrechnungen_vorschlagen() == {"status": "aus"}
+        finally:
+            set_current_tenant(None)
+
+    def test_scheduler_kennt_den_job(self):
+        """apscheduler fehlt in der Test-Umgebung — geprüft wird die Verdrahtung
+        im Quelltext: Job-ID, Funktion, täglich 06:30, Start-Lauf."""
+        import ast
+        from pathlib import Path
+        import app.services as services_paket
+        from app.tasks.monatsrechnung_tasks import JOB_ID
+        quelle = (Path(services_paket.__file__).parent / "scheduler_service.py").read_text()
+        baum = ast.parse(quelle)
+        tupel = [n for n in ast.walk(baum) if isinstance(n, ast.Tuple) and n.elts
+                 and isinstance(n.elts[0], ast.Constant) and n.elts[0].value == JOB_ID]
+        assert len(tupel) == 1
+        funktion, trigger = tupel[0].elts[1], tupel[0].elts[2]
+        assert isinstance(funktion, ast.Name) and funktion.id == "monatsrechnungen_vorschlagen"
+        assert isinstance(trigger, ast.Call) and trigger.func.id == "CronTrigger"
+        assert {k.arg: k.value.value for k in trigger.keywords} == {"hour": 6, "minute": 30}
+        assert "MONATSRECHNUNG_NACHSTART" in quelle and "DateTrigger(" in quelle
+
+    def test_admin_scheduler_run_wirkt_nicht_mandantenuebergreifend(self, client):
+        for job in ("monthly-invoice-proposals", "monthly-invoice-proposals-nachstart"):
+            r = client.post(f"/api/v1/admin/scheduler/run/{job}")
+            assert r.status_code == 409, r.text

@@ -488,3 +488,28 @@ def monatslauf(db: Session, monat: str, art: str, ausgeloest_von: Optional[str] 
     lauf.status, lauf.beendet_am, lauf.ergebnis = "FERTIG", _jetzt_utc_naiv(), ergebnis
     db.commit()
     return {"status": "ok", "monat": monat, "lauf_id": str(lauf_id), **ergebnis}
+
+
+def automatischer_lauf(db: Session, heute: Optional[date] = None, jetzt: Optional[datetime] = None) -> dict:
+    """Einstieg des Schedulers (täglich 06:30 Europe/Berlin).
+
+    Legt in den ersten NACHHOLFENSTER_TAGE Tagen eines Monats die Entwürfe für
+    den Vormonat an — einmal: Nach einem fertigen automatischen Lauf für den
+    Monat passiert nichts mehr. Fällt der 1. in einen Neustart, holt der
+    nächste Morgen den Lauf nach. Der Schalter wird vor jedem Schreibzugriff
+    geprüft.
+    """
+    heute = heute or heute_berlin()
+    if not automatik_an(db):
+        return {"status": "aus"}
+    if heute.day > NACHHOLFENSTER_TAGE:
+        return {"status": "ausserhalb_fenster"}
+    monat = vormonat(heute)
+    erledigt = db.execute(
+        select(BillingRun.id).where(
+            BillingRun.monat == monat, BillingRun.art == ART_AUTO, BillingRun.status == "FERTIG"
+        ).limit(1)
+    ).scalar_one_or_none()
+    if erledigt is not None:
+        return {"status": "erledigt", "monat": monat}
+    return monatslauf(db, monat, ART_AUTO, None, heute=heute, jetzt=jetzt)

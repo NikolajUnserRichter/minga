@@ -17,10 +17,13 @@ from __future__ import annotations
 
 import logging
 import os
+from datetime import datetime, timedelta
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.date import DateTrigger
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +83,9 @@ def start_scheduler() -> Optional[BackgroundScheduler]:
     )
     from app.tasks.subscription_tasks import process_daily_subscriptions
     from app.tasks.report_tasks import generate_weekly_accuracy_report
+    from app.tasks.monatsrechnung_tasks import (
+        JOB_ID_NACHSTART as MONATSRECHNUNG_NACHSTART, monatsrechnungen_vorschlagen,
+    )
 
     sched = BackgroundScheduler(timezone="Europe/Berlin")
 
@@ -102,6 +108,11 @@ def start_scheduler() -> Optional[BackgroundScheduler]:
         ("daily-subscriptions",   process_daily_subscriptions, CronTrigger(hour=5,  minute=0)),
         # === Reports ===
         ("weekly-accuracy",       generate_weekly_accuracy_report, CronTrigger(day_of_week="mon", hour=7, minute=0)),
+        # === Monatsrechnungen (B5) ===
+        # Täglich, nicht nur am 1.: der Lauf entscheidet selbst (Vormonat schon
+        # erledigt? Nachholfenster?). So holt der nächste Morgen einen Lauf
+        # nach, der in einen Neustart fiel — ohne persistenten Jobstore.
+        ("monthly-invoice-proposals", monatsrechnungen_vorschlagen, CronTrigger(hour=6, minute=30)),
     ]
 
     for name, fn, trigger in jobs:
@@ -114,6 +125,18 @@ def start_scheduler() -> Optional[BackgroundScheduler]:
             max_instances=1,     # niemals parallel
             replace_existing=True,
         )
+
+    # Monatsrechnungen zusätzlich einmal 10 min nach jedem Start: Fällt ein
+    # Deploy auf den Vormittag des 1., liegen die Entwürfe noch am selben Tag
+    # vor. Der Lauf ist idempotent; ohne Schalter tut er nichts.
+    sched.add_job(
+        _safe_wrap(MONATSRECHNUNG_NACHSTART, monatsrechnungen_vorschlagen),
+        trigger=DateTrigger(run_date=datetime.now(ZoneInfo("Europe/Berlin")) + timedelta(minutes=10)),
+        id=MONATSRECHNUNG_NACHSTART,
+        name=MONATSRECHNUNG_NACHSTART,
+        max_instances=1,
+        replace_existing=True,
+    )
 
     # Demo-Reset: setzt die offen beschreibbare Demo-DB nächtlich auf den
     # Golden-Seed zurück. NICHT per-Tenant gewrappt — betrifft nur 'demo'.

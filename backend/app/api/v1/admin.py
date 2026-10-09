@@ -128,6 +128,14 @@ def list_scheduled_jobs():
 @router.post("/scheduler/run/{job_id}")
 def run_scheduled_job_now(job_id: str):
     """Triggert einen geplanten Job einmalig sofort (für Admin-UI / Test)."""
+    from app.tasks.monatsrechnung_tasks import NUR_JE_MANDANT
+    if job_id in NUR_JE_MANDANT:
+        # Der Job liefe hier über ALLE Mandanten (Mandantenschleife).
+        raise HTTPException(
+            status_code=409,
+            detail="Monatsrechnungen nur je Mandant starten: Rechnungen → Monatsrechnungen "
+                   "(POST /invoices/monthly-proposals/run)",
+        )
     from app.services.scheduler_service import _scheduler  # type: ignore
     if _scheduler is None:
         raise HTTPException(status_code=503, detail="Scheduler ist nicht aktiv")
