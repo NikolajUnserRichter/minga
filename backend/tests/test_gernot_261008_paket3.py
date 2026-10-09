@@ -5260,3 +5260,231 @@ class TestQ6Leergutbeleg:
         r = client.get("/api/v1/invoices")
 
         assert [i["id"] for i in r.json()] == [zweite["id"], erste["id"]]
+
+
+# ===========================================================================
+# Q7 — Monatliche Sammelrechnungen automatisch als Entwurf (B5)
+#
+# Helfer und Klassen tragen das Präfix _q7_/Q7_/TestQ7: die Datei teilen sich
+# Q1–Q7, ein gleichnamiger Helfer würde still ersetzt. Leistungsmonat der
+# Tests ist März 2026: der Monatslauf lehnt nicht abgeschlossene Monate ab,
+# so laufen die Tests an jedem Tag.
+# ===========================================================================
+import uuid  # noqa: E402
+from datetime import date  # noqa: E402
+from decimal import Decimal  # noqa: E402
+
+import pytest  # noqa: E402
+
+from app.api.deps import get_current_user  # noqa: E402
+from app.main import app  # noqa: E402
+from tests.conftest import TestingSessionLocal  # noqa: E402
+
+Q7_MONAT = "2026-03"
+Q7_URL = "/api/v1/invoices/monthly-proposals"
+
+
+@pytest.fixture
+def _q7_ohne_forecast(monkeypatch):
+    """Jede neue Bestellung stößt ein Forecast-Update an — für Q7 egal."""
+    monkeypatch.setattr("app.api.v1.sales._trigger_forecast_update", lambda *a, **k: None)
+
+
+@pytest.fixture
+def _q7_rolle(client):
+    """Setzt die Rollen des Test-Logins; danach wieder Admin."""
+    def setzen(rollen):
+        async def override():
+            return {"id": "123e4567-e89b-12d3-a456-426614174000", "username": "q7test",
+                    "email": "q7@example.com", "roles": rollen}
+        app.dependency_overrides[get_current_user] = override
+    yield setzen
+    setzen(["admin", "production_planner"])
+
+
+def _q7_d(wert) -> Decimal:
+    return Decimal(str(wert))
+
+
+def _q7_kunde(client, name="Ökoring Handels GmbH", **extra):
+    r = client.post("/api/v1/sales/customers", json={"name": name, "typ": "HANDEL", **extra})
+    assert r.status_code in (200, 201), r.text
+    return r.json()
+
+
+def _q7_monatskunde(client, name="Ökoring Handels GmbH", **extra):
+    return _q7_kunde(client, name, invoice_mode="MONATLICH", **extra)
+
+
+def _q7_bestellung(client, kunde, liefertag="2026-03-05", menge=10, preis="2.50", zeilen=None):
+    """Freitext-Position mit ausdrücklichem Satz (bleibt vom A3-Fix unberührt)."""
+    r = client.post("/api/v1/sales/orders", json={
+        "customer_id": kunde["id"], "requested_delivery_date": liefertag,
+        "lines": zeilen or [{"product_name": "Erbsen-Schale", "quantity": menge, "unit": "STK",
+                             "unit_price": preis, "tax_rate": "REDUZIERT"}],
+    })
+    assert r.status_code == 201, r.text
+    return r.json()
+
+
+def _q7_lieferschein(client, bestellung):
+    r = client.post(f"/api/v1/sales/orders/{bestellung['id']}/delivery-notes", json={})
+    assert r.status_code == 201, r.text
+    return r.json()
+
+
+def _q7_geliefert(client, kunde, liefertag="2026-03-05", **kw):
+    """Bestellung mit Lieferschein — abrechenbar im Monat des Liefertags."""
+    bestellung = _q7_bestellung(client, kunde, liefertag, **kw)
+    return bestellung, _q7_lieferschein(client, bestellung)
+
+
+def _q7_rechnungen(kunde=None):
+    from app.models.invoice import Invoice
+    with TestingSessionLocal() as db:
+        q = db.query(Invoice)
+        if kunde:
+            q = q.filter(Invoice.customer_id == uuid.UUID(kunde["id"]))
+        return [(i.id, i.invoice_number, i.status.value, i.batch_key) for i in q.all()]
+
+
+def _q7_laeufe():
+    from app.models.billing_run import BillingRun
+    with TestingSessionLocal() as db:
+        return [(l.monat, l.art, l.status) for l in db.query(BillingRun).order_by(BillingRun.gestartet_am).all()]
+
+
+def _q7_lauf(monat=Q7_MONAT, art="MONAT_MANUELL", **kw):
+    """Monatslauf direkt am Service, mit eigener Session (wie der Scheduler)."""
+    from app.services import monatsrechnung_service as ms
+    kw.setdefault("ausgeloest_von", "q7")
+    with TestingSessionLocal() as db:
+        return ms.monatslauf(db, monat, art, heute=date(2026, 4, 1), **kw)
+
+
+@pytest.fixture
+def _q7_leergut(monkeypatch):
+    """Attrappe für Q6 (leergut_service.vorschau / belege_anlegen).
+
+    Q7 prüft nur die Verdrahtung: wer offene Leergutbewegungen hat, steht in
+    ``offen``; belege_anlegen legt einen Entwurf mit beleg_art LEERGUT an und
+    nimmt den Kunden aus ``offen`` (Bewegungen reserviert). Die Leergutregeln
+    selbst testet Q6.
+    """
+    zustand = {"offen": [], "aufrufe": [], "fehler": {}}
+    from app.services import leergut_service
+    from app.services.invoice_service import InvoiceService
+    from app.services.monatsrechnung_service import monat_grenzen
+    from app.models.enums import TaxRate
+
+    def vorschau(db, monat, customer_ids):
+        return {"kunden": [{"customer_id": uuid.UUID(k["id"]), "customer_name": k["name"],
+                            "summe_netto": Decimal("6.00")} for k in zustand["offen"]],
+                "uebersprungen": []}
+
+    def belege_anlegen(db, monat, customer_ids, *, erfasst_von):
+        zustand["aufrufe"].append((monat, list(customer_ids), erfasst_von))
+        if customer_ids[0] in zustand["fehler"]:
+            raise zustand["fehler"][customer_ids[0]]
+        von, bis = monat_grenzen(monat)
+        service = InvoiceService(db)
+        beleg = service.create_invoice(customer_id=customer_ids[0], header_text="Leergutabrechnung")
+        beleg.beleg_art = leergut_service.BELEG_ART_LEERGUT
+        beleg.service_period_start, beleg.service_period_end = von, bis
+        service.add_line(invoice_id=beleg.id, description="Leergut ausgegeben: E2-Kiste",
+                         quantity=Decimal("2"), unit="STK", unit_price=Decimal("3.00"),
+                         tax_rate=TaxRate.STANDARD)
+        zustand["offen"][:] = [k for k in zustand["offen"] if uuid.UUID(k["id"]) not in customer_ids]
+        return [beleg], []
+
+    monkeypatch.setattr(leergut_service, "vorschau", vorschau)
+    monkeypatch.setattr(leergut_service, "belege_anlegen", belege_anlegen)
+    yield zustand
+
+
+def _q7_ls_frei(ls) -> bool:
+    from app.models.documents import DeliveryNote
+    with TestingSessionLocal() as db:
+        return db.get(DeliveryNote, uuid.UUID(ls["id"])).invoice_id is None
+
+
+def _q7_schalter(client, wert):
+    r = client.patch("/api/v1/admin/settings", json={"MONATSRECHNUNG_AUTO": wert})
+    assert r.status_code == 200, r.text
+
+
+def _q7_verwerfen(client, rechnung_id):
+    """Entwurf verwerfen — Q1 (Vertrag: DELETE /invoices/{id}, Lieferscheine frei)."""
+    r = client.delete(f"/api/v1/invoices/{rechnung_id}")
+    assert r.status_code == 204, r.text
+
+
+class TestQ7Voraussetzungen:
+    """Charakterisierung — muss vor Task Q7.2 grün sein.
+
+    Hält fest, was Q7 von Paket 1, Q1 (Nummer beim Finalisieren), Q4
+    (Feldschutz) und Q6 (Leergutkonto) nutzt. Rot heißt: ein Vorgänger fehlt
+    oder liefert anders als hier angenommen. Dann stoppen und melden."""
+
+    def test_paket1_sammellauf_bausteine(self):
+        import inspect
+        from app.api.v1.invoices import BatchRunRequest, _abrechenbare_lieferscheine, _aggregiere
+        from app.services.invoice_service import InvoiceService
+        assert list(inspect.signature(_abrechenbare_lieferscheine).parameters) == ["db", "anfrage"]
+        assert list(inspect.signature(_aggregiere).parameters) == ["db", "notes"]
+        assert callable(InvoiceService.abgerechnete_bestellungen)
+        assert set(BatchRunRequest.model_fields) >= {"period_from", "period_to", "customer_ids", "invoice_date"}
+
+    def test_q1_entwurf_ohne_nummer_finalisieren_vergibt_nummer(self, client):
+        kunde = _q7_kunde(client)
+        r = client.post("/api/v1/invoices", json={
+            "customer_id": kunde["id"], "invoice_date": date.today().isoformat(),
+            "lines": [{"description": "Erbsen-Schale", "quantity": 4, "unit": "STK",
+                       "unit_price": 2.50, "tax_rate": "REDUZIERT"}],
+        })
+        assert r.status_code == 201, r.text
+        assert r.json()["status"] == "ENTWURF"
+        assert r.json()["invoice_number"].startswith("ENTWURF-")
+
+        f = client.post(f"/api/v1/invoices/{r.json()['id']}/finalize")
+
+        assert f.status_code == 200, f.text
+        assert f.json()["invoice_number"].startswith("RE-")
+
+    @pytest.mark.usefixtures("_q7_ohne_forecast")
+    def test_q1_sammellauf_legt_entwurf_an_und_verwerfen_gibt_frei(self, client):
+        _, ls = _q7_geliefert(client, _q7_kunde(client))
+        r = client.post("/api/v1/invoices/batch-run/commit",
+                        json={"period_from": "2026-03-01", "period_to": "2026-03-31"})
+        assert r.status_code == 201, r.text
+        entwurf = r.json()["rechnungen"][0]
+        assert entwurf["status"] == "ENTWURF"
+        assert not _q7_ls_frei(ls)
+
+        _q7_verwerfen(client, entwurf["id"])
+
+        assert _q7_ls_frei(ls)
+
+    def test_q4_feldschutz_fuer_kundenfelder(self, client, _q7_rolle):
+        from app.core.rollen import KUNDENFELDER_KAUFMAENNISCH
+        assert "pfand_abrechnung" in KUNDENFELDER_KAUFMAENNISCH
+        kunde = _q7_kunde(client)
+        _q7_rolle(["production_staff"])
+
+        r = client.patch(f"/api/v1/sales/customers/{kunde['id']}", json={"pfand_abrechnung": "KEINE"})
+
+        assert r.status_code == 403, r.text
+
+    def test_q6_leergut_schnittstelle(self):
+        import inspect
+        from app.models.customer import PfandAbrechnung
+        from app.models.invoice import Invoice
+        from app.services import leergut_service
+        assert PfandAbrechnung.MONATLICH.value == "MONATLICH"
+        assert hasattr(Invoice, "beleg_art")
+        assert leergut_service.BELEG_ART_LEERGUT == "LEERGUT"
+        assert issubclass(leergut_service.LeergutFehler, ValueError)
+        assert list(inspect.signature(leergut_service.vorschau).parameters) == ["db", "monat", "customer_ids"]
+        parameter = inspect.signature(leergut_service.belege_anlegen).parameters
+        assert list(parameter) == ["db", "monat", "customer_ids", "erfasst_von"]
+        assert parameter["erfasst_von"].kind is inspect.Parameter.KEYWORD_ONLY
