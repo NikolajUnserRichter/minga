@@ -754,6 +754,10 @@ export const invoicesApi = {
   finalize: (id: string) =>
     api.post<Invoice>(`/invoices/${id}/finalize`).then(r => r.data),
 
+  /** Entwurf ohne Rechnungsnummer verwerfen — verbraucht keine Nummer */
+  discard: (id: string) =>
+    api.delete(`/invoices/${id}`),
+
   cancel: (id: string, data: { reason: string; reason_code?: string; create_credit_note?: boolean }) =>
     api.post<{ invoice: Invoice; credit_note: Invoice | null; warnungen: string[] }>(
       `/invoices/${id}/cancel`, data,

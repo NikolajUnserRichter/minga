@@ -6,6 +6,7 @@ import { Button, Input, useToast } from '../ui';
 import { documentsApi, invoicesApi, OrderConfirmation, DeliveryNote } from '../../services/api';
 import { Order, Invoice } from '../../types';
 import { getErrorMessage } from '../../services/errors';
+import { rechnungsnummerAnzeige, FINALISIEREN_RUECKFRAGE } from '../../services/rechnungsnummer';
 import { belegStatusLabel } from '../ui/statusLabels';
 import { invalidateOrderViews } from '../../services/orderQueries';
 import { InvoiceDetail } from '../../pages/Invoices';
@@ -66,13 +67,13 @@ export function OrderDocumentsModal({ open, onClose, order }: Props) {
 
   const createInvoice = useMutation({
     mutationFn: () => invoicesApi.createFromOrder(orderId!),
-    onSuccess: (inv: Invoice) => { toast.success(`Rechnung ${inv.invoice_number} angelegt`); invalidate(); },
+    onSuccess: () => { toast.success('Rechnungsentwurf angelegt — die Nummer vergibt das Finalisieren'); invalidate(); },
     onError: (e: any) => toast.error(getErrorMessage(e, 'Fehler beim Erstellen der Rechnung')),
   });
 
   const finalizeInvoice = useMutation({
     mutationFn: (inv: Invoice) => invoicesApi.finalize(inv.id),
-    onSuccess: () => { toast.success('Rechnung finalisiert'); invalidate(); },
+    onSuccess: (inv: Invoice) => { toast.success(`Rechnung ${inv.invoice_number} finalisiert`); invalidate(); },
     onError: (e: any) => toast.error(getErrorMessage(e, 'Fehler beim Finalisieren')),
   });
 
@@ -115,7 +116,8 @@ export function OrderDocumentsModal({ open, onClose, order }: Props) {
     mutationFn: ({ inv, email }: { inv: Invoice; email: string }) =>
       invoicesApi.sendInvoiceEmail(inv.id, email),
     onSuccess: (_d, vars) => { toast.success(`Rechnung an ${vars.email} versendet`); invalidate(); },
-    onError: (e: any) => toast.error(getErrorMessage(e, 'Fehler beim Versand')),
+    // Ein Entwurf kann vor dem Versand finalisiert worden sein — auch wenn die Mail scheitert
+    onError: (e: any) => { toast.error(getErrorMessage(e, 'Fehler beim Versand')); invalidate(); },
   });
 
   const promptEmailFor = (defaultEmail = '') =>
@@ -377,7 +379,7 @@ export function OrderDocumentsModal({ open, onClose, order }: Props) {
                 <li key={inv.id} className="border rounded p-2 dark:border-gray-700">
                   <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
-                    <span className="font-mono text-sm">{inv.invoice_number}</span>
+                    <span className="font-mono text-sm">{rechnungsnummerAnzeige(inv.invoice_number)}</span>
                     <span className={`text-xs px-2 py-0.5 rounded ${statusBadge(inv.status)}`}>{belegStatusLabel(inv.status)}</span>
                     <span className="text-xs text-gray-500">€ {Number(inv.total || 0).toFixed(2)}</span>
                   </div>
@@ -405,6 +407,8 @@ export function OrderDocumentsModal({ open, onClose, order }: Props) {
                         icon={<Mail className="w-3 h-3" />}
                         loading={sendInvoiceMail.isPending}
                         onClick={() => {
+                          if (inv.status === 'ENTWURF'
+                              && !window.confirm(`Der Entwurf wird beim Mailen finalisiert. ${FINALISIEREN_RUECKFRAGE}`)) return;
                           const email = promptEmailFor();
                           if (!email) return;
                           sendInvoiceMail.mutate({ inv, email });
@@ -418,7 +422,7 @@ export function OrderDocumentsModal({ open, onClose, order }: Props) {
                         size="sm"
                         icon={<Send className="w-3 h-3" />}
                         loading={finalizeInvoice.isPending}
-                        onClick={() => finalizeInvoice.mutate(inv)}
+                        onClick={() => { if (window.confirm(FINALISIEREN_RUECKFRAGE)) finalizeInvoice.mutate(inv); }}
                       >
                         Finalisieren
                       </Button>

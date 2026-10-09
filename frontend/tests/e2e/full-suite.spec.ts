@@ -169,7 +169,9 @@ test.describe('Orders', () => {
     // (Task 24); bei wiederholtem Lauf auf derselben Bestellung fehlt der Knopf,
     // die Rechnung steht dann schon in der Liste.
     const rechnungKnopf = belege.getByRole('button', { name: /Rechnung aus Bestellung/ });
-    await expect(rechnungKnopf.or(belege.locator('text=RE-')).first()).toBeVisible({ timeout: 5000 });
+    // Rechnung aus Bestellung entsteht als Entwurf ohne Nummer (Paket 3, Q1)
+    const rechnungInListe = belege.getByText(/RE-|Entwurf \(ohne Nummer\)/);
+    await expect(rechnungKnopf.or(rechnungInListe).first()).toBeVisible({ timeout: 5000 });
     if (await rechnungKnopf.isVisible()) {
       await rechnungKnopf.click();
       await expect(rechnungKnopf).toBeHidden({ timeout: 5000 });
@@ -183,7 +185,7 @@ test.describe('Orders', () => {
     // wiederholtem Lauf gibt es mehrere ABs)
     await expect(belege.locator('text=AB-').first()).toBeVisible({ timeout: 5000 });
     await expect(belege.locator('text=LS-').first()).toBeVisible();
-    await expect(belege.locator('text=RE-').first()).toBeVisible();
+    await expect(rechnungInListe.first()).toBeVisible();
   });
 });
 

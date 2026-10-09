@@ -20,6 +20,7 @@ import {
 import { ListPageSkeleton } from '../components/ui/Skeleton';
 import { getErrorMessage } from '../services/errors';
 import { sammelrechnungApi, SammelrechnungVorschauKunde } from '../services/api';
+import { istEntwurfsnummer, rechnungsnummerAnzeige, FINALISIEREN_RUECKFRAGE } from '../services/rechnungsnummer';
 import { lexofficeStatusLabel } from '../components/ui/statusLabels';
 
 const STATUS_LABELS: Record<InvoiceStatus, string> = {
@@ -104,13 +105,21 @@ export default function Invoices() {
   // Finalize mutation
   const finalizeMutation = useMutation({
     mutationFn: (id: string) => invoicesApi.finalize(id),
+    onSuccess: (inv: Invoice) => {
+      queryClient.invalidateQueries({ queryKey: ['invoices'] });
+      toast.success(`Rechnung ${inv.invoice_number} finalisiert`);
+    },
+    onError: (e: any) => toast.error(getErrorMessage(e, 'Fehler beim Finalisieren')),
+  });
+
+  // Entwurf ohne Rechnungsnummer verwerfen — verbraucht keine Nummer
+  const discardMutation = useMutation({
+    mutationFn: (id: string) => invoicesApi.discard(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['invoices'] });
-      toast.success('Rechnung finalisiert');
+      toast.success('Entwurf verworfen');
     },
-    onError: () => {
-      toast.error('Fehler beim Finalisieren');
-    },
+    onError: (e: any) => toast.error(getErrorMessage(e, 'Verwerfen fehlgeschlagen')),
   });
 
   const { data: lexStatus } = useQuery({
@@ -166,10 +175,10 @@ export default function Invoices() {
       setSammelOffen(false);
       setSammelVorschau(null);
       toast.success(res.rechnungen.length
-        ? `${res.rechnungen.length} Sammelrechnung(en) festgeschrieben`
+        ? `${res.rechnungen.length} Sammelrechnungsentwurf/-entwürfe angelegt — bitte prüfen und finalisieren`
         : 'Keine offenen Lieferscheine im Zeitraum');
     },
-    onError: (e: any) => toast.error(getErrorMessage(e, 'Festschreiben fehlgeschlagen')),
+    onError: (e: any) => toast.error(getErrorMessage(e, 'Anlegen der Entwürfe fehlgeschlagen')),
   });
 
   const filteredInvoices = invoices.filter(
@@ -352,7 +361,7 @@ export default function Invoices() {
               {displayInvoices.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage).map((invoice) => (
                 <tr key={invoice.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/50">
                   <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="text-sm font-medium text-gray-900 dark:text-white">{invoice.invoice_number}</div>
+                    <div className="text-sm font-medium text-gray-900 dark:text-white">{rechnungsnummerAnzeige(invoice.invoice_number)}</div>
                     <div className="text-xs text-gray-500 dark:text-gray-400">
                       {invoice.invoice_type === 'GUTSCHRIFT' && invoice.original_invoice_id
                         ? 'Stornorechnung'
@@ -382,13 +391,31 @@ export default function Invoices() {
                       <Button
                         variant="ghost"
                         size="sm"
-                        onClick={() => finalizeMutation.mutate(invoice.id)}
+                        onClick={() => {
+                          if (window.confirm(FINALISIEREN_RUECKFRAGE)) finalizeMutation.mutate(invoice.id);
+                        }}
                         loading={finalizeMutation.isPending}
                       >
                         Finalisieren
                       </Button>
                     )}
-                    {['OFFEN', 'TEILBEZAHLT', 'UEBERFAELLIG', 'BEZAHLT', 'STORNIERT'].includes(invoice.status) && (
+                    {invoice.status === 'ENTWURF' && istEntwurfsnummer(invoice.invoice_number) && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-red-600 dark:text-red-400"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (window.confirm('Entwurf verwerfen? Er wird gelöscht; zugeordnete Lieferscheine werden wieder abrechenbar.')) {
+                            discardMutation.mutate(invoice.id);
+                          }
+                        }}
+                        loading={discardMutation.isPending}
+                      >
+                        Verwerfen
+                      </Button>
+                    )}
+                    {['ENTWURF', 'OFFEN', 'TEILBEZAHLT', 'UEBERFAELLIG', 'BEZAHLT', 'STORNIERT'].includes(invoice.status) && (
                       <Button
                         variant="ghost"
                         size="sm"
@@ -606,7 +633,7 @@ export default function Invoices() {
         <div className="space-y-4">
           <p className="text-sm text-gray-600 dark:text-gray-300">
             Fasst alle noch nicht abgerechneten Lieferscheine des Zeitraums je Kunde zu
-            einer Rechnung zusammen. Erst <b>Festschreiben</b> vergibt Nummern.
+            einem Rechnungsentwurf zusammen. Die Rechnungsnummer vergibt erst das <b>Finalisieren</b> des Entwurfs.
           </p>
           <div className="flex gap-3">
             <div className="flex-1">
@@ -655,7 +682,7 @@ export default function Invoices() {
                     loading={sammelCommitMutation.isPending}
                     disabled={!sammelVorschau || sammelVorschau.length === 0}
                     title={!sammelVorschau ? 'Erst die Vorschau prüfen' : ''}>
-              Festschreiben
+              Entwürfe anlegen
             </Button>
           </div>
         </div>
@@ -665,7 +692,7 @@ export default function Invoices() {
       <Modal
         open={!!selectedInvoice && !showPaymentModal}
         onClose={() => setSelectedInvoice(null)}
-        title={`Rechnung ${selectedInvoice?.invoice_number}`}
+        title={`Rechnung ${rechnungsnummerAnzeige(selectedInvoice?.invoice_number)}`}
         size="lg"
       >
         {selectedInvoice && <InvoiceDetail invoice={selectedInvoice} />}

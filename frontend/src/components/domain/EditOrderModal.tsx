@@ -6,6 +6,7 @@ import { Button, Combobox, Input, Select, Textarea, useToast } from '../ui';
 import { customerPricesApi, productsApi, salesApi } from '../../services/api';
 import { getErrorMessage } from '../../services/errors';
 import { invalidateOrderViews } from '../../services/orderQueries';
+import { istEntwurfsnummer } from '../../services/rechnungsnummer';
 import { Order } from '../../types';
 
 interface EditableLine {
@@ -310,7 +311,7 @@ export function EditOrderModal({ open, order, onClose }: {
                 <section className="space-y-3 border-t border-gray-200 dark:border-gray-700 pt-4">
                     <h3 className="font-semibold">Positionen</h3>
                     {istBerechnet ? <p role="status" className="text-sm text-amber-700 dark:text-amber-400">
-                        Bestellung ist bereits berechnet ({currentOrder.rechnung_nummer}) — erst die Rechnung stornieren bzw. den Entwurf verwerfen
+                        Bestellung ist bereits berechnet ({istEntwurfsnummer(currentOrder.rechnung_nummer) ? 'Rechnungsentwurf ohne Nummer' : currentOrder.rechnung_nummer}) — erst die Rechnung stornieren bzw. den Entwurf verwerfen
                     </p> : <p className="text-sm text-gray-500">Menge und Preis werden beim Verlassen des Feldes gespeichert.</p>}
                     {busy && <p role="status" className="text-sm">Änderung wird gespeichert…</p>}
                     {currentOrder.lines.map((line) => <EditableOrderLine key={line.id} line={line} disabled={positionenGesperrt}
