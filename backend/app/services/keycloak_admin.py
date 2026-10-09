@@ -274,6 +274,10 @@ class KeycloakNichtErreichbar(KeycloakAdminError):
     """Keycloak antwortet nicht oder mit 5xx, oder der Zugang fehlt bzw. wird abgelehnt."""
 
 
+class KeycloakErgebnisUnbekannt(KeycloakNichtErreichbar):
+    pass
+
+
 class KeycloakNichtGefunden(KeycloakAdminError):
     """Benutzer gibt es nicht — oder er gehört zu einem anderen Mandanten."""
 
@@ -404,7 +408,8 @@ class _Benutzerzugang:
         try:
             return self.client.request(method, f"{self.base}{path}", headers=self.h, **kw)
         except httpx.TransportError as e:
-            raise KeycloakNichtErreichbar("Keycloak ist nicht erreichbar.") from e
+            fehlerklasse = KeycloakErgebnisUnbekannt if method in ("POST", "PUT", "PATCH", "DELETE") else KeycloakNichtErreichbar
+            raise fehlerklasse("Keycloak ist nicht erreichbar.") from e
 
     def call(self, method: str, path: str, **kw) -> httpx.Response:
         r = self._senden(method, path, **kw)
@@ -413,7 +418,8 @@ class _Benutzerzugang:
             self.h = {"Authorization": f"Bearer {_users_token(self.c, self.client, erneuern=True)}"}
             r = self._senden(method, path, **kw)
         if r.status_code >= 500:
-            raise KeycloakNichtErreichbar(f"Keycloak meldet einen Serverfehler (HTTP {r.status_code}).")
+            fehlerklasse = KeycloakErgebnisUnbekannt if method in ("POST", "PUT", "PATCH", "DELETE") else KeycloakNichtErreichbar
+            raise fehlerklasse(f"Keycloak meldet einen Serverfehler (HTTP {r.status_code}).")
         return r
 
 
@@ -629,7 +635,7 @@ def create_user_for_tenant(
                 raise KeycloakNichtErreichbar(_HALB_ANGELEGT)
         except KeycloakNichtErreichbar as e:
             gesperrt = user_id is not None and _deaktivieren_best_effort(kc, user_id, email)
-            fehler = KeycloakNichtErreichbar(_HALB_ANGELEGT if gesperrt else _HALB_ANGELEGT_AKTIV)
+            fehler = type(e)(_HALB_ANGELEGT if gesperrt else _HALB_ANGELEGT_AKTIV)
             fehler.angelegt = {"ziel_id": user_id, "ziel_email": email, "deaktiviert": gesperrt}
             raise fehler from e
         except KeycloakAdminError as e:

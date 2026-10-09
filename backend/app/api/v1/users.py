@@ -130,6 +130,11 @@ def _audit(db: Session, aktion: str, mandant: str, user: dict, **felder) -> None
 
 def _fehler(e: kc.KeycloakAdminError, mandant: str, user: dict, db: Session,
             ziel_id: str | None = None) -> HTTPException:
+    if isinstance(e, kc.KeycloakErgebnisUnbekannt):
+        return HTTPException(status_code=503, detail=(
+            "Der Ausgang der Änderung ist unbekannt — bitte den Stand des Kontos prüfen, "
+            "bevor Sie die Aktion erneut ausführen."
+        ))
     if isinstance(e, kc.KeycloakNichtGefunden):
         if e.fremd:
             _audit(db, "FREMDZUGRIFF_ABGEWIESEN", mandant, user, ziel_id=ziel_id)
@@ -237,7 +242,12 @@ def create_user(body: BenutzerCreate, mandant: MandantSchreibenGebremst, user: C
             last_name=body.last_name, role=body.role,
         )
     except kc.KeycloakAdminError as e:
-        if isinstance(e, kc.KeycloakKonflikt):
+        if isinstance(e, kc.KeycloakErgebnisUnbekannt):
+            _audit(db, "BENUTZER_ANGELEGT", mandant, user,
+                   ziel_id=getattr(e, "angelegt", {}).get("ziel_id"), ziel_email=body.email,
+                   ergebnis="ERGEBNIS_UNBEKANNT", aenderungen=body.model_dump(),
+                   deaktiviert=getattr(e, "angelegt", {}).get("deaktiviert"))
+        elif isinstance(e, kc.KeycloakKonflikt):
             # Die 409 verrät, dass die Adresse irgendwo im Realm existiert, womöglich
             # bei einem anderen Mandanten: festhalten, aber nur als Hash (E-M7).
             _audit(db, "ANLAGE_KONFLIKT", mandant, user, ziel_email_sha256=_email_hash(body.email),
@@ -264,7 +274,11 @@ def update_user(user_id: UUID, body: BenutzerUpdate, mandant: MandantSchreibenGe
         )
     except kc.KeycloakAdminError as e:
         teil = getattr(e, "teil_aenderungen", None)
-        if teil:
+        if isinstance(e, kc.KeycloakErgebnisUnbekannt):
+            _audit(db, "BENUTZER_GEAENDERT", mandant, user, ziel_id=str(user_id),
+                   ergebnis="ERGEBNIS_UNBEKANNT", aenderungen=body.model_dump(exclude_none=True),
+                   bestaetigte_aenderungen=teil or {})
+        elif teil:
             _audit(db, "BENUTZER_TEILWEISE_GEAENDERT", mandant, user, ziel_id=str(user_id),
                    aenderungen=teil, fehler=str(e))
         raise _fehler(e, mandant, user, db, str(user_id))
@@ -280,6 +294,9 @@ def reset_password(user_id: UUID, mandant: MandantSchreibenGebremst, user: Curre
     try:
         r = kc.reset_tenant_user_password(tenant_slug=mandant, user_id=str(user_id))
     except kc.KeycloakAdminError as e:
+        if isinstance(e, kc.KeycloakErgebnisUnbekannt):
+            _audit(db, "PASSWORT_ZURUECKGESETZT", mandant, user, ziel_id=str(user_id),
+                   ergebnis="ERGEBNIS_UNBEKANNT", aenderungen={"passwort_zurueckgesetzt": True, "temporary": True})
         raise _fehler(e, mandant, user, db, str(user_id))
     _audit(db, "PASSWORT_ZURUECKGESETZT", mandant, user, ziel_id=r["user"]["id"], ziel_email=r["user"]["email"])
     response.headers["Cache-Control"] = "no-store"

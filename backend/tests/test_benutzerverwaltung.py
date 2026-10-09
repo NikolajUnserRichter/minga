@@ -720,8 +720,10 @@ class TestAendern:
         r = admin.patch(f"/api/v1/users/{uid}", json={"first_name": "Helena", "role": "sales"})
         assert r.status_code == 503, r.text
         z = _audit_zeilen(caplog)
-        assert (z[-1]["aktion"], z[-1]["ziel_id"]) == ("BENUTZER_TEILWEISE_GEAENDERT", uid)
-        assert z[-1]["aenderungen"] == {"first_name": ["Lena", "Helena"], "roles": [["production_staff"], []]}
+        assert (z[-1]["aktion"], z[-1]["ziel_id"]) == ("BENUTZER_GEAENDERT", uid)
+        assert z[-1]["ergebnis"] == "ERGEBNIS_UNBEKANNT"
+        assert z[-1]["aenderungen"] == {"first_name": "Helena", "role": "sales"}
+        assert z[-1]["bestaetigte_aenderungen"] == {"first_name": ["Lena", "Helena"], "roles": [["production_staff"], []]}
 
     @pytest.mark.parametrize("rolle", ["sales", "production_planner", "production_staff", "accounting"])
     def test_nur_admin_aendert(self, admin, kc, rolle):
@@ -1018,9 +1020,9 @@ class TestAuditDauerhaft:
         assert neu["enabled"] is False
         (s,) = _audit_saetze(db)
         assert (s.aktion, s.ziel_user_id, s.ziel_email, s.ziel_email_sha256, s.ausgefuehrt_von) == (
-            "ANLAGE_TEILWEISE", neu["id"], "lena@beispielfirma.de", None, ADMIN_ID)
-        assert (s.details["rolle"], s.details["deaktiviert"]) == ("production_staff", True)
-        assert "deaktiviert" in s.details["fehler"]
+            "BENUTZER_ANGELEGT", neu["id"], "lena@beispielfirma.de", None, ADMIN_ID)
+        assert s.details["ergebnis"] == "ERGEBNIS_UNBEKANNT"
+        assert (s.details["aenderungen"]["role"], s.details["deaktiviert"]) == ("production_staff", True)
 
     def test_aendern_deaktivieren_aktivieren(self, admin, kc, db):
         uid = kc.add_user("lena@beispielfirma.de", MANDANT, roles={"production_staff"}, first="Lena")
@@ -1039,9 +1041,10 @@ class TestAuditDauerhaft:
         r = admin.patch(f"/api/v1/users/{uid}", json={"first_name": "Helena", "role": "sales"})
         assert r.status_code == 503, r.text
         (s,) = _audit_saetze(db)
-        assert (s.aktion, s.ziel_user_id) == ("BENUTZER_TEILWEISE_GEAENDERT", uid)
-        assert s.details["aenderungen"] == {"first_name": ["Lena", "Helena"], "roles": [["production_staff"], []]}
-        assert s.details["fehler"]
+        assert (s.aktion, s.ziel_user_id) == ("BENUTZER_GEAENDERT", uid)
+        assert s.details["ergebnis"] == "ERGEBNIS_UNBEKANNT"
+        assert s.details["aenderungen"] == {"first_name": "Helena", "role": "sales"}
+        assert s.details["bestaetigte_aenderungen"] == {"first_name": ["Lena", "Helena"], "roles": [["production_staff"], []]}
 
     def test_zuruecklesen_scheitert_teilweise_geaendert(self, admin, kc, db, monkeypatch):
         """Keycloak schreibt und fällt beim Zurücklesen aus: Die Änderung ist geschehen
@@ -1160,3 +1163,70 @@ class TestVeraltetesToken:
         (eintrag,) = _audit_saetze(db)
         assert eintrag.aktion == "ZUGANG_GEAENDERT_ABGEWIESEN"
         assert eintrag.ausgefuehrt_von == aufrufer
+
+
+class TestUnklaresSchreibergebnis:
+    @pytest.mark.parametrize("ausfall", ["timeout", "protokoll", 502, 504])
+    @pytest.mark.parametrize("aktion", ["anlage", "anlage_rolle", "deaktivieren", "rolle_entfernen", "rolle_setzen", "reset"])
+    def test_schreiben_dann_antwortverlust(self, admin, kc, db, monkeypatch, caplog, ausfall, aktion):
+        ziel = kc.add_user("ziel@beispielfirma.de", MANDANT, roles={"sales"})
+        methode, pfad = {
+            "anlage": ("POST", "/users"),
+            "anlage_rolle": ("POST", "/role-mappings/realm"),
+            "deaktivieren": ("PUT", f"/users/{ziel}"),
+            "rolle_entfernen": ("DELETE", f"/users/{ziel}/role-mappings/realm"),
+            "rolle_setzen": ("POST", f"/users/{ziel}/role-mappings/realm"),
+            "reset": ("PUT", f"/users/{ziel}/reset-password"),
+        }[aktion]
+        original = kc.handler
+        verluste = []
+
+        def handler(request):
+            antwort = original(request)
+            if request.method == methode and request.url.path.endswith(pfad):
+                verluste.append(request.url.path)
+                if ausfall == "timeout":
+                    raise httpx.ReadTimeout("Antwort verloren", request=request)
+                if ausfall == "protokoll":
+                    raise httpx.RemoteProtocolError("Antwort verloren", request=request)
+                return httpx.Response(ausfall)
+            return antwort
+
+        monkeypatch.setattr(keycloak_admin, "_http_client",
+                            lambda: httpx.Client(transport=httpx.MockTransport(handler)))
+        if aktion.startswith("anlage"):
+            antwort = _neu(admin)
+            konto = next(konto for konto in kc.users.values() if konto["email"] == "lena@beispielfirma.de")
+            erwartete_aktion = "BENUTZER_ANGELEGT"
+            erwartet = {"email": "lena@beispielfirma.de", "first_name": "Lena", "last_name": "Lager", "role": "production_staff"}
+        elif aktion == "reset":
+            antwort = admin.post(f"/api/v1/users/{ziel}/reset-password")
+            assert ziel in kc.passwords
+            erwartete_aktion = "PASSWORT_ZURUECKGESETZT"
+            erwartet = {"passwort_zurueckgesetzt": True, "temporary": True}
+        else:
+            erwartet = {"enabled": False} if aktion == "deaktivieren" else {"role": "accounting"}
+            antwort = admin.patch(f"/api/v1/users/{ziel}", json=erwartet)
+            if aktion == "deaktivieren":
+                assert kc.users[ziel]["enabled"] is False
+            else:
+                assert kc.mappings[ziel] == (set() if aktion == "rolle_entfernen" else {"accounting"})
+            erwartete_aktion = "BENUTZER_GEAENDERT"
+        assert antwort.status_code == 503, antwort.text
+        (eintrag,) = _audit_saetze(db)
+        assert eintrag.aktion == erwartete_aktion
+        assert eintrag.details["ergebnis"] == "ERGEBNIS_UNBEKANNT"
+        assert eintrag.details["aenderungen"] == erwartet
+        assert eintrag.ausgefuehrt_von == ADMIN_ID
+        if aktion.startswith("anlage"):
+            assert eintrag.ziel_email == "lena@beispielfirma.de"
+            assert eintrag.ziel_user_id in (None, konto["id"])
+        else:
+            assert eintrag.ziel_user_id == ziel
+        assert "Stand des Kontos" in antwort.json()["detail"]
+        assert "prüfen" in antwort.json()["detail"]
+        assert len(verluste) == 1
+        assert len(_audit_zeilen(caplog)) == 1
+        for passwort in kc.passwords.values():
+            assert passwort["value"] not in json.dumps(eintrag.details)
+            assert passwort["value"] not in caplog.text + antwort.text
