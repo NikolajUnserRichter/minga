@@ -251,7 +251,11 @@ class PDFService:
             rightMargin=2*cm,
             leftMargin=2*cm,
             topMargin=2*cm,
-            bottomMargin=2*cm
+            bottomMargin=2*cm,
+            # Gleicher Inhalt → byte-gleiches PDF (ohne Erzeugungszeit und
+            # zufällige ID). Nur so belegt die SHA-256 im Versandprotokoll,
+            # welcher Inhalt hinausging (Paket 3, Q2).
+            invariant=1,
         )
 
         styles = getSampleStyleSheet()
@@ -543,6 +547,8 @@ class PDFService:
         doc = SimpleDocTemplate(
             buffer, pagesize=A4,
             rightMargin=2*cm, leftMargin=2*cm, topMargin=2*cm, bottomMargin=2*cm,
+            # Byte-gleich bei gleichem Inhalt — siehe generate_invoice_pdf (Paket 3, Q2)
+            invariant=1,
         )
         styles = getSampleStyleSheet()
         elements = []

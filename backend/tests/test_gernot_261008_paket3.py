@@ -2182,3 +2182,41 @@ class TestQ2Mailversand:
 
         assert _q2_smtp.gesendet[0]["umschlag"] == ["admin@farm.example"]
         assert "Cc" not in _q2_smtp.gesendet[0]["msg"]
+
+
+
+
+class TestQ2PdfReproduzierbar:
+    """Gleicher Inhalt → byte-gleiches PDF. Erst damit belegt die SHA-256 im
+    Versandprotokoll, was hinausging. Vorher trug jedes PDF Erzeugungszeit und
+    eine zufällige ID: zwei Abrufe desselben Belegs waren nie gleich."""
+
+    def test_ab_pdf_zweimal_gleich(self, client):
+        ab = _q2_ab(client, _q2_bestellung(client, _q2_kunde(client)))
+
+        eins = client.get(f"/api/v1/sales/confirmations/{ab['id']}/pdf").content
+        zwei = client.get(f"/api/v1/sales/confirmations/{ab['id']}/pdf").content
+
+        assert eins.startswith(b"%PDF")
+        assert _q2_sha(eins) == _q2_sha(zwei)
+
+    def test_ab_pdf_folgt_der_bestellung(self, client):
+        bestellung = _q2_bestellung(client, _q2_kunde(client))
+        ab = _q2_ab(client, bestellung)
+        vorher = client.get(f"/api/v1/sales/confirmations/{ab['id']}/pdf").content
+
+        _q2_position_nachtragen(client, bestellung)
+
+        nachher = client.get(f"/api/v1/sales/confirmations/{ab['id']}/pdf").content
+        assert _q2_sha(vorher) != _q2_sha(nachher)
+
+    def test_lieferschein_und_rechnung_zweimal_gleich(self, client):
+        bestellung = _q2_bestellung(client, _q2_kunde(client))
+        ls = _q2_ls(client, bestellung)
+        rechnung = _q2_rechnung(client, bestellung)
+
+        for url in (f"/api/v1/sales/delivery-notes/{ls['id']}/pdf",
+                    f"/api/v1/invoices/{rechnung['id']}/pdf"):
+            eins, zwei = client.get(url).content, client.get(url).content
+            assert eins.startswith(b"%PDF"), url
+            assert _q2_sha(eins) == _q2_sha(zwei), url
