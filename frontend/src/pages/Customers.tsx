@@ -7,6 +7,7 @@ import { LeergutKontoModal } from '../components/domain/Leergut';
 import { adressListe } from '../components/domain/BelegVersand';
 import { salesApi } from '../services/api';
 import { Customer, CustomerType, Contact, CustomerAddress, AddressType, PfandAbrechnung } from '../types';
+import type { InvoiceMode } from '../types';
 import { getErrorMessage } from '../services/errors';
 import { ExcelImport } from '../components/common/ExcelImport';
 import { useDebounce } from '../hooks/useDebounce';
@@ -270,6 +271,7 @@ function CustomerForm({ customer, onSubmit, onCancel }: CustomerFormProps) {
     packaging_fee_amount: customer?.packaging_fee_amount != null ? String(customer.packaging_fee_amount) : '0',
     packaging_fee_percent: customer?.packaging_fee_percent != null ? String(customer.packaging_fee_percent) : '0',
     show_prices_on_delivery_note: customer?.show_prices_on_delivery_note ?? false,
+    invoice_mode: customer?.invoice_mode ?? ('EINZELN' as InvoiceMode),
     pfand_abrechnung: customer?.pfand_abrechnung ?? ('JE_LIEFERUNG' as PfandAbrechnung),
     // Belegversand: eine Adresse je Zeile (Paket 3, Q2)
     confirmation_emails: (customer?.confirmation_emails ?? []).join('\n'),
@@ -292,6 +294,11 @@ function CustomerForm({ customer, onSubmit, onCancel }: CustomerFormProps) {
     { value: 'HANDEL', label: 'Handel' },
     { value: 'GEWERBE', label: 'Gewerbe' },
     { value: 'PRIVAT', label: 'Privat' },
+  ];
+  // Abrechnungsart (B5): MONATLICH = Monats-Sammelrechnung als Entwurf am 1. des Folgemonats
+  const invoiceModeOptions: SelectOption[] = [
+    { value: 'EINZELN', label: 'Rechnung je Lieferung' },
+    { value: 'MONATLICH', label: 'Monatliche Sammelrechnung' },
   ];
 
   // Pfandabrechnung je Kunde (Spec 08.10.2026); MONATLICH = Leergutkonto (Paket 3, Q6).
@@ -466,6 +473,17 @@ function CustomerForm({ customer, onSubmit, onCancel }: CustomerFormProps) {
             {formData.pfand_abrechnung === 'MONATLICH'
               ? 'Ab dem Tag der Umstellung stehen Pfandkisten nicht mehr auf der Rechnung: Lieferungen und Rückgaben laufen über das Leergutkonto und werden einmal im Monat abgerechnet (Rechnungen → Leergutabrechnung).'
               : 'Bei „IFCO-Clearing“ stehen Pfandkisten auf Bestellung und Lieferschein, aber nicht auf neu erzeugten Rechnungen.'}
+          </p>
+        </div>
+        <div className="mt-4">
+          <Select
+            label="Abrechnung"
+            options={invoiceModeOptions}
+            value={formData.invoice_mode}
+            onChange={(e) => setFormData({ ...formData, invoice_mode: e.target.value as InvoiceMode })}
+          />
+          <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+            Bei „Monatliche Sammelrechnung“ liegt am 1. des Folgemonats ein Rechnungsentwurf über alle Lieferungen des Vormonats bereit. Freigegeben wird er unter Rechnungen.
           </p>
         </div>
       </div>

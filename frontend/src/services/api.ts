@@ -1631,6 +1631,53 @@ export interface SammelrechnungVorschauKunde {
   summe_netto: number
 }
 
+// Monatsrechnungen (B5): Stand je Monat, Lauf je Mandant (nur Admin)
+export interface MonatsrechnungBeleg {
+  invoice_id: string
+  invoice_number: string
+  customer_id: string
+  customer_name: string
+  status: InvoiceStatus
+  art: 'WARE' | 'LEERGUT'
+  subtotal: number
+  total: number
+}
+
+export interface MonatsrechnungHinweis {
+  art: 'OHNE_LIEFERSCHEIN' | 'NACHGEKOMMEN' | 'FRUEHERER_MONAT' | 'INAKTIV' | 'NICHT_QUITTIERT' | 'KEINE_LIEFERUNGEN' | 'EINZELABRECHNUNG'
+  customer_id: string | null
+  customer_name: string | null
+  text: string
+  belege: string[]
+}
+
+export interface Monatsrechnungen {
+  monat: string
+  zeitraum_von: string
+  zeitraum_bis: string
+  automatik_an: boolean
+  letzter_lauf: { art: string; status: string; gestartet_am: string; beendet_am: string | null; ausgeloest_von: string | null } | null
+  entwuerfe: MonatsrechnungBeleg[]
+  vorgeschlagen: Array<{ art: 'WARE' | 'LEERGUT'; customer_id: string; customer_name: string; anzahl_lieferscheine: number; summe_netto: number }>
+  hinweise: MonatsrechnungHinweis[]
+}
+
+export interface MonatslaufErgebnis {
+  status: string
+  monat: string
+  angelegt: Array<{ invoice_id: string; customer_id: string; customer_name: string; art: 'WARE' | 'LEERGUT' }>
+  uebersprungen: Array<{ customer_id: string; customer_name: string; grund: string }>
+  fehler: Array<{ customer_id: string; customer_name: string; fehler: string }>
+}
+
+export const monatsrechnungApi = {
+  /** Ohne Monat: Vormonat (Europe/Berlin, vom Server bestimmt) */
+  stand: (month?: string) =>
+    api.get<Monatsrechnungen>('/invoices/monthly-proposals', { params: month ? { month } : undefined }).then(r => r.data),
+  lauf: (month: string) =>
+    api.post<MonatslaufErgebnis>('/invoices/monthly-proposals/run', null, { params: { month } }).then(r => r.data),
+}
+
 export const sammelrechnungApi = {
   preview: (data: { period_from: string; period_to: string; customer_ids?: string[] }) =>
     api.post<{ kunden: SammelrechnungVorschauKunde[] }>('/invoices/batch-run/preview', data).then(r => r.data),

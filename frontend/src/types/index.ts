@@ -168,6 +168,8 @@ export interface Customer {
   packaging_fee_amount?: number | string
   packaging_fee_percent?: number | string
   show_prices_on_delivery_note?: boolean
+  /** EINZELN = Rechnung je Lieferung, MONATLICH = Monats-Sammelrechnung (Entwurf am 1. des Folgemonats) */
+  invoice_mode?: InvoiceMode
   /** Pfandabrechnung: JE_LIEFERUNG = Pfand auf jeder Rechnung, KEINE = IFCO-Clearing (nicht auf der Rechnung) */
   pfand_abrechnung?: PfandAbrechnung
   /** Stichtag des Leergutkontos (nur bei MONATLICH, vom Server gesetzt) */
@@ -184,6 +186,8 @@ export interface Customer {
 }
 
 export type CustomerType = 'GASTRO' | 'HANDEL' | 'GEWERBE' | 'PRIVAT'
+/** Abrechnungsart je Kunde (Backend: InvoiceMode, B5) */
+export type InvoiceMode = 'EINZELN' | 'MONATLICH'
 
 /** Pfandabrechnung je Kunde (Backend: PfandAbrechnung); MONATLICH = Leergutkonto (Paket 3, Q6). */
 export type PfandAbrechnung = 'JE_LIEFERUNG' | 'KEINE' | 'MONATLICH'
@@ -637,6 +641,8 @@ export interface Invoice {
   order_id: string | null
   /** Gesetzt bei einer Stornorechnung: die stornierte Originalrechnung */
   original_invoice_id?: string | null
+  /** Monatsrechnung: MONAT-JJJJ-MM (B5), sonst null */
+  batch_key?: string | null
   invoice_date: string
   delivery_date: string | null
   due_date: string

@@ -94,6 +94,7 @@ export default function Settings() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* SMTP Settings */}
         <SeasonSettingsCard />
+        <MonatsrechnungSettingsCard />
         <SmtpSettingsCard />
         <SepaEinstellungenKarte />
 
@@ -581,6 +582,67 @@ export function SeasonSettingsCard() {
   );
 }
 
+
+// ==================== Monatsrechnungen (B5) ====================
+
+export function MonatsrechnungSettingsCard() {
+  const toast = useToast();
+  const queryClient = useQueryClient();
+
+  const { data } = useQuery({
+    queryKey: ['admin-settings'],
+    queryFn: () => adminApi.listSettings(),
+  });
+  // Maßgeblich ist nur der Eintrag in der Datenbank: automatik_an liest ohne
+  // Rückfall auf Umgebungsvariablen (Entscheidung 6). GET /admin/settings zeigt
+  // eine Container-Variable mit source 'env' an — der Job läuft damit nicht.
+  const eintrag = data?.find((s) => s.key === 'MONATSRECHNUNG_AUTO');
+  const an = eintrag?.source === 'db' && ['1', 'true', 'yes'].includes((eintrag?.value || '').toLowerCase());
+
+  const saveMutation = useMutation({
+    mutationFn: (wert: boolean) => adminApi.updateSettings({ MONATSRECHNUNG_AUTO: wert ? 'true' : 'false' }),
+    onSuccess: (_r, wert) => {
+      toast.success(wert ? 'Monatsrechnungen: automatischer Vorschlag an' : 'Monatsrechnungen: automatischer Vorschlag aus');
+      queryClient.invalidateQueries({ queryKey: ['admin-settings'] });
+      queryClient.invalidateQueries({ queryKey: ['invoices'] });
+    },
+    onError: () => toast.error('Speichern fehlgeschlagen'),
+  });
+
+  return (
+    <div className="card">
+      <div className="card-header">
+        <h3 className="card-title">Monatsrechnungen</h3>
+      </div>
+      <div className="card-body space-y-3">
+        <p className="text-sm text-gray-500 dark:text-gray-400">
+          Am 1. jedes Monats um 06:30 legt das System für Kunden mit „Monatlicher Sammelrechnung“
+          Rechnungsentwürfe über den Vormonat an. Freigeben und versenden bleibt Handarbeit.
+        </p>
+        {eintrag?.source === 'env' && (
+          <p className="text-xs text-amber-700 dark:text-amber-300">
+            Die Umgebungsvariable MONATSRECHNUNG_AUTO wirkt nicht — eingeschaltet wird nur hier.
+          </p>
+        )}
+        <div className="flex gap-2">
+          {([true, false] as const).map((wert) => (
+            <button
+              key={String(wert)}
+              type="button"
+              onClick={() => saveMutation.mutate(wert)}
+              className={`flex-1 p-2 rounded-lg border-2 text-sm transition-colors ${an === wert
+                ? 'border-minga-500 bg-minga-50 dark:bg-minga-900/30 font-medium'
+                : 'border-gray-200 dark:border-gray-700 hover:border-gray-300'
+                }`}
+            >
+              {wert ? 'Automatisch vorschlagen' : 'Nur von Hand'}
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export function SmtpSettingsCard() {
   const toast = useToast();
