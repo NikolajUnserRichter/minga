@@ -555,3 +555,93 @@ class TestDExportSkr03:
             _d_zeile("20,00", "S", "1200", "10008", nr, "Zahlung Ökoring Testkunde", "Überweisung 1"),
             _d_zeile("13,89", "S", "1000", "10008", nr, "Zahlung Ökoring Testkunde"),
         ])
+
+
+_D_GRUND = "Kontierung SKR04 vom Steuerberater noch nicht bestätigt"
+
+
+def _d_sperren(client, grund):
+    r = client.patch("/api/v1/admin/settings", json={"DATEV_EXPORT_SPERRE": grund})
+    assert r.status_code == 200, r.text
+
+
+def _d_als(*rollen):
+    """Login mit genau diesen Rollen; das client-Fixture räumt auf."""
+    from app.api.deps import get_current_user
+    from app.main import app
+
+    async def override():
+        return {"id": "123e4567-e89b-12d3-a456-426614174000", "username": "d",
+                "email": "d@example.com", "roles": list(rollen)}
+    app.dependency_overrides[get_current_user] = override
+
+
+class TestDSperre:
+    """Bis der Steuerberater die Kontierung bestätigt, bleibt der Export zu."""
+
+    def test_gesperrt_409_und_nichts_markiert(self, client):
+        rechnung = _d_rechnung(client, _d_kunde(client), _D_GEMISCHT)
+        _d_sperren(client, _D_GRUND)
+
+        for download in (False, True):
+            r = _d_export_roh(client, download=download)
+            assert r.status_code == 409, r.text
+            assert r.json()["detail"] == f"DATEV-Export gesperrt: {_D_GRUND}"
+        assert _d_exportiert(rechnung["id"]) is False
+
+    def test_nach_freigabe_wieder_frei(self, client):
+        rechnung = _d_rechnung(client, _d_kunde(client), _D_GEMISCHT)
+        _d_sperren(client, _D_GRUND)
+        _d_sperren(client, "")
+
+        _, _, zeilen = _d_export(client)
+
+        assert len(zeilen) == 2
+        assert _d_exportiert(rechnung["id"]) is True
+
+    def test_sperre_gilt_auch_im_service(self, client):
+        from app.services.datev_service import DatevExportAbgelehnt, DatevService
+        _d_sperren(client, _D_GRUND)
+        with TestingSessionLocal() as db:
+            with pytest.raises(DatevExportAbgelehnt, match="DATEV-Export gesperrt"):
+                DatevService(db).export_invoices_csv(date.today(), date.today())
+
+
+class TestDEinstellungenFuerDenDialog:
+    """GET /invoices/datev-export/einstellungen — Rahmen, Konten, Sperre."""
+
+    _URL = "/api/v1/invoices/datev-export/einstellungen"
+
+    def test_ohne_eintrag_skr03_und_frei(self, client):
+        r = client.get(self._URL)
+        assert r.status_code == 200, r.text
+        assert r.json() == {
+            "kontenrahmen": "SKR03",
+            "konten": [
+                {"bezeichnung": "Erlöse 7 %", "konto": "8300"},
+                {"bezeichnung": "Erlöse 19 %", "konto": "8400"},
+                {"bezeichnung": "Erlöse steuerfrei", "konto": "8100"},
+                {"bezeichnung": "Bank (Zahlungen außer bar)", "konto": "1200"},
+                {"bezeichnung": "Kasse (Barzahlungen)", "konto": "1000"},
+            ],
+            "sperrgrund": None,
+        }
+
+    def test_skr04_gesperrt(self, client):
+        _d_setze_rahmen(client, "SKR04")
+        _d_sperren(client, _D_GRUND)
+
+        daten = client.get(self._URL).json()
+
+        assert daten["kontenrahmen"] == "SKR04"
+        assert [k["konto"] for k in daten["konten"]] == ["4300", "4400", "4100", "1800", "1600"]
+        assert daten["sperrgrund"] == _D_GRUND
+
+    def test_buchhaltung_liest_den_dialog_nicht_die_admin_einstellungen(self, client):
+        """Darum ein eigener Endpunkt unter /invoices: /admin/settings ist nur
+        für admin. Die Halle sieht weder Rechnungen noch DATEV."""
+        _d_als("accounting")
+        assert client.get(self._URL).status_code == 200
+        assert client.get("/api/v1/admin/settings").status_code == 403
+        _d_als("production_staff")
+        assert client.get(self._URL).status_code == 403

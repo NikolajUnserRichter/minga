@@ -15,8 +15,8 @@ from app.models.customer import Customer
 # Kontentabelle je Rahmen (Nachtrag 09.10., D). erloeskonto_fuer und
 # ist_standard_erloeskonto bleiben auch über dieses Modul importierbar.
 from app.services.kontenrahmen import (  # noqa: F401
-    erloeskonto_fuer, ist_standard_erloeskonto, kontenrahmen, sachkonto,
-    sonderkonto_pruefen,
+    erloeskonto_fuer, export_sperre, ist_standard_erloeskonto, kontenrahmen,
+    sachkonto, sonderkonto_pruefen,
 )
 
 # ---------------------------------------------------------------------------
@@ -245,6 +245,11 @@ class DatevService:
         nimmt bereits exportierte im Zeitraum wieder auf — für eine verlorene
         oder vom Steuerberater zurückgewiesene Datei.
         """
+        # Sperre (z. B. "Kontierung vom Steuerberater noch nicht bestätigt")
+        # vor allem anderen: nichts wird gelesen, geschrieben oder markiert.
+        grund = export_sperre(self.db)
+        if grund:
+            raise DatevExportAbgelehnt(f"DATEV-Export gesperrt: {grund}")
         rahmen = self._rahmen()
         invoices = self._rechnungen(from_date, to_date, erneut_exportieren)
         self._sonderkonten_pruefen(invoices, rahmen)

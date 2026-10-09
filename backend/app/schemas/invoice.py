@@ -318,3 +318,16 @@ class DatevExportResponse(BaseModel):
     total_amount: Decimal
     export_date: datetime
     csv_content: Optional[str] = None  # Optional, für direkten Download
+
+
+class DatevKonto(BaseModel):
+    bezeichnung: str
+    konto: str
+
+
+class DatevEinstellungenResponse(BaseModel):
+    """Für den Export-Dialog (Nachtrag 09.10., D): Kontenrahmen des Mandanten,
+    die Konten, die der Export bebucht, und ein Sperrgrund (None = frei)."""
+    kontenrahmen: str
+    konten: list[DatevKonto]
+    sperrgrund: Optional[str] = None

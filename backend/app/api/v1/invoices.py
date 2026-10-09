@@ -21,11 +21,13 @@ from app.schemas.invoice import (
     InvoiceLineCreate, InvoiceLineUpdate, InvoiceLineResponse,
     PaymentBase, PaymentResponse,
     InvoiceSendRequest, InvoiceCancelRequest,
-    DatevExportRequest, DatevExportResponse,
+    DatevExportRequest, DatevExportResponse, DatevEinstellungenResponse, DatevKonto,
 )
 from app.services.invoice_service import InvoiceService, BereitsAbgerechnet, BestellungStorniert, waehle_vertreter, ist_clearing_pfand, netto_je_lieferschein
 from app.services.datev_service import DatevExportAbgelehnt, DatevService
-from app.services.kontenrahmen import erloeskonto_fuer, ist_standard_erloeskonto, kontenrahmen
+from app.services.kontenrahmen import (
+    BEBUCHTE_KONTEN, erloeskonto_fuer, export_sperre, ist_standard_erloeskonto, kontenrahmen, sachkonto,
+)
 from app.services.leergut_service import LEERGUTBELEG_FEST, ist_leergutbeleg, mailtext as leergut_mailtext
 from app.services.email_service import EmailNotConfiguredError
 from app.services.belegversand import empfaenger_fuer_versand, firmenzusatz, gruss, versende_beleg
@@ -708,6 +710,22 @@ def record_payment(
 # ========================================
 # DATEV EXPORT
 # ========================================
+
+@router.get("/datev-export/einstellungen", response_model=DatevEinstellungenResponse)
+def datev_einstellungen(db: DBSession):
+    """Kontenrahmen, bebuchte Konten und Sperre für den Export-Dialog.
+
+    Unter /invoices statt /admin/settings: den Export bedient auch die
+    Buchhaltung, /admin/settings ist nur für admin (Nachtrag 09.10., D).
+    """
+    rahmen = kontenrahmen(db)
+    return DatevEinstellungenResponse(
+        kontenrahmen=rahmen,
+        konten=[DatevKonto(bezeichnung=text, konto=sachkonto(rahmen, schluessel))
+                for schluessel, text in BEBUCHTE_KONTEN],
+        sperrgrund=export_sperre(db),
+    )
+
 
 @router.post("/datev-export")
 def export_datev(
