@@ -937,3 +937,290 @@ class TestF3MailGruss:
         ab = _f_ab(client)
         assert _f_ab_senden(client, ab).status_code == 200
         assert _f_mails[0]["subject"] == f"Auftragsbestätigung {ab['confirmation_number']}"
+
+
+# ---------------------------------------- Abschnitt O: Belegordner (Frontend)
+
+def _o_node(script):
+    """Führt `script` mit Node im Ordner frontend aus, mit Attrappen für den
+    gewählten Ordner (File System Access API), IndexedDB, window und document.
+
+    Wie die Paket-3-Abnahme (_abnahme_frontend): TypeScript übersetzt das
+    typescript-Paket des Frontends, relative Importe kommen aus den echten
+    Dateien (belegordner.ts → dateiname.ts, belegpfad.ts). Ein Browser ist
+    nicht nötig; die echte API prüft die Abnahme in Chrome.
+    """
+    import os
+    import subprocess
+    from pathlib import Path
+    vorspann = r"""
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const vm = require('node:vm');
+const ts = require('typescript');
+function laden(datei, globals) {
+    const code = ts.transpileModule(fs.readFileSync(datei, 'utf8'), {
+        compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
+    }).outputText;
+    const exports = {};
+    const ladenImport = (name) => {
+        if (!name.startsWith('.')) return require(name);
+        const basis = path.resolve(path.dirname(datei), name);
+        const ziel = [basis + '.ts', basis + '.tsx'].find((k) => fs.existsSync(k));
+        assert.ok(ziel, name);
+        return laden(ziel, globals);
+    };
+    vm.runInNewContext(code, { exports, require: ladenImport, ...globals }, { filename: datei });
+    return exports;
+}
+// Objekte aus dem vm-Kontext haben andere Prototypen: über JSON vergleichen
+const gleich = (ist, soll) => assert.deepEqual(JSON.parse(JSON.stringify(ist ?? null)), soll);
+const fehler = (name) => Object.assign(new Error(name), { name });
+class Datei {
+    constructor(name) { this.kind = 'file'; this.name = name; this.inhalt = null; }
+    async createWritable() {
+        const datei = this;
+        let puffer = null;
+        return {
+            async write(b) { puffer = typeof b === 'string' ? b : await b.text(); },
+            async close() { datei.inhalt = puffer; },
+            async abort() {},
+        };
+    }
+}
+class Ordner {
+    constructor(name) {
+        this.kind = 'directory'; this.name = name; this.eintraege = new Map();
+        this.erlaubnis = 'granted'; this.protokoll = [];
+    }
+    async getDirectoryHandle(name, o = {}) {
+        let e = this.eintraege.get(name);
+        if (!e) { if (!o.create) throw fehler('NotFoundError'); e = new Ordner(name); this.eintraege.set(name, e); }
+        if (e.kind !== 'directory') throw fehler('TypeMismatchError');
+        return e;
+    }
+    async getFileHandle(name, o = {}) {
+        let e = this.eintraege.get(name);
+        if (!e) { if (!o.create) throw fehler('NotFoundError'); e = new Datei(name); this.eintraege.set(name, e); }
+        if (e.kind !== 'file') throw fehler('TypeMismatchError');
+        return e;
+    }
+    async queryPermission() { return this.erlaubnis; }
+    async requestPermission() {
+        // wie Chromium: nur im Stand „fragen“ kommt eine Frage, sonst sofort der Stand
+        if (this.erlaubnis !== 'prompt') return this.erlaubnis;
+        this.protokoll.push('Freigabe angefragt');
+        if (this.ohneKlick) throw fehler('SecurityError');
+        this.erlaubnis = this.antwort || 'granted';
+        return this.erlaubnis;
+    }
+    inhalt(pfad) {
+        let h = this;
+        for (const teil of pfad.split('/')) h = h && h.eintraege.get(teil);
+        return h ? h.inhalt : undefined;
+    }
+}
+function attrappeIndexedDB() {
+    const daten = new Map();
+    const spaeter = (r, tun) => { setTimeout(() => { r.result = tun(); if (r.onsuccess) r.onsuccess(); }, 0); return r; };
+    const speicher = {
+        get: (k) => spaeter({}, () => daten.get(k)),
+        put: (v, k) => spaeter({}, () => { daten.set(k, v); return k; }),
+        delete: (k) => spaeter({}, () => { daten.delete(k); }),
+    };
+    const db = { createObjectStore() {}, transaction: () => ({ objectStore: () => speicher }), close() {} };
+    return {
+        open() {
+            const r = {};
+            setTimeout(() => { r.result = db; if (r.onupgradeneeded) r.onupgradeneeded(); if (r.onsuccess) r.onsuccess(); }, 0);
+            return r;
+        },
+    };
+}
+function umgebung(o = {}) {
+    const w = { wurzel: new Ordner('Belege'), rueckfragen: [], antworten: [], downloads: [], meldungen: [] };
+    const window = {
+        isSecureContext: true,
+        confirm: (text) => { w.rueckfragen.push(text); return w.antworten.length ? w.antworten.shift() : true; },
+        URL: { createObjectURL: () => 'blob:o', revokeObjectURL() {} },
+    };
+    if (!o.ohneApi) window.showDirectoryPicker = async () => w.wurzel;
+    const document = { createElement: () => { const a = { click() { w.downloads.push(a.download); } }; return a; } };
+    w.bo = laden('src/services/belegordner.ts', { window, document, indexedDB: attrappeIndexedDB(), Blob });
+    w.toast = {
+        success: (m) => w.meldungen.push(['success', m]),
+        warning: (m) => w.meldungen.push(['warning', m]),
+    };
+    w.kopf = (n) => ({ 'content-disposition': `attachment; filename="${n}"; filename*=UTF-8''${encodeURIComponent(n)}` });
+    w.re = (inhalt, nummer = 'RE-2026-00006') => w.bo.belegHerunterladen(
+        { art: 'Rechnungen', datum: '2026-10-09', ersatzname: 'Ersatz.pdf' },
+        async () => ({ data: inhalt, headers: w.kopf(nummer + '.pdf') }), w.toast);
+    return w;
+}
+"""
+    ergebnis = subprocess.run(
+        ["node", "-e", vorspann + "(async () => {\n" + script
+         + "\n})().catch((e) => { console.error(e); process.exitCode = 1; });"],
+        cwd=Path(__file__).resolve().parents[2] / "frontend",
+        env={**os.environ, "TZ": "UTC"}, capture_output=True, text=True, timeout=60,
+    )
+    assert ergebnis.returncode == 0, ergebnis.stdout + ergebnis.stderr
+
+
+class TestOBelegordner:
+    """Gernot 09.10.: Belege direkt in einen gewählten Ordner, sortiert nach
+    <Belegart>/<JJJJ-MM>/<Belegnummer>, statt im Download-Ordner. Ohne Ordner,
+    ohne Freigabe, ohne API oder bei Schreibfehlern: normaler Download."""
+
+    def test_ohne_ordner_normaler_download_ohne_meldung(self):
+        _o_node("""
+const w = umgebung();
+gleich(await w.bo.belegordnerName(), null);
+gleich(await w.re('PDF'), { ort: 'download', dateiname: 'RE-2026-00006.pdf' });
+gleich(w.downloads, ['RE-2026-00006.pdf']);
+gleich(w.meldungen, []);
+""")
+
+    def test_ablage_nach_belegart_und_monat_mit_meldung(self):
+        _o_node("""
+const w = umgebung();
+gleich(await w.bo.belegordnerWaehlen(), 'Belege');
+gleich(await w.bo.belegordnerName(), 'Belege');
+gleich(await w.re('PDF-1'), { ort: 'ordner', pfad: 'Belege/Rechnungen/2026-10/RE-2026-00006.pdf' });
+gleich(w.wurzel.inhalt('Rechnungen/2026-10/RE-2026-00006.pdf'), 'PDF-1');
+// Zeitstempel ohne Zone = UTC: 31.10. 23:30 UTC ist in Berlin schon November
+gleich(await w.bo.belegHerunterladen(
+    { art: 'Auftragsbestätigungen', datum: '2026-10-31T23:30:00.123456', ersatzname: 'AB-20261101-0001.pdf' },
+    async () => ({ data: 'AB' }), w.toast),
+  { ort: 'ordner', pfad: 'Belege/Auftragsbestätigungen/2026-11/AB-20261101-0001.pdf' });
+gleich(w.downloads, []);
+gleich(w.meldungen, [
+    ['success', 'Gespeichert in Belege/Rechnungen/2026-10/RE-2026-00006.pdf'],
+    ['success', 'Gespeichert in Belege/Auftragsbestätigungen/2026-11/AB-20261101-0001.pdf'],
+]);
+""")
+
+    def test_vorhandener_beleg_nur_nach_rueckfrage_ersetzen_sonst_daneben(self):
+        _o_node("""
+const w = umgebung();
+await w.bo.belegordnerWaehlen();
+await w.re('PDF-1');
+gleich(w.rueckfragen, []);
+w.antworten.push(true);   // OK = ersetzen
+gleich(await w.re('PDF-2'), { ort: 'ordner', pfad: 'Belege/Rechnungen/2026-10/RE-2026-00006.pdf' });
+gleich(w.wurzel.inhalt('Rechnungen/2026-10/RE-2026-00006.pdf'), 'PDF-2');
+w.antworten.push(false);  // Abbrechen = daneben speichern
+gleich(await w.re('PDF-3'), { ort: 'ordner', pfad: 'Belege/Rechnungen/2026-10/RE-2026-00006 (1).pdf' });
+gleich(w.wurzel.inhalt('Rechnungen/2026-10/RE-2026-00006.pdf'), 'PDF-2');
+gleich(w.wurzel.inhalt('Rechnungen/2026-10/RE-2026-00006 (1).pdf'), 'PDF-3');
+gleich(w.rueckfragen.length, 2);
+gleich(w.rueckfragen[1], '„RE-2026-00006.pdf" liegt schon in Belege/Rechnungen/2026-10.\\n\\n'
+    + 'OK: ersetzen\\nAbbrechen: daneben als „RE-2026-00006 (1).pdf" speichern');
+""")
+
+    def test_exporte_bekommen_ohne_rueckfrage_einen_zusatz(self):
+        _o_node("""
+const w = umgebung();
+await w.bo.belegordnerWaehlen();
+const sepa = (inhalt) => w.bo.belegHerunterladen(
+    { art: 'Lastschriften', datum: '2026-10-09', ersatzname: 'Lastschrift-Einreichung_2026-10-09.csv', mime: 'text/csv' },
+    async () => ({ data: inhalt }), w.toast);
+gleich(await sepa('a;b'), { ort: 'ordner', pfad: 'Belege/Lastschriften/2026-10/Lastschrift-Einreichung_2026-10-09.csv' });
+gleich(await sepa('c;d'), { ort: 'ordner', pfad: 'Belege/Lastschriften/2026-10/Lastschrift-Einreichung_2026-10-09 (1).csv' });
+gleich(w.wurzel.inhalt('Lastschriften/2026-10/Lastschrift-Einreichung_2026-10-09.csv'), 'a;b');
+gleich(w.rueckfragen, []);
+""")
+
+    def test_freigabe_vor_dem_laden_sonst_download_mit_hinweis(self):
+        _o_node("""
+// Freigabe je Sitzung: erst fragen (frischer Klick), dann beim Server laden
+const w = umgebung();
+await w.bo.belegordnerWaehlen();
+w.wurzel.erlaubnis = 'prompt';
+gleich(await w.bo.belegordnerErlaubnis(), 'prompt');
+const e = await w.bo.belegHerunterladen({ art: 'Mahnungen', datum: '2026-10-09', ersatzname: 'M.pdf' },
+    async () => { w.wurzel.protokoll.push('geladen'); return { data: 'M' }; }, w.toast);
+gleich(w.wurzel.protokoll, ['Freigabe angefragt', 'geladen']);
+gleich(e, { ort: 'ordner', pfad: 'Belege/Mahnungen/2026-10/M.pdf' });
+
+// Ohne Freigabe: Download mit Hinweis. Zwei Fälle mit verschiedenem Ausweg (O-E5a):
+// ohneKlick (SecurityError) bzw. weggeklickt: Stand bleibt „fragen“, der Knopf
+// in den Einstellungen hilft. abgelehnt: Chrome fragt in dieser Sitzung nicht
+// mehr, auch nicht über den Knopf.
+const hinweise = {
+    ohneKlick: 'Kein Zugriff auf den Belegordner „Belege" — RE-2026-00006.pdf liegt im Download-Ordner. '
+        + 'Zugriff erlauben: Einstellungen → Belegordner.',
+    weggeklickt: 'Kein Zugriff auf den Belegordner „Belege" — RE-2026-00006.pdf liegt im Download-Ordner. '
+        + 'Zugriff erlauben: Einstellungen → Belegordner.',
+    abgelehnt: 'Zugriff auf den Belegordner „Belege" abgelehnt — RE-2026-00006.pdf liegt im Download-Ordner. '
+        + 'Wieder erlauben: alle Tabs dieser Seite schließen und neu öffnen '
+        + 'oder Symbol links in der Adresszeile → Website-Einstellungen.',
+};
+for (const fall of ['ohneKlick', 'weggeklickt', 'abgelehnt']) {
+    const v = umgebung();
+    await v.bo.belegordnerWaehlen();
+    v.wurzel.erlaubnis = 'prompt';
+    if (fall === 'ohneKlick') v.wurzel.ohneKlick = true;
+    else v.wurzel.antwort = fall === 'abgelehnt' ? 'denied' : 'prompt';
+    gleich(await v.re('PDF'), { ort: 'download', dateiname: 'RE-2026-00006.pdf', hinweis: hinweise[fall] });
+    gleich(v.downloads, ['RE-2026-00006.pdf']);
+    gleich(v.meldungen.map((m) => m[0]), ['warning']);
+    // Der Knopf „Zugriff erlauben“ (Einstellungen, frischer Klick)
+    v.wurzel.ohneKlick = false; v.wurzel.antwort = 'granted';
+    if (fall === 'abgelehnt') {
+        gleich(await v.bo.belegordnerErlaubnis(), 'denied');
+        gleich(await v.bo.belegordnerFreigeben(), false);
+        gleich(v.wurzel.protokoll, ['Freigabe angefragt']);   // keine zweite Frage
+        gleich(v.bo.ZUGRIFF_WIEDER_ERLAUBEN, hinweise.abgelehnt.split('Download-Ordner. ')[1]);
+    } else {
+        gleich(await v.bo.belegordnerErlaubnis(), 'prompt');
+        gleich(await v.bo.belegordnerFreigeben(), true);
+        gleich(v.wurzel.protokoll, ['Freigabe angefragt', 'Freigabe angefragt']);
+    }
+}
+""")
+
+    def test_schreibfehler_faellt_auf_download_zurueck(self):
+        _o_node("""
+const w = umgebung();
+await w.bo.belegordnerWaehlen();
+await w.wurzel.getFileHandle('Packlisten', { create: true });   // Datei statt Ordner
+const e = await w.bo.belegHerunterladen(
+    { art: 'Packlisten', datum: '2026-10-09T08:00:00', ersatzname: 'PL-20261009-0001.pdf' },
+    async () => ({ data: 'PL' }), w.toast);
+gleich(e, {
+    ort: 'download', dateiname: 'PL-20261009-0001.pdf',
+    hinweis: 'Belegordner „Belege" nicht beschreibbar (TypeMismatchError) — PL-20261009-0001.pdf liegt im Download-Ordner.',
+});
+gleich(w.downloads, ['PL-20261009-0001.pdf']);
+""")
+
+    def test_laden_ohne_ergebnis_oder_mit_fehler(self):
+        _o_node("""
+const w = umgebung();
+await w.bo.belegordnerWaehlen();
+gleich(await w.bo.belegHerunterladen({ art: 'Mahnungen', ersatzname: 'M.pdf' }, async () => null, w.toast), null);
+gleich([w.downloads, w.meldungen, [...w.wurzel.eintraege.keys()]], [[], [], []]);
+await assert.rejects(
+    w.bo.belegHerunterladen({ art: 'Rechnungen', ersatzname: 'x.pdf' }, async () => { throw new Error('500 vom Server'); }, w.toast),
+    /500 vom Server/);
+""")
+
+    def test_ohne_api_und_nach_zuruecksetzen_normaler_download(self):
+        _o_node("""
+// Safari/Firefox: keine API — nichts zu wählen, Download wie bisher
+const ohne = umgebung({ ohneApi: true });
+gleich(ohne.bo.belegordnerMoeglich(), false);
+gleich(await ohne.bo.belegordnerWaehlen(), null);
+gleich(await ohne.re('PDF'), { ort: 'download', dateiname: 'RE-2026-00006.pdf' });
+gleich(ohne.meldungen, []);
+
+const w = umgebung();
+gleich(w.bo.belegordnerMoeglich(), true);
+await w.bo.belegordnerWaehlen();
+await w.bo.belegordnerZuruecksetzen();
+gleich(await w.bo.belegordnerName(), null);
+gleich(await w.re('PDF'), { ort: 'download', dateiname: 'RE-2026-00006.pdf' });
+gleich(w.wurzel.eintraege.size, 0);
+""")
