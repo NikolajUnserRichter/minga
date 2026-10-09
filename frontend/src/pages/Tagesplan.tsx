@@ -5,6 +5,7 @@ import { Sprout, Scissors, Package, Truck, Users, Boxes, ListTodo, Plus, FileTex
 import { productionApi, staffApi, documentsApi, salesApi } from '../services/api';
 import { PageHeader } from '../components/common/Layout';
 import { Input, EmptyState, Badge, OrderStatusBadge, PageLoader, Button, useToast, aussaatStatusLabel } from '../components/ui';
+import { LeergutRuecknahmeKnopf } from '../components/domain/Leergut';
 import { getErrorMessage } from '../services/errors';
 import { invalidateOrderViews } from '../services/orderQueries';
 
@@ -297,8 +298,12 @@ export default function Tagesplan() {
         title="Tagesplan"
         subtitle={new Date(date).toLocaleDateString('de-DE', { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric' })}
         actions={
-          <div className="w-44">
-            <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+          <div className="flex items-start gap-2">
+            {/* Halle: Kisten zurücknehmen, ohne die Kundenseite (Paket 3, Q6) */}
+            <LeergutRuecknahmeKnopf />
+            <div className="w-44">
+              <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+            </div>
           </div>
         }
       />

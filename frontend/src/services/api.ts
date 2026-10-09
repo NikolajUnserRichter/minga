@@ -1735,3 +1735,92 @@ export const sepaApi = {
     api.post<{ invoice_number: string; status: string; lastschrift_status: string; gegenbuchung: number; faellig_am: string }>(
       `/sepa/rechnungen/${invoiceId}/ruecklastschrift`, { datum, grund, zahlbar_bis: zahlbarBis || null }).then(r => r.data),
 }
+
+
+// ==================== LEERGUTKONTO (Paket 3, Q6) ====================
+
+export interface LeergutArtikel {
+  id: string
+  sku: string
+  name: string
+  einzelwert: number
+  tax_rate: string
+}
+
+export interface LeergutKundeKurz {
+  customer_id: string
+  name: string
+  pfand_abrechnung: NonNullable<Customer['pfand_abrechnung']>
+  stueck_beim_kunden: number
+}
+
+export type LeergutArt = 'AUSGABE' | 'RUECKNAHME' | 'KORREKTUR_PLUS' | 'KORREKTUR_MINUS' | 'ANFANGSBESTAND'
+
+export interface LeergutBewegung {
+  id: string
+  product_id: string
+  artikel: string
+  art: LeergutArt
+  menge: number
+  einzelwert: number
+  leistungsdatum: string
+  order_line_id: string | null
+  delivery_note_id: string | null
+  invoice_id: string | null
+  bereits_berechnet: boolean
+  erfasst_von: string | null
+  erfasst_am: string
+  notiz: string | null
+}
+
+export interface LeergutKonto {
+  customer_id: string
+  customer_name: string
+  pfand_abrechnung: NonNullable<Customer['pfand_abrechnung']>
+  pfand_monatlich_ab: string | null
+  salden: Array<{
+    product_id: string; artikel: string; stueck: number; wert: number; offen_stueck: number; offen_wert: number
+  }>
+  bewegungen: LeergutBewegung[]
+}
+
+export interface LeergutVorschau {
+  monat: string
+  period_from: string
+  period_to: string
+  kunden: Array<{
+    customer_id: string
+    customer_name: string
+    pfand_abrechnung: NonNullable<Customer['pfand_abrechnung']>
+    leistungszeitraum: [string, string]
+    positionen: Array<{
+      product_id: string; artikel: string; einzelwert: number
+      ausgegeben: number; zurueckgenommen: number; betrag_netto: number
+    }>
+    summe_netto: number
+    minderung: boolean
+    nachzug: Array<{ order_number: string; leistungsdatum: string; artikel: string; menge: number }>
+  }>
+  uebersprungen: Array<{ customer_id: string; customer_name: string; grund: string }>
+}
+
+export const leergutApi = {
+  artikel: () => api.get<LeergutArtikel[]>('/leergut/artikel').then(r => r.data),
+  kunden: () => api.get<LeergutKundeKurz[]>('/leergut/kunden').then(r => r.data),
+  konto: (customerId: string) => api.get<LeergutKonto>(`/leergut/kunden/${customerId}`).then(r => r.data),
+  ruecknahme: (customerId: string, data: {
+    positionen: Array<{ product_id: string; menge: number }>; leistungsdatum?: string; notiz?: string
+  }) => api.post<LeergutBewegung[]>(`/leergut/kunden/${customerId}/ruecknahmen`, data).then(r => r.data),
+  korrektur: (customerId: string, data: {
+    art: 'KORREKTUR_PLUS' | 'KORREKTUR_MINUS' | 'ANFANGSBESTAND'
+    product_id: string; menge: number; leistungsdatum?: string; notiz: string
+    /** Nur ANFANGSBESTAND: Kisten schon berechnet (Altsystem, Rechnung); Server-Standard true */
+    bereits_berechnet?: boolean
+  }) => api.post<LeergutBewegung[]>(`/leergut/kunden/${customerId}/korrekturen`, data).then(r => r.data),
+  loeschen: (bewegungId: string) => api.delete(`/leergut/bewegungen/${bewegungId}`).then(r => r.data),
+  laufVorschau: (data: { monat?: string; customer_ids?: string[] }) =>
+    api.post<LeergutVorschau>('/invoices/leergut-run/preview', data).then(r => r.data),
+  laufAnlegen: (data: { monat?: string; customer_ids?: string[] }) =>
+    api.post<{ rechnungen: Invoice[]; uebersprungen: LeergutVorschau['uebersprungen'] }>(
+      '/invoices/leergut-run/commit', data).then(r => r.data),
+}

@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
-import { Plus, Search, Trash, Tag } from 'lucide-react';
+import { Plus, Search, Trash, Tag, Package } from 'lucide-react';
 import { CustomerPricesModal } from '../components/domain/CustomerPricesModal';
+import { LeergutKontoModal } from '../components/domain/Leergut';
 import { adressListe } from '../components/domain/BelegVersand';
 import { salesApi } from '../services/api';
 import { Customer, CustomerType, Contact, CustomerAddress, AddressType, PfandAbrechnung } from '../types';
@@ -55,6 +56,7 @@ export default function Customers() {
   const [typeFilter, setTypeFilter] = useState<string>('all');
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
   const [pricesFor, setPricesFor] = useState<Customer | null>(null);
+  const [leergutFor, setLeergutFor] = useState<Customer | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [deletingCustomer, setDeletingCustomer] = useState<Customer | null>(null);
   const [orderForCustomer, setOrderForCustomer] = useState<Customer | null>(null);
@@ -152,6 +154,15 @@ export default function Customers() {
               >
                 <Tag className="w-4 h-4" />
               </button>
+              {customer.pfand_abrechnung === 'MONATLICH' && (
+                <button
+                  className="absolute top-3 right-10 text-gray-400 hover:text-minga-600 dark:text-gray-500 dark:hover:text-minga-300"
+                  title="Leergutkonto"
+                  onClick={(e) => { e.stopPropagation(); setLeergutFor(customer); }}
+                >
+                  <Package className="w-4 h-4" />
+                </button>
+              )}
             </div>
           ))}
         </div>
@@ -217,6 +228,14 @@ export default function Customers() {
         customerId={pricesFor?.id || null}
         customerName={pricesFor?.name || ''}
       />
+
+      {/* Leergutkonto (Pfand monatlich, Paket 3 Q6) */}
+      <LeergutKontoModal
+        open={!!leergutFor}
+        onClose={() => setLeergutFor(null)}
+        customerId={leergutFor?.id || null}
+        customerName={leergutFor?.name || ''}
+      />
     </div>
   );
 }
@@ -275,10 +294,11 @@ function CustomerForm({ customer, onSubmit, onCancel }: CustomerFormProps) {
     { value: 'PRIVAT', label: 'Privat' },
   ];
 
-  // Pfandabrechnung je Kunde (Spec 08.10.2026). MONATLICH (Leergutkonto) folgt mit Paket 3.
+  // Pfandabrechnung je Kunde (Spec 08.10.2026); MONATLICH = Leergutkonto (Paket 3, Q6).
   const pfandAbrechnungOptions: SelectOption[] = [
     { value: 'JE_LIEFERUNG', label: 'Pfand auf jeder Rechnung' },
     { value: 'KEINE', label: 'Pfand nicht auf der Rechnung (IFCO-Clearing)' },
+    { value: 'MONATLICH', label: 'Pfand monatlich über das Leergutkonto' },
   ];
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -443,7 +463,9 @@ function CustomerForm({ customer, onSubmit, onCancel }: CustomerFormProps) {
             onChange={(e) => setFormData({ ...formData, pfand_abrechnung: e.target.value as PfandAbrechnung })}
           />
           <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-            Bei „IFCO-Clearing“ stehen Pfandkisten auf Bestellung und Lieferschein, aber nicht auf neu erzeugten Rechnungen.
+            {formData.pfand_abrechnung === 'MONATLICH'
+              ? 'Ab dem Tag der Umstellung stehen Pfandkisten nicht mehr auf der Rechnung: Lieferungen und Rückgaben laufen über das Leergutkonto und werden einmal im Monat abgerechnet (Rechnungen → Leergutabrechnung).'
+              : 'Bei „IFCO-Clearing“ stehen Pfandkisten auf Bestellung und Lieferschein, aber nicht auf neu erzeugten Rechnungen.'}
           </p>
         </div>
       </div>

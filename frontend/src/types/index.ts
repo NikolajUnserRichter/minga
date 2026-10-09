@@ -170,6 +170,8 @@ export interface Customer {
   show_prices_on_delivery_note?: boolean
   /** Pfandabrechnung: JE_LIEFERUNG = Pfand auf jeder Rechnung, KEINE = IFCO-Clearing (nicht auf der Rechnung) */
   pfand_abrechnung?: PfandAbrechnung
+  /** Stichtag des Leergutkontos (nur bei MONATLICH, vom Server gesetzt) */
+  pfand_monatlich_ab?: string | null
   /** Nur lesend; geändert über sepaApi.setZahlungsart (Admin/Buchhaltung). null = Überweisung */
   zahlungsart?: Zahlungsart | null
   aktiv: boolean
@@ -183,8 +185,8 @@ export interface Customer {
 
 export type CustomerType = 'GASTRO' | 'HANDEL' | 'GEWERBE' | 'PRIVAT'
 
-/** Pfandabrechnung je Kunde (Backend: PfandAbrechnung). MONATLICH folgt mit Paket 3. */
-export type PfandAbrechnung = 'JE_LIEFERUNG' | 'KEINE'
+/** Pfandabrechnung je Kunde (Backend: PfandAbrechnung); MONATLICH = Leergutkonto (Paket 3, Q6). */
+export type PfandAbrechnung = 'JE_LIEFERUNG' | 'KEINE' | 'MONATLICH'
 
 export interface Order {
   id: string
@@ -647,6 +649,8 @@ export interface Invoice {
   paid_amount: number
   /** Im Gesamtbetrag enthaltenes Pfand (brutto) */
   total_deposit?: number
+  /** 'LEERGUT' = monatliche Leergutabrechnung (Paket 3, Q6) */
+  beleg_art?: string | null
   billing_address: Record<string, string> | null
   shipping_address: Record<string, string> | null
   header_text: string | null
