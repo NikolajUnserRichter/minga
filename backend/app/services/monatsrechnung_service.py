@@ -357,3 +357,134 @@ def vorschau(db: Session, monat: str) -> dict:
         "vorgeschlagen": vorgeschlagen,
         "hinweise": _hinweise(db, monat, im_monat, monatskunden, rechnungen),
     }
+
+
+# ---------------------------------------------------------------------------
+# Lauf
+# ---------------------------------------------------------------------------
+
+def _sperren(db: Session, monat: str, art: str, ausgeloest_von: Optional[str],
+             jetzt: datetime) -> Optional[BillingRun]:
+    """Legt den Lauf als LAEUFT an. None, wenn für den Monat schon einer läuft.
+
+    Ein LAEUFT-Eintrag, der älter ist als VERWAIST_NACH, stammt aus einem
+    abgebrochenen Prozess: er wird auf FEHLER gesetzt und der Lauf übernimmt.
+    Das bedingte UPDATE (… AND status = 'LAEUFT') entscheidet zwischen zwei
+    Prozessen, die gleichzeitig übernehmen wollen.
+    """
+    for _ in range(2):
+        lauf = BillingRun(monat=monat, art=art, status="LAEUFT",
+                          gestartet_am=jetzt, ausgeloest_von=ausgeloest_von)
+        db.add(lauf)
+        try:
+            db.commit()
+            return lauf
+        except IntegrityError:
+            db.rollback()
+        alt = db.execute(
+            select(BillingRun).where(BillingRun.monat == monat, BillingRun.status == "LAEUFT")
+        ).scalar_one_or_none()
+        if alt is None or alt.gestartet_am > jetzt - VERWAIST_NACH:
+            return None
+        uebernommen = db.execute(
+            update(BillingRun)
+            .where(BillingRun.id == alt.id, BillingRun.status == "LAEUFT")
+            .values(status="FEHLER", beendet_am=jetzt,
+                    fehler="verwaist: Lauf nicht beendet (Neustart oder Absturz)")
+        ).rowcount
+        db.commit()
+        if uebernommen != 1:
+            return None
+    return None
+
+
+def _anlegen(db: Session, monat: str, heute: date, ausgeloest_von: Optional[str]) -> dict:
+    from app.api.v1.invoices import BatchRunRequest, _abrechenbare_lieferscheine, _aggregiere, _sammelrechnung_anlegen
+    from app.services import leergut_service
+
+    start, ende = monat_grenzen(monat)
+    angelegt, uebersprungen, fehler = [], [], []
+    service = InvoiceService(db)
+    anfrage = BatchRunRequest(period_from=start, period_to=ende, invoice_date=heute)
+
+    vorhanden = {r.customer_id for r in _monatsrechnungen(db, monat)}
+    im_monat = _je_kunde(_abrechenbare_lieferscheine(db, anfrage))
+
+    for kunde in _monatskunden(db):
+        if not kunde.aktiv:
+            continue
+        name = kunde.name
+        if kunde.id in vorhanden:
+            uebersprungen.append({"customer_id": str(kunde.id), "customer_name": name,
+                                  "grund": "Monatsrechnung vorhanden"})
+            continue
+        k = _aggregiere(db, im_monat.get(kunde.id, [])).get(kunde.id)
+        if not k:
+            uebersprungen.append({"customer_id": str(kunde.id), "customer_name": name,
+                                  "grund": "keine abrechenbaren Lieferungen"})
+            continue
+        try:
+            invoice = _sammelrechnung_anlegen(db, service, k, anfrage)
+            invoice.batch_key = monatsschluessel(monat)
+            db.commit()
+            angelegt.append({"invoice_id": str(invoice.id), "customer_id": str(kunde.id),
+                             "customer_name": name, "art": "WARE"})
+        except IntegrityError:
+            db.rollback()
+            uebersprungen.append({"customer_id": str(kunde.id), "customer_name": name,
+                                  "grund": "Monatsrechnung parallel angelegt"})
+        except Exception as e:  # ein Kunde blockiert nicht die übrigen
+            db.rollback()
+            logger.exception(f"[monatsrechnung] {monat} Kunde {name} fehlgeschlagen")
+            fehler.append({"customer_id": str(kunde.id), "customer_name": name, "fehler": str(e)[:500]})
+
+    # Leergut (Q6): je Kunde mit offenen Leergutbewegungen ein Beleg — auch
+    # bei Einzelabrechnung der Ware. Q6 entscheidet, wer dran ist, und
+    # schützt selbst vor doppelten Belegen. Je Kunde eine Transaktion.
+    plan = leergut_service.vorschau(db, monat, None)
+    for u in plan["uebersprungen"]:
+        uebersprungen.append({"customer_id": str(u["customer_id"]), "customer_name": u["customer_name"],
+                              "grund": u["grund"]})
+    for k in plan["kunden"]:
+        try:
+            belege, _ = leergut_service.belege_anlegen(
+                db, monat, [k["customer_id"]], erfasst_von=ausgeloest_von or "Monatslauf")
+            db.commit()
+            angelegt.extend({"invoice_id": str(b.id), "customer_id": str(b.customer_id),
+                             "customer_name": k["customer_name"], "art": "LEERGUT"} for b in belege)
+        except Exception as e:  # LeergutFehler und alles andere: nur dieser Kunde
+            db.rollback()
+            logger.exception(f"[monatsrechnung] {monat} Leergut {k['customer_name']} fehlgeschlagen")
+            fehler.append({"customer_id": str(k["customer_id"]), "customer_name": k["customer_name"],
+                           "fehler": str(e)[:500]})
+
+    return {"angelegt": angelegt, "uebersprungen": uebersprungen, "fehler": fehler}
+
+
+def monatslauf(db: Session, monat: str, art: str, ausgeloest_von: Optional[str] = None,
+               heute: Optional[date] = None, jetzt: Optional[datetime] = None) -> dict:
+    """Legt die Monatsentwürfe für ``monat`` an. Idempotent.
+
+    Kunden mit vorhandenem Monatsbeleg werden übersprungen; ein erneuter
+    Lauf ergänzt nur, was fehlt. Rückgabe ``status``: ``ok`` oder
+    ``laeuft_bereits``.
+    """
+    monat_grenzen(monat)  # Format prüfen, bevor etwas geschrieben wird
+    jetzt = jetzt or _jetzt_utc_naiv()
+    heute = heute or heute_berlin()
+    lauf = _sperren(db, monat, art, ausgeloest_von, jetzt)
+    if lauf is None:
+        return {"status": "laeuft_bereits", "monat": monat}
+    lauf_id = lauf.id
+    try:
+        ergebnis = _anlegen(db, monat, heute, ausgeloest_von)
+    except Exception as e:
+        db.rollback()
+        lauf = db.get(BillingRun, lauf_id)
+        lauf.status, lauf.beendet_am, lauf.fehler = "FEHLER", _jetzt_utc_naiv(), str(e)[:2000]
+        db.commit()
+        raise
+    lauf = db.get(BillingRun, lauf_id)
+    lauf.status, lauf.beendet_am, lauf.ergebnis = "FERTIG", _jetzt_utc_naiv(), ergebnis
+    db.commit()
+    return {"status": "ok", "monat": monat, "lauf_id": str(lauf_id), **ergebnis}

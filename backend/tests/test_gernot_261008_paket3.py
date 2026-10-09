@@ -5784,3 +5784,221 @@ class TestQ7Vorschau:
         assert v["vorgeschlagen"] == []
         assert [h["customer_name"] for h in self._hinweise(v, "KEINE_LIEFERUNGEN")] == ["Bodan"]
         assert [h["customer_name"] for h in self._hinweise(v, "INAKTIV")] == ["Fruchthof Nagel"]
+
+
+# ---------------------------------------------------------------------------
+# Q7.6 — Monatslauf
+# ---------------------------------------------------------------------------
+
+@pytest.mark.usefixtures("_q7_ohne_forecast")
+class TestQ7Monatslauf:
+
+    def test_legt_entwurf_je_monatskunde_an(self, client):
+        kunde = _q7_monatskunde(client)
+        einzeln = _q7_kunde(client, "Knuspr")
+        _, ls1 = _q7_geliefert(client, kunde)
+        _, ls2 = _q7_geliefert(client, kunde, "2026-03-31", menge=4)
+        _q7_geliefert(client, einzeln)
+
+        ergebnis = _q7_lauf()
+
+        assert ergebnis["status"] == "ok"
+        assert [(a["customer_name"], a["art"]) for a in ergebnis["angelegt"]] == [("Ökoring Handels GmbH", "WARE")]
+        d = client.get(f"/api/v1/invoices/{ergebnis['angelegt'][0]['invoice_id']}").json()
+        assert d["status"] == "ENTWURF"
+        assert d["invoice_number"].startswith("ENTWURF-")      # Q1: Nummer erst beim Finalisieren
+        assert d["batch_key"] == "MONAT-2026-03"
+        assert (d["service_period_start"], d["service_period_end"]) == ("2026-03-01", "2026-03-31")
+        assert _q7_d(d["subtotal"]) == Decimal("35.00")
+        assert sorted(n["delivery_note_number"] for n in
+                      client.get(f"/api/v1/invoices/{d['id']}/delivery-notes").json()) == sorted(
+            [ls1["delivery_note_number"], ls2["delivery_note_number"]])
+        assert _q7_rechnungen(einzeln) == []
+        assert _q7_laeufe() == [("2026-03", "MONAT_MANUELL", "FERTIG")]
+
+    def test_zweiter_lauf_legt_nichts_doppelt_an(self, client):
+        kunde = _q7_monatskunde(client)
+        _q7_geliefert(client, kunde)
+        _q7_lauf()
+
+        zweiter = _q7_lauf()
+
+        assert zweiter["angelegt"] == []
+        assert [u["grund"] for u in zweiter["uebersprungen"]] == ["Monatsrechnung vorhanden"]
+        assert len(_q7_rechnungen(kunde)) == 1
+
+    def test_laufender_lauf_sperrt(self, client):
+        from datetime import datetime, timedelta
+        from app.models.billing_run import BillingRun
+        kunde = _q7_monatskunde(client)
+        _q7_geliefert(client, kunde)
+        jetzt = datetime(2026, 4, 1, 5, 0)
+        with TestingSessionLocal() as db:
+            db.add(BillingRun(monat=Q7_MONAT, art="MONAT_AUTO", status="LAEUFT",
+                              gestartet_am=jetzt - timedelta(minutes=5)))
+            db.commit()
+
+        assert _q7_lauf(jetzt=jetzt) == {"status": "laeuft_bereits", "monat": Q7_MONAT}
+        assert _q7_rechnungen(kunde) == []
+
+    def test_verwaister_lauf_wird_uebernommen(self, client):
+        from datetime import datetime, timedelta
+        from app.models.billing_run import BillingRun
+        kunde = _q7_monatskunde(client)
+        _q7_geliefert(client, kunde)
+        jetzt = datetime(2026, 4, 1, 5, 0)
+        with TestingSessionLocal() as db:
+            db.add(BillingRun(monat=Q7_MONAT, art="MONAT_AUTO", status="LAEUFT",
+                              gestartet_am=jetzt - timedelta(minutes=61)))
+            db.commit()
+
+        assert _q7_lauf(jetzt=jetzt)["status"] == "ok"
+        assert sorted(s for _, _, s in _q7_laeufe()) == ["FEHLER", "FERTIG"]
+        assert len(_q7_rechnungen(kunde)) == 1
+
+    def test_nach_verwerfen_legt_der_naechste_lauf_neu_an(self, client):
+        kunde = _q7_monatskunde(client)
+        _, ls = _q7_geliefert(client, kunde)
+        erster = _q7_lauf()["angelegt"][0]["invoice_id"]
+
+        _q7_verwerfen(client, erster)
+        assert _q7_ls_frei(ls)
+        neu = _q7_lauf()
+
+        assert len(neu["angelegt"]) == 1 and neu["angelegt"][0]["invoice_id"] != erster
+
+    def test_nachgekommener_lieferschein_ist_ein_hinweis(self, client):
+        from app.services.monatsrechnung_service import vorschau
+        kunde = _q7_monatskunde(client)
+        _q7_geliefert(client, kunde)
+        _q7_lauf()
+        _, spaet = _q7_geliefert(client, kunde, "2026-03-30")
+
+        with TestingSessionLocal() as db:
+            v = vorschau(db, Q7_MONAT)
+
+        assert [h["belege"] for h in v["hinweise"] if h["art"] == "NACHGEKOMMEN"] == [[spaet["delivery_note_number"]]]
+        assert v["vorgeschlagen"] == []
+        assert [e["art"] for e in v["entwuerfe"]] == ["WARE"]
+
+    def test_frueherer_monat_schon_abgerechnet_ueber_die_bestellung(self, client):
+        """Hinweis FRUEHERER_MONAT: Ist jener Monat schon freigegeben, überspringt
+        ihn der Lauf — der Weg ist die Rechnung aus der Bestellung."""
+        from app.services.monatsrechnung_service import vorschau
+        kunde = _q7_monatskunde(client)
+        _q7_geliefert(client, kunde, "2026-02-10")
+        februar = _q7_lauf("2026-02")["angelegt"][0]["invoice_id"]
+        assert client.post(f"/api/v1/invoices/{februar}/finalize").status_code == 200
+        vergessen, ls = _q7_geliefert(client, kunde, "2026-02-26")
+
+        with TestingSessionLocal() as db:
+            hinweise = [h for h in vorschau(db, Q7_MONAT)["hinweise"] if h["art"] == "FRUEHERER_MONAT"]
+        assert [h["belege"] for h in hinweise] == [[ls["delivery_note_number"]]]
+        assert "Rechnung aus Bestellung" in hinweise[0]["text"]
+        assert _q7_lauf("2026-02")["angelegt"] == []        # der Lauf für Februar hilft nicht
+        assert _q7_ls_frei(ls)
+
+        assert client.post(f"/api/v1/invoices/from-order/{vergessen['id']}").status_code == 201
+
+        with TestingSessionLocal() as db:
+            assert [h for h in vorschau(db, Q7_MONAT)["hinweise"] if h["art"] == "FRUEHERER_MONAT"] == []
+
+    def test_lieferschein_ohne_quittung_im_entwurf_ist_ein_hinweis(self, client):
+        from app.services.monatsrechnung_service import vorschau
+        kunde = _q7_monatskunde(client)
+        _, offen = _q7_geliefert(client, kunde)
+        bestellung, quittiert = _q7_geliefert(client, kunde, "2026-03-06")
+        # Bestätigt vor dem Quittieren — so verlangen es die Statusregeln aus Paket 2 (A1)
+        assert client.post(f"/api/v1/sales/orders/{bestellung['id']}/confirm").status_code == 200
+        r = client.patch(f"/api/v1/sales/delivery-notes/{quittiert['id']}/mark-delivered",
+                         json={"signed_by": "Fahrer", "actual_delivery_date": "2026-03-06"})
+        assert r.status_code == 200, r.text
+        _q7_lauf()
+
+        with TestingSessionLocal() as db:
+            v = vorschau(db, Q7_MONAT)
+
+        assert [h["belege"] for h in v["hinweise"] if h["art"] == "NICHT_QUITTIERT"] == [[offen["delivery_note_number"]]]
+
+    def test_bereits_abgerechnete_bestellung_fehlt_im_entwurf(self, client):
+        """Eine Regel mit Paket 1: Rechnung aus Bestellung sperrt die Bestellung."""
+        kunde = _q7_monatskunde(client)
+        einzeln_abgerechnet, _ = _q7_geliefert(client, kunde)
+        _q7_geliefert(client, kunde, "2026-03-06", menge=4)
+        assert client.post(f"/api/v1/invoices/from-order/{einzeln_abgerechnet['id']}").status_code == 201
+
+        ergebnis = _q7_lauf()
+
+        d = client.get(f"/api/v1/invoices/{ergebnis['angelegt'][0]['invoice_id']}").json()
+        assert _q7_d(d["subtotal"]) == Decimal("10.00")
+
+    def test_fehler_bei_einem_kunden_blockiert_die_anderen_nicht(self, client, monkeypatch):
+        import app.api.v1.invoices as inv
+        a = _q7_monatskunde(client, "A-Kunde")
+        b = _q7_monatskunde(client, "B-Kunde")
+        _, ls_a = _q7_geliefert(client, a)
+        _q7_geliefert(client, b)
+        original = inv._sammelrechnung_anlegen
+
+        def kaputt(db, service, k, anfrage):
+            if str(k["customer_id"]) == a["id"]:
+                original(db, service, k, anfrage)      # schreibt halb …
+                raise RuntimeError("Testfehler")        # … und scheitert
+            return original(db, service, k, anfrage)
+        monkeypatch.setattr(inv, "_sammelrechnung_anlegen", kaputt)
+
+        ergebnis = _q7_lauf()
+
+        assert [f["customer_name"] for f in ergebnis["fehler"]] == ["A-Kunde"]
+        assert [x["customer_name"] for x in ergebnis["angelegt"]] == ["B-Kunde"]
+        assert _q7_rechnungen(a) == [] and _q7_ls_frei(ls_a)
+        assert _q7_laeufe() == [("2026-03", "MONAT_MANUELL", "FERTIG")]
+
+    def test_freigabe_vergibt_nummer_und_storno_gibt_den_monat_frei(self, client):
+        """Ende zu Ende mit Q1 (Nummer beim Finalisieren) und Paket 1 (Storno)."""
+        kunde = _q7_monatskunde(client)
+        _q7_geliefert(client, kunde)
+        rid = _q7_lauf()["angelegt"][0]["invoice_id"]
+
+        fertig = client.post(f"/api/v1/invoices/{rid}/finalize")
+        assert fertig.status_code == 200, fertig.text
+        assert fertig.json()["invoice_number"].startswith("RE-")
+        assert fertig.json()["batch_key"] == "MONAT-2026-03"
+        storno = client.post(f"/api/v1/invoices/{rid}/cancel",
+                             json={"reason": "Menge falsch", "reason_code": "FALSCHE_MENGE"})
+        assert storno.status_code == 200, storno.text
+
+        neu = _q7_lauf()
+
+        assert len(neu["angelegt"]) == 1
+
+    def test_leergutbelege_kommen_aus_q6(self, client, _q7_leergut):
+        """Q7 ruft Q6 je Kunde mit offenen Bewegungen — auch bei Einzelabrechnung
+        der Ware — und listet den Beleg unter den Monatsbelegen."""
+        knuspr = _q7_kunde(client, "Knuspr")                     # Ware je Lieferung
+        _q7_leergut["offen"].append(knuspr)
+
+        erster = _q7_lauf()
+        zweiter = _q7_lauf()
+
+        assert [(a["customer_name"], a["art"]) for a in erster["angelegt"]] == [("Knuspr", "LEERGUT")]
+        assert _q7_leergut["aufrufe"] == [(Q7_MONAT, [uuid.UUID(knuspr["id"])], "q7")]
+        assert zweiter["angelegt"] == []
+        from app.services.monatsrechnung_service import vorschau
+        with TestingSessionLocal() as db:
+            v = vorschau(db, Q7_MONAT)
+        assert [(e["customer_name"], e["art"]) for e in v["entwuerfe"]] == [("Knuspr", "LEERGUT")]
+
+    def test_leergutfehler_trifft_nur_diesen_kunden(self, client, _q7_leergut):
+        from app.services.leergut_service import LeergutFehler
+        ware = _q7_monatskunde(client)
+        _q7_geliefert(client, ware)
+        kaputt = _q7_kunde(client, "Bodan")
+        _q7_leergut["offen"].append(kaputt)
+        _q7_leergut["fehler"][uuid.UUID(kaputt["id"])] = LeergutFehler("Pfandwert fehlt")
+
+        ergebnis = _q7_lauf()
+
+        assert [(a["customer_name"], a["art"]) for a in ergebnis["angelegt"]] == [("Ökoring Handels GmbH", "WARE")]
+        assert [(f["customer_name"], f["fehler"]) for f in ergebnis["fehler"]] == [("Bodan", "Pfandwert fehlt")]
+        assert _q7_rechnungen(kaputt) == []
