@@ -1184,3 +1184,283 @@ class TestP4CDateinameMail:
             assert namen == sorted([f"{nummer}.pdf", f"{nummer}_Fruchthof-Nagel-GmbH.pdf"])
             assert len({d["attachment_sha256"] for d in antwort.json()["dispatches"]}) == 1
         assert len(_p4c_mails) == 4
+
+
+# ---------------------------------------- Abschnitt C: Belegstatus (C.3)
+_P4C_HEUTE = "2026-10-09"
+
+
+def _p4c_heute(monkeypatch, tag=_P4C_HEUTE):
+    """Stichtag des Belegstatus festlegen (der Endpunkt rechnet in Berlin)."""
+    from datetime import date
+    monkeypatch.setattr("app.api.v1.belegstatus.heute_berlin", lambda: date.fromisoformat(tag))
+
+
+def _p4c_auftrag(client, kunde, liefertag, status="GELIEFERT", lieferschein=True, ls_status=None) -> str:
+    """Bestellung mit Liefertag und Status (direkt gesetzt), auf Wunsch mit Lieferschein."""
+    import uuid
+    from datetime import date
+    from app.models.documents import DeliveryNote
+    from app.models.enums import DeliveryNoteStatus, OrderStatus
+    from app.models.order import Order
+    from tests.conftest import TestingSessionLocal
+    order_id = _p4c_bestellung(client, kunde, date.fromisoformat(liefertag))
+    if lieferschein:
+        r = client.post(f"/api/v1/sales/orders/{order_id}/delivery-notes", json={})
+        assert r.status_code == 201, r.text
+    with TestingSessionLocal() as db:
+        db.get(Order, uuid.UUID(order_id)).status = OrderStatus(status)
+        if ls_status:
+            for ls in db.query(DeliveryNote).filter(DeliveryNote.order_id == uuid.UUID(order_id)):
+                ls.status = DeliveryNoteStatus(ls_status)
+        db.commit()
+    return order_id
+
+
+def _p4c_status(client, **params) -> dict:
+    r = client.get("/api/v1/belegstatus", params=params)
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def _p4c_zeile(liste, order_id) -> dict:
+    treffer = [z for z in liste["items"] if z["order_id"] == order_id]
+    assert len(treffer) == 1, liste
+    return treffer[0]
+
+
+class TestP4CBelegstatus:
+    """Gernot 08.10. (B2): je Bestellung Lieferschein ✔/✘, Rechnung ✔/✘,
+    versendet ✔/✘, bezahlt; Filter Zeitraum, Kunde, „unvollständig“
+    (geliefert, aber ohne Rechnung bzw. Rechnung nicht versendet)."""
+
+    def test_einzelkunde_geliefert_ohne_rechnung(self, client, monkeypatch):
+        """X07: gelieferte Bestellungen von Einzelkunden ohne Rechnung — mit
+        Lieferschein und ohne (Abo, BE-20261008-0002)."""
+        _p4c_heute(monkeypatch)
+        kunde = _p4c_kunde(client, "Naturkostinsel GmbH")
+        mit_ls = _p4c_auftrag(client, kunde, "2026-10-08")
+        ohne_ls = _p4c_auftrag(client, kunde, "2026-10-08", lieferschein=False)
+
+        liste = _p4c_status(client, von="2026-10-01")
+
+        assert (liste["total"], liste["unvollstaendig"], liste["heute"]) == (2, 2, _P4C_HEUTE)
+        a, b = _p4c_zeile(liste, mit_ls), _p4c_zeile(liste, ohne_ls)
+        assert [len(a["lieferscheine"]), len(b["lieferscheine"])] == [1, 0]
+        assert a["lieferscheine"][0]["status"] == "ENTWURF"
+        for z in (a, b):
+            assert (z["customer_name"], z["abrechnung"], z["liefertag"]) == ("Naturkostinsel GmbH", "EINZELN", "2026-10-08")
+            assert (z["geliefert"], z["rechnung"], z["extern_abgerechnet"]) == (True, None, False)
+            assert (z["luecken"], z["unvollstaendig"], z["rechnung_faellig_ab"]) == (["OHNE_RECHNUNG"], True, "2026-10-08")
+
+    def test_entwurf_nicht_versendet_versendet_bezahlt(self, client, monkeypatch, _p4c_mails):
+        _p4c_heute(monkeypatch)
+        kunde = _p4c_kunde(client)
+        auftraege = [_p4c_auftrag(client, kunde, "2026-10-08") for _ in range(4)]
+        entwurf = _p4c_rechnung(client, auftraege[0], finalisieren=False)
+        offen = _p4c_rechnung(client, auftraege[1])
+        versendet = _p4c_rechnung(client, auftraege[2])
+        bezahlt = _p4c_rechnung(client, auftraege[3])
+        for rechnung in (versendet, bezahlt):
+            r = client.post(f"/api/v1/invoices/{rechnung['id']}/send", json={"to": ["rechnung@fruchthof.example"]})
+            assert r.status_code == 200, r.text
+        r = client.post(f"/api/v1/invoices/{bezahlt['id']}/payments",
+                        json={"payment_date": _P4C_HEUTE, "amount": str(bezahlt["total"])})
+        assert r.status_code in (200, 201), r.text
+
+        liste = _p4c_status(client)
+
+        z = [_p4c_zeile(liste, o) for o in auftraege]
+        assert [x["luecken"] for x in z] == [["RECHNUNG_ENTWURF"], ["NICHT_VERSENDET"], [], []]
+        assert [x["rechnung"]["id"] for x in z] == [entwurf["id"], offen["id"], versendet["id"], bezahlt["id"]]
+        assert [x["rechnung"]["nummer"] for x in z[1:]] == [
+            offen["invoice_number"], versendet["invoice_number"], bezahlt["invoice_number"]]
+        assert z[0]["rechnung"]["nummer"].startswith("ENTWURF-")
+        assert [x["rechnung"]["status"] for x in z] == ["ENTWURF", "OFFEN", "OFFEN", "BEZAHLT"]
+        assert [x["rechnung"]["versendet_am"] is not None for x in z] == [False, False, True, True]
+        assert [x["rechnung"]["bezahlt"] for x in z] == [False, False, False, True]
+        assert [x["rechnung"]["sammelrechnung"] for x in z] == [False] * 4
+        assert liste["unvollstaendig"] == 2
+
+    def test_eintrag_im_versandprotokoll_zaehlt_als_versendet(self, client, monkeypatch):
+        """Ein Eintrag im Versandprotokoll (auch „ohne Mail markiert“) zählt
+        wie sent_at — sent_at setzt nur ein Mailversand (Paket 3, Q2)."""
+        import uuid
+        from datetime import datetime
+        from app.models.documents import DocumentDispatch
+        from app.models.enums import DispatchDocType, DispatchStatus
+        from tests.conftest import TestingSessionLocal
+        _p4c_heute(monkeypatch)
+        kunde = _p4c_kunde(client)
+        order_id = _p4c_auftrag(client, kunde, "2026-10-08")
+        rechnung = _p4c_rechnung(client, order_id)
+        with TestingSessionLocal() as db:
+            db.add(DocumentDispatch(
+                doc_type=DispatchDocType.RE, document_number=rechnung["invoice_number"],
+                invoice_id=uuid.UUID(rechnung["id"]), order_id=uuid.UUID(order_id),
+                status=DispatchStatus.NUR_MARKIERT, to_addrs=[], cc_addrs=[],
+                sent_at=datetime(2026, 10, 8, 15, 0)))
+            db.commit()
+
+        z = _p4c_zeile(_p4c_status(client), order_id)
+
+        assert (z["rechnung"]["versendet_am"], z["luecken"]) == ("2026-10-08T15:00:00", [])
+
+    def test_festgeschriebene_rechnung_geht_dem_entwurf_vor(self, client, monkeypatch):
+        """Zwei Rechnungen zu einer Bestellung (z. B. ein vergessener Entwurf):
+        angezeigt wird die festgeschriebene."""
+        import uuid
+        from app.models.invoice import Invoice
+        from tests.conftest import TestingSessionLocal
+        _p4c_heute(monkeypatch)
+        kunde = _p4c_kunde(client)
+        order_id = _p4c_auftrag(client, kunde, "2026-10-08")
+        fest = _p4c_rechnung(client, order_id)
+        entwurf = _p4c_rechnung(client, _p4c_auftrag(client, kunde, "2026-10-08"), finalisieren=False)
+        with TestingSessionLocal() as db:
+            db.get(Invoice, uuid.UUID(entwurf["id"])).order_id = uuid.UUID(order_id)
+            db.commit()
+
+        z = _p4c_zeile(_p4c_status(client), order_id)
+
+        assert (z["rechnung"]["id"], z["luecken"]) == (fest["id"], ["NICHT_VERSENDET"])
+
+    def test_monatskunde_erst_ab_dem_folgemonat(self, client, monkeypatch):
+        """Monatskunden rechnet der Monatslauf am 1. des Folgemonats ab —
+        vorher ist die fehlende Rechnung keine Lücke."""
+        kunde = _p4c_kunde(client, "Ökoring Handels GmbH", invoice_mode="MONATLICH")
+        order_id = _p4c_auftrag(client, kunde, "2026-10-08")
+
+        _p4c_heute(monkeypatch, "2026-10-31")
+        vorher = _p4c_zeile(_p4c_status(client), order_id)
+        _p4c_heute(monkeypatch, "2026-11-01")
+        nachher = _p4c_zeile(_p4c_status(client), order_id)
+
+        assert (vorher["abrechnung"], vorher["rechnung_faellig_ab"]) == ("MONATLICH", "2026-11-01")
+        assert (vorher["luecken"], vorher["unvollstaendig"]) == ([], False)
+        assert (nachher["luecken"], nachher["unvollstaendig"]) == (["OHNE_RECHNUNG"], True)
+
+    def test_sammelrechnung_ueber_den_lieferschein(self, client, monkeypatch):
+        _p4c_heute(monkeypatch)
+        kunde = _p4c_kunde(client, "Hamberger Großmarkt GmbH")
+        auftraege = [_p4c_auftrag(client, kunde, "2026-10-08", ls_status="GELIEFERT") for _ in range(2)]
+        r = client.post("/api/v1/invoices/batch-run/commit", json={
+            "period_from": "2026-10-01", "period_to": "2026-10-09", "customer_ids": [kunde["id"]]})
+        assert r.status_code == 201, r.text
+        sammel = r.json()["rechnungen"][0]
+        assert client.post(f"/api/v1/invoices/{sammel['id']}/finalize").status_code == 200
+
+        liste = _p4c_status(client)
+
+        for order_id in auftraege:
+            z = _p4c_zeile(liste, order_id)
+            assert (z["rechnung"]["id"], z["rechnung"]["sammelrechnung"]) == (sammel["id"], True)
+            assert z["lieferscheine"][0]["status"] == "GELIEFERT"
+            assert z["luecken"] == ["NICHT_VERSENDET"]
+
+    def test_fakturiert_ohne_rechnung_ist_extern_abgerechnet(self, client, monkeypatch):
+        """Altbestand (574 Bestellungen in Produktion): FAKTURIERT, über DATEV
+        abgerechnet, ohne Rechnung im System — keine Lücke. Wurde die
+        NovaERP-Rechnung storniert und nicht neu ausgestellt, fehlt sie: Der
+        Storno setzt FAKTURIERT nicht zurück, „extern“ wäre dann falsch.
+        Die Rechnungen entstehen vor der Kennzeichnung FAKTURIERT — danach
+        lehnt der Server neue Rechnungen ab (Paket 4, B-E1)."""
+        import uuid
+        from app.models.enums import OrderStatus
+        from app.models.order import Order
+        from tests.conftest import TestingSessionLocal
+        _p4c_heute(monkeypatch)
+        kunde = _p4c_kunde(client)
+        extern = _p4c_auftrag(client, kunde, "2026-08-14", status="FAKTURIERT", lieferschein=False)
+        im_system = _p4c_auftrag(client, kunde, "2026-10-08")
+        _p4c_rechnung(client, im_system)
+        storniert = _p4c_auftrag(client, kunde, "2026-10-08")
+        r = client.post(f"/api/v1/invoices/{_p4c_rechnung(client, storniert)['id']}/cancel",
+                        json={"reason": "Preisfehler", "reason_code": "PREISFEHLER"})
+        assert r.status_code == 200, r.text
+        with TestingSessionLocal() as db:  # wie der Status-Endpunkt: GELIEFERT → FAKTURIERT
+            for order_id in (im_system, storniert):
+                db.get(Order, uuid.UUID(order_id)).status = OrderStatus.FAKTURIERT
+            db.commit()
+
+        liste = _p4c_status(client)
+
+        e, i, s = _p4c_zeile(liste, extern), _p4c_zeile(liste, im_system), _p4c_zeile(liste, storniert)
+        assert (e["extern_abgerechnet"], e["rechnung"], e["luecken"], e["geliefert"]) == (True, None, [], True)
+        assert (i["extern_abgerechnet"], i["luecken"]) == (False, ["NICHT_VERSENDET"])
+        assert (s["extern_abgerechnet"], s["rechnung"], s["luecken"]) == (False, None, ["OHNE_RECHNUNG"])
+
+    def test_wann_eine_bestellung_als_geliefert_gilt(self, client, monkeypatch):
+        """GELIEFERT/FAKTURIERT, ein quittierter Lieferschein, oder BESTAETIGT/
+        IN_PRODUKTION mit Liefertag vor heute (Spec A1: gelieferte Bestellungen
+        bleiben oft auf BESTAETIGT). ENTWURF ohne Quittung nie; storniert fehlt."""
+        _p4c_heute(monkeypatch)
+        kunde = _p4c_kunde(client)
+        faelle = {
+            "bestaetigt_gestern": (_p4c_auftrag(client, kunde, "2026-10-08", status="BESTAETIGT"), True),
+            "bestaetigt_heute": (_p4c_auftrag(client, kunde, "2026-10-09", status="BESTAETIGT"), False),
+            "in_produktion_vorgestern": (_p4c_auftrag(client, kunde, "2026-10-07", status="IN_PRODUKTION"), True),
+            "entwurf_alt": (_p4c_auftrag(client, kunde, "2026-09-14", status="ENTWURF", lieferschein=False), False),
+            "entwurf_quittiert": (_p4c_auftrag(client, kunde, "2026-10-09", status="ENTWURF", ls_status="GELIEFERT"), True),
+            "geliefert_morgen": (_p4c_auftrag(client, kunde, "2026-10-10", status="GELIEFERT"), True),
+        }
+        storniert = _p4c_auftrag(client, kunde, "2026-10-08", status="STORNIERT")
+
+        liste = _p4c_status(client)
+
+        ist = {name: _p4c_zeile(liste, oid)["geliefert"] for name, (oid, _) in faelle.items()}
+        assert ist == {name: soll for name, (_, soll) in faelle.items()}
+        assert storniert not in [z["order_id"] for z in liste["items"]]
+        luecken = {name: _p4c_zeile(liste, oid)["luecken"] for name, (oid, _) in faelle.items()}
+        assert luecken == {
+            "bestaetigt_gestern": ["OHNE_RECHNUNG"], "bestaetigt_heute": [],
+            "in_produktion_vorgestern": ["OHNE_RECHNUNG"], "entwurf_alt": [],
+            "entwurf_quittiert": ["OHNE_RECHNUNG"],
+            "geliefert_morgen": [],  # fällig erst ab dem Liefertag
+        }
+
+    def test_filter_reihenfolge_und_seiten(self, client, monkeypatch):
+        _p4c_heute(monkeypatch)
+        nagel = _p4c_kunde(client)
+        kern = _p4c_kunde(client, "Großer Kern GmbH")
+        n1 = _p4c_auftrag(client, nagel, "2026-10-08")                          # unvollständig
+        n2 = _p4c_auftrag(client, nagel, "2026-10-12", status="BESTAETIGT")     # Zukunft
+        k1 = _p4c_auftrag(client, kern, "2026-09-30")                           # unvollständig
+        k2 = _p4c_auftrag(client, kern, "2026-10-05")                           # unvollständig
+
+        alle = _p4c_status(client)
+        assert [z["order_id"] for z in alle["items"]] == [n2, n1, k2, k1]   # Liefertag absteigend
+        assert (alle["total"], alle["unvollstaendig"]) == (4, 3)
+
+        oktober = _p4c_status(client, von="2026-10-01", bis="2026-10-09")
+        assert [z["order_id"] for z in oktober["items"]] == [n1, k2]
+        assert _p4c_status(client, kunde_id=kern["id"])["total"] == 2
+
+        nur = _p4c_status(client, nur_unvollstaendig="true")
+        assert [z["order_id"] for z in nur["items"]] == [n1, k2, k1]
+        assert (nur["total"], nur["unvollstaendig"]) == (3, 3)
+
+        seite2 = _p4c_status(client, nur_unvollstaendig="true", page=2, page_size=2)
+        assert [z["order_id"] for z in seite2["items"]] == [k1]
+        assert (seite2["total"], seite2["unvollstaendig"]) == (3, 3)
+
+    def test_von_nach_bis_wird_abgelehnt(self, client):
+        r = client.get("/api/v1/belegstatus", params={"von": "2026-10-09", "bis": "2026-10-01"})
+        assert r.status_code == 422, r.text
+        assert r.json()["detail"] == "„von“ liegt nach „bis“"
+
+    @pytest.mark.parametrize("rollen, code", [
+        (["accounting"], 200), (["sales"], 200), (["admin"], 200),
+        (["production_planner"], 403), (["production_staff"], 403),
+    ], ids=["buchhaltung", "vertrieb", "admin", "planung", "halle"])
+    def test_rechte_wie_die_rechnungen(self, client, rollen, code):
+        """Wie /invoices (main.py: _deps_geld): Admin, Vertrieb, Buchhaltung."""
+        from app.api.deps import get_current_user
+        from app.main import app
+
+        async def benutzer():
+            return {"id": "123e4567-e89b-12d3-a456-426614174099", "username": "p4c",
+                    "email": "p4c@example.com", "roles": rollen}
+        app.dependency_overrides[get_current_user] = benutzer
+
+        assert client.get("/api/v1/belegstatus").status_code == code

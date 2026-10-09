@@ -34,6 +34,7 @@ from app.api.v1 import leergut
 from app.api.v1 import ratgeber as ratgeber_admin
 from app.api.v1 import seo_dashboard
 from app.api.v1 import sepa
+from app.api.v1 import belegstatus
 from app.api.v1 import users as benutzer
 from app.api import ratgeber_public, seo_public
 from app.api.deps import get_current_user
@@ -776,6 +777,14 @@ app.include_router(
 
 app.include_router(
     invoices.router,
+    prefix="/api/v1",
+    dependencies=_deps_geld,
+)
+
+# Belegstatus je Bestellung (Paket 4, C): zeigt Rechnungs-, Versand- und
+# Zahlstatus — dieselben Rollen wie die Rechnungen
+app.include_router(
+    belegstatus.router,
     prefix="/api/v1",
     dependencies=_deps_geld,
 )
