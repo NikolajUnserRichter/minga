@@ -1592,3 +1592,51 @@ class TestQ4DevRollen:
         with pytest.raises(HTTPException) as fehler:
             self._login(monkeypatch, False, "admin")
         assert fehler.value.status_code == 401
+
+
+class TestQ4PositionsrabattImAudit:
+    """Befund B3: Den Positionsrabatt übernimmt jede Rechnung aus der Bestellung
+    (create_invoice_from_order, Sammellauf _aggregiere). Die Halle setzt ihn per
+    API — beim Anlegen und nachträglich, auch nach der Bestätigung. Ob sie das
+    darf, ist offen (Frage 4); nachvollziehbar ist es ab Q4.8."""
+
+    def _bestaetigt(self, client):
+        produkt = _q4_produkt(client)
+        kunde = _q4_kunde(client)
+        r = _q4_bestellung(client, kunde, produkt)
+        assert r.status_code == 201, r.text
+        r = client.post(f"/api/v1/sales/orders/{r.json()['id']}/confirm")
+        assert r.status_code == 200, r.text
+        return produkt, r.json()
+
+    def _audit(self, client, bestellung, aktion):
+        _q4_verwaltung()
+        r = client.get(f"/api/v1/sales/orders/{bestellung['id']}/audit-log")
+        assert r.status_code == 200, r.text
+        eintraege = [e for e in r.json() if e["action"] == aktion]
+        assert len(eintraege) == 1, eintraege
+        return eintraege[0]
+
+    def test_rabatt_aenderung_steht_im_audit(self, client):
+        _, bestellung = self._bestaetigt(client)
+        _q4_als("production_staff")
+
+        r = client.patch(f"/api/v1/sales/orders/{bestellung['id']}/lines/{bestellung['lines'][0]['id']}",
+                         json={"discount_percent": 50})
+
+        assert r.status_code == 200, r.text  # erlaubt, offen: Frage 4
+        eintrag = self._audit(client, bestellung, "UPDATE_LINE")
+        assert Decimal(eintrag["old_values"]["discount_percent"]) == 0
+        assert Decimal(eintrag["new_values"]["discount_percent"]) == 50
+
+    def test_neue_position_mit_rabatt_steht_im_audit(self, client):
+        produkt, bestellung = self._bestaetigt(client)
+        _q4_als("production_staff")
+
+        r = client.post(f"/api/v1/sales/orders/{bestellung['id']}/lines", json={
+            "product_id": produkt["id"], "product_name": produkt["name"], "quantity": 1,
+            "unit": "STK", "unit_price": "2.50", "discount_percent": 100})
+
+        assert r.status_code == 201, r.text
+        eintrag = self._audit(client, bestellung, "ADD_LINE")
+        assert Decimal(eintrag["new_values"]["discount_percent"]) == 100

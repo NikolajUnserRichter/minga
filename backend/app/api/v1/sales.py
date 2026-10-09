@@ -1385,7 +1385,8 @@ async def add_order_line(
                 "position": line.position,
                 "product": product_name,
                 "quantity": str(line.quantity),
-                "unit_price": str(line.unit_price)
+                "unit_price": str(line.unit_price),
+                "discount_percent": str(line.discount_percent or 0),
             }
         )
 
@@ -1443,11 +1444,13 @@ async def update_order_line(
     if not line:
         raise HTTPException(status_code=404, detail="Position nicht gefunden")
 
-    # Alte Werte für Audit — der Steuersatz gehört dazu, er ändert den Betrag.
+    # Alte Werte für Audit — Steuersatz und Positionsrabatt gehören dazu, sie
+    # ändern den Betrag; den Rabatt übernimmt jede Rechnung (Paket 3, Q4.8).
     old_values = {
         "quantity": str(line.quantity),
         "unit_price": str(line.unit_price),
         "tax_rate": line.tax_rate.value,
+        "discount_percent": str(line.discount_percent or 0),
     }
 
     update_data = line_data.model_dump(exclude_unset=True)
@@ -1477,6 +1480,7 @@ async def update_order_line(
                 "quantity": str(line.quantity),
                 "unit_price": str(line.unit_price),
                 "tax_rate": line.tax_rate.value,
+                "discount_percent": str(line.discount_percent or 0),
             }
         )
 
