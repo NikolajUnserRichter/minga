@@ -926,3 +926,80 @@ class TestP4BSammelpositionMenge:
 
         assert _p4b_netto_und_anlage(client, neu) == (
             _P4B_Decimal("37.50"), [_P4B_Decimal("12.50"), _P4B_Decimal("25.00")])
+
+
+# ---------------------------------------- Abschnitt C: Dateiname mit Kundenname (C.1)
+import pytest  # noqa: E402
+
+
+class TestP4CDateiname:
+    """Gernot 08.10. (B7): LS-20261008-001_Fruchthof-Nagel-GmbH.pdf — Nummer,
+    Unterstrich, bereinigter Kundenname. Die Regel, ohne Datenbank."""
+
+    def test_nummer_und_kunde(self):
+        from app.services.beleg_dateiname import beleg_dateiname
+        assert beleg_dateiname("LS-20261008-0001", kunde="Fruchthof Nagel GmbH") == (
+            "LS-20261008-0001_Fruchthof-Nagel-GmbH.pdf")
+        assert beleg_dateiname("RE-2026-00008", kunde="Großer Kern GmbH") == "RE-2026-00008_Grosser-Kern-GmbH.pdf"
+
+    @pytest.mark.parametrize("name, teil", [
+        # Kundennamen aus Produktion (minga, 09.10.2026)
+        pytest.param("Ökoring Handels GmbH", "Oekoring-Handels-GmbH", id="umlaut-vorn"),
+        pytest.param("Ferdinand Bierbichler GmbH & Co. KG", "Ferdinand-Bierbichler-GmbH-Co-KG", id="gmbh-co-kg"),
+        pytest.param("SIMPE'L regional&unverpackt", "SIMPEL-regional-unverpackt", id="apostroph-und"),
+        pytest.param("BODAN Großhandel für Naturkost GmbH", "BODAN-Grosshandel-fuer-Naturkost-GmbH", id="eszett"),
+        pytest.param("Münchner Tafel e. V.", "Muenchner-Tafel-e-V", id="e-v"),
+        pytest.param("Engelsberger Hofladen (R. u. D. Reichlmayr GbR)",
+                     "Engelsberger-Hofladen-R-u-D-Reichlmayr-GbR", id="klammern"),
+        pytest.param("Restaurant Eschenrieder Hof/Golfclub Sohyl Sediq",
+                     "Restaurant-Eschenrieder-Hof-Golfclub-Sohyl-Sediq", id="schraegstrich"),
+        pytest.param("Cafe Lido Gastronomiebetriebs GmbH & Co.KG", "Cafe-Lido-Gastronomiebetriebs-GmbH-Co-KG",
+                     id="co-kg-ohne-leerzeichen"),
+        # Akzente, zerlegte Umlaute (macOS), Leerraum, Anführungszeichen
+        pytest.param("Café Crème", "Cafe-Creme", id="akzente"),
+        pytest.param("Mu\u0308nchner Gru\u0308nkern", "Muenchner-Gruenkern", id="nfd"),
+        pytest.param("  Hofladen\t\"Süd\"\n ", "Hofladen-Sued", id="leerraum"),
+        pytest.param("ÄÖÜ äöü ß", "AeOeUe-aeoeue-ss", id="alle-umlaute"),
+        # Akut als Apostroph (NFKD machte daraus ein Leerzeichen) und Buchstaben,
+        # die NFKD nicht zerlegt (sie fielen sonst weg)
+        pytest.param("SIMPE´L Hofladen", "SIMPEL-Hofladen", id="akut-als-apostroph"),
+        pytest.param("Søren Ærø Œuvre", "Soeren-Aeroe-Oeuvre", id="nordisch"),
+        pytest.param("Łódź Đurić", "Lodz-Duric", id="polnisch-kroatisch"),
+    ])
+    def test_bereinigung(self, name, teil):
+        from app.services.beleg_dateiname import kundenteil
+        assert kundenteil(name) == teil
+
+    def test_laenge_an_der_wortgrenze(self):
+        from app.services.beleg_dateiname import KUNDE_MAX_ZEICHEN, kundenteil
+        assert KUNDE_MAX_ZEICHEN == 50
+        lang = "Bayerische Landesanstalt für Landwirtschaft Institut für Ökologischen Landbau"
+        assert kundenteil(lang) == "Bayerische-Landesanstalt-fuer-Landwirtschaft"
+        # Wort endet genau an der Grenze: bleibt ganz
+        assert kundenteil("A" * 50 + " GmbH") == "A" * 50
+        # ein einziges langes Wort: harter Schnitt
+        assert kundenteil("X" * 70) == "X" * 50
+        # der Wortschnitt ließe weniger als die Hälfte übrig ("A"): harter Schnitt
+        assert kundenteil("A " + "B" * 60) == "A-" + "B" * 48
+
+    @pytest.mark.parametrize("kunde", [None, "", "   ", "!!!", "„“"], ids=["none", "leer", "leerzeichen", "zeichen", "anfuehrung"])
+    def test_ohne_brauchbaren_namen_wie_bisher(self, kunde):
+        from app.services.beleg_dateiname import beleg_dateiname
+        assert beleg_dateiname("RE-2026-00002", kunde=kunde) == "RE-2026-00002.pdf"
+
+    def test_entwurf_mit_kunde(self):
+        from app.services.beleg_dateiname import beleg_dateiname
+        assert beleg_dateiname("ENTWURF-AB12CD34EF56", kunde="Ökoring Handels GmbH") == (
+            "Entwurf-AB12CD34EF56_Oekoring-Handels-GmbH.pdf")
+        assert beleg_dateiname("RE-2026-00003", entwurf=True, kunde="Ökoring Handels GmbH") == (
+            "Entwurf-RE-2026-00003_Oekoring-Handels-GmbH.pdf")
+
+    def test_kopf_ascii_filename_gleich_filename_stern(self):
+        """Nur A–Z, a–z, 0–9, '-', '_', '.': filename= und filename* tragen
+        denselben Namen, und der Belegordner (O, sichererName) ändert nichts."""
+        import re
+        from app.services.beleg_dateiname import beleg_dateiname, content_disposition
+        name = beleg_dateiname("AB-20261009-0001", kunde="Hamberger Großmarkt GmbH & Co. KG")
+        assert name == "AB-20261009-0001_Hamberger-Grossmarkt-GmbH-Co-KG.pdf"
+        assert re.fullmatch(r"[A-Za-z0-9._-]+", name)
+        assert content_disposition(name) == f"attachment; filename=\"{name}\"; filename*=UTF-8''{name}"
