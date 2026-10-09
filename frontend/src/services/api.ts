@@ -15,6 +15,7 @@ import type {
 import type { OrderStatus } from '../types'
 
 import keycloak from './auth';
+import { dateinameAusHeader } from './dateiname';
 
 const AUTH_DISABLED = import.meta.env.VITE_AUTH_DISABLED === 'true';
 
@@ -1379,7 +1380,8 @@ const _openPdfFromResponse = async (url: string, filename: string) => {
   a.href = objectUrl
   a.target = '_blank'
   a.rel = 'noopener'
-  a.download = filename
+  // B7: Der Server benennt die Datei (Belegnummer); filename ist nur Ersatz
+  a.download = dateinameAusHeader(res.headers['content-disposition'], filename)
   document.body.appendChild(a)
   a.click()
   a.remove()
@@ -1418,7 +1420,7 @@ export const documentsApi = {
     _openPdfFromResponse(`/sales/delivery-notes/${note.id}/pdf`, `${note.delivery_note_number}.pdf`),
 
   downloadPackingListPdf: (note: DeliveryNote) =>
-    _openPdfFromResponse(`/sales/delivery-notes/${note.id}/packing-list/pdf`, `${note.packing_list?.packing_list_number || note.delivery_note_number}-packing.pdf`),
+    _openPdfFromResponse(`/sales/delivery-notes/${note.id}/packing-list/pdf`, `${note.packing_list?.packing_list_number || note.delivery_note_number}.pdf`),
 }
 
 // =============================================================================

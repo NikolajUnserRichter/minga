@@ -18,6 +18,8 @@ import {
   Alert,
 } from '../components/ui';
 import { ListPageSkeleton } from '../components/ui/Skeleton';
+import { dateinameAusHeader } from '../services/dateiname';
+import { ladePdfHerunter } from '../services/print';
 import { getErrorMessage } from '../services/errors';
 import { sammelrechnungApi, SammelrechnungVorschauKunde } from '../services/api';
 import { istEntwurfsnummer, rechnungsnummerAnzeige, FINALISIEREN_RUECKFRAGE } from '../services/rechnungsnummer';
@@ -424,12 +426,11 @@ export default function Invoices() {
                           e.stopPropagation();
                           try {
                             const response = await invoicesApi.downloadPdf(invoice.id);
-                            const url = window.URL.createObjectURL(new Blob([response.data]));
-                            const a = document.createElement('a');
-                            a.href = url;
-                            a.download = `Rechnung_${invoice.invoice_number}.pdf`;
-                            a.click();
-                            window.URL.revokeObjectURL(url);
+                            // B7: Name vom Server (RE-….pdf bzw. Entwurf-….pdf)
+                            ladePdfHerunter(
+                              response.data,
+                              dateinameAusHeader(response.headers['content-disposition'], `${invoice.invoice_number}.pdf`),
+                            );
                           } catch (err) {
                             toast.error('Fehler beim Laden des PDFs');
                           }

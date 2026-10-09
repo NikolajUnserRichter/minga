@@ -6,6 +6,7 @@ import { useAuth } from '../../context/AuthContext';
 import { Button, Input, useToast } from '../ui';
 import { documentsApi, invoicesApi, OrderConfirmation, DeliveryNote } from '../../services/api';
 import { Order, Invoice } from '../../types';
+import { dateinameAusHeader } from '../../services/dateiname';
 import { getErrorMessage } from '../../services/errors';
 import { rechnungsnummerAnzeige, FINALISIEREN_RUECKFRAGE } from '../../services/rechnungsnummer';
 import { belegStatusLabel } from '../ui/statusLabels';
@@ -93,7 +94,8 @@ export function OrderDocumentsModal({ open, onClose, order }: Props) {
       a.href = url;
       a.target = '_blank';
       a.rel = 'noopener';
-      a.download = `${inv.invoice_number}.pdf`;
+      // B7: Name vom Server (RE-….pdf bzw. Entwurf-….pdf)
+      a.download = dateinameAusHeader(res.headers['content-disposition'], `${inv.invoice_number}.pdf`);
       document.body.appendChild(a);
       a.click();
       a.remove();
