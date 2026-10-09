@@ -8,6 +8,7 @@ Workflow:
 
     POST /orders/{id}/delivery-notes       → Lieferschein + Packliste anlegen
     PATCH /delivery-notes/{id}/mark-delivered → quittiert; setzt order.actual_delivery_date
+    POST /delivery-notes/{id}/send         → per E-Mail (eine Mail an alle), Protokoll
     GET /delivery-notes/{id}/pdf
     GET /delivery-notes/{id}/packing-list/pdf
     GET /orders/{id}/delivery-notes
@@ -34,7 +35,7 @@ from app.models.enums import ConfirmationStatus, DeliveryNoteStatus, DispatchDoc
 from app.schemas.documents import (
     OrderConfirmationCreate, OrderConfirmationResponse, OrderConfirmationSend,
     DeliveryNoteCreate, DeliveryNoteResponse, DeliveryNoteMarkDelivered,
-    PackingListItemCreate,
+    PackingListItemCreate, BelegVersandRequest,
 )
 from app.services.pdf_service import PDFService, load_company_settings
 from app.services.email_service import EmailNotConfiguredError
@@ -361,6 +362,99 @@ def list_delivery_notes(order_id: UUID, db: DBSession):
         .order_by(DeliveryNote.created_at.desc())
     ).unique().scalars().all()
     return notes
+
+
+@router.post("/delivery-notes/{note_id}/send", response_model=DeliveryNoteResponse)
+def send_delivery_note(note_id: UUID, data: BelegVersandRequest, db: DBSession, user: CurrentUser):
+    """Lieferschein per E-Mail versenden (Paket 3, Q2) — gleiche Regeln wie die AB.
+
+    - Mail: `to` oder `use_customer_recipients` (LS-Empfänger, sonst Haupt-E-Mail).
+    - Leerer Body: keine Mail, nur ENTWURF → AUSGESTELLT.
+    - ENTWURF wird mit dem ersten Versand AUSGESTELLT; ein quittierter
+      Lieferschein (GELIEFERT) bleibt GELIEFERT und geht als Kopie hinaus.
+    - Erneuter Versand nur mit unverändertem PDF (Inhalt aus den aktuellen
+      Bestellpositionen, siehe send_confirmation).
+    Anhang ist das Lieferschein-PDF, ohne Packliste.
+    """
+    note = db.execute(
+        select(DeliveryNote)
+        .options(
+            joinedload(DeliveryNote.order).joinedload(Order.customer),
+            joinedload(DeliveryNote.order).joinedload(Order.lines),
+        )
+        .where(DeliveryNote.id == note_id)
+    ).unique().scalar_one_or_none()
+    if not note:
+        raise HTTPException(status_code=404, detail="Lieferschein nicht gefunden")
+    order = note.order
+    customer = order.customer if order else None
+
+    try:
+        an, cc = empfaenger_fuer_versand(
+            customer, DispatchDocType.LS,
+            to=data.to, cc=data.cc, use_customer_recipients=data.use_customer_recipients,
+        )
+    except ValueError as e:  # auch KeinEmpfaenger und die Obergrenze An + Cc
+        raise HTTPException(status_code=400, detail=str(e))
+
+    if not an and note.status != DeliveryNoteStatus.ENTWURF:
+        raise HTTPException(status_code=400, detail="Lieferschein ist bereits ausgestellt")
+
+    pdf = PDFService.generate_delivery_note_pdf(note, settings=load_company_settings(db), db=db)
+
+    if not an:
+        markiere_ohne_mail(
+            db, doc_type=DispatchDocType.LS, document_number=note.delivery_note_number,
+            pdf=pdf, user=user, customer_id=order.customer_id if order else None,
+            order_id=note.order_id, delivery_note_id=note.id,
+        )
+        note.status = DeliveryNoteStatus.AUSGESTELLT
+        db.commit()
+        db.refresh(note)
+        return note
+
+    nachweis = erster_nachweis(note.dispatches)
+    if nachweis is not None and nachweis.attachment_sha256 != pdf_pruefsumme(pdf):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Bestellung oder Belegvorlage wurden seit dem ersten Versand von "
+                f"Lieferschein {note.delivery_note_number} geändert. Bitte einen neuen "
+                f"Lieferschein anlegen."
+            ),
+        )
+
+    customer_name = customer.name if customer else "Kunde"
+    try:
+        versende_beleg(
+            db,
+            doc_type=DispatchDocType.LS,
+            document_number=note.delivery_note_number,
+            an=an,
+            cc=cc,
+            betreff=f"Lieferschein {note.delivery_note_number}{firmenzusatz(db)}",
+            text=(
+                f"Sehr geehrte Damen und Herren bei {customer_name},\n\n"
+                f"anbei finden Sie den Lieferschein {note.delivery_note_number}\n"
+                f"zu Ihrer Bestellung {order.order_number if order else '—'}.\n\n"
+                f"{gruss(db)}"
+            ),
+            pdf=pdf,
+            user=user,
+            customer_id=order.customer_id if order else None,
+            order_id=note.order_id,
+            delivery_note_id=note.id,
+        )
+    except EmailNotConfiguredError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"E-Mail-Versand fehlgeschlagen: {e}")
+
+    if note.status == DeliveryNoteStatus.ENTWURF:
+        note.status = DeliveryNoteStatus.AUSGESTELLT
+    db.commit()
+    db.refresh(note)
+    return note
 
 
 @router.patch(

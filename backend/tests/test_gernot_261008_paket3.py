@@ -2655,3 +2655,91 @@ class TestQ2AbVersand:
         assert "Höchstens 10" in r.json()["detail"]
         assert _q2_smtp.gesendet == []
         assert _q2_abs(client, bestellung)[0]["status"] == "ENTWURF"
+
+
+
+
+class TestQ2LsVersand:
+    """POST /sales/delivery-notes/{id}/send — neu, gleiche Regeln wie die AB."""
+
+    def test_lieferschein_per_mail(self, client, _q2_smtp):
+        bestellung = _q2_bestellung(client, _q2_kunde(client))
+        ls = _q2_ls(client, bestellung)
+
+        r = _q2_ls_senden(client, ls, {"to": ["lager@oekoring.example", "einkauf@oekoring.example"]})
+
+        assert r.status_code == 200, r.text
+        [mail] = _q2_smtp.gesendet
+        assert mail["umschlag"] == ["lager@oekoring.example", "einkauf@oekoring.example"]
+        dateiname, pdf = _q2_anhang(mail)
+        assert dateiname == f"{ls['delivery_note_number']}.pdf"
+        antwort = r.json()
+        assert antwort["status"] == "AUSGESTELLT"
+        [zeile] = antwort["dispatches"]
+        assert (zeile["doc_type"], zeile["status"]) == ("LS", "GESENDET")
+        assert zeile["attachment_sha256"] == _q2_sha(pdf)
+
+    def test_hinterlegte_ls_empfaenger(self, client, _q2_smtp):
+        kunde = _q2_kunde(client, email="info@oekoring.example",
+                          confirmation_emails=["einkauf@oekoring.example"],
+                          delivery_note_emails=["lager@oekoring.example"])
+        ls = _q2_ls(client, _q2_bestellung(client, kunde))
+
+        r = _q2_ls_senden(client, ls, {"use_customer_recipients": True})
+
+        assert r.status_code == 200, r.text
+        assert _q2_smtp.gesendet[0]["umschlag"] == ["lager@oekoring.example"]
+
+    def test_leerer_body_stellt_nur_aus(self, client, _q2_smtp):
+        ls = _q2_ls(client, _q2_bestellung(client, _q2_kunde(client, email="info@oekoring.example")))
+
+        r = _q2_ls_senden(client, ls, {})
+
+        assert r.status_code == 200, r.text
+        assert r.json()["status"] == "AUSGESTELLT"
+        assert r.json()["dispatches"][0]["status"] == "NUR_MARKIERT"
+        assert _q2_smtp.gesendet == []
+        assert _q2_ls_senden(client, ls, {}).status_code == 400
+
+    def test_quittierter_lieferschein_geht_als_kopie(self, client, _q2_smtp):
+        bestellung = _q2_bestellung(client, _q2_kunde(client))
+        ls = _q2_ls(client, bestellung)
+        r = client.patch(f"/api/v1/sales/delivery-notes/{ls['id']}/mark-delivered",
+                         json={"signed_by": "Herr Kern"})
+        assert r.status_code == 200, r.text
+
+        r = _q2_ls_senden(client, ls, {"to": ["lager@oekoring.example"]})
+
+        assert r.status_code == 200, r.text
+        assert r.json()["status"] == "GELIEFERT"
+        assert len(_q2_smtp.gesendet) == 1
+
+    def test_nach_bestellaenderung_409(self, client, _q2_smtp):
+        bestellung = _q2_bestellung(client, _q2_kunde(client))
+        ls = _q2_ls(client, bestellung)
+        assert _q2_ls_senden(client, ls, {"to": ["lager@oekoring.example"]}).status_code == 200
+        _q2_position_nachtragen(client, bestellung)
+
+        r = _q2_ls_senden(client, ls, {"to": ["einkauf@oekoring.example"]})
+
+        assert r.status_code == 409, r.text
+        assert len(_q2_smtp.gesendet) == 1
+
+    def test_halle_darf_lieferschein_senden(self, client, _q2_smtp, _q2_rolle):
+        ls = _q2_ls(client, _q2_bestellung(client, _q2_kunde(client)))
+        _q2_rolle(["production_staff"])
+
+        r = _q2_ls_senden(client, ls, {"to": ["lager@oekoring.example"]})
+
+        assert r.status_code == 200, r.text
+        assert r.json()["dispatches"][0]["sent_by_name"] == "mia"
+
+    def test_obergrenze_gilt_auch_fuer_die_kundenliste(self, client, _q2_smtp):
+        """10 hinterlegte Lieferschein-Adressen plus Cc: abgewiesen, keine Mail."""
+        kunde = _q2_kunde(client, delivery_note_emails=[f"l{i}@oekoring.example" for i in range(10)])
+        ls = _q2_ls(client, _q2_bestellung(client, kunde))
+
+        r = _q2_ls_senden(client, ls, {"use_customer_recipients": True, "cc": ["chef@oekoring.example"]})
+
+        assert r.status_code == 400, r.text
+        assert _q2_smtp.gesendet == []
