@@ -27,12 +27,14 @@ KNOWN_SETTINGS: dict[str, dict] = {
     "SMTP_USE_SSL":      {"is_secret": False, "label": "Direct SSL verwenden"},
     "EMAILS_FROM_EMAIL": {"is_secret": False, "label": "Absender-Adresse"},
     "EMAILS_FROM_NAME":  {"is_secret": False, "label": "Absender-Name"},
-    # Firmendaten — landen auf allen Belegen (§ 14 UStG)
-    "COMPANY_NAME":         {"is_secret": False, "label": "Firmenname (Briefkopf)"},
-    "COMPANY_ADDRESS_LINE1": {"is_secret": False, "label": "Adresse Zeile 1 (Straße)"},
-    "COMPANY_ADDRESS_LINE2": {"is_secret": False, "label": "Adresse Zeile 2 (PLZ Ort)"},
-    "COMPANY_USTID":        {"is_secret": False, "label": "USt-IdNr. (DEXXXXXXXX)"},
-    "COMPANY_STEUERNR":     {"is_secret": False, "label": "Steuernummer (alternativ zur USt-IdNr.)"},
+    # Firmendaten (Karte "Firmendaten", Abschnitt F). Auf Belegen (§ 14 UStG)
+    # nur, wo die Belegvorlage keinen eigenen Briefkopf bzw. keine eigene
+    # Fußzeile hat. Labels wie in der Karte: sie stehen in den 422-Meldungen.
+    "COMPANY_NAME":         {"is_secret": False, "label": "Firmenname"},
+    "COMPANY_ADDRESS_LINE1": {"is_secret": False, "label": "Straße und Hausnummer"},
+    "COMPANY_ADDRESS_LINE2": {"is_secret": False, "label": "PLZ und Ort"},
+    "COMPANY_USTID":        {"is_secret": False, "label": "USt-IdNr."},
+    "COMPANY_STEUERNR":     {"is_secret": False, "label": "Steuernummer"},
     "COMPANY_PHONE":        {"is_secret": False, "label": "Telefon"},
     "COMPANY_EMAIL":        {"is_secret": False, "label": "E-Mail"},
     "COMPANY_WEBSITE":      {"is_secret": False, "label": "Website"},
@@ -60,6 +62,45 @@ KNOWN_SETTINGS: dict[str, dict] = {
     "DATEV_KONTENRAHMEN":    {"is_secret": False, "label": "DATEV-Kontenrahmen (SKR03 | SKR04)"},
     "DATEV_EXPORT_SPERRE":   {"is_secret": False, "label": "DATEV-Export gesperrt — Grund (leer = Export frei)"},
 }
+
+
+#: Felder der Karte "Firmendaten" in den Einstellungen (Abschnitt F). Die
+#: Gläubiger-ID gehört zur Karte "SEPA-Lastschrift" und hat ihre eigene
+#: Prüfung (sepa_service.einstellung_pruefen).
+FIRMENDATEN_KEYS = (
+    "COMPANY_NAME", "COMPANY_ADDRESS_LINE1", "COMPANY_ADDRESS_LINE2",
+    "COMPANY_USTID", "COMPANY_STEUERNR", "COMPANY_PHONE", "COMPANY_EMAIL",
+    "COMPANY_WEBSITE", "COMPANY_BANK_NAME", "COMPANY_IBAN", "COMPANY_BIC",
+)
+FIRMENDATEN_MAX_LAENGE = 200
+
+
+def firmendaten_pruefen(key: str, wert: str) -> str:
+    """Prüfer für PATCH /admin/settings (nicht leerer Wert), läuft vor
+    sepa_service.einstellung_pruefen: gibt den zu speichernden Wert zurück
+    oder wirft ValueError mit Klartext. Andere Schlüssel unverändert.
+
+    Firmendaten: eine Zeile (der Firmenname steht im Betreff der Beleg-Mails;
+    ein Zeilenumbruch im Betreff bricht den Versand ab), ohne Rand-Leerzeichen,
+    höchstens FIRMENDATEN_MAX_LAENGE Zeichen; IBAN und BIC wie im SEPA-Mandat
+    geprüft und normalisiert.
+    """
+    if key not in FIRMENDATEN_KEYS:
+        return wert
+    from app.services.sepa_service import bic_pruefen, iban_pruefen
+
+    wert = wert.strip()
+    if not wert:
+        raise ValueError("nur Leerzeichen — zum Löschen das Feld leer lassen")
+    if "\n" in wert or "\r" in wert:
+        raise ValueError("nur eine Zeile erlaubt")
+    if len(wert) > FIRMENDATEN_MAX_LAENGE:
+        raise ValueError(f"höchstens {FIRMENDATEN_MAX_LAENGE} Zeichen")
+    if key == "COMPANY_IBAN":
+        return iban_pruefen(wert)
+    if key == "COMPANY_BIC":
+        return bic_pruefen(wert)
+    return wert
 
 
 def get_setting(db: Session, key: str, env_fallback: bool = True) -> Optional[str]:

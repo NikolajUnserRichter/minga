@@ -835,3 +835,72 @@ class TestF1PdfBriefkopf:
         # ">" bleibt unmaskiert: ReportLab druckt es richtig, und als ein
         # Textstück wie vor F bleiben die PDF-Bytes solcher Werte gleich.
         assert "feld>wald.example" in text, text
+def _f_als(rollen):
+    from app.api.deps import get_current_user
+    from app.main import app
+
+    async def override():
+        return {"id": "123e4567-e89b-12d3-a456-426614174077", "username": "f",
+                "email": "f@farm.example", "roles": rollen}
+    app.dependency_overrides[get_current_user] = override
+
+
+@pytest.mark.usefixtures("_f_ohne_umgebung")
+class TestF2FirmendatenSpeichern:
+    """PATCH /admin/settings prüft die Firmendaten (Karte „Firmendaten")."""
+
+    def _werte(self, client):
+        r = client.get("/api/v1/admin/settings")
+        assert r.status_code == 200, r.text
+        return {s["key"]: s for s in r.json()}
+
+    def test_alle_felder_speichern_normalisiert(self, client):
+        r = client.patch("/api/v1/admin/settings", json={
+            **_F_FIRMA,
+            "COMPANY_NAME": "  Testfarm GmbH ",
+            "COMPANY_IBAN": "de89 3704 0044 0532 0130 00",
+            "COMPANY_BIC": "cobadeffxxx",
+        })
+
+        assert r.status_code == 200, r.text
+        werte = self._werte(client)
+        assert {k: werte[k]["value"] for k in _F_FIRMA} == _F_FIRMA
+        assert {werte[k]["source"] for k in _F_FIRMA} == {"db"}
+        # Labels wie in der Karte — sie stehen in den 422-Meldungen.
+        assert [werte[k]["label"] for k in list(_F_FIRMA)[:5]] == [
+            "Firmenname", "Straße und Hausnummer", "PLZ und Ort", "USt-IdNr.", "Steuernummer"]
+
+    def test_falsche_iban_422_und_nichts_gespeichert(self, client):
+        r = client.patch("/api/v1/admin/settings", json={
+            "COMPANY_NAME": "Testfarm GmbH", "COMPANY_IBAN": "DE89370400440532013001"})
+
+        assert r.status_code == 422, r.text
+        assert r.json()["detail"] == "IBAN: IBAN-Prüfziffer stimmt nicht"
+        assert self._werte(client)["COMPANY_NAME"]["source"] != "db"
+
+    def test_falsche_bic_422(self, client):
+        r = client.patch("/api/v1/admin/settings", json={"COMPANY_BIC": "COBA"})
+        assert r.status_code == 422, r.text
+        assert r.json()["detail"].startswith("BIC: BIC hat kein gültiges Format")
+
+    @pytest.mark.parametrize("wert,meldung", [
+        ("Testfarm\nGmbH", "nur eine Zeile"),
+        ("x" * 201, "höchstens 200 Zeichen"),
+        ("   ", "nur Leerzeichen"),
+    ], ids=["zeilenumbruch", "zu_lang", "nur_leerzeichen"])
+    def test_unbrauchbarer_firmenname_422(self, client, wert, meldung):
+        r = client.patch("/api/v1/admin/settings", json={"COMPANY_NAME": wert})
+        assert r.status_code == 422, r.text
+        assert r.json()["detail"].startswith(f"Firmenname: {meldung}"), r.text
+
+    def test_leerer_wert_loescht_wie_bisher(self, client):
+        assert client.patch("/api/v1/admin/settings", json={"COMPANY_NAME": "Testfarm GmbH"}).status_code == 200
+        assert client.patch("/api/v1/admin/settings", json={"COMPANY_NAME": ""}).status_code == 200
+        assert self._werte(client)["COMPANY_NAME"]["has_value"] is False
+
+    @pytest.mark.parametrize("rolle", ["sales", "accounting", "production_planner", "production_staff"])
+    def test_nur_admin(self, client, rolle):
+        _f_als([rolle])
+        assert client.get("/api/v1/admin/settings").status_code == 403
+        r = client.patch("/api/v1/admin/settings", json={"COMPANY_NAME": "Testfarm GmbH"})
+        assert r.status_code == 403, r.text
