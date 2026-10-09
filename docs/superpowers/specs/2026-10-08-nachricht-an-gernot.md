@@ -2,13 +2,19 @@ Hallo Gernot,
 
 danke für deine Antworten. Kurz zum Stand und was ich noch von dir brauche.
 
-**Seit gestern Abend live**
+**Seit gestern Abend bzw. heute früh live**
 - **Bestell-Import:** Bestellungen mit Lieferdatum heute oder später kommen als „Bestätigt“ an. Der Import nimmt eine Datei nur ganz oder gar nicht und zeigt alle Fehler auf einmal. Deine zwei Zukunftsbestellungen (Großer Kern 10.10., Fruchthof Nagel 12.10.) habe ich zurückgesetzt.
 - **Tagesplan:** Knöpfe „Gepackt“ und „Ausgeliefert“. Gepackte Bestellungen fallen aus dem Sortenbedarf, bleiben aber unter „Ausliefern“. Status heißen jetzt überall auf Deutsch.
 - **Pfand:** neue Bestellungen bekommen den Satz aus dem Produkt, die IFCO-Kiste also 19 %. Je Kunde kannst du einstellen „Pfand nicht auf der Rechnung (IFCO-Clearing)“.
 - **Rechnungen:** Die PDF weist die Steuer je Satz aus. Rechnungsliste mit Kundennamen und den neuesten 100. „Zahlung erfassen“ funktioniert jetzt (vorher kam immer ein Fehler).
 - **Schutz vor Doppelabrechnung:** keine zweite Rechnung zur selben Bestellung. Bestellungen mit Rechnung lassen sich nicht mehr ändern, stornieren oder löschen, ohne vorher die Rechnung zu stornieren.
 - **Abos:** Abo-Bestellungen tragen Produkt, deinen Kundenpreis und den richtigen Steuersatz.
+- **Rechnungsnummer erst beim Finalisieren:** Entwürfe tragen keine RE-Nummer mehr, die Nummer kommt lückenlos beim Ausstellen. Sammelrechnungen entstehen als Entwurf, du prüfst und gibst frei.
+- **Belegversand:** Am Kunden hinterlegst du Empfänger je Belegart (AB, Lieferschein, Rechnung). Eine Mail geht an alle Adressen, im Beleg steht „versendet an …“. Lieferscheine kannst du jetzt auch mailen. PDFs heißen wie die Belegnummer.
+- **SEPA-Lastschrift:** Gläubiger-ID in den Einstellungen, Mandat am Kunden. Rechnung und Mail nennen Mandat, Einzugsdatum und die maskierte IBAN. Lastschriftrechnungen laufen nicht ins Mahnwesen. Einzugsliste mit CSV für die Bank.
+- **Leergutkonto:** Je Kunde „Pfand monatlich“: Ausgaben werden mitgezählt, Rücknahmen erfasst du (auch im Tagesplan), einmal im Monat entsteht ein Leergutbeleg als Entwurf.
+- **Monatsrechnung:** Je Kunde „monatliche Sammelrechnung“. Ist der Schalter in den Einstellungen an, liegen am 1. des Folgemonats morgens die Entwürfe bereit. Bis du Monatskunden einstellst, passiert nichts.
+- **Mitarbeiter:** Die Rechte sind vorbereitet (Halle sieht Produkte, aber keine Rechnungen und keine Konditionen). Die Zugänge lege ich an, sobald du mir die Namen schickst.
 
 **Bitte bis zum nächsten Update nicht**
 - keinen DATEV-Export auslösen (der Export ist korrigiert, die Kontierung soll aber erst dein Steuerberater bestätigen),
@@ -16,11 +22,8 @@ danke für deine Antworten. Kurz zum Stand und was ich noch von dir brauche.
 - RE-2026-00002 und -00004 nicht selbst stornieren (wir korrigieren sie gemeinsam per Storno und neuer Rechnung).
 
 **Zu deinen Fragen**
-- **Pfand:** Ja, das geht. Du stellst je Kunde ein: „Pfand auf jeder Rechnung" (z. B. Knuspr), „kein Pfand auf der Rechnung" (IFCO-Clearing, z. B. Ökoring) oder „monatlich über das Leergutkonto". Beim Leergutkonto wird erfasst, was rausgeht und was zurückkommt, und einmal im Monat abgerechnet. Die ersten beiden Einstellungen sind schon da, das Leergutkonto kommt als Nächstes.
-- **Monatsrechnung:** Am 1. des Folgemonats liegen die Sammelrechnungen morgens als Entwurf bereit. Du prüfst und gibst frei, automatisch verschickt wird nichts.
-- **Mehrere Empfänger:** Eine Mail an alle hinterlegten Adressen, im Beleg steht „versendet an …".
+- **Pfand:** Ja, das geht. Du stellst je Kunde ein: „Pfand auf jeder Rechnung" (z. B. Knuspr), „kein Pfand auf der Rechnung" (IFCO-Clearing, z. B. Ökoring) oder „monatlich über das Leergutkonto". Beim Leergutkonto wird erfasst, was rausgeht und was zurückkommt, und einmal im Monat abgerechnet. Alle drei Einstellungen sind jetzt da.
 - **Mitarbeiter:** Sie dürfen Bestellungen, Auftragsbestätigungen und Lieferscheine anlegen und versenden, Rechnungen bleiben bei dir.
-- **SEPA-Lastschrift:** Kommt. Die Gläubiger-ID trägst du einmal in den Firmeneinstellungen ein (sie gehört zu MingaGreens), am Kunden Mandatsreferenz, IBAN, Bank und Datum. Lastschriftrechnungen laufen nicht ins Mahnwesen.
 
 **Was ich bald von dir brauche (wichtigste zuerst)**
 1. Welche Kunden rechnen Pfand über IFCO-Clearing ab? Nur Ökoring und Bodan?
