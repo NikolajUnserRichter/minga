@@ -16,7 +16,8 @@ from datetime import date
 from decimal import Decimal
 from typing import Optional
 
-from sqlalchemy import select
+from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.documents import DeliveryNote, PackingList, PackingListItem
@@ -52,33 +53,45 @@ def lieferschein_anlegen(
     """Lieferschein (ENTWURF) samt Packliste anlegen. Ohne packing_items
     1:1 aus den Bestellpositionen (ohne Pfand-Erweiterungen). Prüft weder
     Positionen noch vorhandene Lieferscheine — das tun die Aufrufer.
-    Committet nicht."""
+    Das unverändernde UPDATE beginnt die äußere Schreibtransaktion und
+    serialisiert SQLite vor dem Lesen der Nummern. Der Savepoint hält
+    Lieferschein und Packliste bei Nummernkollisionen zusammen; andere
+    Integritätsfehler werden nicht wiederholt. Committet nicht."""
     today = date.today()
-    ls_number = naechste_belegnummer(
-        db, DeliveryNote, DeliveryNote.delivery_note_number, "LS", today
+    db.flush()
+    db.execute(
+        update(Order).where(Order.id == order.id)
+        .values(status=Order.status, updated_at=Order.updated_at)
+        .execution_options(synchronize_session=False)
     )
-    pl_number = naechste_belegnummer(
-        db, PackingList, PackingList.packing_list_number, "PL", today
-    )
-
-    note = DeliveryNote(
-        order_id=order.id,
-        delivery_note_number=ls_number,
-        status=DeliveryNoteStatus.ENTWURF,
-        notes=notes,
-        actual_delivery_date=actual_delivery_date,
-    )
-    db.add(note)
-    db.flush()  # note.id
-
-    packing = PackingList(
-        delivery_note_id=note.id,
-        packing_list_number=pl_number,
-        total_weight_g=total_weight_g,
-        total_packages=total_packages,
-    )
-    db.add(packing)
-    db.flush()  # packing.id
+    for versuch in range(5):
+        try:
+            with db.begin_nested():
+                ls_number = naechste_belegnummer(
+                    db, DeliveryNote, DeliveryNote.delivery_note_number, "LS", today
+                )
+                pl_number = naechste_belegnummer(
+                    db, PackingList, PackingList.packing_list_number, "PL", today
+                )
+                note = DeliveryNote(
+                    order_id=order.id, delivery_note_number=ls_number,
+                    status=DeliveryNoteStatus.ENTWURF, notes=notes,
+                    actual_delivery_date=actual_delivery_date,
+                )
+                db.add(note)
+                db.flush()
+                packing = PackingList(
+                    delivery_note_id=note.id, packing_list_number=pl_number,
+                    total_weight_g=total_weight_g, total_packages=total_packages,
+                )
+                db.add(packing)
+                db.flush()
+            break
+        except IntegrityError as error:
+            nummernkollision = any(feld in str(error.orig) for feld in (
+                "delivery_note_number", "packing_list_number"))
+            if not nummernkollision or versuch == 4:
+                raise
 
     # Items: explizite Liste ODER 1:1 aus Order-Lines
     if packing_items:

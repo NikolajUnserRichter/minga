@@ -2122,3 +2122,121 @@ class TestP4Fix3Positionsgrenzen:
         assert antwort.status_code == 200, antwort.text
         storno = client.get(f"/api/v1/invoices/{antwort.json()['credit_note']['id']}").json()
         assert Decimal(storno["lines"][0]["quantity"]) == -1
+
+
+def _p4fix4_bestellungen(session_factory):
+    from app.models.customer import Customer, CustomerType
+    from app.models.order import Order, OrderLine, OrderStatus
+    with session_factory() as db:
+        kunde = Customer(name="Nebenläufigkeit Testkunde", typ=CustomerType.HANDEL)
+        db.add(kunde)
+        db.flush()
+        bestellungen = [Order(
+            customer_id=kunde.id, order_number=f"TEST-FIX4-{index}",
+            requested_delivery_date=_p4b_date.today(), status=OrderStatus.BESTAETIGT,
+            lines=[OrderLine(position=1, beschreibung="Testware", quantity=1, unit="STK", unit_price=2,
+                             line_net=2, line_vat=Decimal("0.14"), line_gross=Decimal("2.14"))],
+        ) for index in range(2)]
+        db.add_all(bestellungen)
+        db.commit()
+        return [order.id for order in bestellungen]
+
+
+class TestP4Fix4Lieferscheinnummer:
+    @pytest.mark.parametrize("weg", ["packliste", "ausliefern"])
+    def test_zwei_threads_mit_getrennten_sessions(self, monkeypatch, tmp_path, weg):
+        import threading
+        import time
+        from concurrent.futures import ThreadPoolExecutor
+        from app.models.order import Order
+        from app.models.documents import DeliveryNote, PackingList, PackingListItem
+        from app.services import lieferschein_service as service
+        from tests.test_gernot_261008_paket3 import _q1_mandanten_db
+        registry, sessions = _q1_mandanten_db(monkeypatch, tmp_path, slug="fix4test")
+        try:
+            ids = _p4fix4_bestellungen(sessions)
+            start = threading.Barrier(2)
+            original = service.naechste_belegnummer
+
+            def langsame_nummer(*args):
+                nummer = original(*args)
+                time.sleep(0.1)
+                return nummer
+
+            monkeypatch.setattr(service, "naechste_belegnummer", langsame_nummer)
+
+            def anlegen(order_id):
+                with sessions() as db:
+                    order = db.get(Order, order_id)
+                    start.wait(timeout=5)
+                    if weg == "packliste":
+                        note = service.lieferschein_anlegen(db, order)
+                    else:
+                        note = service.lieferschein_beim_ausliefern(db, order)
+                    db.commit()
+                    return note.delivery_note_number
+
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                futures = [pool.submit(anlegen, order_id) for order_id in ids]
+                nummern = [future.result(timeout=15) for future in futures]
+            assert sorted(nummer.rsplit("-", 1)[1] for nummer in nummern) == ["0001", "0002"]
+            with sessions() as db:
+                assert db.query(DeliveryNote).count() == 2
+                assert db.query(PackingList).count() == 2
+                assert db.query(PackingListItem).count() == 2
+                assert {note.order_id for note in db.query(DeliveryNote)} == set(ids)
+        finally:
+            registry.dispose_tenant("fix4test")
+
+    def test_rollback_entfernt_lieferschein_und_packliste(self, monkeypatch, tmp_path):
+        from app.models.order import Order
+        from app.models.documents import DeliveryNote, PackingList, PackingListItem
+        from app.services.lieferschein_service import lieferschein_anlegen
+        from tests.test_gernot_261008_paket3 import _q1_mandanten_db
+        registry, sessions = _q1_mandanten_db(monkeypatch, tmp_path, slug="fix4rollback")
+        try:
+            ids = _p4fix4_bestellungen(sessions)
+            with sessions() as db:
+                lieferschein_anlegen(db, db.get(Order, ids[0]))
+                db.rollback()
+            with sessions() as db:
+                assert db.query(DeliveryNote).count() == 0
+                assert db.query(PackingList).count() == 0
+                assert db.query(PackingListItem).count() == 0
+        finally:
+            registry.dispose_tenant("fix4rollback")
+
+    @pytest.mark.parametrize("kollision", ["LS", "PL"])
+    def test_veraltete_nummer_wird_im_savepoint_wiederholt(self, monkeypatch, tmp_path, kollision):
+        from app.models.order import Order
+        from app.models.documents import DeliveryNote, PackingList
+        from app.services import lieferschein_service as service
+        from tests.test_gernot_261008_paket3 import _q1_mandanten_db
+        registry, sessions = _q1_mandanten_db(monkeypatch, tmp_path, slug="fix4retry")
+        try:
+            ids = _p4fix4_bestellungen(sessions)
+            with sessions() as db:
+                service.lieferschein_anlegen(db, db.get(Order, ids[0]))
+                db.commit()
+            original = service.naechste_belegnummer
+            versuche = []
+
+            def einmal_veraltet(db, model, column, prefix, datum):
+                nummer = original(db, model, column, prefix, datum)
+                if prefix == kollision:
+                    versuche.append(nummer)
+                    if len(versuche) == 1:
+                        return nummer.rsplit("-", 1)[0] + "-0001"
+                return nummer
+
+            monkeypatch.setattr(service, "naechste_belegnummer", einmal_veraltet)
+            with sessions() as db:
+                note = service.lieferschein_anlegen(db, db.get(Order, ids[1]))
+                assert note.delivery_note_number.endswith("-0002")
+                db.commit()
+            assert len(versuche) == 2
+            with sessions() as db:
+                assert db.query(DeliveryNote).count() == 2
+                assert db.query(PackingList).count() == 2
+        finally:
+            registry.dispose_tenant("fix4retry")
