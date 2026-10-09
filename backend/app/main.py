@@ -308,6 +308,13 @@ app.add_middleware(
 )
 
 
+#: /api/v1-Pfade, die ohne Mandant laufen dürfen (Apex, admin.<Domain>):
+#: Plattform-Verwaltung (eigener X-Platform-Admin-Key), Branding vor dem
+#: Login und der Basic-Auth-Status. Alles andere unter /api/v1 braucht einen
+#: Mandanten aus der Subdomain.
+MANDANTENFREIE_API_PFADE = ("/api/v1/platform", "/api/v1/branding", "/api/v1/auth/whoami")
+
+
 # === Tenant-Routing-Middleware ===========================================
 # Liest den Host-Header, leitet Slug ab und legt ihn in request.state ab.
 # Muss VOR dem basic_auth_middleware sitzen (= später hinzugefügt), damit
@@ -330,6 +337,24 @@ async def tenant_middleware(request: Request, call_next):
         or path.startswith("/redoc")
         or path == "/openapi.json"
     )
+
+    # Fachdaten nur mit Mandant. Apex und admin.<Domain> gelten oben als
+    # Plattform-Pfad, damit Marketing-Seite und Admin-UI ohne Mandant laufen —
+    # deren Aufrufe liegen unter /api/v1/platform bzw. /api/contact, /api/track,
+    # /api/stats. Jeder andere /api/v1-Pfad liefe dort ohne Request-Tenant:
+    # get_db fiele auf DEFAULT_TENANT_SLUG zurück, und get_current_user
+    # gliche den tenant_slug des Tokens nicht ab. Ein Login eines anderen
+    # Mandanten (z. B. der öffentliche Demo-Login) läse und schriebe dann im
+    # Default-Mandanten (Paket 3, Q1.0).
+    if (
+        (is_apex_host(_host_only) or is_admin_host(_host_only))
+        and path.startswith("/api/v1")
+        and not path.startswith(MANDANTENFREIE_API_PFADE)
+    ):
+        return JSONResponse(
+            status_code=404,
+            content={"detail": f"Tenant nicht gefunden für Host '{host}'"},
+        )
 
     if slug is None and not is_platform_path:
         # Unbekannte Subdomain → 404, sofern nicht statische Frontend-Datei
