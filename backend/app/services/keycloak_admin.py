@@ -302,6 +302,10 @@ class RolleNichtErlaubt(KeycloakAdminError):
     """Rolle liegt außerhalb von MANDANTEN_ROLLEN."""
 
 
+class ZugangGeaendert(KeycloakAdminError):
+    pass
+
+
 def _http_client() -> httpx.Client:
     """Fabrik für den HTTP-Client. Tests hängen hier einen httpx.MockTransport ein."""
     return httpx.Client(verify=True, timeout=15)
@@ -442,6 +446,15 @@ def _app_rollen(kc: _Benutzerzugang, user_id: str) -> list[str]:
     """Direkt zugewiesene App-Rollen, in Rangfolge. Andere Realm-Rollen fallen heraus."""
     namen = {m.get("name") for m in _rollen_mappings(kc, user_id)}
     return [r for r in MANDANTEN_ROLLEN if r in namen]
+
+
+def pruefe_aktuellen_admin(tenant_slug: str, user_id: str) -> dict:
+    user_id = _require_user_id(user_id)
+    with _Benutzerzugang() as zugang:
+        konto = _lade_mandanten_user(zugang, user_id, tenant_slug)
+        if konto.get("enabled") is not True or "admin" not in _app_rollen(zugang, user_id):
+            raise ZugangGeaendert()
+        return konto
 
 
 def _als_benutzer(rep: dict, rollen: list[str]) -> dict:

@@ -51,7 +51,7 @@ DEMO_MANDANT = DEFAULT_DEMO_SLUG
 DEMO_LOGINS = frozenset(u["email"].lower() for u in DEMO_USERS)
 
 
-def _mandant(request: Request, user: CurrentUser) -> str:
+def _mandant(request: Request, user: CurrentUser, db: DBSession) -> str:
     """Mandant des Requests. Basic-Auth- und AUTH_DISABLED-Nutzer haben keinen
     tenant_slug im Token und kommen hier nicht durch; ein Token ohne ``sub``
     (Benutzer-ID) auch nicht — sonst griffe der Selbstschutz ins Leere."""
@@ -62,6 +62,13 @@ def _mandant(request: Request, user: CurrentUser) -> str:
             status_code=403,
             detail="Benutzerverwaltung nur mit einem Keycloak-Login dieses Mandanten.",
         )
+    try:
+        kc.pruefe_aktuellen_admin(host_mandant, str(user["id"]))
+    except (kc.KeycloakNichtGefunden, kc.ZugangGeaendert) as fehler:
+        _audit(db, "ZUGANG_GEAENDERT_ABGEWIESEN", host_mandant, user)
+        raise HTTPException(status_code=403, detail="Ihr Zugang wurde geändert — bitte neu anmelden.") from fehler
+    except kc.KeycloakAdminError as fehler:
+        raise _fehler(fehler, host_mandant, user, db) from fehler
     return host_mandant
 
 

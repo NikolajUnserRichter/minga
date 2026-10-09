@@ -422,7 +422,8 @@ class TestFremderMandantLesen:
     def test_ungueltige_id(self, admin, kc):
         assert admin.get("/api/v1/users/kein-uuid").status_code == 422
         assert admin.get("/api/v1/users/..%2F..%2Froles").status_code in (404, 422)
-        assert kc.calls == []
+        assert kc.schreibende_calls() == []
+        assert all(TOKEN_PFAD in aufruf[1] or f"/users/{ADMIN_ID}" in aufruf[1] for aufruf in kc.calls)
 
     def test_fremdzugriff_im_audit(self, admin, kc, caplog):
         caplog.set_level("WARNING", logger="app.audit.benutzer")
@@ -815,16 +816,18 @@ class TestSchutzregeln:
         assert admin.patch(f"/api/v1/users/{ADMIN_ID}", json={"last_name": "Neu"}).status_code == 200
 
     def test_letzter_aktiver_admin(self, admin, kc):
-        """Der Aufrufer hat admin nur im Token (z. B. über eine Gruppe); in
-        Keycloak ist B der einzige direkte, aktive Admin des Mandanten."""
+        """Die Dienst-Schutzregel gilt auch unabhängig von der Aufruferprüfung."""
         kc.mappings[ADMIN_ID] = set()
         b = kc.add_user("b@beispielfirma.de", MANDANT, roles={"admin"})
         kc.add_user("fremdadmin@fremdfirma.de", FREMD, roles={"admin"})
         kc.add_user("inaktiv@beispielfirma.de", MANDANT, roles={"admin"}, enabled=False)
-        assert admin.patch(f"/api/v1/users/{b}", json={"role": "sales"}).status_code == 409
-        assert admin.patch(f"/api/v1/users/{b}", json={"enabled": False}).status_code == 409
+        for aenderung in ({"role": "sales"}, {"enabled": False}):
+            with pytest.raises(keycloak_admin.BenutzerSchutzregel, match="letzte aktive Admin"):
+                keycloak_admin.update_tenant_user(
+                    tenant_slug=MANDANT, user_id=b, acting_user_id=ADMIN_ID, **aenderung)
         assert kc.mappings[b] == {"admin"} and kc.users[b]["enabled"] is True
-        kc.add_user("c@beispielfirma.de", MANDANT, roles={"admin"})
+        aufrufer = kc.add_user("c@beispielfirma.de", MANDANT, roles={"admin"})
+        _als(uid=aufrufer)
         assert admin.patch(f"/api/v1/users/{b}", json={"role": "sales"}).status_code == 200
 
 
@@ -1123,3 +1126,37 @@ def test_routen_vollstaendig_ohne_loeschen():
     assert set(pfade["/api/v1/users"]) == {"get", "post"}
     assert set(pfade["/api/v1/users/{user_id}"]) == {"get", "patch"}
     assert set(pfade["/api/v1/users/{user_id}/reset-password"]) == {"post"}
+
+
+class TestVeraltetesToken:
+    @pytest.mark.parametrize("zustand", ["deaktiviert", "herabgestuft", "geloescht", "fremd", "ohne_mandant"])
+    @pytest.mark.parametrize("route", ["liste", "einzel", "anlegen", "aendern", "reset", "selbst"])
+    def test_aktueller_aufruferzustand_entscheidet(self, admin, kc, db, zustand, route):
+        aufrufer = kc.add_user("zweiter@beispielfirma.de", MANDANT, roles={"admin"})
+        ziel = kc.add_user("ziel@beispielfirma.de", MANDANT, roles={"sales"})
+        _als(uid=aufrufer)
+        if zustand == "deaktiviert":
+            kc.users[aufrufer]["enabled"] = False
+        elif zustand == "herabgestuft":
+            kc.mappings[aufrufer] = {"sales"}
+        elif zustand == "geloescht":
+            del kc.users[aufrufer]
+        else:
+            kc.users[aufrufer]["attributes"] = {"tenant_slug": [FREMD]} if zustand == "fremd" else {}
+        if route == "liste":
+            antwort = admin.get("/api/v1/users")
+        elif route == "einzel":
+            antwort = admin.get(f"/api/v1/users/{ziel}")
+        elif route == "anlegen":
+            antwort = _neu(admin)
+        elif route == "reset":
+            antwort = admin.post(f"/api/v1/users/{ziel}/reset-password")
+        else:
+            antwort = admin.patch(f"/api/v1/users/{aufrufer if route == 'selbst' else ziel}",
+                                  json={"enabled": True, "role": "admin"})
+        assert antwort.status_code == 403, antwort.text
+        assert antwort.json()["detail"] == "Ihr Zugang wurde geändert — bitte neu anmelden."
+        assert kc.schreibende_calls() == []
+        (eintrag,) = _audit_saetze(db)
+        assert eintrag.aktion == "ZUGANG_GEAENDERT_ABGEWIESEN"
+        assert eintrag.ausgefuehrt_von == aufrufer
