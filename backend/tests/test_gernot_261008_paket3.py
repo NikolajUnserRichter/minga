@@ -1218,3 +1218,270 @@ class TestQ4RechnungenNurMitRechnungsrecht:
         _q4_als(rolle)
         r = client.get("/api/v1/invoices", params={"order_id": _Q4_FREMD})
         assert r.status_code == 200, r.text
+
+
+class TestQ4Kundenfeldschutz:
+    """Spec Entscheidung 6 / T3 R4 / T5 R2: Die Halle legt Kunden an und pflegt
+    Stammdaten (Gernot, 03.09.). Konditionen ändern nur Verwaltung, Vertrieb und
+    Buchhaltung. Der Schutz greift nur bei einer echten Änderung — das Formular
+    schickt alle Felder."""
+
+    @pytest.mark.parametrize("feld,wert", [
+        ("pfand_abrechnung", "KEINE"),
+        ("discount_percent", 5),
+        ("payment_terms", "NET_30"),
+        ("credit_limit", 500),
+        ("skonto_percent", 2),
+        ("skonto_days", 10),
+        ("packaging_fee_amount", 4.5),
+        ("packaging_fee_percent", 1),
+        ("datev_account", "10077"),
+    ])
+    def test_halle_aendert_kein_abrechnungsfeld(self, client, feld, wert):
+        from app.core.rollen import KUNDENFELDER_KAUFMAENNISCH
+        kunde = _q4_kunde(client)
+        _q4_als("production_staff")
+
+        r = client.patch(f"/api/v1/sales/customers/{kunde['id']}", json={feld: wert})
+
+        assert r.status_code == 403, r.text
+        assert KUNDENFELDER_KAUFMAENNISCH[feld] in r.json()["detail"]
+        _q4_verwaltung()
+        assert client.get(f"/api/v1/sales/customers/{kunde['id']}").json()[feld] == kunde[feld]
+
+    def test_halle_aendert_keine_preisliste(self, client):
+        from app.models.product import PriceList
+        from tests.conftest import TestingSessionLocal
+        with TestingSessionLocal() as db:
+            liste = PriceList(name="Gastro 2026", code="GASTRO26")
+            db.add(liste)
+            db.commit()
+            liste_id = str(liste.id)
+        kunde = _q4_kunde(client)
+        _q4_als("production_staff")
+
+        r = client.patch(f"/api/v1/sales/customers/{kunde['id']}", json={"price_list_id": liste_id})
+
+        assert r.status_code == 403, r.text
+
+    def test_abgelehnte_aenderung_schreibt_auch_die_freien_felder_nicht(self, client):
+        kunde = _q4_kunde(client)
+        _q4_als("production_staff")
+
+        r = client.patch(f"/api/v1/sales/customers/{kunde['id']}",
+                         json={"name": "Ökoring eG", "discount_percent": 7})
+
+        assert r.status_code == 403
+        assert _q4_kunde_db(kunde["id"])["name"] == "Ökoring"
+
+    def test_volles_formular_mit_unveraenderten_konditionen_geht_durch(self, client):
+        """Gespeicherte Werte 5.00 % / NET_30 / KEINE, das Formular schickt 5 / NET_30 / KEINE
+        und die unveränderte E-Mail."""
+        kunde = _q4_kunde(client, discount_percent="5.00", payment_terms="NET_30",
+                          pfand_abrechnung="KEINE", skonto_percent="2.5", skonto_days=10)
+        _q4_als("production_staff")
+
+        r = client.patch(f"/api/v1/sales/customers/{kunde['id']}",
+                         json=_q4_kundenformular(kunde, name="Ökoring eG", telefon="089 123"))
+
+        assert r.status_code == 200, r.text
+        stand = _q4_kunde_db(kunde["id"])
+        assert stand["name"] == "Ökoring eG"
+        assert stand["pfand_abrechnung"] == "KEINE"
+        assert stand["payment_terms"] == "NET_30"
+
+    def test_volles_formular_mit_geaendertem_rabatt_wird_abgelehnt(self, client):
+        kunde = _q4_kunde(client, discount_percent="5.00")
+        _q4_als("production_staff")
+
+        r = client.patch(f"/api/v1/sales/customers/{kunde['id']}",
+                         json=_q4_kundenformular(kunde, discount_percent=7.5))
+
+        assert r.status_code == 403, r.text
+        assert ": Jahresrabatt %." in r.json()["detail"]
+
+    def test_veraltetes_formular_nennt_neu_laden(self, client):
+        """Die Halle öffnet das Formular, danach ändert die Verwaltung den Rabatt.
+        Die Halle speichert nur eine neue Telefonnummer (Befund H4)."""
+        kunde = _q4_kunde(client, discount_percent="5.00")
+        r = client.patch(f"/api/v1/sales/customers/{kunde['id']}", json={"discount_percent": 6})
+        assert r.status_code == 200, r.text
+        _q4_als("production_staff")
+
+        r = client.patch(f"/api/v1/sales/customers/{kunde['id']}",
+                         json=_q4_kundenformular(kunde, telefon="089 123"))
+
+        assert r.status_code == 403, r.text
+        assert "Formular veraltet" in r.json()["detail"]
+        assert _q4_kunde_db(kunde["id"])["discount_percent"] == Decimal("6.00")
+
+    def test_halle_legt_kunden_mit_standardkonditionen_an(self, client):
+        """Neuanlage aus dem Formular: alle Konditionen auf Standard, E-Mail gesetzt —
+        erlaubt (Gernot, 03.09.)."""
+        _q4_als("production_staff")
+
+        r = client.post("/api/v1/sales/customers", json={
+            "name": "Fruchthof Nagel", "typ": "HANDEL", "customer_number": "",
+            "email": "info@fruchthof-nagel.de",
+            "liefertage": [2], "payment_terms": "NET_14", "discount_percent": 0,
+            "skonto_percent": 0, "skonto_days": 0, "packaging_fee_amount": 0,
+            "packaging_fee_percent": 0, "show_prices_on_delivery_note": False,
+            "aktiv": True, "pfand_abrechnung": "JE_LIEFERUNG",
+        })
+
+        assert r.status_code == 201, r.text
+        assert r.json()["pfand_abrechnung"] == "JE_LIEFERUNG"
+        assert r.json()["email"] == "info@fruchthof-nagel.de"
+
+    @pytest.mark.parametrize("feld,wert", [
+        ("pfand_abrechnung", "KEINE"),
+        ("discount_percent", 3),
+        ("payment_terms", "NET_30"),
+    ])
+    def test_halle_legt_keinen_kunden_mit_abweichender_kondition_an(self, client, feld, wert):
+        _q4_als("production_staff")
+
+        r = client.post("/api/v1/sales/customers",
+                        json={"name": "Großer Kern", "typ": "GASTRO", feld: wert})
+
+        assert r.status_code == 403, r.text
+        _q4_verwaltung()
+        assert client.get("/api/v1/sales/customers", params={"search": "Großer Kern"}).json()["total"] == 0
+
+    @pytest.mark.parametrize("rolle", _Q4_MIT_RECHNUNGSRECHT)
+    def test_kaufmaennische_rollen_aendern_konditionen(self, client, rolle):
+        kunde = _q4_kunde(client)
+        _q4_als(rolle)
+
+        r = client.patch(f"/api/v1/sales/customers/{kunde['id']}",
+                         json={"pfand_abrechnung": "KEINE", "discount_percent": 5})
+
+        assert r.status_code == 200, r.text
+        assert r.json()["pfand_abrechnung"] == "KEINE"
+
+    def test_planung_aendert_keine_konditionen(self, client):
+        """Spec 08.10., Abnahme Paket 1: 'production_planner/production_staff können
+        pfand_abrechnung setzen' — offen für Paket 3. T3 R4: nur Admin, Vertrieb,
+        Buchhaltung."""
+        kunde = _q4_kunde(client)
+        _q4_als("production_planner")
+
+        r = client.patch(f"/api/v1/sales/customers/{kunde['id']}", json={"pfand_abrechnung": "KEINE"})
+
+        assert r.status_code == 403, r.text
+        assert "Pfandabrechnung" in r.json()["detail"]
+
+    def test_halle_mit_zusaetzlicher_vertriebsrolle_darf(self, client):
+        kunde = _q4_kunde(client)
+        _q4_als("production_staff", "sales")
+
+        r = client.patch(f"/api/v1/sales/customers/{kunde['id']}", json={"discount_percent": 5})
+
+        assert r.status_code == 200, r.text
+
+
+class TestQ4EmpfaengerDesKunden:
+    """Befund B1: Über die Haupt-E-Mail laufen der Rückfall jeder Empfängerliste
+    (Q2: belegversand.hinterlegte_empfaenger), die Vorbelegung des Versanddialogs
+    und der Mahnlauf (send_payment_reminders: email_to=customer.email). Ändern nur
+    Rollen ohne die Halle (T5 3.3); bei der Neuanlage frei."""
+
+    def test_halle_aendert_keine_haupt_email(self, client):
+        kunde = _q4_kunde(client)
+        _q4_als("production_staff")
+
+        r = client.patch(f"/api/v1/sales/customers/{kunde['id']}",
+                         json={"email": "angreifer@fremd.example"})
+
+        assert r.status_code == 403, r.text
+        assert "E-Mail (Hauptkontakt)" in r.json()["detail"]
+        assert _q4_kunde_db(kunde["id"])["email"] == "einkauf@oekoring.de"
+
+    def test_altbestand_email_in_anderer_schreibweise_gilt_als_unveraendert(self, client):
+        """EmailStr schreibt die Domain klein. Ein Altbestand mit großer Domain
+        darf das Formular der Halle nicht sperren."""
+        from uuid import UUID
+        from app.models.customer import Customer
+        from tests.conftest import TestingSessionLocal
+        kunde = _q4_kunde(client)
+        with TestingSessionLocal() as db:
+            db.get(Customer, UUID(kunde["id"])).email = "Einkauf@OEKORING.de"
+            db.commit()
+        kunde["email"] = "Einkauf@OEKORING.de"
+        _q4_als("production_staff")
+
+        r = client.patch(f"/api/v1/sales/customers/{kunde['id']}",
+                         json=_q4_kundenformular(kunde, telefon="089 1"))
+
+        assert r.status_code == 200, r.text
+
+    def test_planung_pflegt_die_haupt_email(self, client):
+        kunde = _q4_kunde(client)
+        _q4_als("production_planner")
+
+        r = client.patch(f"/api/v1/sales/customers/{kunde['id']}",
+                         json={"email": "rechnung@oekoring.de"})
+
+        assert r.status_code == 200, r.text
+
+    def test_empfaengerlisten_ohne_die_halle(self, client):
+        """Greift erst, wenn der Versand-Abschnitt (Q2.3) die Empfängerlisten am Kunden
+        eingeführt hat. Bestandskunden haben dort NULL, das Formular schickt []."""
+        from app.schemas.customer import CustomerUpdate
+        if "invoice_emails" not in CustomerUpdate.model_fields:
+            pytest.skip("Empfängerlisten (Q2.3) noch nicht umgesetzt")
+        from uuid import UUID
+        from app.models.customer import Customer
+        from tests.conftest import TestingSessionLocal
+        kunde = _q4_kunde(client)
+        with TestingSessionLocal() as db:
+            k = db.get(Customer, UUID(kunde["id"]))
+            k.confirmation_emails = k.delivery_note_emails = k.invoice_emails = None
+            db.commit()
+        _q4_als("production_staff")
+
+        unveraendert = client.patch(f"/api/v1/sales/customers/{kunde['id']}", json={
+            "telefon": "089 1", "confirmation_emails": [], "delivery_note_emails": [],
+            "invoice_emails": [],
+        })
+        geaendert = client.patch(f"/api/v1/sales/customers/{kunde['id']}",
+                                 json={"invoice_emails": ["rechnung@oekoring.de"]})
+
+        assert unveraendert.status_code == 200, unveraendert.text
+        assert geaendert.status_code == 403, geaendert.text
+
+
+# Kundenfelder, die die Halle ändern darf (Stammdaten, Gernot 03.09.). Wer ein
+# Feld zu CustomerCreate/CustomerUpdate hinzufügt, ordnet es hier oder in
+# app.core.rollen (KUNDENFELDER_KAUFMAENNISCH, KUNDENFELDER_EMPFAENGER) ein.
+# Name, Kundennummer, USt-IdNr. und Anschrift trägt die festgeschriebene
+# Rechnung eingefroren (Q1.6; Altrechnungen Q4.9).
+_Q4_FREIE_KUNDENFELDER = {
+    "name", "typ", "telefon", "adresse", "liefertage", "customer_number",
+    "ansprechpartner_name", "ansprechpartner_email", "ansprechpartner_telefon",
+    "ust_id", "steuernummer", "show_prices_on_delivery_note", "notizen", "aktiv",
+    "addresses",
+}
+# Empfängerlisten des Versand-Abschnitts (Q2.3): in KUNDENFELDER_EMPFAENGER
+# eingeordnet, bevor es sie gibt — der Wachhund bleibt in jeder Reihenfolge
+# von Q2 und Q4 grün.
+_Q4_KUENFTIGE_KUNDENFELDER = {"confirmation_emails", "delivery_note_emails", "invoice_emails"}
+
+
+class TestQ4KundenfelderEingeordnet:
+    def test_jedes_kundenfeld_ist_eingeordnet(self):
+        """Wachhund: Ein neues Kundenfeld (z. B. invoice_mode, Q7) darf nicht
+        ungeprüft für die Halle schreibbar werden."""
+        from app.core.rollen import KUNDENFELDER_EMPFAENGER, KUNDENFELDER_KAUFMAENNISCH
+        from app.schemas.customer import CustomerCreate, CustomerUpdate
+
+        felder = set(CustomerCreate.model_fields) | set(CustomerUpdate.model_fields)
+        kaufmaennisch = set(KUNDENFELDER_KAUFMAENNISCH)
+        empfaenger = set(KUNDENFELDER_EMPFAENGER)
+        geschuetzt = kaufmaennisch | empfaenger
+
+        assert felder - geschuetzt - _Q4_FREIE_KUNDENFELDER == set()
+        assert kaufmaennisch & empfaenger == set()
+        assert geschuetzt & _Q4_FREIE_KUNDENFELDER == set()
+        unbekannt = geschuetzt - felder - _Q4_KUENFTIGE_KUNDENFELDER
+        assert unbekannt == set(), f"Unbekannte Felder im Feldschutz: {sorted(unbekannt)}"

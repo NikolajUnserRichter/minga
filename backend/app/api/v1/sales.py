@@ -11,6 +11,7 @@ from sqlalchemy import select, func, or_
 from sqlalchemy.orm import joinedload
 
 from app.api.deps import DBSession, Pagination, CurrentUser
+from app.core.rollen import kundenfeldschutz, standardwerte
 from app.models.customer import Customer, CustomerType, Contact, CustomerAddress, AddressType, Subscription
 from app.models.order import Order, OrderLine, OrderStatus, OrderAuditLog, TaxRate, vat_from_lines
 from app.models.seed import Seed
@@ -114,10 +115,13 @@ async def get_customer(customer_id: UUID, db: DBSession):
 
 
 @router.post("/customers", response_model=CustomerResponse, status_code=status.HTTP_201_CREATED)
-async def create_customer(customer_data: CustomerCreate, db: DBSession):
+async def create_customer(customer_data: CustomerCreate, db: DBSession, user: CurrentUser):
     """Neuen Kunden anlegen. Wenn customer_number leer ist, wird automatisch
     KD-NNNNN sequenziell generiert (5-stellig, beginnend bei 10001)."""
     data = customer_data.model_dump()
+    # Feldschutz (Spec 08.10.2026, Entscheidung 6): Die Halle legt Kunden an,
+    # aber nur mit Standardkonditionen. Vor der Kundennummer: ein 403 verbraucht keine.
+    kundenfeldschutz(user, data, standardwerte(CustomerCreate), neuanlage=True)
     if "addresses" in data:
         del data["addresses"]
 
@@ -133,7 +137,7 @@ async def create_customer(customer_data: CustomerCreate, db: DBSession):
 
 
 @router.patch("/customers/{customer_id}", response_model=CustomerResponse)
-async def update_customer(customer_id: UUID, customer_data: CustomerUpdate, db: DBSession):
+async def update_customer(customer_id: UUID, customer_data: CustomerUpdate, db: DBSession, user: CurrentUser):
     """Kunden aktualisieren."""
     customer = db.get(Customer, customer_id)
     if not customer:
@@ -143,6 +147,8 @@ async def update_customer(customer_id: UUID, customer_data: CustomerUpdate, db: 
         )
 
     update_data = customer_data.model_dump(exclude_unset=True)
+    # Feldschutz vor dem ersten setattr: eine Ablehnung schreibt nichts.
+    kundenfeldschutz(user, update_data, {f: getattr(customer, f, None) for f in update_data})
     for field, value in update_data.items():
         setattr(customer, field, value)
 

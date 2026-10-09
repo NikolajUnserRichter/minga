@@ -79,13 +79,10 @@ _auth_deps = [Depends(get_current_user)]
 # ---------------------------------------------------------------------------
 from app.api.deps import require_access  # noqa: E402
 
-ADMIN = "admin"
-SALES = "sales"
-PLANER = "production_planner"
-PRODUKTION = "production_staff"
-BUCHHALTUNG = "accounting"
-
-ALLE_ROLLEN = [ADMIN, SALES, PLANER, PRODUKTION, BUCHHALTUNG]
+# Rollen-Konstanten: app/core/rollen.py (auch für Prüfungen in einzelnen Routern)
+from app.core.rollen import (  # noqa: E402
+    ADMIN, SALES, PLANER, PRODUKTION, BUCHHALTUNG, ALLE_ROLLEN,
+)
 
 
 def _rollen(*lesen: str, schreiben: Optional[list] = None) -> list:
