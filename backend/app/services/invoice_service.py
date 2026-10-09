@@ -649,6 +649,13 @@ class InvoiceService:
         eine Ausnahme hier verbraucht keine Nummer.
         """
         invoice.due_date = invoice.invoice_date + timedelta(days=zahlungsziel_tage)
+        # SEPA-Lastschrift (B10, Paket 3 Q5): Zahlungsart und Mandat des
+        # aktuellen Kunden, Einzugsdatum (frühestens die Fälligkeit oben, also
+        # das Zahlungsziel des Entwurfs, und frühestens heute + Frist) und die
+        # eingefrorene Vorabankündigung. Wirft LastschriftNichtMoeglich (ein
+        # ValueError) — vor Status und Nummer, verbraucht also keine Nummer.
+        from app.services.sepa_service import lastschrift_festschreiben
+        lastschrift_festschreiben(self.db, invoice, zahlungsziel_tage)
 
     def _empfaenger_festschreiben(self, invoice: Invoice) -> None:
         """Empfängerangaben beim Festschreiben einfrieren (GoBD).

@@ -200,3 +200,98 @@ def aktives_mandat(db: Session, customer_id) -> Optional[SepaMandat]:
     return db.execute(
         select(SepaMandat).where(SepaMandat.customer_id == customer_id, SepaMandat.aktiv.is_(True))
     ).scalar_one_or_none()
+
+
+# --------------------------------------------------------------------------
+# Festschreiben: Vorabankündigung als Snapshot
+# --------------------------------------------------------------------------
+
+#: Vorabankündigung nach Gernots Wortlaut vom 08.10.2026 — „zum frühest
+#: möglichen Zeitpunkt" ist durch das konkrete Einzugsdatum ersetzt (eine
+#: Vorabankündigung braucht Betrag und Datum). „Bitte überweisen Sie den
+#: Betrag nicht": die Firmen-IBAN steht in jeder Fußzeile.
+HINWEIS_VORLAGE = (
+    "Den Rechnungsbetrag von {betrag} buchen wir am {einzugsdatum} per "
+    "SEPA-Lastschrift zum Mandat {mandatsreferenz} zu der Gläubiger-ID "
+    "{glaeubiger_id} von Ihrem Konto {iban_maskiert}{bank_teil} ab. Bitte "
+    "überweisen Sie den Betrag nicht und sorgen Sie für ausreichende Deckung."
+)
+
+
+def _euro(betrag: Decimal, waehrung: str) -> str:
+    """1234.5 → '1.234,50 EUR'."""
+    text = f"{Decimal(betrag):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    return f"{text} {waehrung}"
+
+
+def hinweistext(*, betrag: Decimal, waehrung: str, einzug: date, mandat: SepaMandat, glaeubiger: str) -> str:
+    bank = (mandat.bank_name or "").strip()
+    return HINWEIS_VORLAGE.format(
+        betrag=_euro(betrag, waehrung),
+        einzugsdatum=einzug.strftime("%d.%m.%Y"),
+        mandatsreferenz=mandat.mandatsreferenz,
+        glaeubiger_id=glaeubiger,
+        iban_maskiert=iban_maskiert(mandat.iban),
+        # Ohne Bank entfällt "bei der …" ganz, statt "bei der  ab" zu drucken.
+        bank_teil=f" bei der {bank}" if bank else "",
+    )
+
+
+def lastschrift_voraussetzungen(db: Session, invoice):
+    """Ist die Rechnung beim Festschreiben eine Lastschrift — und geht das?
+
+    None: keine Lastschrift (Überweisungskunde, Gutschrift, Stornorechnung,
+    Betrag ≤ 0). Sonst (Kunde, aktives Mandat, Gläubiger-ID). Lastschriftkunde
+    ohne aktives Mandat oder ohne Gläubiger-ID: LastschriftNichtMoeglich.
+    Der Kunde zählt über die ID, nicht über die Relationship: PATCH /invoices
+    kann im Entwurf customer_id umgestellt haben. Betrag: im Entwurf der
+    zuletzt berechnete; festschreiben rechnet vorher neu (recalculate_totals).
+    """
+    from app.models.customer import Customer
+    from app.models.invoice import InvoiceType
+
+    if invoice.invoice_type != InvoiceType.RECHNUNG or (invoice.total or 0) <= 0:
+        return None
+    kunde = db.get(Customer, invoice.customer_id)
+    if kunde is None or kunde.zahlungsart != Zahlungsart.LASTSCHRIFT:
+        return None
+    mandat = aktives_mandat(db, kunde.id)
+    if mandat is None:
+        raise LastschriftNichtMoeglich(
+            f"{kunde.name} zahlt per Lastschrift, hat aber kein aktives SEPA-Mandat — "
+            "Mandat anlegen oder Zahlungsart auf Überweisung stellen"
+        )
+    glaeubiger = glaeubiger_id(db)
+    if not glaeubiger:
+        raise LastschriftNichtMoeglich(
+            "Gläubiger-ID fehlt in den Firmeneinstellungen — ohne sie keine Lastschrift"
+        )
+    return kunde, mandat, glaeubiger
+
+
+def lastschrift_festschreiben(db: Session, invoice, zahlungsziel_tage: int) -> None:
+    """Teil des Festschreibens (ENTWURF → OFFEN) — für JEDEN Weg dorthin.
+
+    Läuft in InvoiceService._zahlungsbedingungen_festschreiben (Q1): nach
+    recalculate_totals und dem Rechnungsdatum, vor Status und Nummer. Eine
+    Ausnahme verbraucht also keine Nummer. zahlungsziel_tage ist das
+    Zahlungsziel des Entwurfs (Q1: due_date − invoice_date, auch von Hand
+    gesetzt) — eingezogen wird nie vor der vereinbarten Fälligkeit, und nie
+    früher als heute + Vorabankündigungsfrist. Rechnungen von
+    Überweisungskunden, Gutschriften, Stornorechnungen und Beträge ≤ 0
+    bleiben unberührt (zahlungsart NULL).
+    """
+    lastschrift = lastschrift_voraussetzungen(db, invoice)
+    if lastschrift is None:
+        return
+    _kunde, mandat, glaeubiger = lastschrift
+
+    einzug = einzugsdatum(invoice.invoice_date, zahlungsziel_tage, vorabankuendigung_tage(db), heute_berlin())
+    invoice.due_date = einzug
+    invoice.zahlungsart = Zahlungsart.LASTSCHRIFT
+    invoice.sepa_mandat_id = mandat.id
+    invoice.lastschrift_status = LastschriftStatus.AUSSTEHEND
+    invoice.sepa_hinweis = hinweistext(
+        betrag=invoice.total, waehrung=invoice.currency or "EUR",
+        einzug=einzug, mandat=mandat, glaeubiger=glaeubiger,
+    )

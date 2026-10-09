@@ -9,6 +9,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field, ConfigDict, field_validator
 
 from app.models.invoice import InvoiceStatus, InvoiceType, TaxRate, PaymentMethod
+from app.models.sepa_mandate import Zahlungsart, LastschriftStatus
 from app.schemas.documents import BelegVersandRequest, DocumentDispatchResponse
 
 
@@ -228,6 +229,11 @@ class InvoiceResponse(InvoiceBase):
     created_at: datetime
     updated_at: datetime
     sent_at: Optional[datetime]
+
+    # SEPA-Lastschrift (B10): eingefrorener Hinweis, IBAN darin nur maskiert
+    zahlungsart: Optional[Zahlungsart] = None
+    lastschrift_status: Optional[LastschriftStatus] = None
+    sepa_hinweis: Optional[str] = None
 
     # Berechnete Felder
     remaining_amount: Optional[Decimal] = None

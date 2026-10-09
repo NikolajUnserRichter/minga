@@ -3404,3 +3404,191 @@ class TestQ5Rechte:
         assert r.status_code in (200, 403, 422), r.text
         q5_rolle(["admin"])
         assert client.get(f"/api/v1/sales/customers/{kunde['id']}").json()["zahlungsart"] == "LASTSCHRIFT"
+
+
+class TestQ5Festschreiben:
+    def test_entwurf_ohne_lastschriftdaten(self, client):
+        kunde, _ = _q5_lastschriftkunde(client)
+        entwurf = _q5_entwurf(client, kunde)
+        assert (entwurf["zahlungsart"], entwurf["lastschrift_status"], entwurf["sepa_hinweis"]) == (None, None, None)
+
+    def test_festschreiben_friert_hinweis_ein(self, client):
+        from app.services.sepa_service import einzugsdatum, heute_berlin
+        kunde, mandat = _q5_lastschriftkunde(client)
+        entwurf = _q5_entwurf(client, kunde)
+
+        rechnung = _q5_festschreiben(client, entwurf)
+
+        erwartet = einzugsdatum(date.fromisoformat(rechnung["invoice_date"]), 14, 14, heute_berlin())
+        assert rechnung["zahlungsart"] == "LASTSCHRIFT"
+        assert rechnung["lastschrift_status"] == "AUSSTEHEND"
+        assert rechnung["due_date"] == erwartet.isoformat()
+        assert erwartet >= heute_berlin() + timedelta(days=14) and erwartet.weekday() < 5
+        assert rechnung["sepa_hinweis"] == (
+            f"Den Rechnungsbetrag von 21,40 EUR buchen wir am {erwartet.strftime('%d.%m.%Y')} per "
+            f"SEPA-Lastschrift zum Mandat {mandat['mandatsreferenz']} zu der Gläubiger-ID {_Q5_GID} "
+            "von Ihrem Konto DE89 xxxx xxxx xxxx xxxx 00 bei der Commerzbank ab. Bitte überweisen "
+            "Sie den Betrag nicht und sorgen Sie für ausreichende Deckung."
+        )
+
+    def test_von_hand_gesetztes_zahlungsziel_bleibt(self, client):
+        """Entwurf auf 45 Tage gestellt: eingezogen wird nicht vor der
+        vereinbarten Fälligkeit (Q1 übergibt das Zahlungsziel des Entwurfs)."""
+        from app.services.sepa_service import naechster_bankarbeitstag
+        kunde, _ = _q5_lastschriftkunde(client)
+        entwurf = _q5_entwurf(client, kunde)
+        ziel = date.fromisoformat(entwurf["invoice_date"]) + timedelta(days=45)
+        r = client.patch(f"/api/v1/invoices/{entwurf['id']}", json={"due_date": ziel.isoformat()})
+        assert r.status_code == 200, r.text
+
+        rechnung = _q5_festschreiben(client, entwurf)
+
+        erwartet = naechster_bankarbeitstag(date.fromisoformat(rechnung["invoice_date"]) + timedelta(days=45))
+        assert rechnung["due_date"] == erwartet.isoformat()
+        assert f"buchen wir am {erwartet.strftime('%d.%m.%Y')}" in rechnung["sepa_hinweis"]
+
+    def test_ohne_bank_entfaellt_bei_der(self, client):
+        _q5_glaeubiger(client)
+        kunde = _q5_kunde(client)
+        _q5_mandat(client, kunde, bank_name=None)
+        client.put(f"/api/v1/sepa/kunden/{kunde['id']}/zahlungsart", json={"zahlungsart": "LASTSCHRIFT"})
+        hinweis = _q5_festschreiben(client, _q5_entwurf(client, kunde))["sepa_hinweis"]
+        assert "bei der" not in hinweis and "xxxx 00 ab." in hinweis
+
+    def test_ueberweisungskunde_unveraendert(self, client):
+        rechnung = _q5_festschreiben(client, _q5_entwurf(client, _q5_kunde(client)))
+        assert (rechnung["zahlungsart"], rechnung["lastschrift_status"], rechnung["sepa_hinweis"]) == (None, None, None)
+
+    def test_ohne_aktives_mandat_bleibt_entwurf(self, client):
+        from app.models.sepa_mandate import SepaMandat
+        kunde, mandat = _q5_lastschriftkunde(client)
+        entwurf = _q5_entwurf(client, kunde)
+        with TestingSessionLocal() as db:  # Altzustand nachstellen (die API verhindert ihn)
+            db.get(SepaMandat, uuid.UUID(mandat["id"])).aktiv = False
+            db.commit()
+
+        r = client.post(f"/api/v1/invoices/{entwurf['id']}/finalize")
+
+        assert r.status_code == 400, r.text
+        assert "kein aktives SEPA-Mandat" in r.json()["detail"]
+        assert client.get(f"/api/v1/invoices/{entwurf['id']}").json()["status"] == "ENTWURF"
+
+    def test_ohne_glaeubiger_id_bleibt_entwurf(self, client):
+        kunde, _ = _q5_lastschriftkunde(client)
+        entwurf = _q5_entwurf(client, kunde)
+        assert client.patch("/api/v1/admin/settings", json={"COMPANY_SEPA_GLAEUBIGER_ID": ""}).status_code == 200
+
+        r = client.post(f"/api/v1/invoices/{entwurf['id']}/finalize")
+
+        assert r.status_code == 400 and "Gläubiger-ID" in r.json()["detail"]
+        assert client.get(f"/api/v1/invoices/{entwurf['id']}").json()["status"] == "ENTWURF"
+
+    def test_kundenwechsel_im_entwurf(self, client):
+        """Mandat und Zahlungsart gehören zum Kunden beim Festschreiben, nicht beim Anlegen."""
+        lastschrift, mandat = _q5_lastschriftkunde(client)
+        ueberweisung = _q5_kunde(client, "Überweiser")
+
+        weg = _q5_entwurf(client, lastschrift)
+        client.patch(f"/api/v1/invoices/{weg['id']}", json={"customer_id": ueberweisung["id"]})
+        assert _q5_festschreiben(client, weg)["sepa_hinweis"] is None
+
+        hin = _q5_entwurf(client, ueberweisung)
+        client.patch(f"/api/v1/invoices/{hin['id']}", json={"customer_id": lastschrift["id"]})
+        assert mandat["mandatsreferenz"] in _q5_festschreiben(client, hin)["sepa_hinweis"]
+
+    def test_storno_einer_lastschriftrechnung_ohne_lastschrift(self, client):
+        kunde, _ = _q5_lastschriftkunde(client)
+        rechnung = _q5_festschreiben(client, _q5_entwurf(client, kunde))
+        r = client.post(f"/api/v1/invoices/{rechnung['id']}/cancel",
+                        json={"reason": "Test", "create_credit_note": True})
+        assert r.status_code == 200, r.text
+        storno = r.json()["credit_note"]
+        assert (storno["zahlungsart"], storno["sepa_hinweis"]) == (None, None)
+
+    def test_snapshot_unveraendert_nach_mandatsaenderung(self, client):
+        kunde, mandat = _q5_lastschriftkunde(client)
+        rechnung = _q5_festschreiben(client, _q5_entwurf(client, kunde))
+
+        r = client.patch(f"/api/v1/sepa/mandate/{mandat['id']}", json={"iban": _Q5_IBAN_NEU, "bank_name": "Sparkasse"})
+        assert r.status_code == 200, r.text
+
+        nachher = client.get(f"/api/v1/invoices/{rechnung['id']}").json()
+        assert nachher["sepa_hinweis"] == rechnung["sepa_hinweis"]
+        assert "Commerzbank" in nachher["sepa_hinweis"] and "Sparkasse" not in nachher["sepa_hinweis"]
+
+    def test_widerruf_meldet_offene_lastschriftrechnung(self, client):
+        kunde, mandat = _q5_lastschriftkunde(client)
+        rechnung = _q5_festschreiben(client, _q5_entwurf(client, kunde))
+
+        r = client.post(f"/api/v1/sepa/mandate/{mandat['id']}/widerruf", json={})
+
+        assert r.json()["offene_lastschriften"] == [rechnung["invoice_number"]]
+        # Snapshot bleibt (GoBD), die Rechnung wird nicht umgeschrieben
+        assert client.get(f"/api/v1/invoices/{rechnung['id']}").json()["sepa_hinweis"] == rechnung["sepa_hinweis"]
+
+    def test_widerruf_meldet_keine_stornierte_rechnung(self, client):
+        kunde, mandat = _q5_lastschriftkunde(client)
+        rechnung = _q5_festschreiben(client, _q5_entwurf(client, kunde))
+        r = client.post(f"/api/v1/invoices/{rechnung['id']}/cancel",
+                        json={"reason": "Test", "create_credit_note": True})
+        assert r.status_code == 200, r.text
+
+        r = client.post(f"/api/v1/sepa/mandate/{mandat['id']}/widerruf", json={})
+
+        assert r.json()["offene_lastschriften"] == []
+
+    def test_referenz_datum_art_fest_ab_festgeschriebener_rechnung(self, client):
+        """Der eingefrorene Hinweis nennt die Referenz; Einzugsliste, Einreichung
+        und Zahlung müssen dazu passen — auch vor dem ersten Einzug."""
+        kunde, mandat = _q5_lastschriftkunde(client)
+        _q5_festschreiben(client, _q5_entwurf(client, kunde))
+        url = f"/api/v1/sepa/mandate/{mandat['id']}"
+        for feld, wert in (("mandatsreferenz", "MG-ANDERS"), ("unterschrieben_am", "2026-08-01"),
+                           ("mandatsart", "B2B")):
+            r = client.patch(url, json={feld: wert})
+            assert r.status_code == 409, (feld, r.text)
+        # Kontowechsel unter demselben Mandat bleibt möglich (Entscheidung 7)
+        assert client.patch(url, json={"iban": _Q5_IBAN_NEU}).status_code == 200
+
+    def test_rechnungsantwort_nur_maskiert(self, client, q5_rolle):
+        kunde, _ = _q5_lastschriftkunde(client)
+        rechnung = _q5_festschreiben(client, _q5_entwurf(client, kunde))
+        q5_rolle(["sales"])
+        r = client.get(f"/api/v1/invoices/{rechnung['id']}")
+        assert r.status_code == 200
+        assert _Q5_IBAN not in r.text
+        assert "DE89 xxxx xxxx xxxx xxxx 00" in r.json()["sepa_hinweis"]
+
+    def test_patch_status_offen_umgeht_festschreiben_nicht(self, client):
+        """Charakterisierung der Q1-Zusage: kein Weg nach OFFEN ohne Festschreiben."""
+        kunde, _ = _q5_lastschriftkunde(client)
+        entwurf = _q5_entwurf(client, kunde)
+        client.patch(f"/api/v1/invoices/{entwurf['id']}", json={"status": "OFFEN"})
+        nachher = client.get(f"/api/v1/invoices/{entwurf['id']}").json()
+        assert nachher["status"] == "ENTWURF" or nachher["sepa_hinweis"]
+
+    def test_sammellauf_bekommt_hinweis_beim_festschreiben(self, client):
+        """Charakterisierung der Q1-Zusage für den Sammellauf: der Hinweis
+        entsteht spätestens bei der Freigabe des Entwurfs."""
+        from app.models.documents import DeliveryNote
+        kunde, mandat = _q5_lastschriftkunde(client)
+        heute = date.today()
+        r = client.post("/api/v1/sales/orders", json={
+            "customer_id": kunde["id"], "order_date": heute.isoformat(),
+            "requested_delivery_date": heute.isoformat(),
+            "lines": [{"product_name": "Erbse", "quantity": 2, "unit": "STK",
+                       "unit_price": "10.00", "tax_rate": "REDUZIERT"}],
+        })
+        assert r.status_code == 201, r.text
+        with TestingSessionLocal() as db:
+            db.add(DeliveryNote(order_id=uuid.UUID(r.json()["id"]), delivery_note_number="LS-Q5-1"))
+            db.commit()
+
+        r = client.post("/api/v1/invoices/batch-run/commit", json={
+            "period_from": (heute - timedelta(days=1)).isoformat(), "period_to": heute.isoformat()})
+        assert r.status_code == 201, r.text
+        rechnung = r.json()["rechnungen"][0]
+        if rechnung["status"] == "ENTWURF":
+            rechnung = _q5_festschreiben(client, rechnung)
+        assert rechnung["status"] == "OFFEN"
+        assert mandat["mandatsreferenz"] in rechnung["sepa_hinweis"]
