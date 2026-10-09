@@ -320,17 +320,18 @@ class TestQ1Festschreiben:
 
         assert Decimal(str(rechnung["total"])) == Decimal("26.75")
 
-    def test_altentwurf_behaelt_re_nummer_und_datum(self, client):
-        """Entscheidung 2: bestehende Entwürfe behalten ihre RE-Nummer."""
+    def test_altentwurf_behaelt_re_nummer(self, client):
+        """Entscheidung 2: bestehende Entwürfe behalten ihre RE-Nummer. Das
+        Rechnungsdatum ist seit Paket 4 (B) auch bei ihnen der Tag des
+        Festschreibens (tests/test_paket4.py::TestP4BAusstellungsdatum)."""
         kunde = _q1_kunde(client)
         alt_id = _q1_altentwurf(kunde, _q1_nr(3))
-        vorher = client.get(f"/api/v1/invoices/{alt_id}").json()
 
         alt = _q1_finalisieren(client, {"id": alt_id})
         neu = _q1_finalisieren(client, _q1_entwurf(client, kunde))
 
         assert alt["invoice_number"] == _q1_nr(3)
-        assert (alt["invoice_date"], alt["due_date"]) == (vorher["invoice_date"], vorher["due_date"])
+        assert alt["invoice_date"] == _q1_heute().isoformat()
         assert neu["invoice_number"] == _q1_nr(4)
 
     def test_neues_jahr_beginnt_bei_eins(self, client, monkeypatch):

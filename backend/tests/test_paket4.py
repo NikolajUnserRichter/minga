@@ -617,3 +617,80 @@ class TestP4BFakturiert:
 
         assert r.status_code == 200, r.text
         assert r.json()["kunden"] == []
+
+
+from decimal import Decimal as _P4B_Decimal
+
+
+def _p4b_altentwurf(kunde, nummer, datum, ziel_tage):
+    """Entwurf, wie ihn der Code vor Paket 3 anlegte: echte RE-Nummer schon
+    beim Anlegen (Bestand wie RE-2026-00003). Direkt per ORM — über die API
+    entsteht so ein Entwurf nicht mehr."""
+    from app.models.invoice import Invoice, InvoiceLine, InvoiceStatus, TaxRate
+    with _P4B_Session() as db:
+        rechnung = Invoice(
+            invoice_number=nummer, customer_id=_p4b_uuid.UUID(kunde["id"]),
+            invoice_date=datum, due_date=datum + _p4b_timedelta(days=ziel_tage),
+            status=InvoiceStatus.ENTWURF,
+        )
+        db.add(rechnung)
+        db.flush()
+        db.add(InvoiceLine(
+            invoice_id=rechnung.id, position=1, description="Erbsen-Schale",
+            quantity=_P4B_Decimal("10"), unit="STK", unit_price=_P4B_Decimal("2.50"),
+            tax_rate=TaxRate.REDUZIERT, line_total=_P4B_Decimal("25.00"),
+        ))
+        db.commit()
+        return str(rechnung.id)
+
+
+def _p4b_heute_festsetzen(monkeypatch, tag):
+    monkeypatch.setattr("app.services.invoice_service._heute_berlin", lambda: tag)
+
+
+def _p4b_festschreiben(client, rechnung_id):
+    r = client.post(f"/api/v1/invoices/{rechnung_id}/finalize")
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+class TestP4BAusstellungsdatum:
+    """G64: Rechnungsdatum ist der Tag des Festschreibens (Europe/Berlin),
+    auch bei einem Altentwurf mit RE-Nummer. Das Zahlungsziel in Tagen bleibt."""
+
+    def test_altentwurf_mit_nummer_bekommt_den_tag_der_ausstellung(self, client, monkeypatch):
+        """Wie RE-2026-00003: angelegt 07.10., festgeschrieben 09.10."""
+        kunde = _p4b_kunde(client, "Ökoring Handels GmbH")
+        alt_id = _p4b_altentwurf(kunde, "RE-2026-00003", _p4b_date(2026, 10, 7), 14)
+        _p4b_heute_festsetzen(monkeypatch, _p4b_date(2026, 10, 9))
+
+        rechnung = _p4b_festschreiben(client, alt_id)
+
+        assert rechnung["invoice_number"] == "RE-2026-00003"
+        assert rechnung["invoice_date"] == "2026-10-09"
+        assert rechnung["due_date"] == "2026-10-23"
+
+    def test_zahlungsziel_in_tagen_bleibt(self, client, monkeypatch):
+        kunde = _p4b_kunde(client, "Ökoring Handels GmbH")
+        alt_id = _p4b_altentwurf(kunde, "RE-2026-00004", _p4b_date(2026, 9, 1), 30)
+        _p4b_heute_festsetzen(monkeypatch, _p4b_date(2026, 10, 9))
+
+        rechnung = _p4b_festschreiben(client, alt_id)
+
+        assert (rechnung["invoice_date"], rechnung["due_date"]) == ("2026-10-09", "2026-11-08")
+
+    def test_neuer_entwurf_wie_bisher(self, client, monkeypatch):
+        """Wächter: Entwurf mit Platzhalter — Nummer und Datum beim Festschreiben."""
+        kunde = _p4b_kunde(client, "Ökoring Handels GmbH")
+        r = client.post("/api/v1/invoices", json={
+            "customer_id": kunde["id"], "invoice_date": "2026-10-01", "due_date": "2026-10-15",
+            "lines": [{"description": "Erbsen-Schale", "quantity": 10, "unit": "STK",
+                       "unit_price": "2.50", "tax_rate": "REDUZIERT"}],
+        })
+        assert r.status_code == 201, r.text
+        _p4b_heute_festsetzen(monkeypatch, _p4b_date(2026, 10, 9))
+
+        rechnung = _p4b_festschreiben(client, r.json()["id"])
+
+        assert rechnung["invoice_number"] == "RE-2026-00001"
+        assert (rechnung["invoice_date"], rechnung["due_date"]) == ("2026-10-09", "2026-10-23")

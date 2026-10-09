@@ -638,9 +638,10 @@ class InvoiceService:
         0. Schreibsperre holen und den Stand darunter neu lesen
            (_sperren_und_neu_lesen) — erst dann prüfen.
         1. Summen final aus den Positionen (recalculate_totals).
-        2. Trägt der Entwurf den Platzhalter: Rechnungsdatum = heute
-           (Europe/Berlin). Nummer und Ausstellungsdatum entstehen zusammen.
-           Ein Altentwurf mit RE-Nummer behält Nummer und Datum.
+        2. Rechnungsdatum = heute (Europe/Berlin), immer — auch für einen
+           Altentwurf, der seine RE-Nummer schon vor Paket 3 bekam; er
+           behält nur die Nummer (Paket 4, B). Trägt der Entwurf den
+           Platzhalter, entstehen Nummer und Ausstellungsdatum zusammen.
         3. _zahlungsbedingungen_festschreiben: Fälligkeit = Rechnungsdatum +
            Zahlungsziel des Entwurfs (Haken für SEPA, Paket 3 Q5);
            _empfaenger_festschreiben: Empfängerangaben einfrieren (GoBD).
@@ -676,8 +677,10 @@ class InvoiceService:
         zahlungsziel_tage = max((invoice.due_date - invoice.invoice_date).days, 0)
 
         braucht_nummer = ist_entwurfsnummer(invoice.invoice_number)
-        if braucht_nummer:
-            invoice.invoice_date = _heute_berlin()
+        # Ausstellungsdatum ist der Tag des Festschreibens — auch für einen
+        # Altentwurf mit RE-Nummer. RE-2026-00003 trug sonst das Anlagedatum
+        # 07.10. statt 09.10. und lag vor der Lieferung vom 08.10. (Paket 4, B).
+        invoice.invoice_date = _heute_berlin()
         self._zahlungsbedingungen_festschreiben(invoice, zahlungsziel_tage)
         self._empfaenger_festschreiben(invoice)
 

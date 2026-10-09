@@ -27,7 +27,11 @@ def test_dunning_email_sending(db, monkeypatch):
     inv_service.add_line(invoice.id, "Test", Decimal("1"), "Stk", Decimal("100.00"))
     inv_service.finalize_invoice(invoice.id)
     
-    # Manually set to OVERDUE conform to logic
+    # Manually set to OVERDUE conform to logic. Festschreiben setzt das
+    # Rechnungsdatum seit Paket 4 (B) immer auf heute, auch bei der hier
+    # vorab gesetzten Nummer — das Mahnbeispiel braucht die alten Daten.
+    invoice.invoice_date = overdue_date - timedelta(days=14)
+    invoice.due_date = overdue_date
     invoice.status = InvoiceStatus.UEBERFAELLIG
     db.commit()
     
