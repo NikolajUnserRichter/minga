@@ -1949,3 +1949,82 @@ class TestP4DHalleOhneGeldUndKonditionen:
 
         assert r.status_code == 200, r.text
         assert r.json()["prices"] is None
+
+
+_P4FIX_FUSS = (
+    "Testbank - Bankverbindung auf jeder Seite\n"
+    "Geschäftsführung: Erika Muster - HRB 123456\n"
+    "USt-ID DE123456789 - Steuer-Nr. 123/456/789"
+)
+
+
+def _p4fix1_belege(client, anzahl, bundles=False):
+    from datetime import date
+    for art in ("RECHNUNG", "LIEFERSCHEIN", "AUFTRAGSBESTAETIGUNG", "MAHNUNG", "VERPACKUNGSLISTE"):
+        antwort = client.patch(f"/api/v1/document-templates/{art}", json={"texts": {
+            "header_text": "Testfarm GmbH - Feldweg 1 - 80000 München",
+            "footer_text": _P4FIX_FUSS,
+        }})
+        assert antwort.status_code == 200, antwort.text
+    kunde = _p4c_kunde(client, "PDF Testkunde", skonto_percent=2, skonto_days=10)
+    positionen = []
+    mix = None
+    if bundles:
+        sorten = [_p4a_produkt(client, name, f"FIX1-{index}") for index, name in enumerate(
+            ("BIO Erbsensprossen", "BIO Sonnenblumen", "BIO Radieschen", "BIO Brokkoli", "BIO Rucola", "BIO Rotkohl"))]
+        mix = _p4a_mix(client, [(sorte, 1) for sorte in sorten], sku="FIX1-MIX")
+    for index in range(anzahl):
+        position = {"product_name": "BIO Sonnenblume Microgreens frisch geschnitten in der Mehrwegschale 100 Gramm",
+                    "quantity": 4, "unit": "STK", "unit_price": 2.5, "tax_rate": "REDUZIERT"}
+        if mix and index < 2:
+            position.update(product_id=mix["id"], product_name=mix["name"])
+        positionen.append(position)
+    antwort = client.post("/api/v1/sales/orders", json={
+        "customer_id": kunde["id"], "requested_delivery_date": date.today().isoformat(),
+        "lines": positionen,
+    })
+    assert antwort.status_code == 201, antwort.text
+    order = antwort.json()
+    rechnung = _p4c_rechnung(client, order["id"])
+    antwort = client.post(f"/api/v1/sales/orders/{order['id']}/delivery-notes", json={})
+    assert antwort.status_code == 201, antwort.text
+    return rechnung, antwort.json()
+
+
+@pytest.mark.usefixtures("_p4a_ohne_celery")
+class TestP4Fix1PDFSeiten:
+    @pytest.mark.parametrize("art", ["rechnung", "lieferschein"])
+    @pytest.mark.parametrize("anzahl,bundles", [(3, True), (12, False)])
+    def test_seiten_fuss_folgekopf_und_summen(self, client, tmp_path, art, anzahl, bundles):
+        import subprocess
+        rechnung, lieferschein = _p4fix1_belege(client, anzahl, bundles)
+        if art == "rechnung":
+            pfad = f"/api/v1/invoices/{rechnung['id']}/pdf"
+            nummer = rechnung["invoice_number"]
+        else:
+            pfad = f"/api/v1/sales/delivery-notes/{lieferschein['id']}/pdf"
+            nummer = lieferschein["delivery_note_number"]
+        antwort = client.get(pfad)
+        assert antwort.status_code == 200, antwort.text
+        datei = tmp_path / f"{art}-{anzahl}.pdf"
+        datei.write_bytes(antwort.content)
+        text = subprocess.run(["pdftotext", "-layout", str(datei), "-"],
+                              check=True, capture_output=True, text=True).stdout
+        seiten = text.rstrip("\f").split("\f")
+        if bundles:
+            assert len(seiten) == 1
+            assert "BIO Erbsensprossen," in seiten[0]
+            assert "Seite 1 von" not in seiten[0]
+        else:
+            assert len(seiten) >= 2
+            assert nummer in seiten[1]
+            assert "Beschreibung" in seiten[1]
+            for index, text in enumerate(seiten, 1):
+                assert f"Seite {index} von {len(seiten)}" in text
+        for text in seiten:
+            for zeile in _P4FIX_FUSS.splitlines():
+                assert zeile in text
+        assert Decimal(str(rechnung["subtotal"])) == Decimal(anzahl * 10)
+        assert Decimal(str(rechnung["total"])) == Decimal(anzahl * 10) * Decimal("1.07")
+        if art == "rechnung":
+            assert f"{anzahl * 10:.2f} €" in " ".join(seiten)

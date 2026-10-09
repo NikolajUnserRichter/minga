@@ -7,6 +7,7 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, Tabl
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 from reportlab.lib.units import cm
+from reportlab.pdfgen.canvas import Canvas
 from app.models.invoice import (
     Invoice, InvoiceStatus, InvoiceType, ist_entwurfsnummer, steuer_je_satz, steuerausweis_stimmt,
 )
@@ -65,7 +66,7 @@ def line_desc_cell(main: Optional[str], product, styles) -> Paragraph:
             extras.append(f"Sorte: {sorte}")
         if getattr(product, "is_bundle", False):
             comps = sorted(product.components or [], key=lambda c: (c.sort_order or 0))
-            names = " | ".join(
+            names = ", ".join(
                 (c.child_product.name_short or c.child_product.name)
                 for c in comps if c.child_product is not None
             )
@@ -247,6 +248,64 @@ def _wasserzeichen_entwurf(canvas, doc) -> None:
     canvas.restoreState()
 
 
+class _BelegCanvas(Canvas):
+    def __init__(self, *args, footer, title, number, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._seiten = []
+        self._footer = footer
+        self._belegtitel = title
+        self._belegnummer = number
+
+    def showPage(self):
+        self._seiten.append(dict(self.__dict__))
+        self._startPage()
+
+    def save(self):
+        anzahl = len(self._seiten)
+        for zustand in self._seiten:
+            self.__dict__.update(zustand)
+            self.saveState()
+            breite, hoehe = self._pagesize
+            if self._footer is not None:
+                self._footer.wrap(breite - 4 * cm, hoehe)
+                self._footer.drawOn(self, 2 * cm, cm)
+            if anzahl > 1:
+                seite = f"Seite {self._pageNumber} von {anzahl}"
+                self.setFont("Helvetica", 8)
+                self.setFillColor(colors.grey)
+                self.drawRightString(breite - 2 * cm, 0.5 * cm, seite)
+                if self._pageNumber > 1:
+                    self.drawString(2 * cm, hoehe - cm,
+                                    f"{self._belegtitel} {self._belegnummer} – {seite}")
+            self.restoreState()
+            super().showPage()
+        super().save()
+
+
+def _build_paginated(doc, elements, tmpl, settings, title, number, *, draft=False,
+                     fallback="Minga Greens - Microgreens Farm München"):
+    from functools import partial
+    from app.services.document_template_service import section_enabled
+    footer = None
+    if section_enabled(tmpl, "footer", default=True):
+        custom = tmpl.texts.get("footer_text") if tmpl and tmpl.texts else None
+        if custom and custom.strip():
+            style = ParagraphStyle("CustomFooter", fontSize=8, leading=10, textColor=colors.grey)
+            footer = Paragraph(custom.replace("\n", "<br/>"), style)
+        else:
+            footer = render_company_footer_block(settings)
+            if footer is None:
+                style = ParagraphStyle("Footer", fontSize=8, leading=12, textColor=colors.grey)
+                footer = Paragraph(fallback, style)
+    if footer is not None:
+        _, hoehe = footer.wrap(doc.width, doc.height)
+        doc.bottomMargin = max(doc.bottomMargin, hoehe + 1.4 * cm)
+    callbacks = ({"onFirstPage": _wasserzeichen_entwurf, "onLaterPages": _wasserzeichen_entwurf}
+                 if draft else {})
+    doc.build(elements, canvasmaker=partial(_BelegCanvas, footer=footer, title=title, number=number),
+              **callbacks)
+
+
 class PDFService:
     @staticmethod
     def generate_invoice_pdf(invoice: Invoice, settings: Optional[dict] = None, *, db=None) -> bytes:
@@ -285,6 +344,9 @@ class PDFService:
             or ist_entwurfsnummer(getattr(invoice, "invoice_number", None))
         )
         empfaenger = rechnungsempfaenger(invoice, ist_entwurf)
+        title = ("Leergutabrechnung" if invoice.beleg_art == "LEERGUT" else "Rechnung")
+        if invoice.invoice_type != InvoiceType.RECHNUNG:
+            title = "Stornorechnung" if invoice.original_invoice_id else "Gutschrift"
 
         # Briefkopf — Logo + Custom-Header oder Settings-Fallback
         custom_header = (tmpl.texts.get("header_text") if (tmpl and tmpl.texts) else None)
@@ -382,7 +444,7 @@ class PDFService:
                     f"{line.tax_rate.percent} %",
                     f"{line.line_total:.2f} €"
                 ])
-            table = Table(data, colWidths=[1.0*cm, 2.0*cm, 3.9*cm, 1.6*cm, 1.8*cm, 2.3*cm, 1.4*cm, 3.0*cm])
+            table = Table(data, colWidths=[1.0*cm, 2.0*cm, 3.9*cm, 1.6*cm, 1.8*cm, 2.3*cm, 1.4*cm, 3.0*cm], repeatRows=1)
             table.setStyle(TableStyle([
                 ('BACKGROUND', (0,0), (-1,0), colors.lightgrey),
                 ('TEXTCOLOR', (0,0), (-1,0), colors.black),
@@ -519,7 +581,7 @@ class PDFService:
                         datum.strftime("%d.%m.%Y") if datum else "—",
                         f"{betraege[n.id]:.2f} EUR",
                     ])
-                ls_tabelle = Table(ls_daten, colWidths=[6*cm, 4*cm, 4*cm])
+                ls_tabelle = Table(ls_daten, colWidths=[6*cm, 4*cm, 4*cm], repeatRows=1)
                 ls_tabelle.setStyle(TableStyle([
                     ("GRID", (0, 0), (-1, -1), 0.4, colors.grey),
                     ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#EEEEEE")),
@@ -537,25 +599,9 @@ class PDFService:
             )
             elements.append(Paragraph(thanks_text, styles['Normal']))
 
-        # Footer: Custom-Text oder Firmendaten + Bankverbindung
-        if _en(tmpl, "footer", default=True):
-            elements.append(Spacer(1, 20))
-            custom_footer = tmpl.texts.get("footer_text") if (tmpl and tmpl.texts) else None
-            if custom_footer and custom_footer.strip():
-                footer_style = ParagraphStyle('CustomFooter', fontSize=8, leading=10, textColor=colors.grey)
-                elements.append(Paragraph(custom_footer.replace("\n", "<br/>"), footer_style))
-            else:
-                footer_block = render_company_footer_block(settings)
-                if footer_block:
-                    elements.append(footer_block)
-                else:
-                    footer_style = ParagraphStyle('Footer', parent=styles['Normal'], fontSize=8, textColor=colors.grey)
-                    elements.append(Paragraph("Minga Greens - Microgreens Farm München", footer_style))
-
-        if ist_entwurf:
-            doc.build(elements, onFirstPage=_wasserzeichen_entwurf, onLaterPages=_wasserzeichen_entwurf)
-        else:
-            doc.build(elements)
+        _build_paginated(doc, elements, tmpl, settings, title,
+                         "" if ist_entwurfsnummer(invoice.invoice_number) else invoice.invoice_number,
+                         draft=ist_entwurf)
         pdf = buffer.getvalue()
         buffer.close()
         return pdf
@@ -642,20 +688,7 @@ class PDFService:
         elements.extend(body_elements)
         elements.append(Spacer(1, 24))
 
-        # Footer-Sektion
-        if _en(tmpl, "footer", default=True):
-            custom_footer = tmpl.texts.get("footer_text") if (tmpl and tmpl.texts) else None
-            if custom_footer and custom_footer.strip():
-                footer_style = ParagraphStyle('CustomFooter', fontSize=8, leading=10, textColor=colors.grey)
-                elements.append(Paragraph(custom_footer.replace("\n", "<br/>"), footer_style))
-            else:
-                footer_block = render_company_footer_block(settings)
-                if footer_block:
-                    elements.append(footer_block)
-                else:
-                    footer_style = ParagraphStyle('Footer', parent=styles['Normal'], fontSize=8, textColor=colors.grey)
-                    elements.append(Paragraph("Minga Greens - Microgreens Farm München", footer_style))
-        doc.build(elements)
+        _build_paginated(doc, elements, tmpl, settings, title, doc_number)
         pdf = buffer.getvalue()
         buffer.close()
         return pdf
@@ -783,25 +816,9 @@ class PDFService:
             elements.append(Paragraph("Mit freundlichen Grüßen", styles['Normal']))
             elements.append(Paragraph("Ihr Minga-Greens-Team", styles['Normal']))
             elements.append(Spacer(1, 20))
-        # Footer mit Bankverbindung — bei Mahnung kritisch (Empfänger braucht IBAN)
-        if _en(tmpl, "footer", default=True):
-            custom_footer = tmpl.texts.get("footer_text") if (tmpl and tmpl.texts) else None
-            if custom_footer and custom_footer.strip():
-                footer_style = ParagraphStyle('CustomFooter', fontSize=8, leading=10, textColor=colors.grey)
-                elements.append(Paragraph(custom_footer.replace("\n", "<br/>"), footer_style))
-            else:
-                footer_block = render_company_footer_block(settings)
-                if footer_block:
-                    elements.append(footer_block)
-                else:
-                    footer = ParagraphStyle('Footer', parent=styles['Normal'], fontSize=8, textColor=colors.grey)
-                    elements.append(Paragraph(
-                        "Minga Greens · Microgreens Farm München · "
-                        f"Erstellt am {_date.today().strftime('%d.%m.%Y')}",
-                        footer
-                    ))
-
-        doc.build(elements)
+        _build_paginated(doc, elements, tmpl, settings, title, invoice.invoice_number,
+                         fallback="Minga Greens · Microgreens Farm München · "
+                         f"Erstellt am {_date.today().strftime('%d.%m.%Y')}")
         pdf = buffer.getvalue()
         buffer.close()
         return pdf
@@ -830,7 +847,7 @@ class PDFService:
                     f"{line.unit_price:.2f} €",
                     f"{line.line_net:.2f} €",
                 ])
-            table = Table(data, colWidths=[1.0*cm, 2.0*cm, 5.6*cm, 1.6*cm, 1.6*cm, 2.6*cm, 2.6*cm])
+            table = Table(data, colWidths=[1.0*cm, 2.0*cm, 5.6*cm, 1.6*cm, 1.6*cm, 2.6*cm, 2.6*cm], repeatRows=1)
             table.setStyle(TableStyle([
                 ('BACKGROUND', (0,0), (-1,0), colors.lightgrey),
                 ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
@@ -913,7 +930,7 @@ class PDFService:
                 col_widths = [0.9*cm, 1.6*cm, 3.7*cm, 1.4*cm, 1.4*cm, 1.7*cm, 1.7*cm, 2.1*cm, 2.3*cm]
             else:
                 col_widths = [1.0*cm, 1.8*cm, 5.2*cm, 1.7*cm, 1.6*cm, 2.5*cm, 2.5*cm]
-            table = Table(data, colWidths=col_widths)
+            table = Table(data, colWidths=col_widths, repeatRows=1)
             table.setStyle(TableStyle([
                 ('BACKGROUND', (0,0), (-1,0), colors.lightgrey),
                 ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
@@ -990,7 +1007,7 @@ class PDFService:
                         item.unit,
                         item.batch_number or "—",
                     ])
-                t = Table(data, colWidths=[1.2*cm, 8*cm, 2.5*cm, 2*cm, 3*cm])
+                t = Table(data, colWidths=[1.2*cm, 8*cm, 2.5*cm, 2*cm, 3*cm], repeatRows=1)
                 t.setStyle(TableStyle([
                     ('BACKGROUND', (0,0), (-1,0), colors.lightgrey),
                     ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
@@ -1008,7 +1025,7 @@ class PDFService:
             data = [["Container-Typ", "Anzahl"]]
             for item in container_items:
                 data.append([item.container_type or item.product_name, str(item.container_count or int(item.quantity))])
-            t = Table(data, colWidths=[10*cm, 4*cm])
+            t = Table(data, colWidths=[10*cm, 4*cm], repeatRows=1)
             t.setStyle(TableStyle([
                 ('BACKGROUND', (0,0), (-1,0), colors.lightgrey),
                 ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
