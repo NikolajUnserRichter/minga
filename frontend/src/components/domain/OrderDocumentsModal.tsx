@@ -219,8 +219,11 @@ export function OrderDocumentsModal({ open, onClose, order }: Props) {
   // Gleiche Regel wie das Backend (InvoiceService.aktive_rechnung_zur_bestellung):
   // eine nicht stornierte Rechnung vom Typ RECHNUNG sperrt die nächste.
   const aktiveRechnung = invoices.find((i: Invoice) => i.invoice_type === 'RECHNUNG' && i.status !== 'STORNIERT');
+  // Fakturiert = außerhalb von NovaERP abgerechnet (z. B. über DATEV); der
+  // Server lehnt jede Rechnung dazu mit 409 ab (Paket 4, B; G66).
+  const fakturiert = order.status === 'FAKTURIERT';
   // Ohne frisch geladene Liste kein Knopf: lieber einmal zu wenig anbieten als doppelt berechnen.
-  const rechnungMoeglich = order.status !== 'STORNIERT' && invoicesQuery.isSuccess && !invoicesQuery.isFetching && !aktiveRechnung;
+  const rechnungMoeglich = order.status !== 'STORNIERT' && !fakturiert && invoicesQuery.isSuccess && !invoicesQuery.isFetching && !aktiveRechnung;
 
   return (
     <Modal
@@ -455,7 +458,11 @@ export function OrderDocumentsModal({ open, onClose, order }: Props) {
               Rechnungen zu dieser Bestellung konnten nicht geladen werden. Bitte den Dialog neu öffnen.
             </p>
           ) : invoices.length === 0 ? (
-            <p className="text-sm text-gray-500 dark:text-gray-400 italic">Noch keine Rechnung zu dieser Bestellung.</p>
+            <p className="text-sm text-gray-500 dark:text-gray-400 italic">
+              {fakturiert
+                ? 'Als „Fakturiert“ gekennzeichnet: außerhalb von NovaERP abgerechnet (z. B. über DATEV). Eine Rechnung ist hier nicht möglich.'
+                : 'Noch keine Rechnung zu dieser Bestellung.'}
+            </p>
           ) : (
             <ul className="space-y-2">
               {invoices.map((inv: Invoice) => (
