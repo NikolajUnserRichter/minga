@@ -9,7 +9,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import select
 
-from app.api.deps import DBSession
+from app.api.deps import DBSession, require_role
+from app.core.rollen import ROLLEN_OHNE_HALLE
 from app.models.product import (
     Product, ProductGroup, GrowPlan, ProductVariant, BundleComponent, PriceList, PriceListItem,
     ProductCategory
@@ -280,7 +281,9 @@ def remove_bundle_component(product_id: UUID, component_id: UUID, db: DBSession)
     db.commit()
 
 
-@router.get("/{product_id}/price")
+# Preis mit Preisliste und Kundenrabatt: nicht für die Halle (Q4.5). Sie liest
+# den Katalog (_deps_katalog), Preislisten aber nicht (_deps_geld).
+@router.get("/{product_id}/price", dependencies=[Depends(require_role(ROLLEN_OHNE_HALLE))])
 def get_product_price(
     product_id: UUID,
     db: DBSession,

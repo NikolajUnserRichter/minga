@@ -1485,3 +1485,81 @@ class TestQ4KundenfelderEingeordnet:
         assert geschuetzt & _Q4_FREIE_KUNDENFELDER == set()
         unbekannt = geschuetzt - felder - _Q4_KUENFTIGE_KUNDENFELDER
         assert unbekannt == set(), f"Unbekannte Felder im Feldschutz: {sorted(unbekannt)}"
+
+
+class TestQ4SonderpreiseDatevKatalogpreis:
+    """T5 R2, soweit Gernots Entscheidung vom 03.09. (Kunden und Bestellungen
+    erfassen) unberührt bleibt: Sonderpreise pflegen alle außer der Halle, den
+    DATEV-Debitorenexport ziehen nur Verwaltung, Vertrieb und Buchhaltung.
+    Lesen der Sonderpreise bleibt offen (Bestellformular)."""
+
+    def _sonderpreis(self, client):
+        produkt = _q4_produkt(client)
+        kunde = _q4_kunde(client)
+        r = client.post(f"/api/v1/sales/customers/{kunde['id']}/prices",
+                        json={"product_id": produkt["id"], "unit_price": "2.20"})
+        assert r.status_code == 201, r.text
+        return kunde, produkt, r.json()
+
+    def test_halle_pflegt_keine_sonderpreise(self, client):
+        kunde, produkt, preis = self._sonderpreis(client)
+        _q4_als("production_staff")
+
+        neu = client.post(f"/api/v1/sales/customers/{kunde['id']}/prices",
+                          json={"product_id": produkt["id"], "unit_price": "1.00"})
+        aendern = client.patch(f"/api/v1/sales/customer-prices/{preis['id']}", json={"unit_price": "1.00"})
+        loeschen = client.delete(f"/api/v1/sales/customer-prices/{preis['id']}")
+
+        assert (neu.status_code, aendern.status_code, loeschen.status_code) == (403, 403, 403)
+        _q4_verwaltung()
+        preise = client.get(f"/api/v1/sales/customers/{kunde['id']}/prices").json()
+        assert [Decimal(p["unit_price"]) for p in preise] == [Decimal("2.20")]
+
+    def test_halle_liest_sonderpreis_fuers_bestellformular(self, client):
+        kunde, produkt, _ = self._sonderpreis(client)
+        _q4_als("production_staff")
+
+        liste = client.get(f"/api/v1/sales/customers/{kunde['id']}/prices")
+        wirksam = client.get(f"/api/v1/sales/customers/{kunde['id']}/effective-price/{produkt['id']}")
+
+        assert liste.status_code == 200, liste.text
+        assert wirksam.status_code == 200, wirksam.text
+
+    @pytest.mark.parametrize("rolle", _Q4_OHNE_RECHNUNGSRECHT)
+    def test_datev_debitorenexport_nur_kaufmaennisch(self, client, rolle):
+        """T5 R2: 'nur noch admin, sales und accounting, und zwar schon beim Lesen'."""
+        _q4_als(rolle)
+        assert client.get("/api/v1/sales/customers/export/datev").status_code == 403
+
+    @pytest.mark.parametrize("rolle", _Q4_MIT_RECHNUNGSRECHT)
+    def test_kaufmaennische_rollen_ziehen_den_export(self, client, rolle):
+        _q4_als(rolle)
+        assert client.get("/api/v1/sales/customers/export/datev").status_code == 200
+
+    @pytest.mark.parametrize("rolle", _Q4_DEMO_ROLLEN)
+    def test_demo_rollen_pflegen_sonderpreise_weiter(self, client, rolle):
+        _, _, preis = self._sonderpreis(client)
+        _q4_als(rolle)
+
+        r = client.patch(f"/api/v1/sales/customer-prices/{preis['id']}", json={"unit_price": "2.10"})
+
+        assert r.status_code == 200, r.text
+
+    def test_halle_liest_keinen_kundenpreis_ueber_den_katalog(self, client):
+        """Befund H1: GET /products/{id}/price?customer_id= liest Preislistenpreis und
+        Kundenrabatt (ProductService.get_product_price). /price-lists bleibt für die
+        Halle zu; das Bestellformular ruft den Endpunkt nicht (productsApi.getPrice)."""
+        kunde, produkt, _ = self._sonderpreis(client)
+        _q4_als("production_staff")
+
+        r = client.get(f"/api/v1/products/{produkt['id']}/price", params={"customer_id": kunde["id"]})
+
+        assert r.status_code == 403, r.text
+
+    def test_planung_liest_den_katalogpreis_weiter(self, client):
+        kunde, produkt, _ = self._sonderpreis(client)
+        _q4_als("production_planner")
+
+        r = client.get(f"/api/v1/products/{produkt['id']}/price", params={"customer_id": kunde["id"]})
+
+        assert r.status_code == 200, r.text

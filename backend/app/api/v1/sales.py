@@ -6,12 +6,12 @@ Erweitert mit ERP-Standard Order Header-Line Architektur
 from datetime import date, datetime, timezone
 from uuid import UUID
 from decimal import Decimal
-from fastapi import APIRouter, HTTPException, status, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Response
 from sqlalchemy import select, func, or_
 from sqlalchemy.orm import joinedload
 
-from app.api.deps import DBSession, Pagination, CurrentUser
-from app.core.rollen import kundenfeldschutz, standardwerte
+from app.api.deps import DBSession, Pagination, CurrentUser, require_role
+from app.core.rollen import KAUFMAENNISCHE_ROLLEN, ROLLEN_OHNE_HALLE, kundenfeldschutz, standardwerte
 from app.models.customer import Customer, CustomerType, Contact, CustomerAddress, AddressType, Subscription
 from app.models.order import Order, OrderLine, OrderStatus, OrderAuditLog, TaxRate, vat_from_lines
 from app.models.seed import Seed
@@ -54,6 +54,12 @@ def _trigger_forecast_update(order_id: str, action: str) -> None:
 
 
 router = APIRouter()
+
+# Der Router selbst steht der Halle offen (_deps_auftraege in main.py).
+# DATEV-Debitoren ziehen nur Verwaltung, Vertrieb, Buchhaltung (T5 R2);
+# Sonderpreise pflegen alle außer der Halle (T5 R2).
+_nur_kaufmaennisch = [Depends(require_role(KAUFMAENNISCHE_ROLLEN))]
+_ohne_halle = [Depends(require_role(ROLLEN_OHNE_HALLE))]
 
 
 # ============== Customer Endpoints ==============
@@ -307,7 +313,7 @@ async def list_customer_prices(customer_id: UUID, db: DBSession):
     return [_enrich_price(db, p) for p in prices]
 
 
-@router.post("/customers/{customer_id}/prices", response_model=CustomerPriceResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/customers/{customer_id}/prices", response_model=CustomerPriceResponse, status_code=status.HTTP_201_CREATED, dependencies=_ohne_halle)
 async def create_customer_price(customer_id: UUID, data: CustomerPriceCreate, db: DBSession):
     """Legt einen Sonderpreis für ein Produkt fest. valid_from defaultet
     auf heute, valid_until auf NULL (= unbegrenzt)."""
@@ -346,7 +352,7 @@ async def create_customer_price(customer_id: UUID, data: CustomerPriceCreate, db
     return _enrich_price(db, price)
 
 
-@router.patch("/customer-prices/{price_id}", response_model=CustomerPriceResponse)
+@router.patch("/customer-prices/{price_id}", response_model=CustomerPriceResponse, dependencies=_ohne_halle)
 async def update_customer_price(price_id: UUID, data: CustomerPriceUpdate, db: DBSession):
     """Aktualisiert einen Sonderpreis."""
     price = db.execute(
@@ -370,7 +376,7 @@ async def update_customer_price(price_id: UUID, data: CustomerPriceUpdate, db: D
     return _enrich_price(db, price)
 
 
-@router.delete("/customer-prices/{price_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/customer-prices/{price_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=_ohne_halle)
 async def delete_customer_price(price_id: UUID, db: DBSession):
     """Entfernt einen Sonderpreis (regulärer Preis greift dann wieder)."""
     price = db.get(CustomerPrice, price_id)
@@ -448,7 +454,7 @@ async def delete_contact(customer_id: UUID, contact_id: UUID, db: DBSession):
     db.commit()
 
 
-@router.get("/customers/export/datev")
+@router.get("/customers/export/datev", dependencies=_nur_kaufmaennisch)
 async def export_customers_datev(db: DBSession):
     """Exportiert Kundenstammdaten im DATEV-Format."""
     service = DatevService(db)
