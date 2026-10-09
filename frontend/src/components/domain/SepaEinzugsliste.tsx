@@ -33,7 +33,7 @@ async function fehlertext(e: unknown, standard: string): Promise<string> {
 export function SepaEinzugsliste() {
   const toast = useToast();
   const queryClient = useQueryClient();
-  const heute = new Date().toISOString().split('T')[0];
+  const heute = new Date().toLocaleDateString('sv-SE', { timeZone: 'Europe/Berlin' });
   const [bis, setBis] = useState('');
   const [auswahl, setAuswahl] = useState<string[]>([]);
   const [datum, setDatum] = useState(heute);

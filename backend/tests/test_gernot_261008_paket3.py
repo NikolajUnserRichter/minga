@@ -6261,3 +6261,108 @@ class TestAbnahmeSnapshotZeitstempel:
             assert invoice.billing_address["nachgetragen"] is True
             assert invoice.billing_address["name"] == "Ökoring Handels GmbH"
             assert invoice.updated_at == zeitstempel
+
+
+def _abnahme_frontend(script):
+    import os
+    from pathlib import Path
+    import subprocess
+    bootstrap = """
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const vm = require('node:vm');
+const ts = require('typescript');
+function laden(datei, ersatz = {}, globals = {}) {
+    const code = ts.transpileModule(fs.readFileSync(datei, 'utf8'), {
+        compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX }
+    }).outputText;
+    const exports = {};
+    const ladenImport = (name) => {
+        if (Object.hasOwn(ersatz, name)) return ersatz[name];
+        if (name.startsWith('.')) {
+            const basis = path.resolve(path.dirname(datei), name);
+            const ziel = [basis + '.ts', basis + '.tsx', path.join(basis, 'index.ts')]
+                .find(kandidat => fs.existsSync(kandidat));
+            assert.ok(ziel, name);
+            return laden(ziel, ersatz, globals);
+        }
+        return require(name);
+    };
+    vm.runInNewContext(code, { exports, require: ladenImport, ...globals }, { filename: datei });
+    return exports;
+}
+function elemente(element) {
+    if (!element || typeof element !== 'object') return [];
+    if (Array.isArray(element)) return element.flatMap(elemente);
+    return [element, ...elemente(element.props?.children)];
+}
+"""
+    result = subprocess.run(
+        ["node", "-e", bootstrap + script],
+        cwd=Path(__file__).resolve().parents[2] / "frontend",
+        env={**os.environ, "TZ": "UTC"}, capture_output=True, text=True, timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+class TestAbnahmeSepaBerlin:
+    def test_backend_um_halb_eins_berlin(self, client, monkeypatch):
+        from datetime import datetime, timezone
+        from app.models.invoice import Invoice
+        from app.services import sepa_service
+        kunde, _ = _q5_lastschriftkunde(client)
+        rechnung = _q5_festschreiben(client, _q5_entwurf(client, kunde))
+        with TestingSessionLocal() as db:
+            db.get(Invoice, uuid.UUID(rechnung["id"])).invoice_date = date(2026, 10, 8)
+            db.commit()
+
+        class BerlinerUhr(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                zeit = datetime(2026, 10, 8, 22, 30, tzinfo=timezone.utc)
+                return zeit.astimezone(tz) if tz else zeit.replace(tzinfo=None)
+
+        monkeypatch.setattr(sepa_service, "datetime", BerlinerUhr)
+        assert sepa_service.heute_berlin() == date(2026, 10, 9)
+        response = _q5_einreichen(client, [rechnung["id"]], ankuendigung_bestaetigt=True)
+        assert response.status_code == 200, response.text
+        assert 'Lastschrift-Einreichung_2026-10-09.csv' in response.headers["content-disposition"]
+        liste = client.get("/api/v1/sepa/einzugsliste").json()
+        assert liste[0]["eingereicht_am"] == "2026-10-09"
+        morgen = client.post("/api/v1/sepa/einzug", json={"invoice_ids": [rechnung["id"]], "datum": "2026-10-10"})
+        assert morgen.status_code == 422, morgen.text
+        heute = client.post("/api/v1/sepa/einzug", json={"invoice_ids": [rechnung["id"]], "datum": "2026-10-09"})
+        assert heute.status_code == 200, heute.text
+
+    def test_frontend_vorgabe_maximum_und_csv_um_halb_eins_berlin(self):
+        _abnahme_frontend("""
+(async () => {
+    class BerlinerUhr extends Date {
+        constructor(...args) { super(...(args.length ? args : ['2026-10-08T22:30:00Z'])); }
+    }
+    let zustand = 0;
+    const download = { click() {} };
+    const noop = () => {};
+    const { SepaEinzugsliste } = laden('src/components/domain/SepaEinzugsliste.tsx', {
+        react: { useState: wert => [zustand++ === 1 ? ['rechnung-1'] : wert, noop] },
+        '@tanstack/react-query': {
+            useQueryClient: () => ({ invalidateQueries: noop }),
+            useMutation: () => ({}),
+            useQuery: () => ({ data: [{ invoice_id: 'rechnung-1', ankuendigung: 'RECHTZEITIG', mandat_aktiv: true }] }),
+        },
+        '../../services/api': { sepaApi: { einreichen: async () => ({ data: 'CSV' }) } },
+        '../ui': { Input: 'input', Button: 'button', useToast: () => ({ success: noop, error: noop }) },
+    }, {
+        Date: BerlinerUhr, Blob,
+        window: { URL: { createObjectURL: () => 'blob:test', revokeObjectURL: noop } },
+        document: { createElement: () => download },
+    });
+    const baum = elemente(SepaEinzugsliste());
+    const datum = baum.find(element => element.props?.label === 'Eingezogen am (laut Kontoauszug)');
+    assert.equal(datum.props.value, '2026-10-09');
+    assert.equal(datum.props.max, '2026-10-09');
+    await baum.find(element => element.type === 'button').props.onClick();
+    assert.equal(download.download, 'Lastschrift-Einreichung_2026-10-09.csv');
+})().catch(error => { console.error(error); process.exitCode = 1; });
+""")
