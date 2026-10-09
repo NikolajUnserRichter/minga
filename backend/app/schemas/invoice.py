@@ -9,7 +9,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field, ConfigDict, field_validator
 
 from app.models.invoice import InvoiceStatus, InvoiceType, TaxRate, PaymentMethod
-from app.schemas.documents import DocumentDispatchResponse
+from app.schemas.documents import BelegVersandRequest, DocumentDispatchResponse
 
 
 # ============================================================
@@ -264,13 +264,10 @@ class InvoiceListResponse(BaseModel):
 # INVOICE ACTIONS
 # ============================================================
 
-class InvoiceSendRequest(BaseModel):
-    """Request zum Versenden einer Rechnung"""
-    send_email: bool = Field(default=True, description="Per E-Mail senden?")
-    email_to: Optional[str] = Field(None, description="Empfänger-E-Mail (optional)")
-    email_cc: Optional[list[str]] = Field(None, description="CC-Empfänger")
-    email_subject: Optional[str] = Field(None, description="Betreff (optional)")
-    email_body: Optional[str] = Field(None, description="E-Mail-Text (optional)")
+class InvoiceSendRequest(BelegVersandRequest):
+    """Rechnung per E-Mail (Paket 3, Q2): `to` (mit optionalem `cc`) oder
+    `use_customer_recipients`. Anders als bei AB und Lieferschein gibt es kein
+    „nur markieren": ohne Empfänger antwortet der Endpunkt mit 400."""
 
 
 class InvoiceCancelRequest(BaseModel):

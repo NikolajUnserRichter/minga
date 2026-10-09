@@ -116,12 +116,16 @@ def _q1_mailversand(monkeypatch, fehler=None):
     monkeypatch.setenv("SMTP_USER", "versand@farm.example")
     gesendet = {}
 
+    # Seit Q2 verschickt app.services.belegversand und erwartet ein VersandErgebnis
+    from app.services.email_service import VersandErgebnis
+
     def versand(**kw):
         if fehler is not None:
             raise fehler
         gesendet.update(kw)
+        return VersandErgebnis(message_id="<q1@test>")
 
-    monkeypatch.setattr("app.api.v1.invoices.send_email", versand)
+    monkeypatch.setattr("app.services.belegversand.send_email", versand)
     return gesendet
 
 
@@ -497,7 +501,7 @@ class TestQ1AndereWege:
                         params={"to_email": "einkauf@oekoring.example"})
 
         assert r.status_code == 200, r.text
-        assert r.json()["invoice_number"] == _q1_nr(1)
+        assert r.json()["document_number"] == _q1_nr(1)  # Antwort seit Q2: Protokollzeile
         assert _q1_nr(1) in gesendet["subject"]
         assert gesendet["attachment_filename"] == f"{_q1_nr(1)}.pdf"
         detail = client.get(f"/api/v1/invoices/{entwurf['id']}").json()
@@ -1815,18 +1819,18 @@ def _q3_kopf(nummer_pdf: str) -> str:
 def _q3_mail_abfangen(monkeypatch) -> dict:
     """Fängt den Mailversand ab und liefert die Argumente von send_email.
 
-    Bis zum Versand-Abschnitt (Q2) rufen die Endpunkte send_email direkt.
-    Q2 verschickt über app.services.belegversand und ändert dafür nur diesen
-    Rumpf; die Tests bleiben gleich."""
+    Seit dem Versand-Abschnitt (Q2) verschickt app.services.belegversand
+    und erwartet von send_email ein VersandErgebnis."""
+    from app.services.email_service import VersandErgebnis
     # Seit Q1 prüft "Mailen" eines Entwurfs vor dem Festschreiben die
     # SMTP-Einstellungen — hier über die Umgebung "konfiguriert".
     monkeypatch.setenv("SMTP_HOST", "smtp.farm.example")
     monkeypatch.setenv("SMTP_USER", "versand@farm.example")
     versendet = {}
-    monkeypatch.setattr("app.api.v1.invoices.send_email", lambda **kw: versendet.update(kw))
-    # Seit Q2.5 verschickt die AB über app.services.belegversand (erwartet ein VersandErgebnis);
-    # die Rechnungszeile darüber zieht in Q2.7 um.
-    monkeypatch.setattr("app.services.belegversand.send_email", _q2_attrappe(versendet))
+    monkeypatch.setattr(
+        "app.services.belegversand.send_email",
+        lambda **kw: versendet.update(kw) or VersandErgebnis(message_id="<q3@test>"),
+    )
     return versendet
 
 
@@ -2743,3 +2747,177 @@ class TestQ2LsVersand:
 
         assert r.status_code == 400, r.text
         assert _q2_smtp.gesendet == []
+
+
+
+
+def _q2_rechnung_senden(client, rechnung, body=None, **params):
+    return client.post(f"/api/v1/invoices/{rechnung['id']}/send", json=body, params=params or None)
+
+
+class TestQ2Rechnungsversand:
+    """POST /invoices/{id}/send — JSON-Body mit Liste, Protokoll; sent_at nur bei
+    Versand. Die Empfänger stehen fest, bevor ein Entwurf festgeschrieben und
+    committet wird (Q1, Entscheidung 4)."""
+
+    def test_eine_mail_an_mehrere_mit_protokoll(self, client, _q2_smtp):
+        rechnung = _q2_rechnung(client, _q2_bestellung(client, _q2_kunde(client)))
+        assert rechnung["status"] == "ENTWURF"
+
+        r = _q2_rechnung_senden(client, rechnung, {
+            "to": ["rechnung@oekoring.example", "buchhaltung@oekoring.example"],
+        })
+
+        assert r.status_code == 200, r.text
+        zeile = r.json()
+        assert (zeile["doc_type"], zeile["status"]) == ("RE", "GESENDET")
+        assert zeile["to_addrs"] == ["rechnung@oekoring.example", "buchhaltung@oekoring.example"]
+        [mail] = _q2_smtp.gesendet
+        assert mail["msg"]["To"] == "rechnung@oekoring.example, buchhaltung@oekoring.example"
+        detail = client.get(f"/api/v1/invoices/{rechnung['id']}").json()
+        # Q1: die Nummer entsteht beim Festschreiben VOR dem Versand
+        assert detail["invoice_number"].startswith("RE-")
+        assert zeile["document_number"] == detail["invoice_number"]
+        dateiname, pdf = _q2_anhang(mail)
+        assert dateiname == f"{detail['invoice_number']}.pdf"
+        assert zeile["attachment_sha256"] == _q2_sha(pdf)
+        assert detail["status"] == "OFFEN"
+        assert detail["sent_at"] is not None
+        assert [d["id"] for d in detail["dispatches"]] == [zeile["id"]]
+        liste = {i["id"]: i for i in client.get("/api/v1/invoices").json()}
+        assert liste[rechnung["id"]]["dispatches"][0]["to_addrs"] == zeile["to_addrs"]
+
+    def test_hinterlegte_rechnungsempfaenger(self, client, _q2_smtp):
+        kunde = _q2_kunde(client, email="info@oekoring.example",
+                          invoice_emails=["rechnung@oekoring.example", "einkauf@oekoring.example"])
+        rechnung = _q2_rechnung(client, _q2_bestellung(client, kunde))
+
+        r = _q2_rechnung_senden(client, rechnung, {"use_customer_recipients": True})
+
+        assert r.status_code == 200, r.text
+        assert _q2_smtp.gesendet[0]["umschlag"] == ["rechnung@oekoring.example", "einkauf@oekoring.example"]
+
+    def test_ohne_empfaenger_400_und_entwurf_bleibt(self, client, _q2_smtp):
+        rechnung = _q2_rechnung(client, _q2_bestellung(client, _q2_kunde(client)))
+
+        assert _q2_rechnung_senden(client, rechnung, {}).status_code == 400
+        assert _q2_rechnung_senden(client, rechnung).status_code == 400
+
+        detail = client.get(f"/api/v1/invoices/{rechnung['id']}").json()
+        assert (detail["status"], detail["sent_at"]) == ("ENTWURF", None)
+        # keine Rechnungsnummer verbraucht
+        assert detail["invoice_number"] == rechnung["invoice_number"]
+        assert _q2_smtp.gesendet == []
+
+    def test_alter_query_parameter_bleibt(self, client, _q2_smtp):
+        """Das bisherige Frontend schickt ?to_email= — bleibt möglich, die Adresse
+        wird jetzt geprüft und klein geschrieben (zu Beginn rot: ging ungeprüft)."""
+        rechnung = _q2_rechnung(client, _q2_bestellung(client, _q2_kunde(client)))
+
+        r = _q2_rechnung_senden(client, rechnung, to_email="Rechnung@Oekoring.example")
+
+        assert r.status_code == 200, r.text
+        assert _q2_smtp.gesendet[0]["umschlag"] == ["rechnung@oekoring.example"]
+
+    def test_finalisieren_setzt_kein_sent_at(self, client):
+        """Charakterisierung (seit Q1.1): Finalisieren verschickt nichts."""
+        rechnung = _q2_rechnung(client, _q2_bestellung(client, _q2_kunde(client)))
+
+        r = client.post(f"/api/v1/invoices/{rechnung['id']}/finalize")
+
+        assert r.status_code == 200, r.text
+        assert (r.json()["status"], r.json()["sent_at"]) == ("OFFEN", None)
+
+    def test_storno_setzt_kein_sent_at(self, client):
+        """Charakterisierung (seit Q1.1): die Stornorechnung ist nicht versendet."""
+        rechnung = _q2_rechnung(client, _q2_bestellung(client, _q2_kunde(client)))
+        assert client.post(f"/api/v1/invoices/{rechnung['id']}/finalize").status_code == 200
+
+        r = client.post(f"/api/v1/invoices/{rechnung['id']}/cancel",
+                        json={"reason": "Test", "reason_code": "PREISFEHLER"})
+
+        assert r.status_code == 200, r.text
+        assert r.json()["credit_note"]["sent_at"] is None
+
+    def test_versandfehler_nach_dem_festschreiben(self, client, _q2_smtp, monkeypatch):
+        """Q1, Entscheidung 4: festgeschrieben und committet wird VOR dem Versand.
+        Scheitert die Mail danach am Mailserver (502), ist die Rechnung
+        festgeschrieben, aber unversendet — ohne Protokollzeile und ohne
+        sent_at. (Ohne SMTP-Einstellungen prüft Q1 vorher: 503, der Entwurf
+        bleibt Entwurf — TestQ1AndereWege::test_mailen_ohne_smtp_bleibt_entwurf.)"""
+        import smtplib
+
+        def bricht_ab(self, msg, from_addr=None, to_addrs=None):
+            raise smtplib.SMTPServerDisconnected("Verbindung abgebrochen (Test)")
+        monkeypatch.setattr(_Q2FakeSMTP, "send_message", bricht_ab)
+        rechnung = _q2_rechnung(client, _q2_bestellung(client, _q2_kunde(client)))
+
+        r = _q2_rechnung_senden(client, rechnung, {"to": ["rechnung@oekoring.example"]})
+
+        assert r.status_code == 502, r.text
+        detail = client.get(f"/api/v1/invoices/{rechnung['id']}").json()
+        assert detail["invoice_number"].startswith("RE-")
+        assert f"Rechnung {detail['invoice_number']} ist finalisiert, aber nicht versendet" in r.json()["detail"]
+        assert (detail["status"], detail["sent_at"], detail["dispatches"]) == ("OFFEN", None, [])
+
+    def test_festschreiben_scheitert_400_ohne_mail(self, client, _q2_smtp, monkeypatch):
+        """Charakterisierung (Q1-Block in /send): Ein ValueError beim Festschreiben
+        (z. B. Q5: Lastschrift ohne Mandat) ergibt 400, keine Mail, der Entwurf
+        bleibt Entwurf."""
+        from app.services.invoice_service import InvoiceService
+
+        def scheitert(self, invoice, von=None):
+            raise ValueError("Festschreiben nicht möglich (Test)")
+        monkeypatch.setattr(InvoiceService, "festschreiben", scheitert)
+        rechnung = _q2_rechnung(client, _q2_bestellung(client, _q2_kunde(client)))
+
+        r = _q2_rechnung_senden(client, rechnung, to_email="rechnung@oekoring.example")
+
+        assert r.status_code == 400, r.text
+        assert "Festschreiben nicht möglich" in r.json()["detail"]
+        assert _q2_smtp.gesendet == []
+        detail = client.get(f"/api/v1/invoices/{rechnung['id']}").json()
+        assert (detail["status"], detail["dispatches"]) == ("ENTWURF", [])
+
+    def test_obergrenze_gilt_auch_fuer_die_kundenliste(self, client, _q2_smtp):
+        """Missbrauch per API: 10 hinterlegte Rechnungsadressen plus Cc —
+        abgewiesen, bevor der Entwurf eine Nummer bekommt."""
+        kunde = _q2_kunde(client, invoice_emails=[f"r{i}@oekoring.example" for i in range(10)])
+        rechnung = _q2_rechnung(client, _q2_bestellung(client, kunde))
+
+        r = _q2_rechnung_senden(client, rechnung, {"use_customer_recipients": True,
+                                                   "cc": ["chef@oekoring.example"]})
+
+        assert r.status_code == 400, r.text
+        assert _q2_smtp.gesendet == []
+        detail = client.get(f"/api/v1/invoices/{rechnung['id']}").json()
+        assert (detail["status"], detail["invoice_number"]) == ("ENTWURF", rechnung["invoice_number"])
+
+    def test_firmenname_aus_den_einstellungen(self, client, _q2_smtp):
+        _q2_firmenname("Testfarm GmbH")
+        rechnung = _q2_rechnung(client, _q2_bestellung(client, _q2_kunde(client)))
+
+        assert _q2_rechnung_senden(client, rechnung, {"to": ["rechnung@oekoring.example"]}).status_code == 200
+
+        [mail] = _q2_smtp.gesendet
+        assert mail["msg"]["Subject"].endswith("— Testfarm GmbH")
+        assert "Minga" not in mail["msg"]["Subject"] + _q2_text(mail)
+
+    def test_halle_darf_keine_rechnung_senden(self, client, _q2_smtp, _q2_rolle):
+        """Charakterisierung: 403 vom Rechnungsrouter (_deps_geld)."""
+        rechnung = _q2_rechnung(client, _q2_bestellung(client, _q2_kunde(client)))
+        _q2_rolle(["production_staff"])
+
+        r = _q2_rechnung_senden(client, rechnung, {"to": ["rechnung@oekoring.example"]})
+
+        assert r.status_code == 403, r.text
+        assert _q2_smtp.gesendet == []
+
+    def test_vertrieb_darf_rechnung_senden(self, client, _q2_smtp, _q2_rolle):
+        rechnung = _q2_rechnung(client, _q2_bestellung(client, _q2_kunde(client)))
+        _q2_rolle(["sales"], name="ben")
+
+        r = _q2_rechnung_senden(client, rechnung, {"to": ["rechnung@oekoring.example"]})
+
+        assert r.status_code == 200, r.text
+        assert r.json()["sent_by_name"] == "ben"

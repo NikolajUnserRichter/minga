@@ -14,7 +14,10 @@ from tests.test_documents_preise import _pdf_text
 @pytest.fixture(autouse=True)
 def ohne_externe_dienste(monkeypatch):
     monkeypatch.setattr("app.api.v1.sales._trigger_forecast_update", lambda *args, **kwargs: None)
-    monkeypatch.setattr("app.api.v1.invoices.send_email", lambda **kwargs: None)
+    # Seit Paket 3 (Q2) verschickt app.services.belegversand und erwartet ein VersandErgebnis
+    from app.services.email_service import VersandErgebnis
+    monkeypatch.setattr("app.services.belegversand.send_email",
+                        lambda **kwargs: VersandErgebnis(message_id="<integritaet@test>"))
 
 
 def _altrechnung(order, nummer, status):

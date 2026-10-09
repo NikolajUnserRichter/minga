@@ -1047,7 +1047,12 @@ def _s2_mailen(client, monkeypatch, invoice_id) -> dict:
     monkeypatch.setenv("SMTP_HOST", "smtp.farm.example")
     monkeypatch.setenv("SMTP_USER", "versand@farm.example")
     versendet = {}
-    monkeypatch.setattr("app.api.v1.invoices.send_email", lambda **kw: versendet.update(kw))
+    # Seit Paket 3 (Q2) verschickt app.services.belegversand und erwartet ein VersandErgebnis
+    from app.services.email_service import VersandErgebnis
+    monkeypatch.setattr(
+        "app.services.belegversand.send_email",
+        lambda **kw: versendet.update(kw) or VersandErgebnis(message_id="<s2@test>"),
+    )
     r = client.post(f"/api/v1/invoices/{invoice_id}/send",
                     params={"to_email": "einkauf@oekoring.example"})
     assert r.status_code == 200, r.text
@@ -1369,9 +1374,12 @@ class TestS3StornoAusgeglichen:
         storno = _s3_storniere(client, original).json()["credit_note"]
 
         gesendet = {}
+        # Seit Paket 3 (Q2) verschickt app.services.belegversand und erwartet ein VersandErgebnis
+        from app.services.email_service import VersandErgebnis
         def _fake_send_email(**kwargs):
             gesendet.update(kwargs)
-        with patch("app.api.v1.invoices.send_email", _fake_send_email):
+            return VersandErgebnis(message_id="<s3@test>")
+        with patch("app.services.belegversand.send_email", _fake_send_email):
             r = client.post(f"/api/v1/invoices/{storno['id']}/send",
                             params={"to_email": "kunde@example.com"})
             assert r.status_code == 200, r.text

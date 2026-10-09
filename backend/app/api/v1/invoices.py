@@ -25,7 +25,11 @@ from app.schemas.invoice import (
 )
 from app.services.invoice_service import InvoiceService, BereitsAbgerechnet, BestellungStorniert, waehle_vertreter, ist_clearing_pfand, netto_je_lieferschein
 from app.services.datev_service import DatevService, erloeskonto_fuer, ist_standard_erloeskonto
-from app.services.email_service import send_email, EmailNotConfiguredError
+from app.services.email_service import EmailNotConfiguredError
+from app.services.belegversand import empfaenger_fuer_versand, firmenzusatz, gruss, versende_beleg
+from app.core.email_adressen import pruefe_empfaenger
+from app.models.enums import DispatchDocType
+from app.schemas.documents import DocumentDispatchResponse
 from app.services.email_service import pruefe_smtp_konfiguration
 from app.services.pdf_service import load_company_settings
 from app.services.beleg_dateiname import beleg_dateiname, content_disposition, rechnung_dateiname
@@ -269,12 +273,13 @@ def generate_payment_reminder(
     )
 
 
-@router.post("/{invoice_id}/send")
+@router.post("/{invoice_id}/send", response_model=DocumentDispatchResponse)
 def send_invoice_email(
     invoice_id: UUID,
     db: DBSession,
     user: CurrentUser,
-    to_email: str = Query(..., description="Empfänger-Adresse"),
+    data: Optional[InvoiceSendRequest] = None,
+    to_email: Optional[str] = Query(None, description="Veraltet: ein Empfänger; neu ist der JSON-Body"),
 ):
     """Sendet die Rechnung als PDF-Anhang per E-Mail.
 
@@ -302,6 +307,25 @@ def send_invoice_email(
         raise HTTPException(status_code=400, detail="Stornierte Rechnungen können nicht versendet werden")
     if not invoice.lines:
         raise HTTPException(status_code=400, detail="Rechnung hat keine Positionen")
+
+    # Empfänger VOR dem Festschreiben klären (Paket 3, Q2): ohne gültige
+    # Empfänger bleibt ein Entwurf Entwurf und verbraucht keine Nummer.
+    # Body `to`/`cc` oder `use_customer_recipients`; der Query-Parameter
+    # `to_email` bleibt für ältere Aufrufer. Die Antwort ist die neue
+    # Zeile im Versandprotokoll.
+    try:
+        to = data.to if data and data.to else None
+        if not to and to_email:
+            to = pruefe_empfaenger([to_email], feld="to_email")
+        an, cc = empfaenger_fuer_versand(
+            invoice.customer, DispatchDocType.RE,
+            to=to, cc=data.cc if data else [],
+            use_customer_recipients=bool(data and data.use_customer_recipients),
+        )
+    except ValueError as e:  # auch KeinEmpfaenger und die Obergrenze An + Cc
+        raise HTTPException(status_code=400, detail=str(e))
+    if not an:
+        raise HTTPException(status_code=400, detail="Kein Empfänger angegeben")
 
     # Mailen eines Entwurfs stellt ihn aus — mit derselben Funktion wie
     # /finalize (Summen, Datum, Nummer, Status). Festgeschrieben und
@@ -344,40 +368,48 @@ def send_invoice_email(
         # Mailtext erst hier: ein Entwurf ist oben bereits neu berechnet (Task 11)
         if ist_storno:
             original = invoice.original_invoice
-            betreff = f"Stornorechnung {invoice.invoice_number} — Minga Greens"
+            betreff = f"Stornorechnung {invoice.invoice_number}{firmenzusatz(db)}"
             text = (
                 f"Sehr geehrte Damen und Herren bei {invoice.customer.name},\n\n"
                 f"anbei finden Sie die Stornorechnung {invoice.invoice_number} zur Rechnung "
                 f"{original.invoice_number if original else '—'}.\n"
                 f"Die Rechnung ist damit vollständig aufgehoben.\n\n"
-                f"Mit freundlichen Grüßen\nIhr Minga-Greens-Team"
+                f"{gruss(db)}"
             )
         else:
-            betreff = f"Rechnung {invoice.invoice_number} — Minga Greens"
+            betreff = f"Rechnung {invoice.invoice_number}{firmenzusatz(db)}"
             text = (
                 f"Sehr geehrte Damen und Herren bei {invoice.customer.name},\n\n"
                 f"anbei finden Sie die Rechnung {invoice.invoice_number} über\n"
                 f"{invoice.total:.2f} {invoice.currency}.\n\n"
                 f"Fällig am: {invoice.due_date.strftime('%d.%m.%Y') if invoice.due_date else '—'}\n\n"
-                f"Mit freundlichen Grüßen\nIhr Minga-Greens-Team"
+                f"{gruss(db)}"
             )
-        send_email(
-            db=db,
-            to=to_email,
-            subject=betreff,
-            body=text,
-            attachment_bytes=pdf,
-            attachment_filename=beleg_dateiname(invoice.invoice_number),
+        eintrag = versende_beleg(
+            db,
+            doc_type=DispatchDocType.RE,
+            document_number=invoice.invoice_number,
+            an=an,
+            cc=cc,
+            betreff=betreff,
+            text=text,
+            pdf=pdf,
+            user=user,
+            customer_id=invoice.customer_id,
+            order_id=invoice.order_id,
+            invoice_id=invoice.id,
         )
     except EmailNotConfiguredError as e:
         raise HTTPException(status_code=503, detail=f"{nicht_versendet}{e}")
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"{nicht_versendet}E-Mail-Versand fehlgeschlagen: {e}")
 
-    invoice.sent_at = _dt.now(_tz.utc)
+    # sent_at: erster erfolgreicher Mailversand (B2); maßgeblich ist das Protokoll
+    if invoice.sent_at is None:
+        invoice.sent_at = _dt.now(_tz.utc)
     db.commit()
-    db.refresh(invoice)
-    return {"invoice_number": invoice.invoice_number, "sent_to": to_email, "sent_at": invoice.sent_at}
+    db.refresh(eintrag)
+    return eintrag
 
 
 @router.post("/{invoice_id}/cancel")
