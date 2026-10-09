@@ -141,24 +141,29 @@ def _abo_produkt(db, sub) -> tuple[Product, Optional[ProductVariant]]:
     return produkt, variante
 
 
-def abo_position(db, sub, heute: date) -> OrderLine:
-    """Bestellposition einer Abo-Lieferung an `heute`.
+def abo_position(db, sub, heute: date, quelle=None, nr: int = 1) -> OrderLine:
+    """Bestellposition `nr` einer Abo-Lieferung an `heute`.
+
+    `quelle` ist die Abo-Position (SubscriptionItem, B6); ohne Angabe das Abo
+    selbst (Kopffelder, Stand vor B6). Produkt, Variante, Sorte, Menge und
+    Einheit kommen aus der Quelle, der Kunde aus dem Abo.
 
     Preis wie in create_order (sales.py, Positionsschleife): Sonderpreis des
     Kunden (resolve_unit_price, Stichtag = Liefertag) vor Variantenpreis vor
     Basispreis. Steuersatz aus dem Produktstamm. Einheit der Variante, sonst
-    die des Abos. Wirft AboUebersprungen, bevor etwas angelegt ist.
+    die der Position. Wirft AboUebersprungen, bevor etwas angelegt ist.
     """
     from app.api.v1.sales import _calculate_line_amounts
 
-    produkt, variante = _abo_produkt(db, sub)
+    quelle = sub if quelle is None else quelle
+    produkt, variante = _abo_produkt(db, quelle)
 
     preis, ist_sonderpreis = resolve_unit_price(
         db, customer_id=sub.kunde_id, product_id=produkt.id,
         default=produkt.base_price, on_date=heute,
     )
     name = produkt.name
-    einheit = sub.einheit
+    einheit = quelle.einheit
     if variante is not None:
         name = f"{produkt.name} — {variante.name_suffix or ''}".strip(" —")
         verpackung = db.get(UnitOfMeasure, variante.packaging_unit_id)
@@ -174,13 +179,13 @@ def abo_position(db, sub, heute: date) -> OrderLine:
         logger.warning("[abo] Abo %s: %s hat keinen Preis, Position mit 0,00 EUR", sub.id, produkt.name)
 
     line = OrderLine(
-        position=1,
+        position=nr,
         product_id=produkt.id,
         product_variant_id=variante.id if variante is not None else None,
-        seed_id=sub.seed_id,
+        seed_id=quelle.seed_id,
         beschreibung=name,
         # Durchgehend Decimal: Decimal * float wirft.
-        quantity=Decimal(str(sub.menge)),
+        quantity=Decimal(str(quelle.menge)),
         unit=einheit,
         unit_price=Decimal(str(preis or 0)),
         tax_rate=steuersatz_der_position(
@@ -190,6 +195,35 @@ def abo_position(db, sub, heute: date) -> OrderLine:
     )
     _calculate_line_amounts(line)
     return line
+
+
+def abo_positionen(db, sub, heute: date) -> list[OrderLine]:
+    """Alle Bestellpositionen einer Abo-Lieferung an `heute` (B6).
+
+    Quelle sind die Abo-Positionen (subscription_items) in ihrer Reihenfolge.
+    Ein Abo ohne Position, etwa wenn das Nachtragen beim Start scheiterte
+    (tenancy._auto_migrate loggt nur), liefert seinen Kopf wie vor B6.
+
+    Alles oder nichts: Scheitert eine Position, wirft die Funktion
+    AboUebersprungen, bevor etwas angelegt ist, und das ganze Abo fällt für
+    diesen Tag aus. Eine Teillieferung ohne Hinweis wäre schlimmer als eine
+    gemeldete ausgefallene Lieferung. Bei mehreren Positionen nennt die
+    Meldung die Position ("Position 2: Produkt … ist deaktiviert").
+    """
+    quellen = list(getattr(sub, "positionen", None) or [])
+    if not quellen:
+        if hasattr(sub, "positionen"):
+            logger.warning("[abo] Abo %s hat keine Position, liefert den Kopf", sub.id)
+        quellen = [sub]
+    zeilen = []
+    for nr, quelle in enumerate(quellen, start=1):
+        try:
+            zeilen.append(abo_position(db, sub, heute, quelle, nr))
+        except AboUebersprungen as grund:
+            if len(quellen) > 1:
+                raise AboUebersprungen(f"Position {nr}: {grund}") from grund
+            raise
+    return zeilen
 
 
 def liefertag_heute() -> date:
@@ -282,16 +316,18 @@ def process_daily_subscriptions(heute: Optional[date] = None):
         db.close()
 
 def _create_order_from_subscription(db, sub: Subscription, heute: Optional[date] = None) -> Order:
-    """Erstellt eine Order aus einem Abo für den Liefertag `heute`.
+    """Erstellt eine Order aus einem Abo für den Liefertag `heute`, mit
+    einer Bestellposition je Abo-Position (B6).
 
-    Wirft AboUebersprungen, ohne etwas anzulegen, wenn kein eindeutiges
-    Produkt feststeht.
+    Wirft AboUebersprungen, ohne etwas anzulegen, wenn für eine Position kein
+    eindeutiges Produkt feststeht.
     """
     from app.api.v1.sales import _generate_order_number, _calculate_order_totals
 
     heute = heute or date.today()
-    # Zuerst die Position: steht kein Produkt fest, entsteht auch kein Kopf.
-    line = abo_position(db, sub, heute)
+    # Zuerst die Positionen: steht für eine kein Produkt fest, entsteht auch
+    # kein Kopf (alles oder nichts, abo_positionen).
+    zeilen = abo_positionen(db, sub, heute)
 
     customer = sub.kunde
     order_number = _generate_order_number(db)
@@ -347,7 +383,8 @@ def _create_order_from_subscription(db, sub: Subscription, heute: Optional[date]
     # Order eine leere Liste, die kein Lazy-Load mehr nachlädt — mit db.add()
     # allein summierte _calculate_order_totals über nichts und die Abo-
     # Bestellung blieb bei 0,00 €.
-    order.lines.append(line)
+    for line in zeilen:
+        order.lines.append(line)
 
     _calculate_order_totals(order)
     return order

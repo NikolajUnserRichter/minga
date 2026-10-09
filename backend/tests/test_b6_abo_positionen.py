@@ -390,3 +390,160 @@ class TestB6Migration:
             assert _b6_positionen_je_abo(tenancy.registry.get_engine("demo")) == erwartet
         finally:
             tenancy.registry.dispose_all()
+
+
+# ------------------------------------------------ Task 3: Abo-Lauf
+
+def _b6_zeilen(bestellung):
+    return [(l["position"], l["beschreibung"], l["quantity"], l["unit"], l["unit_price"],
+             l["tax_rate"], l["line_net"]) for l in bestellung["lines"]]
+
+
+class TestB6AboLauf:
+    """Eine Bestellung je Abo und Liefertag, mit allen Positionen."""
+
+    def _drei_positionen(self, client, kunde):
+        snack = _b6_produkt(client, "BIO Snackbox | Amaranth", "B6-SNACK", "4.50")
+        kresse = _b6_produkt(client, "Kresse Schale", "B6-KRESSE", "3.00")
+        kiste = _b6_variante(client, kresse, preis="30.00")
+        pfand = _b6_pfandkiste(client)
+        r = client.post(f"/api/v1/sales/customers/{kunde['id']}/prices", json={
+            "product_id": snack["id"], "unit_price": "4.20", "valid_from": "2026-09-01",
+        })
+        assert r.status_code in (200, 201), r.text
+        return [
+            {"product_id": snack["id"], "menge": 2},
+            {"product_id": kresse["id"], "product_variant_id": kiste["id"], "menge": 1},
+            {"product_id": pfand["id"], "menge": 1},
+        ]
+
+    def test_eine_bestellung_mit_allen_positionen(self, client):
+        kunde = _b6_kunde(client)
+        abo_id = _b6_abo_db(kunde["id"], self._drei_positionen(client, kunde))
+
+        ergebnis = _b6_lauf(_B6_DO)
+
+        assert ergebnis["erstellt"] == 1
+        [bestellung] = _b6_bestellungen(abo_id)
+        assert bestellung["requested_delivery_date"] == _B6_DO
+        # Sonderpreis vor Variantenpreis vor Basispreis, Satz aus dem Produktstamm,
+        # Einheit der Variante (wie create_order und Paket 2, A5)
+        assert _b6_zeilen(bestellung) == [
+            (1, "BIO Snackbox | Amaranth", Decimal("2.000"), "STUECK", Decimal("4.20"), "REDUZIERT", Decimal("8.40")),
+            (2, "Kresse Schale — 12er Mehrwegkiste", Decimal("1.000"), "KISTE_12", Decimal("30.00"), "REDUZIERT", Decimal("30.00")),
+            (3, "IFCO-Kiste", Decimal("1.000"), "STUECK", Decimal("4.00"), "STANDARD", Decimal("4.00")),
+        ]
+        assert bestellung["total_net"] == Decimal("42.40")
+
+    def test_zweiter_lauf_am_selben_tag_legt_nichts_doppelt_an(self, client):
+        kunde = _b6_kunde(client)
+        abo_id = _b6_abo_db(kunde["id"], self._drei_positionen(client, kunde))
+
+        _b6_lauf(_B6_DO)
+        zweiter = _b6_lauf(_B6_DO)
+
+        assert (zweiter["erstellt"], zweiter["bereits_vorhanden"]) == (0, 1)
+        [bestellung] = _b6_bestellungen(abo_id)
+        assert len(bestellung["lines"]) == 3
+
+    def test_lauf_liest_die_positionen_nicht_den_kopf(self, client):
+        kunde = _b6_kunde(client)
+        snack = _b6_produkt(client, "BIO Snackbox | Amaranth", "B6-SNACK", "4.50")
+        kresse = _b6_produkt(client, "Kresse Schale", "B6-KRESSE", "3.00")
+        abo_id = _b6_abo_db(kunde["id"], [{"product_id": kresse["id"], "menge": 2}],
+                            product_id=uuid.UUID(snack["id"]), menge=Decimal("9"))
+
+        _b6_anlegen(abo_id)
+
+        [bestellung] = _b6_bestellungen(abo_id)
+        assert [(l["product_id"], l["quantity"]) for l in bestellung["lines"]] == [
+            (kresse["id"], Decimal("2.000"))]
+
+    def test_abo_ohne_position_liefert_seinen_kopf(self, client):
+        """Rückfall, falls das Nachtragen beim Start scheiterte (_auto_migrate
+        loggt nur): Das Abo liefert weiter sein Kopfprodukt statt nichts."""
+        kunde = _b6_kunde(client)
+        snack = _b6_produkt(client, "BIO Snackbox | Amaranth", "B6-SNACK", "4.50")
+        abo_id = _b6_abo_db(kunde["id"], [], product_id=uuid.UUID(snack["id"]),
+                            menge=Decimal("2"), einheit="STUECK")
+
+        _b6_anlegen(abo_id)
+
+        [bestellung] = _b6_bestellungen(abo_id)
+        assert _b6_zeilen(bestellung) == [
+            (1, "BIO Snackbox | Amaranth", Decimal("2.000"), "STUECK", Decimal("4.50"), "REDUZIERT", Decimal("9.00"))]
+
+    def test_eine_kaputte_position_ueberspringt_das_ganze_abo(self, client):
+        """Alles oder nichts: keine Teillieferung ohne Hinweis. Die Meldung nennt die Position."""
+        from app.tasks.subscription_tasks import AboUebersprungen
+        kunde = _b6_kunde(client)
+        snack = _b6_produkt(client, "BIO Snackbox | Amaranth", "B6-SNACK", "4.50")
+        kresse = _b6_produkt(client, "Kresse Schale", "B6-KRESSE", "3.00")
+        abo_id = _b6_abo_db(kunde["id"], [
+            {"product_id": snack["id"], "menge": 2},
+            {"product_id": kresse["id"], "menge": 1},
+        ])
+        r = client.delete(f"/api/v1/products/{kresse['id']}")  # Soft-Delete: is_active = False
+        assert r.status_code == 204, r.text
+
+        with pytest.raises(AboUebersprungen, match="^Position 2: Produkt Kresse Schale ist deaktiviert$"):
+            _b6_anlegen(abo_id)
+        assert _b6_bestellungen() == []
+
+    def test_lauf_meldet_das_kaputte_abo_und_beliefert_die_anderen(self, client):
+        kunde = _b6_kunde(client)
+        snack = _b6_produkt(client, "BIO Snackbox | Amaranth", "B6-SNACK", "4.50")
+        kresse = _b6_produkt(client, "Kresse Schale", "B6-KRESSE", "3.00")
+        gut = _b6_abo_db(kunde["id"], [{"product_id": snack["id"], "menge": 2},
+                                       {"product_id": snack["id"], "menge": 1, "einheit": "SCHALE"}])
+        kaputt = _b6_abo_db(kunde["id"], [{"product_id": snack["id"], "menge": 2},
+                                          {"menge": 1}])
+
+        ergebnis = _b6_lauf(_B6_DO)
+
+        assert ergebnis["erstellt"] == 1
+        assert ergebnis["uebersprungen"] == [{
+            "abo_id": kaputt, "kunde": "Café Kleinberger",
+            "grund": "Position 2: Abo hat weder Produkt noch Sorte",
+        }]
+        assert len(_b6_bestellungen(gut)[0]["lines"]) == 2
+        assert _b6_bestellungen(kaputt) == []
+
+
+class TestB6Pfand:
+    """Pfand aus dem Abo folgt der Pfandabrechnung des Kunden über die normalen
+    Wege: Die Abo-Bestellung trägt die Pfandposition wie jede Bestellung, die
+    Rechnung lässt sie bei IFCO-Clearing weg (invoice_service.ist_clearing_pfand),
+    das Leergutkonto (MONATLICH) bucht beim Übergang nach GELIEFERT. Der Lauf
+    selbst kennt pfand_abrechnung nicht."""
+
+    def _rechnungszeilen(self, client, kunde):
+        from sqlalchemy import select
+        from app.models.invoice import InvoiceLine
+        snack = _b6_produkt(client, "BIO Snackbox | Amaranth", "B6-SNACK", "4.50")
+        pfand = _b6_pfandkiste(client)
+        abo_id = _b6_abo_db(kunde["id"], [{"product_id": snack["id"], "menge": 2},
+                                          {"product_id": pfand["id"], "menge": 2}])
+        _b6_lauf(_B6_DO)
+        [bestellung] = _b6_bestellungen(abo_id)
+        assert [l["beschreibung"] for l in bestellung["lines"]] == [
+            "BIO Snackbox | Amaranth", "IFCO-Kiste"]
+
+        r = client.post(f"/api/v1/invoices/from-order/{bestellung['id']}")
+        assert r.status_code == 201, r.text
+        with TestingSessionLocal() as db:
+            return [
+                (l.description, l.is_deposit, l.tax_rate.value)
+                for l in db.execute(select(InvoiceLine).where(
+                    InvoiceLine.invoice_id == uuid.UUID(r.json()["id"]))).scalars().all()
+            ]
+
+    def test_ifco_clearing_pfand_steht_nicht_auf_der_rechnung(self, client):
+        kunde = _b6_kunde(client, pfand_abrechnung="KEINE")
+        assert self._rechnungszeilen(client, kunde) == [
+            ("BIO Snackbox | Amaranth", False, "REDUZIERT")]
+
+    def test_pfand_je_lieferung_steht_auf_der_rechnung(self, client):
+        kunde = _b6_kunde(client, pfand_abrechnung="JE_LIEFERUNG")
+        assert sorted(self._rechnungszeilen(client, kunde)) == [
+            ("BIO Snackbox | Amaranth", False, "REDUZIERT"), ("IFCO-Kiste", True, "STANDARD")]
