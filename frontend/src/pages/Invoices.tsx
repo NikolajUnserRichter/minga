@@ -21,6 +21,7 @@ import { ListPageSkeleton } from '../components/ui/Skeleton';
 import { belegHerunterladen } from '../services/belegordner';
 import { belegartDerRechnung } from '../services/belegpfad';
 import { getErrorMessage } from '../services/errors';
+import { rechnungPasstZurSuche } from '../services/rechnungssuche';
 import { eingabeAusZahl, positionsaenderung } from '../services/positionsaenderung';
 import { BelegVersandAuftrag } from '../services/api';
 import { VersandFormular, VersandProtokoll, versandMeldung, versandZeile } from '../components/domain/BelegVersand';
@@ -191,11 +192,8 @@ export default function Invoices() {
 
 
 
-  const filteredInvoices = invoices.filter(
-    (invoice) =>
-      invoice.invoice_number.toLowerCase().includes(search.toLowerCase()) ||
-      invoice.customer_name?.toLowerCase().includes(search.toLowerCase())
-  );
+  // Suche „nach Nummer oder Kunde“ — in jedem Reiter (Paket 4, B; G05)
+  const passtZurSuche = (invoice: Invoice) => rechnungPasstZurSuche(invoice, search);
 
   const statusOptions: SelectOption[] = [
     { value: 'all', label: 'Alle Status' },
@@ -214,21 +212,23 @@ export default function Invoices() {
     { value: 'PROFORMA', label: 'Proforma' },
   ];
 
+  // Je Reiter seine Liste, darauf die Suche. Die Zähler zeigen, was der
+  // Reiter mit der aktuellen Suche zeigt (Paket 4, B; G05).
+  const reiter: Record<string, Invoice[]> = {
+    all: invoices.filter(passtZurSuche),
+    open: invoices.filter((i) => i.status === 'OFFEN' && passtZurSuche(i)),
+    overdue: overdueInvoices.filter(passtZurSuche),
+    paid: invoices.filter((i) => i.status === 'BEZAHLT' && passtZurSuche(i)),
+  };
+
   const tabs = [
-    { id: 'all', label: 'Alle', count: invoices.length },
-    { id: 'open', label: 'Offen', count: invoices.filter((i) => i.status === 'OFFEN').length },
-    { id: 'overdue', label: 'Überfällig', count: overdueInvoices.length },
-    { id: 'paid', label: 'Bezahlt', count: invoices.filter((i) => i.status === 'BEZAHLT').length },
+    { id: 'all', label: 'Alle', count: reiter.all.length },
+    { id: 'open', label: 'Offen', count: reiter.open.length },
+    { id: 'overdue', label: 'Überfällig', count: reiter.overdue.length },
+    { id: 'paid', label: 'Bezahlt', count: reiter.paid.length },
   ];
 
-  const displayInvoices =
-    activeTab === 'overdue'
-      ? overdueInvoices
-      : activeTab === 'open'
-        ? invoices.filter((i) => i.status === 'OFFEN')
-        : activeTab === 'paid'
-          ? invoices.filter((i) => i.status === 'BEZAHLT')
-          : filteredInvoices;
+  const displayInvoices = reiter[activeTab] ?? reiter.all;
 
   if (isLoading) {
     return <ListPageSkeleton />;
@@ -332,14 +332,18 @@ export default function Invoices() {
         </div>
       </div>
 
-      <Tabs tabs={tabs} activeTab={activeTab} onChange={setActiveTab} className="mb-6" />
+      {/* Neuer Reiter oder neue Suche: zurück auf Seite 1, sonst bleibt ein
+          Treffer auf einer leeren Seite unsichtbar. Kein useEffect: die
+          Paket-3-Abnahme rendert diese Seite mit einem Ersatz, der nur
+          useState kennt. */}
+      <Tabs tabs={tabs} activeTab={activeTab} onChange={(id) => { setActiveTab(id); setCurrentPage(1); }} className="mb-6" />
 
       <FilterBar>
         <div className="flex-1 max-w-md">
           <Input
             placeholder="Suchen nach Nummer oder Kunde..."
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            onChange={(e) => { setSearch(e.target.value); setCurrentPage(1); }}
             startIcon={<Search className="w-4 h-4" />}
           />
         </div>
