@@ -1195,3 +1195,26 @@ class TestQ4HalleLiestProdukte:
 
         assert r.status_code == 404
         assert "nicht gefunden" in r.json()["detail"]
+
+
+class TestQ4RechnungenNurMitRechnungsrecht:
+    """R3 serverseitig — Charakterisierung (von Anfang an grün): Der Belege-Dialog
+    blendet den Rechnungsteil aus, der Server bleibt trotzdem zu (_deps_geld)."""
+
+    @pytest.mark.parametrize("rolle", _Q4_OHNE_RECHNUNGSRECHT)
+    @pytest.mark.parametrize("methode,pfad", [
+        ("GET", f"/api/v1/invoices?order_id={_Q4_FREMD}"),
+        ("POST", f"/api/v1/invoices/from-order/{_Q4_FREMD}"),
+        ("POST", f"/api/v1/invoices/{_Q4_FREMD}/finalize"),
+        ("POST", f"/api/v1/invoices/{_Q4_FREMD}/send?to_email=a%40b.de"),
+        ("GET", f"/api/v1/invoices/{_Q4_FREMD}/pdf"),
+    ])
+    def test_ohne_rechnungsrecht_403(self, client, rolle, methode, pfad):
+        _q4_als(rolle)
+        assert client.request(methode, pfad).status_code == 403
+
+    @pytest.mark.parametrize("rolle", _Q4_MIT_RECHNUNGSRECHT)
+    def test_mit_rechnungsrecht_offen(self, client, rolle):
+        _q4_als(rolle)
+        r = client.get("/api/v1/invoices", params={"order_id": _Q4_FREMD})
+        assert r.status_code == 200, r.text

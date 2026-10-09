@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { FileText, Truck, Package, Send, Download, Plus, CheckCheck, Receipt, Mail, Pencil } from 'lucide-react';
 import { Modal } from '../ui/Modal';
+import { useAuth } from '../../context/AuthContext';
 import { Button, Input, useToast } from '../ui';
 import { documentsApi, invoicesApi, OrderConfirmation, DeliveryNote } from '../../services/api';
 import { Order, Invoice } from '../../types';
@@ -31,6 +32,12 @@ export function OrderDocumentsModal({ open, onClose, order }: Props) {
   const toast = useToast();
   const queryClient = useQueryClient();
   const orderId = order?.id;
+  // Rechnungen nur mit Rechnungsrecht (main.py: _deps_geld = admin, sales,
+  // accounting). Planung und Halle öffnen den Dialog wegen AB und Lieferschein;
+  // für sie entfallen Rechnungsteil und Abfrage. Der Server sperrt /invoices
+  // für sie trotzdem (403). Rollen aus dem Token wie in App.tsx (Startseite).
+  const { user } = useAuth();
+  const darfRechnungen = ['admin', 'sales', 'accounting'].some((rolle) => user?.roles?.includes(rolle));
 
   const confirmationsQuery = useQuery({
     queryKey: ['confirmations', orderId],
@@ -54,7 +61,7 @@ export function OrderDocumentsModal({ open, onClose, order }: Props) {
   const invoicesQuery = useQuery({
     queryKey: ['invoices', 'order', orderId],
     queryFn: () => invoicesApi.list({ order_id: orderId!, page_size: 100 }),
-    enabled: open && !!orderId,
+    enabled: open && !!orderId && darfRechnungen,
   });
 
   const invalidate = () => {
@@ -345,7 +352,8 @@ export function OrderDocumentsModal({ open, onClose, order }: Props) {
           )}
         </section>
 
-        {/* RECHNUNGEN */}
+        {/* RECHNUNGEN — nur mit Rechnungsrecht (darfRechnungen) */}
+        {darfRechnungen && (
         <section>
           <div className="flex items-center justify-between mb-3">
             <h3 className="flex items-center gap-2 font-semibold text-gray-800 dark:text-gray-200">
@@ -439,6 +447,7 @@ export function OrderDocumentsModal({ open, onClose, order }: Props) {
             </ul>
           )}
         </section>
+        )}
       </div>
     </Modal>
   );
