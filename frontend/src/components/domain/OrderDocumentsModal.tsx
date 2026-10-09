@@ -4,7 +4,8 @@ import { FileText, Truck, Package, Send, Download, Plus, CheckCheck, Receipt, Ma
 import { Modal } from '../ui/Modal';
 import { useAuth } from '../../context/AuthContext';
 import { Button, Input, useToast } from '../ui';
-import { documentsApi, invoicesApi, OrderConfirmation, DeliveryNote } from '../../services/api';
+import { documentsApi, invoicesApi, salesApi, OrderConfirmation, DeliveryNote, BelegVersandAuftrag } from '../../services/api';
+import { VersandFormular, VersandProtokoll, versandMeldung } from './BelegVersand';
 import { Order, Invoice } from '../../types';
 import { dateinameAusHeader } from '../../services/dateiname';
 import { getErrorMessage } from '../../services/errors';
@@ -105,39 +106,70 @@ export function OrderDocumentsModal({ open, onClose, order }: Props) {
     }
   };
 
+  // Belegversand (Paket 3, Q2): offenes Versandformular 'AB:<id>', 'LS:<id>' oder 'RE:<id>'
+  const [versandOffen, setVersandOffen] = useState<string | null>(null);
+  const versandUmschalten = (schluessel: string) =>
+    setVersandOffen((offen) => (offen === schluessel ? null : schluessel));
+  // Kundenstamm für „Neue AB“/„Neuer LS“: Sind für die Belegart Empfänger
+  // hinterlegt, öffnet sich das Versandformular gleich (T5 3.3).
+  const kundeQuery = useQuery({
+    queryKey: ['customer', order?.customer_id],
+    queryFn: () => salesApi.getCustomer(order!.customer_id!),
+    enabled: open && !!order?.customer_id,
+  });
+
   const createConfirmation = useMutation({
     mutationFn: () => documentsApi.createConfirmation(orderId!, {}),
-    onSuccess: (c) => { toast.success(`AB ${c.confirmation_number} erstellt`); invalidate(); },
+    onSuccess: (c) => {
+      toast.success(`AB ${c.confirmation_number} erstellt`);
+      invalidate();
+      if (kundeQuery.data?.confirmation_emails?.length) setVersandOffen(`AB:${c.id}`);
+    },
     onError: (e: any) => toast.error(getErrorMessage(e, 'Fehler beim Erstellen der AB')),
   });
 
   const sendConfirmation = useMutation({
-    mutationFn: ({ conf, email }: { conf: OrderConfirmation; email?: string }) =>
-      documentsApi.sendConfirmation(conf.id, email ? { sent_to_email: email } : {}),
-    onSuccess: (_d, vars) => {
-      toast.success(vars.email ? `AB an ${vars.email} versendet` : 'AB als versendet markiert');
+    mutationFn: ({ conf, auftrag }: { conf: OrderConfirmation; auftrag: BelegVersandAuftrag }) =>
+      documentsApi.sendConfirmation(conf.id, auftrag),
+    onSuccess: (c) => {
+      versandMeldung(toast, `AB ${c.confirmation_number}`, c.dispatches);
+      setVersandOffen(null);
+      invalidate();
+    },
+    onError: (e: any) => toast.error(getErrorMessage(e, 'Fehler beim Versenden')),
+  });
+
+  const sendDeliveryNote = useMutation({
+    mutationFn: ({ note, auftrag }: { note: DeliveryNote; auftrag: BelegVersandAuftrag }) =>
+      documentsApi.sendDeliveryNote(note.id, auftrag),
+    onSuccess: (n) => {
+      versandMeldung(toast, `Lieferschein ${n.delivery_note_number}`, n.dispatches);
+      setVersandOffen(null);
       invalidate();
     },
     onError: (e: any) => toast.error(getErrorMessage(e, 'Fehler beim Versenden')),
   });
 
   const sendInvoiceMail = useMutation({
-    mutationFn: ({ inv, email }: { inv: Invoice; email: string }) =>
-      invoicesApi.sendInvoiceEmail(inv.id, email),
-    onSuccess: (_d, vars) => { toast.success(`Rechnung an ${vars.email} versendet`); invalidate(); },
-    // Ein Entwurf kann vor dem Versand finalisiert worden sein — auch wenn die Mail scheitert
+    mutationFn: ({ inv, auftrag }: { inv: Invoice; auftrag: BelegVersandAuftrag }) =>
+      invoicesApi.sendInvoice(inv.id, auftrag),
+    onSuccess: (zeile) => {
+      // Nummer aus der Protokollzeile: ein Entwurf bekommt sie erst mit dem Versand (Q1)
+      versandMeldung(toast, `Rechnung ${zeile.document_number}`, [zeile]);
+      setVersandOffen(null);
+      invalidate();
+    },
+    // Ein Entwurf ist vor dem Versand finalisiert worden — auch wenn die Mail scheitert (Q1)
     onError: (e: any) => { toast.error(getErrorMessage(e, 'Fehler beim Versand')); invalidate(); },
   });
 
-  const promptEmailFor = (defaultEmail = '') =>
-    window.prompt(
-      'E-Mail-Adresse des Empfängers (leer lassen = nur als versendet markieren):',
-      defaultEmail,
-    );
-
   const createDeliveryNote = useMutation({
     mutationFn: (zusaetzlich: boolean) => documentsApi.createDeliveryNote(orderId!, {}, { zusaetzlich }),
-    onSuccess: (n) => { toast.success(`Lieferschein ${n.delivery_note_number} erstellt`); invalidate(); },
+    onSuccess: (n) => {
+      toast.success(`Lieferschein ${n.delivery_note_number} erstellt`);
+      invalidate();
+      if (kundeQuery.data?.delivery_note_emails?.length) setVersandOffen(`LS:${n.id}`);
+    },
     onError: (e: any) => {
       // 409 = es gibt schon einen Lieferschein; das fragt neuerLieferschein() nach.
       if (e?.response?.status === 409) return;
@@ -225,11 +257,15 @@ export function OrderDocumentsModal({ open, onClose, order }: Props) {
           ) : (
             <ul className="space-y-2">
               {confirmations.map((c) => (
-                <li key={c.id} className="flex items-center justify-between border rounded p-2 dark:border-gray-700">
+                <li key={c.id} className="border rounded p-2 dark:border-gray-700">
+                  <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
                     <span className="font-mono text-sm">{c.confirmation_number}</span>
                     <span className={`text-xs px-2 py-0.5 rounded ${statusBadge(c.status)}`}>{belegStatusLabel(c.status)}</span>
-                    {c.sent_to_email && <span className="text-xs text-gray-500">→ {c.sent_to_email}</span>}
+                    {/* Vor Q2 versendet: kein Protokoll, nur die Kurzanzeige */}
+                    {c.sent_to_email && !c.dispatches?.length && (
+                      <span className="text-xs text-gray-500">→ {c.sent_to_email}</span>
+                    )}
                   </div>
                   <div className="flex gap-1">
                     <Button
@@ -240,21 +276,29 @@ export function OrderDocumentsModal({ open, onClose, order }: Props) {
                     >
                       PDF
                     </Button>
-                    {c.status === 'ENTWURF' && (
-                      <Button
-                        size="sm"
-                        icon={<Send className="w-3 h-3" />}
-                        loading={sendConfirmation.isPending}
-                        onClick={() => {
-                          const email = promptEmailFor();
-                          if (email === null) return; // Abbrechen
-                          sendConfirmation.mutate({ conf: c, email: email || undefined });
-                        }}
-                      >
-                        Versenden
-                      </Button>
-                    )}
+                    <Button
+                      size="sm"
+                      icon={<Send className="w-3 h-3" />}
+                      onClick={() => versandUmschalten(`AB:${c.id}`)}
+                    >
+                      {c.status === 'ENTWURF' ? 'Versenden' : 'Erneut senden'}
+                    </Button>
                   </div>
+                  </div>
+                  <VersandProtokoll eintraege={c.dispatches} />
+                  {versandOffen === `AB:${c.id}` && (
+                    <div className="mt-2">
+                      <VersandFormular
+                        belegart="AB"
+                        belegNummer={c.confirmation_number}
+                        customerId={order.customer_id}
+                        nurMarkierenMoeglich={c.status === 'ENTWURF'}
+                        pending={sendConfirmation.isPending}
+                        onSenden={(auftrag) => sendConfirmation.mutate({ conf: c, auftrag })}
+                        onAbbrechen={() => setVersandOffen(null)}
+                      />
+                    </div>
+                  )}
                 </li>
               ))}
             </ul>
@@ -308,8 +352,29 @@ export function OrderDocumentsModal({ open, onClose, order }: Props) {
                           Packliste
                         </Button>
                       )}
+                      <Button
+                        size="sm"
+                        icon={<Send className="w-3 h-3" />}
+                        onClick={() => versandUmschalten(`LS:${n.id}`)}
+                      >
+                        {n.dispatches && n.dispatches.length > 0 ? 'Erneut senden' : 'Versenden'}
+                      </Button>
                     </div>
                   </div>
+                  <VersandProtokoll eintraege={n.dispatches} />
+                  {versandOffen === `LS:${n.id}` && (
+                    <div className="mt-2">
+                      <VersandFormular
+                        belegart="LS"
+                        belegNummer={n.delivery_note_number}
+                        customerId={order.customer_id}
+                        nurMarkierenMoeglich={n.status === 'ENTWURF'}
+                        pending={sendDeliveryNote.isPending}
+                        onSenden={(auftrag) => sendDeliveryNote.mutate({ note: n, auftrag })}
+                        onAbbrechen={() => setVersandOffen(null)}
+                      />
+                    </div>
+                  )}
                   {n.status !== 'GELIEFERT' && !quittierbar && (
                     <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
                       {order.status === 'STORNIERT'
@@ -415,16 +480,9 @@ export function OrderDocumentsModal({ open, onClose, order }: Props) {
                         size="sm"
                         variant="secondary"
                         icon={<Mail className="w-3 h-3" />}
-                        loading={sendInvoiceMail.isPending}
-                        onClick={() => {
-                          if (inv.status === 'ENTWURF'
-                              && !window.confirm(`Der Entwurf wird beim Mailen finalisiert. ${FINALISIEREN_RUECKFRAGE}`)) return;
-                          const email = promptEmailFor();
-                          if (!email) return;
-                          sendInvoiceMail.mutate({ inv, email });
-                        }}
+                        onClick={() => versandUmschalten(`RE:${inv.id}`)}
                       >
-                        Mailen
+                        {inv.dispatches && inv.dispatches.length > 0 ? 'Erneut senden' : 'Versenden'}
                       </Button>
                     )}
                     {inv.status === 'ENTWURF' && (
@@ -439,6 +497,29 @@ export function OrderDocumentsModal({ open, onClose, order }: Props) {
                     )}
                   </div>
                   </div>
+                  <VersandProtokoll eintraege={inv.dispatches} />
+                  {versandOffen === `RE:${inv.id}` && (
+                    <div className="mt-2">
+                      {inv.status === 'ENTWURF' && (
+                        <p className="mb-1 text-xs text-gray-600 dark:text-gray-300">
+                          Der Entwurf wird beim Mailen finalisiert: Er erhält die nächste freie Rechnungsnummer und lässt sich danach nur noch stornieren.
+                        </p>
+                      )}
+                      <VersandFormular
+                        belegart="RE"
+                        belegNummer={rechnungsnummerAnzeige(inv.invoice_number)}
+                        customerId={inv.customer_id}
+                        pending={sendInvoiceMail.isPending}
+                        onSenden={(auftrag) => {
+                          // Rückfrage aus Q1.7: Mailen eines Entwurfs schreibt ihn fest
+                          if (inv.status === 'ENTWURF'
+                              && !window.confirm(`Der Entwurf wird beim Mailen finalisiert. ${FINALISIEREN_RUECKFRAGE}`)) return;
+                          sendInvoiceMail.mutate({ inv, auftrag });
+                        }}
+                        onAbbrechen={() => setVersandOffen(null)}
+                      />
+                    </div>
+                  )}
                   {offeneRechnung === inv.id && (
                     <div className="mt-3 border-t pt-3 dark:border-gray-700">
                       <InvoiceDetail invoice={inv} />

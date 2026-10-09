@@ -10,7 +10,7 @@ import type {
   RevenueStats, YieldStats, Subscription, AccuracySummary, AccuracyDetail,
   Contact, Supplier, ProductVariant, UnitOfMeasure, CustomerAddress, BundleComponent,
   PurchaseOrder, PurchaseOrderListItem, PurchaseOrderStatus, TradeGoodsStock,
-  SeedBatchComponent
+  SeedBatchComponent, DocumentDispatch
 } from '../types'
 import type { OrderStatus } from '../types'
 
@@ -803,8 +803,9 @@ export const invoicesApi = {
   downloadPdf: (id: string) =>
     api.get(`/invoices/${id}/pdf`, { responseType: 'blob' }),
 
-  sendInvoiceEmail: (invoiceId: string, toEmail: string) =>
-    api.post(`/invoices/${invoiceId}/send`, null, { params: { to_email: toEmail } }).then(r => r.data),
+  // Eine Mail an alle Empfänger (Paket 3, Q2); Antwort = neue Protokollzeile
+  sendInvoice: (invoiceId: string, data: BelegVersandAuftrag) =>
+    api.post<DocumentDispatch>(`/invoices/${invoiceId}/send`, data).then(r => r.data),
 
   // Zahlungserinnerung / Mahnung (level 1-3) als PDF
   generatePaymentReminder: (invoiceId: string, level: number = 1, dunning_fee: number = 0) =>
@@ -1318,6 +1319,17 @@ export const attachmentsApi = {
 
 // ==================== BELEGKETTE (AB / Lieferschein / Packliste) ====================
 
+/**
+ * Versandauftrag für AB, Lieferschein und Rechnung (Paket 3, Q2).
+ * to: Empfänger für diesen Versand; use_customer_recipients: Liste aus dem
+ * Kundenstamm. Leeres Objekt {} = keine Mail, nur markieren (nur AB und LS).
+ */
+export interface BelegVersandAuftrag {
+  to?: string[]
+  cc?: string[]
+  use_customer_recipients?: boolean
+}
+
 export interface OrderConfirmation {
   id: string
   order_id: string
@@ -1329,6 +1341,7 @@ export interface OrderConfirmation {
   notes: string | null
   created_at: string
   updated_at: string
+  dispatches?: DocumentDispatch[]
 }
 
 export interface PackingListItem {
@@ -1370,6 +1383,7 @@ export interface DeliveryNote {
   packing_list: PackingList | null
   created_at: string
   updated_at: string
+  dispatches?: DocumentDispatch[]
 }
 
 const _openPdfFromResponse = async (url: string, filename: string) => {
@@ -1396,7 +1410,7 @@ export const documentsApi = {
   createConfirmation: (orderId: string, data: { notes?: string }) =>
     api.post<OrderConfirmation>(`/sales/orders/${orderId}/confirmations`, data).then(r => r.data),
 
-  sendConfirmation: (confId: string, data: { sent_to_email?: string }) =>
+  sendConfirmation: (confId: string, data: BelegVersandAuftrag) =>
     api.patch<OrderConfirmation>(`/sales/confirmations/${confId}/send`, data).then(r => r.data),
 
   downloadConfirmationPdf: (conf: OrderConfirmation) =>
@@ -1412,6 +1426,9 @@ export const documentsApi = {
     api.post<DeliveryNote>(`/sales/orders/${orderId}/delivery-notes`, data, {
       params: opts?.zusaetzlich ? { zusaetzlich: true } : undefined,
     }).then(r => r.data),
+
+  sendDeliveryNote: (noteId: string, data: BelegVersandAuftrag) =>
+    api.post<DeliveryNote>(`/sales/delivery-notes/${noteId}/send`, data).then(r => r.data),
 
   markDelivered: (noteId: string, data: { signed_by?: string; actual_delivery_date?: string }) =>
     api.patch<DeliveryNote>(`/sales/delivery-notes/${noteId}/mark-delivered`, data).then(r => r.data),

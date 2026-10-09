@@ -171,6 +171,10 @@ export interface Customer {
   /** Pfandabrechnung: JE_LIEFERUNG = Pfand auf jeder Rechnung, KEINE = IFCO-Clearing (nicht auf der Rechnung) */
   pfand_abrechnung?: PfandAbrechnung
   aktiv: boolean
+  /** Belegversand (Paket 3, Q2): Empfänger je Belegart; leer = Haupt-E-Mail */
+  confirmation_emails?: string[]
+  delivery_note_emails?: string[]
+  invoice_emails?: string[]
   created_at: string
   updated_at: string
 }
@@ -599,6 +603,24 @@ export type InvoiceStatus = 'ENTWURF' | 'OFFEN' | 'TEILBEZAHLT' | 'BEZAHLT' | 'U
 export type InvoiceType = 'RECHNUNG' | 'GUTSCHRIFT' | 'PROFORMA'
 export type PaymentMethod = 'UEBERWEISUNG' | 'LASTSCHRIFT' | 'BAR' | 'EC' | 'KREDITKARTE' | 'PAYPAL'
 
+/** Eine Zeile des Versandprotokolls (Backend: DocumentDispatchResponse) */
+export interface DocumentDispatch {
+  id: string
+  doc_type: 'AB' | 'LS' | 'RE'
+  document_number: string
+  status: 'GESENDET' | 'TEILWEISE' | 'NUR_MARKIERT'
+  to_addrs: string[]
+  cc_addrs: string[]
+  /** vom Mailserver abgelehnte Adressen mit seiner Antwort */
+  refused: Record<string, string> | null
+  subject: string | null
+  attachment_filename: string | null
+  attachment_sha256: string | null
+  message_id: string | null
+  sent_at: string
+  sent_by_name: string | null
+}
+
 export interface Invoice {
   id: string
   invoice_number: string
@@ -633,6 +655,8 @@ export interface Invoice {
   customer_number?: string | null
   reminder_level?: number
   last_reminder_sent_at?: string | null
+  /** Versandprotokoll, älteste zuerst */
+  dispatches?: DocumentDispatch[]
   lines?: InvoiceLine[]
   payments?: Payment[]
   created_at: string
