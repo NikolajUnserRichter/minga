@@ -1,4 +1,4 @@
-from typing import Literal, Optional
+from typing import Annotated, Literal, Optional
 """
 Pydantic Schemas für Rechnungen (Invoices)
 Mit deutscher MwSt-Berechnung und DATEV-Export
@@ -6,7 +6,7 @@ Mit deutscher MwSt-Berechnung und DATEV-Export
 from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID
-from pydantic import BaseModel, Field, ConfigDict, field_validator
+from pydantic import AfterValidator, BaseModel, Field, ConfigDict, field_validator
 
 from app.models.invoice import InvoiceStatus, InvoiceType, TaxRate, PaymentMethod
 from app.models.sepa_mandate import Zahlungsart, LastschriftStatus
@@ -32,11 +32,28 @@ class InvoiceLineBase(BaseModel):
     tax_rate: TaxRate = Field(default=TaxRate.REDUZIERT, description="MwSt-Satz")
 
 
+def _positionsmenge(wert: Decimal) -> Decimal:
+    if not (0 < wert <= Decimal("9999999.999")) or wert != wert.quantize(Decimal("0.001")):
+        raise ValueError("Menge: größer als 0, höchstens 9.999.999,999 und höchstens 3 Nachkommastellen")
+    return wert
+
+
+def _positionseinzelpreis(wert: Decimal) -> Decimal:
+    if not (0 <= wert <= Decimal("999999.9999")) or wert != wert.quantize(Decimal("0.0001")):
+        raise ValueError("Einzelpreis: mindestens 0, höchstens 999.999,9999 und höchstens 4 Nachkommastellen")
+    return wert
+
+
+Positionsmenge = Annotated[Decimal, AfterValidator(_positionsmenge)]
+Positionseinzelpreis = Annotated[Decimal, AfterValidator(_positionseinzelpreis)]
+
+
 class InvoiceLineCreate(InvoiceLineBase):
     """Schema zum Erstellen einer Rechnungsposition"""
     # Von Hand erfasste Positionen sind immer positiv — negative Zeilen
     # entstehen nur intern beim Storno.
-    quantity: Decimal = Field(..., gt=0, description="Menge")
+    quantity: Positionsmenge = Field(..., description="Menge")
+    unit_price: Positionseinzelpreis = Field(..., description="Einzelpreis (netto)")
     product_id: Optional[UUID] = Field(None, description="Produkt-ID")
     order_item_id: Optional[UUID] = Field(None, description="Bestellposition-ID")
     harvest_batch_ids: Optional[list[UUID]] = Field(None, description="Chargen-IDs für Rückverfolgung")
@@ -58,9 +75,9 @@ class InvoiceLineUpdate(BaseModel):
     nicht ändern will, lässt es weg.
     """
     description: Optional[str] = Field(None, min_length=1)
-    quantity: Optional[Decimal] = Field(None, gt=0)
+    quantity: Optional[Positionsmenge] = None
     unit: Optional[str] = Field(None, min_length=1)
-    unit_price: Optional[Decimal] = Field(None, ge=0)
+    unit_price: Optional[Positionseinzelpreis] = None
     discount_percent: Optional[Decimal] = Field(None, ge=0, le=100)
     tax_rate: Optional[TaxRate] = None
     buchungskonto: Optional[str] = None

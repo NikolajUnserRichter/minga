@@ -2057,3 +2057,68 @@ class TestP4Fix2Festschreibung:
         fertig = client.post(f"/api/v1/invoices/{neu['id']}/finalize")
         assert fertig.status_code == 200, fertig.text
         assert fertig.json()["invoice_number"].endswith("-00001")
+
+
+def _p4fix_entwurf(client, **position):
+    kunde = _p4b_kunde(client)
+    antwort = client.post("/api/v1/invoices", json={
+        "customer_id": kunde["id"], "invoice_date": _p4b_date.today().isoformat(),
+        "lines": [{"description": "Testposition", "quantity": "1", "unit": "STK",
+                   "unit_price": "2.5", **position}],
+    })
+    assert antwort.status_code == 201, antwort.text
+    return client.get(f"/api/v1/invoices/{antwort.json()['id']}").json()
+
+
+class TestP4Fix3Positionsgrenzen:
+    @pytest.mark.parametrize("weg", ["rechnung", "anlegen", "aendern"])
+    @pytest.mark.parametrize("werte,feld", [
+        ({"quantity": "1000000000000"}, "Menge"),
+        ({"quantity": "1.0005"}, "Menge"),
+        ({"unit_price": "1.00005"}, "Einzelpreis"),
+        ({"quantity": "1000000000000000", "unit_price": "1000000000"}, "Menge"),
+        ({"quantity": "10000000"}, "Menge"),
+        ({"unit_price": "1000000"}, "Einzelpreis"),
+        ({"quantity": "0"}, "Menge"),
+        ({"quantity": "-1"}, "Menge"),
+        ({"unit_price": "-0.0001"}, "Einzelpreis"),
+    ])
+    def test_unzulaessige_werte_werden_deutsch_abgelehnt(self, client, weg, werte, feld):
+        entwurf = _p4fix_entwurf(client)
+        position = {"description": "Grenztest", "quantity": "1", "unit": "STK", "unit_price": "1", **werte}
+        if weg == "rechnung":
+            antwort = client.post("/api/v1/invoices", json={
+                "customer_id": entwurf["customer_id"], "invoice_date": _p4b_date.today().isoformat(),
+                "lines": [position]})
+        elif weg == "anlegen":
+            antwort = client.post(f"/api/v1/invoices/{entwurf['id']}/lines", json=position)
+        else:
+            antwort = client.patch(f"/api/v1/invoices/{entwurf['id']}/lines/{entwurf['lines'][0]['id']}", json=werte)
+        assert antwort.status_code == 422, antwort.text
+        assert feld in antwort.json()["detail"][0]["msg"]
+        assert "Nachkommastellen" in antwort.json()["detail"][0]["msg"]
+        nachher = client.get(f"/api/v1/invoices/{entwurf['id']}").json()
+        assert len(nachher["lines"]) == 1
+        assert Decimal(nachher["lines"][0]["quantity"]) == 1
+        assert Decimal(nachher["lines"][0]["unit_price"]) == Decimal("2.5")
+
+    @pytest.mark.parametrize("werte", [
+        {"quantity": "9999999.999", "unit_price": "999999.9999"},
+        {"quantity": "0.001", "unit_price": "0"},
+    ])
+    def test_grenzwerte_zulaessig(self, client, werte):
+        entwurf = _p4fix_entwurf(client, **werte)
+        position = entwurf["lines"][0]
+        for feld, wert in werte.items():
+            assert Decimal(position[feld]) == Decimal(wert)
+        antwort = client.patch(f"/api/v1/invoices/{entwurf['id']}/lines/{position['id']}", json=werte)
+        assert antwort.status_code == 200, antwort.text
+
+    def test_interne_stornozeilen_bleiben_negativ(self, client):
+        entwurf = _p4fix_entwurf(client)
+        assert client.post(f"/api/v1/invoices/{entwurf['id']}/finalize").status_code == 200
+        antwort = client.post(f"/api/v1/invoices/{entwurf['id']}/cancel", json={
+            "reason": "Synthetischer Grenztest", "create_credit_note": True})
+        assert antwort.status_code == 200, antwort.text
+        storno = client.get(f"/api/v1/invoices/{antwort.json()['credit_note']['id']}").json()
+        assert Decimal(storno["lines"][0]["quantity"]) == -1
