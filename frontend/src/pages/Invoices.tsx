@@ -105,7 +105,7 @@ export default function Invoices() {
   const itemsPerPage = 20;
 
   // Fetch invoices
-  const { data: invoices = [], isLoading, isError } = useQuery({
+  const { data: invoices = [], isLoading, isError, error } = useQuery({
     queryKey: ['invoices', { status: filterStatus, invoice_type: filterType }],
     queryFn: () =>
       invoicesApi.list({
@@ -234,11 +234,16 @@ export default function Invoices() {
   }
 
   if (isError) {
+    const keineBerechtigung = (error as { response?: { status?: number } })?.response?.status === 403;
     return (
       <div className="p-8 text-center">
         <AlertCircle className="w-12 h-12 text-red-400 mx-auto mb-4" />
-        <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">Rechnungen konnten nicht geladen werden</h2>
-        <p className="text-gray-500 dark:text-gray-400">Bitte prüfe die Verbindung zum Server und versuche es erneut.</p>
+        <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">
+          {keineBerechtigung ? 'Keine Berechtigung für Rechnungen' : 'Rechnungen konnten nicht geladen werden'}
+        </h2>
+        {!keineBerechtigung && (
+          <p className="text-gray-500 dark:text-gray-400">Bitte prüfe die Verbindung zum Server und versuche es erneut.</p>
+        )}
       </div>
     );
   }

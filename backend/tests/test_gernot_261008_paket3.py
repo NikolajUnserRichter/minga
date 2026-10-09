@@ -6401,3 +6401,40 @@ assert.equal(getFieldErrors(fehler).invoice_emails, meldung);
 assert.equal(getFieldErrors(fehler).delivery_note_emails, undefined);
 assert.equal(Object.keys(getFieldErrors({ response: { data: { detail: 'Serverfehler' } } })).length, 0);
 """)
+
+
+class TestAbnahmeRechnungsberechtigung:
+    @pytest.mark.parametrize("status", [403, 500, None])
+    def test_rechnungsseite_unterscheidet_verbot_und_verbindungsfehler(self, status):
+        import json
+        _abnahme_frontend("const status = " + json.dumps(status) + ";\n" + """
+const { renderToStaticMarkup } = require('react-dom/server');
+const ersatz = {
+    react: { useState: wert => [wert, () => {}] },
+    '@tanstack/react-query': {
+        useQueryClient: () => ({}), useMutation: () => ({}),
+        useQuery: ({ queryKey }) => queryKey[0] === 'invoices'
+            ? { isError: true, error: status ? { response: { status } } : new Error('Network Error') }
+            : {},
+    },
+    '../services/api': {},
+    '../components/ui': { useToast: () => ({}) },
+    '../context/AuthContext': { useAuth: () => ({ user: { roles: ['production_staff'] } }) },
+    '../components/common/Layout': {},
+    '../components/ui/Skeleton': {},
+    '../services/print': {},
+    '../components/domain/BelegVersand': {},
+    '../components/domain/MonatsrechnungenDialog': {},
+    '../components/domain/Leergut': {},
+    '../components/domain/SepaEinzugsliste': {},
+};
+const Invoices = laden('src/pages/Invoices.tsx', ersatz).default;
+const ansicht = renderToStaticMarkup(Invoices());
+if (status === 403) {
+    assert.ok(ansicht.includes('Keine Berechtigung für Rechnungen'), ansicht);
+    assert.ok(!ansicht.includes('Verbindung zum Server'), ansicht);
+} else {
+    assert.ok(ansicht.includes('Bitte prüfe die Verbindung zum Server'), ansicht);
+    assert.ok(!ansicht.includes('Keine Berechtigung'), ansicht);
+}
+""")
