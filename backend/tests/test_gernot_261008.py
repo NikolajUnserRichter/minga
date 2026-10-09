@@ -1944,7 +1944,9 @@ class TestS6KeineZweiteRechnungZurBestellung:
         zweite = _s6_aus_bestellung(client, bestellung)
 
         assert zweite.status_code == 409, zweite.text
-        assert erste.json()["invoice_number"] in zweite.json()["detail"]
+        # Ein Entwurf erscheint ohne seinen Platzhalter (Paket 3, Q1)
+        assert "Rechnungsentwurf (noch ohne Nummer)" in zweite.json()["detail"]
+        assert erste.json()["invoice_number"] not in zweite.json()["detail"]
         alle = client.get("/api/v1/invoices",
                           params={"customer_id": bestellung["customer_id"]}).json()
         assert len(alle) == 1, "Die abgelehnte Rechnung darf nicht gespeichert sein"
@@ -1976,7 +1978,9 @@ class TestS6KeineZweiteRechnungZurBestellung:
         r = _s6_aus_bestellung(client, bestellung)
 
         assert r.status_code == 409, r.text
-        assert sammel["invoice_number"] in r.json()["detail"]
+        # Der Lauf legt Entwürfe an; sie erscheinen ohne Platzhalter (Paket 3, Q1)
+        assert "Rechnungsentwurf (noch ohne Nummer)" in r.json()["detail"]
+        assert sammel["invoice_number"] not in r.json()["detail"]
 
     def test_manuelle_rechnung_mit_bestellbezug_wird_abgelehnt(self, client):
         bestellung = _s6_bestellung(client, _s6_kunde(client))

@@ -1517,8 +1517,14 @@ class TestNacharbeitStornosperre:
         vorher = _audit(client, order)
         response = stornieren()
         assert response.status_code == 400, response.text
-        assert rechnung["invoice_number"] in response.json()["detail"]
-        assert "erst die Rechnung stornieren" in response.json()["detail"]
+        if rechnungsart == "entwurf":
+            # Ein Entwurf wird verworfen, nicht storniert, und erscheint ohne
+            # seinen Platzhalter (Paket 3, Q1)
+            assert "Rechnungsentwurf (noch ohne Nummer)" in response.json()["detail"]
+            assert "erst den Entwurf verwerfen" in response.json()["detail"]
+        else:
+            assert rechnung["invoice_number"] in response.json()["detail"]
+            assert "erst die Rechnung stornieren" in response.json()["detail"]
         assert _lesen(client, order)["status"] == bestellstatus
         assert _lesen(client, weitere)["status"] == "BESTAETIGT"
         assert _audit(client, order) == vorher
@@ -1540,7 +1546,8 @@ class TestNacharbeitStornosperre:
         assert response.status_code == 201, response.text
         with TestingSessionLocal() as db:
             gespeichert = db.get(Order, uuid.UUID(order["id"]))
-            with pytest.raises(StatuswechselFehler, match=response.json()["invoice_number"]):
+            # Ein Entwurf erscheint ohne seinen Platzhalter (Paket 3, Q1)
+            with pytest.raises(StatuswechselFehler, match=r"Rechnungsentwurf \(noch ohne Nummer\)"):
                 setze_status(db, gespeichert, OrderStatus.STORNIERT, user=None)
             assert gespeichert.status == OrderStatus.BESTAETIGT
             assert not db.new

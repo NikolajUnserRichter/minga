@@ -25,6 +25,8 @@ from sqlalchemy.orm import Session
 from app.models.order import Order, OrderAuditLog, OrderStatus
 from app.services.order_fulfillment_service import deduct_inventory_for_order
 from app.services.invoice_service import InvoiceService
+from app.services.invoice_service import entwurf_bezeichnung
+from app.models.enums import InvoiceStatus
 
 
 # IN_PRODUKTION heißt in der Oberfläche "Gepackt" (Entscheidung 08.10.2026).
@@ -104,6 +106,12 @@ def setze_status(
     alt = order.status
     if neu == OrderStatus.STORNIERT:
         rechnung = InvoiceService(db).aktive_rechnung_zur_bestellung(order.id)
+        if rechnung is not None and rechnung.status == InvoiceStatus.ENTWURF:
+            # Ein Entwurf wird verworfen, nicht storniert (Paket 3, Q1)
+            raise StatuswechselFehler(
+                f"Bestellung steckt in einem {entwurf_bezeichnung(rechnung)} "
+                "— erst den Entwurf verwerfen"
+            )
         if rechnung is not None:
             raise StatuswechselFehler(
                 f"Bestellung ist bereits berechnet ({rechnung.invoice_number}) "

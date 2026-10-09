@@ -32,6 +32,18 @@ def _euro(betrag: Decimal) -> str:
     return f"{Decimal(betrag):.2f} €".replace(".", ",")
 
 
+def entwurf_bezeichnung(invoice: Invoice) -> str:
+    """Wie ein Rechnungsentwurf in Meldungen heißt.
+
+    Ohne Nummer nie mit seinem Platzhalter ENTWURF-… (die Oberfläche zeigt
+    ihn nicht, Spec 08.10.2026 Entscheidung 2); ein Altentwurf mit seiner
+    RE-Nummer.
+    """
+    if ist_entwurfsnummer(invoice.invoice_number):
+        return "Rechnungsentwurf (noch ohne Nummer)"
+    return f"Rechnungsentwurf {invoice.invoice_number}"
+
+
 def _heute_berlin() -> date:
     """Heutiges Datum in Europe/Berlin — der Container läuft auf UTC.
 
@@ -168,6 +180,15 @@ class InvoiceService:
             vorhandene = self.aktive_rechnung_zur_bestellung(order_id)
             if vorhandene is not None:
                 order = self.db.get(Order, order_id)
+                if vorhandene.status == InvoiceStatus.ENTWURF:
+                    # Ein Entwurf wird bearbeitet, finalisiert oder verworfen
+                    # — nicht storniert (Paket 3, Q1).
+                    raise BereitsAbgerechnet(
+                        f"Zur Bestellung {order.order_number if order else order_id} gibt es "
+                        f"bereits einen {entwurf_bezeichnung(vorhandene)}. Eine zweite "
+                        "Rechnung ist nicht möglich. Den Entwurf bearbeiten und finalisieren "
+                        "oder verwerfen."
+                    )
                 raise BereitsAbgerechnet(
                     f"Zur Bestellung {order.order_number if order else order_id} gibt es "
                     f"bereits die Rechnung {vorhandene.invoice_number} "

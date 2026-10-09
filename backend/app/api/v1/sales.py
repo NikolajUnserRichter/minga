@@ -32,6 +32,7 @@ from app.tasks.forecast_tasks import update_forecast_from_order
 from app.services.customer_service import next_customer_number
 from app.services.datev_service import DatevService
 from app.services.invoice_service import InvoiceService
+from app.models.invoice import ist_entwurfsnummer
 from app.services.order_status_service import (
     BestandsbuchungFehler, StatuswechselFehler, bezeichnung, pruefe_uebergang, setze_status,
 )
@@ -1279,9 +1280,12 @@ async def delete_order(order_id: UUID, db: DBSession, user: CurrentUser):
 def _pruefe_bestellung_nicht_berechnet(order: Order, db: DBSession) -> None:
     rechnung = InvoiceService(db).aktive_rechnung_zur_bestellung(order.id)
     if rechnung is not None:
+        # Ein Entwurf ohne Nummer erscheint nie mit seinem Platzhalter (Paket 3, Q1)
+        nummer = ("Rechnungsentwurf ohne Nummer" if ist_entwurfsnummer(rechnung.invoice_number)
+                  else rechnung.invoice_number)
         raise HTTPException(
             status_code=409,
-            detail=f"Bestellung ist bereits berechnet ({rechnung.invoice_number}) — "
+            detail=f"Bestellung ist bereits berechnet ({nummer}) — "
                    "erst die Rechnung stornieren bzw. den Entwurf verwerfen",
         )
 

@@ -865,3 +865,91 @@ class TestQ1Entwurfsbeleg:
         assert r.status_code == 200, r.text
         assert "ENTWURF-" not in r.json()["csv_content"]
         assert rechnung["invoice_number"] in r.json()["csv_content"]
+
+
+class TestQ1Meldungen:
+    """Meldungen nennen einen Entwurf nie mit Platzhalter und raten bei
+    einem Entwurf nicht zum Storno (der wäre 400)."""
+
+    def _bestellung_mit_entwurf(self, client):
+        bestellung, _ = _q1_bestellung_mit_lieferschein(client, _q1_kunde(client))
+        r = client.post(f"/api/v1/invoices/from-order/{bestellung['id']}")
+        assert r.status_code == 201, r.text
+        return bestellung, r.json()
+
+    def test_zweite_rechnung_zu_einem_entwurf(self, client):
+        bestellung, entwurf = self._bestellung_mit_entwurf(client)
+
+        r = client.post(f"/api/v1/invoices/from-order/{bestellung['id']}")
+
+        assert r.status_code == 409, r.text
+        detail = r.json()["detail"]
+        assert "Rechnungsentwurf (noch ohne Nummer)" in detail
+        assert "verwerfen" in detail
+        assert "ENTWURF-" not in detail and "stornieren" not in detail
+
+    def test_storno_der_bestellung_nennt_den_entwurf(self, client):
+        bestellung, _ = self._bestellung_mit_entwurf(client)
+
+        r = client.post(f"/api/v1/sales/orders/{bestellung['id']}/status",
+                        json={"status": "STORNIERT", "reason": "entfällt"})
+
+        assert r.status_code == 400, r.text
+        detail = r.json()["detail"]
+        assert "erst den Entwurf verwerfen" in detail
+        assert "ENTWURF-" not in detail
+
+    def test_altentwurf_mit_seiner_nummer(self, client):
+        from app.models.invoice import Invoice
+        bestellung, entwurf = self._bestellung_mit_entwurf(client)
+        with TestingSessionLocal() as db:
+            db.get(Invoice, uuid.UUID(entwurf["id"])).invoice_number = _q1_nr(9)
+            db.commit()
+
+        r = client.post(f"/api/v1/invoices/from-order/{bestellung['id']}")
+
+        assert r.status_code == 409, r.text
+        assert f"Rechnungsentwurf {_q1_nr(9)}" in r.json()["detail"]
+
+    def test_ausgestellte_rechnung_wie_bisher(self, client):
+        """Charakterisierung: eine finalisierte Rechnung wird weiter mit
+        Nummer genannt, Korrektur über Storno."""
+        bestellung, entwurf = self._bestellung_mit_entwurf(client)
+        rechnung = _q1_finalisieren(client, entwurf)
+
+        r = client.post(f"/api/v1/invoices/from-order/{bestellung['id']}")
+
+        assert r.status_code == 409, r.text
+        assert rechnung["invoice_number"] in r.json()["detail"]
+        assert "stornieren" in r.json()["detail"]
+
+
+class TestQ1MeldungenPositionssperre:
+    """Paket 2.1 (30765e5/30135b4) sperrt Positionen und Löschen einer
+    berechneten Bestellung mit „Bestellung ist bereits berechnet (Nr.)“.
+    Steckt sie in einem Entwurf ohne Nummer, nennt die Meldung ihn ohne
+    Platzhalter (Q1, Entscheidung 10)."""
+
+    def test_positionssperre_nennt_entwurf_ohne_platzhalter(self, client):
+        bestellung, _ = _q1_bestellung_mit_lieferschein(client, _q1_kunde(client))
+        r = client.post(f"/api/v1/invoices/from-order/{bestellung['id']}")
+        assert r.status_code == 201, r.text
+        assert _Q1_PLATZHALTER.match(r.json()["invoice_number"])
+
+        zeile = bestellung["lines"][0]["id"]
+        r = client.patch(f"/api/v1/sales/orders/{bestellung['id']}/lines/{zeile}", json={"quantity": 9})
+
+        assert r.status_code == 409, r.text
+        assert "Rechnungsentwurf ohne Nummer" in r.json()["detail"]
+        assert "ENTWURF-" not in r.json()["detail"]
+
+    def test_bestellantwort_traegt_den_platzhalter_fuer_die_oberflaeche(self, client):
+        """Die API liefert rechnung_nummer roh; die Oberfläche zeigt ihn über
+        rechnungsnummerAnzeige (Q1.7)."""
+        bestellung, _ = _q1_bestellung_mit_lieferschein(client, _q1_kunde(client))
+        r = client.post(f"/api/v1/invoices/from-order/{bestellung['id']}")
+        assert r.status_code == 201, r.text
+
+        nummer = client.get(f"/api/v1/sales/orders/{bestellung['id']}").json()["rechnung_nummer"]
+
+        assert _Q1_PLATZHALTER.match(nummer)
