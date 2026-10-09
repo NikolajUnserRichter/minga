@@ -16,6 +16,7 @@ import { CustomerCard } from '../components/domain/CustomerCard';
 import { CreateOrderModal } from '../components/domain/CreateOrderModal';
 import { SepaMandatKarte } from '../components/domain/SepaMandatKarte';
 import { useAuth } from '../context/AuthContext';
+import { KAUFMAENNISCHE_ROLLEN, ROLLEN_OHNE_HALLE, hatEineRolle, ohneKonditionen } from '../services/rollen';
 import {
   Button,
   Input,
@@ -51,6 +52,10 @@ export default function Customers() {
   const toast = useToast();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  // Die Halle pflegt Kunden ohne Konditionen (P4-D.3): kein Sonderpreis-Knopf,
+  // kein Excel-Import — der Server sperrt beides für sie (P4-D.2, /imports).
+  const { user } = useAuth();
+  const ohneHalle = hatEineRolle(user?.roles, ROLLEN_OHNE_HALLE);
 
   const [search, setSearch] = useState('');
   const debouncedSearch = useDebounce(search.trim(), 300);
@@ -102,7 +107,9 @@ export default function Customers() {
         subtitle={`${customers.length} Kunden`}
         actions={
           <div className="flex gap-2 items-center">
-            <ExcelImport entity="customers" onImported={() => queryClient.invalidateQueries({ queryKey: ['customers'] })} />
+            {ohneHalle && (
+              <ExcelImport entity="customers" onImported={() => queryClient.invalidateQueries({ queryKey: ['customers'] })} />
+            )}
             <Button icon={<Plus className="w-4 h-4" />} onClick={() => setIsCreating(true)}>
               Neuer Kunde
             </Button>
@@ -148,13 +155,15 @@ export default function Customers() {
                 onCreateOrder={() => setOrderForCustomer(customer)}
                 onManageSubscriptions={() => navigate('/subscriptions')}
               />
-              <button
-                className="absolute top-3 right-3 text-gray-400 hover:text-amber-600 dark:text-gray-500 dark:hover:text-amber-300"
-                title="Sonderpreise verwalten"
-                onClick={(e) => { e.stopPropagation(); setPricesFor(customer); }}
-              >
-                <Tag className="w-4 h-4" />
-              </button>
+              {ohneHalle && (
+                <button
+                  className="absolute top-3 right-3 text-gray-400 hover:text-amber-600 dark:text-gray-500 dark:hover:text-amber-300"
+                  title="Sonderpreise verwalten"
+                  onClick={(e) => { e.stopPropagation(); setPricesFor(customer); }}
+                >
+                  <Tag className="w-4 h-4" />
+                </button>
+              )}
               {customer.pfand_abrechnung === 'MONATLICH' && (
                 <button
                   className="absolute top-3 right-10 text-gray-400 hover:text-minga-600 dark:text-gray-500 dark:hover:text-minga-300"
@@ -254,6 +263,14 @@ function CustomerForm({ customer, onSubmit, onCancel }: CustomerFormProps) {
   const { user } = useAuth();
   const darfBankdaten = ['admin', 'accounting'].some((r) => user?.roles?.includes(r));
   const istAdmin = !!user?.roles?.includes('admin');
+  // Konditionen und Aktiv-Schalter ändern nur Verwaltung, Vertrieb, Buchhaltung —
+  // wie der Server (kundenfeldschutz, P4-D.1). Die Planung sieht die Werte gesperrt.
+  const kaufmaennisch = hatEineRolle(user?.roles, KAUFMAENNISCHE_ROLLEN);
+  // Die Halle sieht keine Konditionen (der Server liefert null, P4-D.2) und
+  // schickt sie nicht mit (P4-D.3). Haupt-E-Mail und Empfänger ändert sie nur
+  // bei der Neuanlage (kundenfeldschutz, Paket 3).
+  const ohneHalle = hatEineRolle(user?.roles, ROLLEN_OHNE_HALLE);
+  const empfaengerGesperrt = !!customer && !ohneHalle;
   const [loading, setLoading] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [formData, setFormData] = useState({
@@ -330,11 +347,15 @@ function CustomerForm({ customer, onSubmit, onCancel }: CustomerFormProps) {
         invoice_emails: adressListe(formData.invoice_emails),
       };
 
+      // Halle: ohne Konditionsfelder. Sonst würden aus den ausgeblendeten Werten
+      // (null) die Vorgaben des Formulars, und der Server lehnte ab (P4-D.3).
+      // Neue Kunden der Halle bekommen die Standardkonditionen des Servers.
+      const daten = ohneHalle ? payload : ohneKonditionen(payload);
       let saved: Customer;
       if (customer) {
-        saved = await salesApi.updateCustomer(customer.id, payload);
+        saved = await salesApi.updateCustomer(customer.id, daten);
       } else {
-        saved = await salesApi.createCustomer(payload);
+        saved = await salesApi.createCustomer(daten);
       }
       onSubmit(saved);
     } catch (error: any) {
@@ -367,6 +388,7 @@ function CustomerForm({ customer, onSubmit, onCancel }: CustomerFormProps) {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <Input
           label="E-Mail (Hauptkontakt)"
+          disabled={empfaengerGesperrt}
           type="email"
           value={formData.email}
           onChange={(e) => setFormData({ ...formData, email: e.target.value })}
@@ -409,20 +431,30 @@ function CustomerForm({ customer, onSubmit, onCancel }: CustomerFormProps) {
           value={formData.liefertage}
           onChange={(value) => setFormData({ ...formData, liefertage: value })}
         />
-        <Select
-          label="Zahlungsziel"
-          options={paymentTermsOptions}
-          value={formData.payment_terms}
-          onChange={(e) => setFormData({ ...formData, payment_terms: e.target.value })}
-        />
+        {ohneHalle && (
+          <Select
+            label="Zahlungsziel"
+            disabled={!kaufmaennisch}
+            options={paymentTermsOptions}
+            value={formData.payment_terms}
+            onChange={(e) => setFormData({ ...formData, payment_terms: e.target.value })}
+          />
+        )}
       </div>
 
-      {/* Rabatte + Skonto + Verpackungsgebühr */}
+      {/* Rabatte + Skonto + Verpackungsgebühr — nicht für die Halle (P4-D.3) */}
+      {ohneHalle && (
       <div className="bg-gray-50 dark:bg-gray-700/30 p-4 rounded-lg space-y-3">
         <h4 className="font-medium text-sm text-gray-700 dark:text-gray-300">Konditionen</h4>
+        {!kaufmaennisch && (
+          <p className="text-xs text-gray-500 dark:text-gray-400">
+            Konditionen ändern Verwaltung, Vertrieb und Buchhaltung.
+          </p>
+        )}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <Input
             label="Jahresrabatt %"
+            disabled={!kaufmaennisch}
             type="number"
             step="0.01"
             min={0}
@@ -432,6 +464,7 @@ function CustomerForm({ customer, onSubmit, onCancel }: CustomerFormProps) {
           />
           <Input
             label="Skonto %"
+            disabled={!kaufmaennisch}
             type="number"
             step="0.01"
             min={0}
@@ -441,6 +474,7 @@ function CustomerForm({ customer, onSubmit, onCancel }: CustomerFormProps) {
           />
           <Input
             label="Skontofrist (Tage)"
+            disabled={!kaufmaennisch}
             type="number"
             min={0}
             max={90}
@@ -449,6 +483,7 @@ function CustomerForm({ customer, onSubmit, onCancel }: CustomerFormProps) {
           />
           <Input
             label="Verpackungsgebühr (€)"
+            disabled={!kaufmaennisch}
             type="number"
             step="0.01"
             min={0}
@@ -468,6 +503,7 @@ function CustomerForm({ customer, onSubmit, onCancel }: CustomerFormProps) {
         <div className="mt-4">
           <Select
             label="Pfandabrechnung"
+            disabled={!kaufmaennisch}
             options={pfandAbrechnungOptions}
             value={formData.pfand_abrechnung}
             onChange={(e) => setFormData({ ...formData, pfand_abrechnung: e.target.value as PfandAbrechnung })}
@@ -481,6 +517,7 @@ function CustomerForm({ customer, onSubmit, onCancel }: CustomerFormProps) {
         <div className="mt-4">
           <Select
             label="Abrechnung"
+            disabled={!kaufmaennisch}
             options={invoiceModeOptions}
             value={formData.invoice_mode}
             onChange={(e) => setFormData({ ...formData, invoice_mode: e.target.value as InvoiceMode })}
@@ -490,6 +527,7 @@ function CustomerForm({ customer, onSubmit, onCancel }: CustomerFormProps) {
           </p>
         </div>
       </div>
+      )}
 
       {/* Belegversand (Paket 3, Q2): eine Mail an alle Adressen der Belegart */}
       <div className="bg-gray-50 dark:bg-gray-700/30 p-4 rounded-lg space-y-3">
@@ -498,9 +536,15 @@ function CustomerForm({ customer, onSubmit, onCancel }: CustomerFormProps) {
           Eine Adresse je Zeile. Alle Adressen einer Belegart stehen gemeinsam im An-Feld einer Mail.
           Leer = Haupt-E-Mail des Kunden.
         </p>
+        {empfaengerGesperrt && (
+          <p className="text-xs text-gray-500 dark:text-gray-400">
+            Haupt-E-Mail und Empfänger ändern Verwaltung, Vertrieb, Buchhaltung und Planung.
+          </p>
+        )}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <Textarea
             label="Auftragsbestätigung an"
+            disabled={empfaengerGesperrt}
             error={fieldErrors.confirmation_emails}
             rows={3}
             value={formData.confirmation_emails}
@@ -508,6 +552,7 @@ function CustomerForm({ customer, onSubmit, onCancel }: CustomerFormProps) {
           />
           <Textarea
             label="Lieferschein an"
+            disabled={empfaengerGesperrt}
             error={fieldErrors.delivery_note_emails}
             rows={3}
             value={formData.delivery_note_emails}
@@ -515,6 +560,7 @@ function CustomerForm({ customer, onSubmit, onCancel }: CustomerFormProps) {
           />
           <Textarea
             label="Rechnung an"
+            disabled={empfaengerGesperrt}
             error={fieldErrors.invoice_emails}
             rows={3}
             value={formData.invoice_emails}
@@ -527,10 +573,16 @@ function CustomerForm({ customer, onSubmit, onCancel }: CustomerFormProps) {
         <input
           type="checkbox"
           checked={formData.aktiv}
+          disabled={!kaufmaennisch}
           onChange={(e) => setFormData({ ...formData, aktiv: e.target.checked })}
           className="w-4 h-4 rounded border-gray-300 dark:border-gray-600 text-minga-600 dark:text-minga-400 focus:ring-minga-500"
         />
         <span className="text-sm text-gray-700 dark:text-gray-300">Aktiv</span>
+        {!kaufmaennisch && (
+          <span className="text-xs text-gray-500 dark:text-gray-400">
+            (deaktivieren und reaktivieren Verwaltung, Vertrieb, Buchhaltung)
+          </span>
+        )}
       </label>
 
       {customer ? (
@@ -597,7 +649,11 @@ function AddressList({ customerId }: { customerId: string }) {
   const deleteMutation = useMutation({
     mutationFn: (id: string) => salesApi.deleteAddress(customerId, id),
     onSuccess: () => { invalidate(); toast.success('Adresse gelöscht'); },
+    onError: (e) => toast.error(getErrorMessage(e, 'Löschen fehlgeschlagen')),
   });
+  // Löschen nur ohne die Halle — wie der Server (P4-D.1)
+  const { user } = useAuth();
+  const darfLoeschen = hatEineRolle(user?.roles, ROLLEN_OHNE_HALLE);
 
   const typeOptions: SelectOption[] = [
     { value: 'BILLING', label: 'Rechnungsadresse' },
@@ -629,7 +685,9 @@ function AddressList({ customerId }: { customerId: string }) {
                   {a.plz} {a.ort} {a.land !== 'DE' && `(${a.land})`}
                 </div>
               </div>
-              <Button type="button" variant="ghost" size="sm" icon={<Trash className="w-4 h-4" />} onClick={() => deleteMutation.mutate(a.id)} />
+              {darfLoeschen && (
+                <Button type="button" variant="ghost" size="sm" icon={<Trash className="w-4 h-4" />} onClick={() => deleteMutation.mutate(a.id)} />
+              )}
             </div>
           ))}
         </div>
@@ -745,7 +803,11 @@ function ContactList({ customerId }: { customerId: string }) {
       invalidate();
       toast.success('Ansprechpartner gelöscht');
     },
+    onError: (e) => toast.error(getErrorMessage(e, 'Löschen fehlgeschlagen')),
   });
+  // Löschen nur ohne die Halle — wie der Server (P4-D.1)
+  const { user } = useAuth();
+  const darfLoeschen = hatEineRolle(user?.roles, ROLLEN_OHNE_HALLE);
 
   const roleOptions: SelectOption[] = [
     { value: 'ALLGEMEIN', label: 'Allgemein' },
@@ -773,13 +835,15 @@ function ContactList({ customerId }: { customerId: string }) {
                   {c.role} · {c.email || '–'} · {c.telefon || '–'}
                 </div>
               </div>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                icon={<Trash className="w-4 h-4" />}
-                onClick={() => deleteMutation.mutate(c.id)}
-              />
+              {darfLoeschen && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  icon={<Trash className="w-4 h-4" />}
+                  onClick={() => deleteMutation.mutate(c.id)}
+                />
+              )}
             </div>
           ))}
         </div>
