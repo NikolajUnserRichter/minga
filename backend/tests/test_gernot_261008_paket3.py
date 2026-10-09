@@ -504,7 +504,7 @@ class TestQ1AndereWege:
         assert r.status_code == 200, r.text
         assert r.json()["document_number"] == _q1_nr(1)  # Antwort seit Q2: Protokollzeile
         assert _q1_nr(1) in gesendet["subject"]
-        assert gesendet["attachment_filename"] == f"{_q1_nr(1)}.pdf"
+        assert gesendet["attachment_filename"] == f"{_q1_nr(1)}_Oekoring-Handels-GmbH.pdf"  # Paket 4, C
         detail = client.get(f"/api/v1/invoices/{entwurf['id']}").json()
         assert detail["status"] == "OFFEN"
         assert detail["sent_at"] is not None
@@ -1846,7 +1846,7 @@ class TestQ3Downloads:
         r = client.get(f"/api/v1/invoices/{rechnung['id']}/pdf")
 
         assert r.status_code == 200, r.text
-        assert r.headers["content-disposition"] == _q3_kopf(f"{nummer}.pdf")
+        assert r.headers["content-disposition"] == _q3_kopf(f"{nummer}_Fruchthof-Nagel.pdf")  # Paket 4, C
 
     def test_rechnungsentwurf_heisst_entwurf(self, client):
         """Ein Entwurf darf im Download-Ordner nicht wie die ausgestellte
@@ -1857,7 +1857,7 @@ class TestQ3Downloads:
         r = client.get(f"/api/v1/invoices/{rechnung['id']}/pdf")
 
         assert r.status_code == 200, r.text
-        assert r.headers["content-disposition"] == _q3_kopf("Entwurf-RE-2026-00003.pdf")
+        assert r.headers["content-disposition"] == _q3_kopf("Entwurf-RE-2026-00003_Fruchthof-Nagel.pdf")  # Paket 4, C
 
     def test_entwurf_mit_platzhalter(self, client):
         rechnung = _q3_rechnungsentwurf(client)
@@ -1866,7 +1866,7 @@ class TestQ3Downloads:
         r = client.get(f"/api/v1/invoices/{rechnung['id']}/pdf")
 
         assert r.status_code == 200, r.text
-        assert r.headers["content-disposition"] == _q3_kopf("Entwurf-AB12CD34EF56.pdf")
+        assert r.headers["content-disposition"] == _q3_kopf("Entwurf-AB12CD34EF56_Fruchthof-Nagel.pdf")  # Paket 4, C
 
     def test_ab_lieferschein_und_packliste(self, client):
         """Name war schon die Nummer; neu ist filename* (RFC 5987)."""
@@ -1876,10 +1876,11 @@ class TestQ3Downloads:
         r_ls = client.get(f"/api/v1/sales/delivery-notes/{ls['id']}/pdf")
         r_pl = client.get(f"/api/v1/sales/delivery-notes/{ls['id']}/packing-list/pdf")
 
-        assert r_ab.headers["content-disposition"] == _q3_kopf(f"{ab['confirmation_number']}.pdf")
-        assert r_ls.headers["content-disposition"] == _q3_kopf(f"{ls['delivery_note_number']}.pdf")
+        # Paket 4, C: Nummer und Kundenname
+        assert r_ab.headers["content-disposition"] == _q3_kopf(f"{ab['confirmation_number']}_Fruchthof-Nagel.pdf")
+        assert r_ls.headers["content-disposition"] == _q3_kopf(f"{ls['delivery_note_number']}_Fruchthof-Nagel.pdf")
         assert r_pl.headers["content-disposition"] == _q3_kopf(
-            f"{ls['packing_list']['packing_list_number']}.pdf")
+            f"{ls['packing_list']['packing_list_number']}_Fruchthof-Nagel.pdf")
 
     def test_browser_darf_den_namen_lesen(self, client):
         """Im Entwicklungsbetrieb (Vite :5173 → API :8000) ist der Abruf
@@ -1908,7 +1909,7 @@ class TestQ3Mailanhang:
                         params={"to_email": "einkauf@fruchthof.example"})
 
         assert r.status_code == 200, r.text
-        assert versendet["attachment_filename"] == f"{nummer}.pdf"
+        assert versendet["attachment_filename"] == f"{nummer}_Fruchthof-Nagel.pdf"  # Paket 4, C
 
     def test_altentwurf_mailen(self, client, monkeypatch):
         """'Mailen' stellt einen Alt-Entwurf heute mit dem Versand aus
@@ -1922,7 +1923,7 @@ class TestQ3Mailanhang:
                         params={"to_email": "einkauf@fruchthof.example"})
 
         assert r.status_code == 200, r.text
-        assert versendet["attachment_filename"] == "RE-2026-00003.pdf"
+        assert versendet["attachment_filename"] == "RE-2026-00003_Fruchthof-Nagel.pdf"  # Paket 4, C
 
     def test_ab_mailen(self, client, monkeypatch):
         ab, _ = _q3_belegkette(client)
@@ -1932,7 +1933,7 @@ class TestQ3Mailanhang:
                          json={"sent_to_email": "einkauf@fruchthof.example"})
 
         assert r.status_code == 200, r.text
-        assert versendet["attachment_filename"] == f"{ab['confirmation_number']}.pdf"
+        assert versendet["attachment_filename"] == f"{ab['confirmation_number']}_Fruchthof-Nagel.pdf"  # Paket 4, C
 
 
 
@@ -2504,7 +2505,7 @@ class TestQ2AbVersand:
         assert mail["msg"]["To"] == "rechnung@oekoring.example, einkauf@oekoring.example"
         assert mail["msg"]["Cc"] == "chef@oekoring.example"
         dateiname, pdf = _q2_anhang(mail)
-        assert dateiname == f"{ab['confirmation_number']}.pdf"
+        assert dateiname == f"{ab['confirmation_number']}_Oekoring-Handels-GmbH.pdf"  # Paket 4, C
         antwort = r.json()
         assert antwort["status"] == "VERSENDET"
         assert antwort["sent_at"] is not None
@@ -2677,7 +2678,7 @@ class TestQ2LsVersand:
         [mail] = _q2_smtp.gesendet
         assert mail["umschlag"] == ["lager@oekoring.example", "einkauf@oekoring.example"]
         dateiname, pdf = _q2_anhang(mail)
-        assert dateiname == f"{ls['delivery_note_number']}.pdf"
+        assert dateiname == f"{ls['delivery_note_number']}_Oekoring-Handels-GmbH.pdf"  # Paket 4, C
         antwort = r.json()
         assert antwort["status"] == "AUSGESTELLT"
         [zeile] = antwort["dispatches"]
@@ -2780,7 +2781,7 @@ class TestQ2Rechnungsversand:
         assert detail["invoice_number"].startswith("RE-")
         assert zeile["document_number"] == detail["invoice_number"]
         dateiname, pdf = _q2_anhang(mail)
-        assert dateiname == f"{detail['invoice_number']}.pdf"
+        assert dateiname == f"{detail['invoice_number']}_Oekoring-Handels-GmbH.pdf"  # Paket 4, C
         assert zeile["attachment_sha256"] == _q2_sha(pdf)
         assert detail["status"] == "OFFEN"
         assert detail["sent_at"] is not None

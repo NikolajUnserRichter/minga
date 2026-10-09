@@ -10,7 +10,8 @@ Regeln:
   die Liste nur auf ausdrücklichen Wunsch (`use_customer_recipients`).
 - An und Cc zusammen höchstens MAX_EMPFAENGER — geprüft, nachdem die
   Kundenliste aufgelöst ist (`empfaenger_fuer_versand`).
-- Anhang heißt wie der Beleg (`beleg_dateiname`, Q3).
+- Anhang heißt wie der Beleg: Nummer und Kundenname (`beleg_dateiname`, Q3;
+  Kundenname Paket 4, C — Parameter `kunde`).
 - Protokolliert wird nur Erfolg (auch Teilerfolg); scheitert der Versand,
   wirft send_email und es entsteht keine Zeile. Nichts hier committet.
 """
@@ -168,11 +169,12 @@ def versende_beleg(
     confirmation_id: Optional[UUID] = None,
     delivery_note_id: Optional[UUID] = None,
     invoice_id: Optional[UUID] = None,
+    kunde: Optional[str] = None,
 ) -> DocumentDispatch:
     """Schickt EINE Mail mit dem PDF an alle Empfänger und legt die
     Protokollzeile an (flush, kein commit). Fehler beim Versand
     (EmailNotConfiguredError, SMTP-Fehler) gehen unverändert an den Aufrufer."""
-    dateiname = beleg_dateiname(document_number)
+    dateiname = beleg_dateiname(document_number, kunde=kunde)
     ergebnis = send_email(
         db=db,
         to=list(an),
@@ -219,6 +221,7 @@ def markiere_ohne_mail(
     order_id: Optional[UUID] = None,
     confirmation_id: Optional[UUID] = None,
     delivery_note_id: Optional[UUID] = None,
+    kunde: Optional[str] = None,
 ) -> DocumentDispatch:
     """Protokollzeile für „ohne Mail als versendet/ausgestellt markiert".
     Die Prüfsumme hält fest, mit welchem Inhalt der Beleg herausging."""
@@ -233,7 +236,7 @@ def markiere_ohne_mail(
         status=DispatchStatus.NUR_MARKIERT,
         to_addrs=[],
         cc_addrs=[],
-        attachment_filename=beleg_dateiname(document_number),
+        attachment_filename=beleg_dateiname(document_number, kunde=kunde),
         attachment_sha256=pdf_pruefsumme(pdf),
         sent_at=datetime.now(timezone.utc),
         sent_by_id=benutzer_id,

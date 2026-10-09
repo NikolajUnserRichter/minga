@@ -85,14 +85,30 @@ def beleg_dateiname(nummer: Optional[str], *, entwurf: bool = False, kunde: Opti
     return f"{name}_{teil}.pdf" if teil else f"{name}.pdf"
 
 
+def bestellkunde(order) -> Optional[str]:
+    """Kundenname für AB, Lieferschein und Packliste: der Name, den ihr PDF
+    druckt (order.customer.name)."""
+    return getattr(getattr(order, "customer", None), "name", None)
+
+
+def rechnung_kunde(invoice) -> Optional[str]:
+    """Kundenname für Download und Mailanhang einer Rechnung: der Empfänger
+    im PDF (pdf_service.rechnungsempfaenger) — bei ausgestellten Rechnungen
+    der beim Festschreiben eingefrorene Name, beim Entwurf der aktuelle."""
+    from app.services.pdf_service import rechnungsempfaenger
+    return rechnungsempfaenger(invoice, invoice.status == InvoiceStatus.ENTWURF).get("name")
+
+
 def rechnung_dateiname(invoice) -> str:
     """Dateiname für den Download einer Rechnung: Entwürfe heißen ``Entwurf-…``.
 
     Nicht für den Mailanhang: ``POST /invoices/{id}/send`` stellt einen
     Entwurf mit dem Versand aus, der Anhang heißt wie die Rechnung
-    (``beleg_dateiname(invoice.invoice_number)``).
+    (``beleg_dateiname(invoice.invoice_number, kunde=rechnung_kunde(invoice))``).
     """
-    return beleg_dateiname(invoice.invoice_number, entwurf=invoice.status == InvoiceStatus.ENTWURF)
+    return beleg_dateiname(
+        invoice.invoice_number, entwurf=invoice.status == InvoiceStatus.ENTWURF, kunde=rechnung_kunde(invoice),
+    )
 
 
 def content_disposition(dateiname: str, art: str = "attachment") -> str:

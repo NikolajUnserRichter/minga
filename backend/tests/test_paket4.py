@@ -1003,3 +1003,184 @@ class TestP4CDateiname:
         assert name == "AB-20261009-0001_Hamberger-Grossmarkt-GmbH-Co-KG.pdf"
         assert re.fullmatch(r"[A-Za-z0-9._-]+", name)
         assert content_disposition(name) == f"attachment; filename=\"{name}\"; filename*=UTF-8''{name}"
+
+
+# ---------------------------------------- Abschnitt C: Download und Mailanhang (C.2)
+
+def _p4c_kunde(client, name="Fruchthof Nagel GmbH", **extra):
+    r = client.post("/api/v1/sales/customers", json={"name": name, "typ": "HANDEL", **extra})
+    assert r.status_code == 201, r.text
+    return r.json()
+
+
+def _p4c_bestellung(client, kunde, liefertag=None) -> str:
+    from datetime import date
+    r = client.post("/api/v1/sales/orders", json={
+        "customer_id": kunde["id"],
+        "requested_delivery_date": (liefertag or date.today()).isoformat(),
+        "lines": [{"product_name": "Erbsen-Schale", "quantity": 10, "unit": "STK",
+                   "unit_price": 2.50, "tax_rate": "REDUZIERT"}],
+    })
+    assert r.status_code == 201, r.text
+    return r.json()["id"]
+
+
+def _p4c_rechnung(client, order_id, finalisieren=True) -> dict:
+    r = client.post(f"/api/v1/invoices/from-order/{order_id}")
+    assert r.status_code == 201, r.text
+    if finalisieren:
+        f = client.post(f"/api/v1/invoices/{r.json()['id']}/finalize")
+        assert f.status_code == 200, f.text
+        return f.json()
+    return r.json()
+
+
+def _p4c_kopf(name: str) -> str:
+    return f"attachment; filename=\"{name}\"; filename*=UTF-8''{name}"
+
+
+@pytest.fixture
+def _p4c_mails(monkeypatch):
+    """Beleg-Mails abfangen (belegversand.send_email), SMTP über die Umgebung 'konfiguriert'."""
+    from app.services.email_service import VersandErgebnis
+    monkeypatch.setenv("SMTP_HOST", "smtp.farm.example")
+    monkeypatch.setenv("SMTP_USER", "versand@farm.example")
+    gesendet = []
+
+    def senden(**kw):
+        gesendet.append(kw)
+        return VersandErgebnis(message_id=f"<p4c{len(gesendet)}@test.example>")
+
+    monkeypatch.setattr("app.services.belegversand.send_email", senden)
+    return gesendet
+
+
+class TestP4CDateinameDownloads:
+    """Download (Content-Disposition) mit Kundennamen: AB, LS, PL, Rechnung, Sammelrechnung."""
+
+    def test_ab_lieferschein_packliste(self, client):
+        kunde = _p4c_kunde(client, "Ökoring Handels GmbH")
+        order_id = _p4c_bestellung(client, kunde)
+        ab = client.post(f"/api/v1/sales/orders/{order_id}/confirmations", json={}).json()
+        ls = client.post(f"/api/v1/sales/orders/{order_id}/delivery-notes", json={}).json()
+
+        r_ab = client.get(f"/api/v1/sales/confirmations/{ab['id']}/pdf")
+        r_ls = client.get(f"/api/v1/sales/delivery-notes/{ls['id']}/pdf")
+        r_pl = client.get(f"/api/v1/sales/delivery-notes/{ls['id']}/packing-list/pdf")
+
+        assert r_ab.headers["content-disposition"] == _p4c_kopf(
+            f"{ab['confirmation_number']}_Oekoring-Handels-GmbH.pdf")
+        assert r_ls.headers["content-disposition"] == _p4c_kopf(
+            f"{ls['delivery_note_number']}_Oekoring-Handels-GmbH.pdf")
+        assert r_pl.headers["content-disposition"] == _p4c_kopf(
+            f"{ls['packing_list']['packing_list_number']}_Oekoring-Handels-GmbH.pdf")
+
+    def test_rechnung_nimmt_den_namen_vom_beleg(self, client):
+        """Ausgestellt: der beim Festschreiben eingefrorene Empfängername (wie im
+        PDF, GoBD) — eine spätere Umbenennung des Kunden ändert den Namen nicht.
+        Entwurf: der aktuelle Kundenname."""
+        kunde = _p4c_kunde(client)
+        rechnung = _p4c_rechnung(client, _p4c_bestellung(client, kunde))
+        entwurf = _p4c_rechnung(client, _p4c_bestellung(client, kunde), finalisieren=False)
+        r = client.patch(f"/api/v1/sales/customers/{kunde['id']}", json={"name": "Fruchthof Nagel KG"})
+        assert r.status_code == 200, r.text
+
+        r_re = client.get(f"/api/v1/invoices/{rechnung['id']}/pdf")
+        r_ent = client.get(f"/api/v1/invoices/{entwurf['id']}/pdf")
+
+        assert r_re.headers["content-disposition"] == _p4c_kopf(
+            f"{rechnung['invoice_number']}_Fruchthof-Nagel-GmbH.pdf")
+        platzhalter = entwurf["invoice_number"].removeprefix("ENTWURF-")
+        assert r_ent.headers["content-disposition"] == _p4c_kopf(
+            f"Entwurf-{platzhalter}_Fruchthof-Nagel-KG.pdf")
+
+    def test_sammelrechnung(self, client):
+        from datetime import date
+        kunde = _p4c_kunde(client, "Hamberger Großmarkt GmbH")
+        for _ in range(2):
+            order_id = _p4c_bestellung(client, kunde)
+            assert client.post(f"/api/v1/sales/orders/{order_id}/delivery-notes", json={}).status_code == 201
+        heute = date.today().isoformat()
+        r = client.post("/api/v1/invoices/batch-run/commit", json={
+            "period_from": heute, "period_to": heute, "customer_ids": [kunde["id"]]})
+        assert r.status_code == 201, r.text
+        sammel = r.json()["rechnungen"][0]
+        f = client.post(f"/api/v1/invoices/{sammel['id']}/finalize")
+        assert f.status_code == 200, f.text
+
+        r_pdf = client.get(f"/api/v1/invoices/{sammel['id']}/pdf")
+
+        assert r_pdf.headers["content-disposition"] == _p4c_kopf(
+            f"{f.json()['invoice_number']}_Hamberger-Grossmarkt-GmbH.pdf")
+
+
+class TestP4CDateinameMail:
+    """Mailanhang und Versandprotokoll heißen wie der Download."""
+
+    def test_rechnung_mailen(self, client, _p4c_mails):
+        kunde = _p4c_kunde(client, "Ökoring Handels GmbH")
+        rechnung = _p4c_rechnung(client, _p4c_bestellung(client, kunde))
+
+        r = client.post(f"/api/v1/invoices/{rechnung['id']}/send", json={"to": ["rechnung@oekoring.example"]})
+
+        assert r.status_code == 200, r.text
+        name = f"{rechnung['invoice_number']}_Oekoring-Handels-GmbH.pdf"
+        assert _p4c_mails[0]["attachment_filename"] == name
+        assert r.json()["attachment_filename"] == name
+
+    def test_entwurf_mailen_heisst_wie_die_ausgestellte_rechnung(self, client, _p4c_mails):
+        kunde = _p4c_kunde(client, "Ökoring Handels GmbH")
+        entwurf = _p4c_rechnung(client, _p4c_bestellung(client, kunde), finalisieren=False)
+
+        r = client.post(f"/api/v1/invoices/{entwurf['id']}/send", json={"to": ["rechnung@oekoring.example"]})
+
+        assert r.status_code == 200, r.text
+        assert r.json()["attachment_filename"] == f"{r.json()['document_number']}_Oekoring-Handels-GmbH.pdf"
+
+    def test_ab_und_lieferschein_mailen_und_markieren(self, client, _p4c_mails):
+        kunde = _p4c_kunde(client)
+        order_id = _p4c_bestellung(client, kunde)
+        ab = client.post(f"/api/v1/sales/orders/{order_id}/confirmations", json={}).json()
+        ls = client.post(f"/api/v1/sales/orders/{order_id}/delivery-notes", json={}).json()
+
+        r_ab = client.patch(f"/api/v1/sales/confirmations/{ab['id']}/send", json={"to": ["einkauf@fruchthof.example"]})
+        r_ls = client.post(f"/api/v1/sales/delivery-notes/{ls['id']}/send", json={})  # ohne Mail: nur markiert
+
+        assert r_ab.status_code == 200, r_ab.text
+        assert r_ls.status_code == 200, r_ls.text
+        assert _p4c_mails[0]["attachment_filename"] == f"{ab['confirmation_number']}_Fruchthof-Nagel-GmbH.pdf"
+        assert r_ab.json()["dispatches"][0]["attachment_filename"] == (
+            f"{ab['confirmation_number']}_Fruchthof-Nagel-GmbH.pdf")
+        assert r_ls.json()["dispatches"][0]["status"] == "NUR_MARKIERT"
+        assert r_ls.json()["dispatches"][0]["attachment_filename"] == (
+            f"{ls['delivery_note_number']}_Fruchthof-Nagel-GmbH.pdf")
+
+    def test_erneuter_versand_nach_der_umstellung_ohne_409(self, client, _p4c_mails):
+        """Der Versandnachweis vergleicht die Prüfsumme des PDF-Inhalts, nicht
+        den Dateinamen: Ein Beleg, der vor dem Deploy als „AB-….pdf“ hinausging,
+        geht danach erneut hinaus — unter dem neuen Namen, mit derselben Prüfsumme."""
+        from app.models.documents import DocumentDispatch
+        from tests.conftest import TestingSessionLocal
+        kunde = _p4c_kunde(client)
+        order_id = _p4c_bestellung(client, kunde)
+        ab = client.post(f"/api/v1/sales/orders/{order_id}/confirmations", json={}).json()
+        ls = client.post(f"/api/v1/sales/orders/{order_id}/delivery-notes", json={}).json()
+        assert client.patch(f"/api/v1/sales/confirmations/{ab['id']}/send",
+                            json={"to": ["einkauf@fruchthof.example"]}).status_code == 200
+        assert client.post(f"/api/v1/sales/delivery-notes/{ls['id']}/send",
+                           json={"to": ["einkauf@fruchthof.example"]}).status_code == 200
+        with TestingSessionLocal() as db:  # Stand vor dem Deploy: Name nur die Nummer
+            for zeile in db.query(DocumentDispatch).all():
+                zeile.attachment_filename = f"{zeile.document_number}.pdf"
+            db.commit()
+
+        r_ab = client.patch(f"/api/v1/sales/confirmations/{ab['id']}/send", json={"to": ["chef@fruchthof.example"]})
+        r_ls = client.post(f"/api/v1/sales/delivery-notes/{ls['id']}/send", json={"to": ["chef@fruchthof.example"]})
+
+        assert r_ab.status_code == 200, r_ab.text
+        assert r_ls.status_code == 200, r_ls.text
+        for antwort, nummer in ((r_ab, ab["confirmation_number"]), (r_ls, ls["delivery_note_number"])):
+            namen = sorted(d["attachment_filename"] for d in antwort.json()["dispatches"])
+            assert namen == sorted([f"{nummer}.pdf", f"{nummer}_Fruchthof-Nagel-GmbH.pdf"])
+            assert len({d["attachment_sha256"] for d in antwort.json()["dispatches"]}) == 1
+        assert len(_p4c_mails) == 4

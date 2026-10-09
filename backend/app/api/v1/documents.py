@@ -30,7 +30,7 @@ from app.models.order import Order, OrderStatus
 from app.models.documents import (
     OrderConfirmation, DeliveryNote, PackingList,
 )
-from app.services.beleg_dateiname import beleg_dateiname, content_disposition
+from app.services.beleg_dateiname import beleg_dateiname, bestellkunde, content_disposition
 from app.models.enums import ConfirmationStatus, DeliveryNoteStatus, DispatchDocType
 from app.schemas.documents import (
     OrderConfirmationCreate, OrderConfirmationResponse, OrderConfirmationSend,
@@ -151,7 +151,7 @@ def send_confirmation(conf_id: UUID, data: OrderConfirmationSend, db: DBSession,
         markiere_ohne_mail(
             db, doc_type=DispatchDocType.AB, document_number=conf.confirmation_number,
             pdf=pdf, user=user, customer_id=order.customer_id, order_id=order.id,
-            confirmation_id=conf.id,
+            confirmation_id=conf.id, kunde=bestellkunde(order),
         )
         conf.status = ConfirmationStatus.VERSENDET
         db.commit()
@@ -197,6 +197,7 @@ def send_confirmation(conf_id: UUID, data: OrderConfirmationSend, db: DBSession,
             customer_id=order.customer_id,
             order_id=order.id,
             confirmation_id=conf.id,
+            kunde=bestellkunde(order),
         )
     except EmailNotConfiguredError as e:
         raise HTTPException(status_code=503, detail=str(e))
@@ -232,7 +233,8 @@ def download_confirmation_pdf(conf_id: UUID, db: DBSession):
     return StreamingResponse(
         BytesIO(pdf),
         media_type="application/pdf",
-        headers={"Content-Disposition": content_disposition(beleg_dateiname(conf.confirmation_number))},
+        headers={"Content-Disposition": content_disposition(
+            beleg_dateiname(conf.confirmation_number, kunde=bestellkunde(conf.order)))},
     )
 
 
@@ -348,7 +350,7 @@ def send_delivery_note(note_id: UUID, data: BelegVersandRequest, db: DBSession, 
         markiere_ohne_mail(
             db, doc_type=DispatchDocType.LS, document_number=note.delivery_note_number,
             pdf=pdf, user=user, customer_id=order.customer_id if order else None,
-            order_id=note.order_id, delivery_note_id=note.id,
+            order_id=note.order_id, delivery_note_id=note.id, kunde=bestellkunde(order),
         )
         note.status = DeliveryNoteStatus.AUSGESTELLT
         db.commit()
@@ -386,6 +388,7 @@ def send_delivery_note(note_id: UUID, data: BelegVersandRequest, db: DBSession, 
             customer_id=order.customer_id if order else None,
             order_id=note.order_id,
             delivery_note_id=note.id,
+            kunde=bestellkunde(order),
         )
     except EmailNotConfiguredError as e:
         raise HTTPException(status_code=503, detail=str(e))
@@ -481,7 +484,8 @@ def download_delivery_note_pdf(note_id: UUID, db: DBSession):
     return StreamingResponse(
         BytesIO(pdf),
         media_type="application/pdf",
-        headers={"Content-Disposition": content_disposition(beleg_dateiname(note.delivery_note_number))},
+        headers={"Content-Disposition": content_disposition(
+            beleg_dateiname(note.delivery_note_number, kunde=bestellkunde(note.order)))},
     )
 
 
@@ -501,5 +505,6 @@ def download_packing_list_pdf(note_id: UUID, db: DBSession):
     return StreamingResponse(
         BytesIO(pdf),
         media_type="application/pdf",
-        headers={"Content-Disposition": content_disposition(beleg_dateiname(note.packing_list.packing_list_number))},
+        headers={"Content-Disposition": content_disposition(
+            beleg_dateiname(note.packing_list.packing_list_number, kunde=bestellkunde(note.order)))},
     )

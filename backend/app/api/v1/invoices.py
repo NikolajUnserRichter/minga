@@ -38,7 +38,7 @@ from app.schemas.documents import DocumentDispatchResponse
 from app.services.email_service import pruefe_smtp_konfiguration
 from app.services.pdf_service import load_company_settings
 from app.services.sepa_service import LastschriftNichtMoeglich, versand_pruefen, zahlungszeile_fuer_mail
-from app.services.beleg_dateiname import beleg_dateiname, content_disposition, rechnung_dateiname
+from app.services.beleg_dateiname import beleg_dateiname, content_disposition, rechnung_dateiname, rechnung_kunde
 
 from app.api.deps import CurrentUser, require_role
 
@@ -514,6 +514,7 @@ def send_invoice_email(
             customer_id=invoice.customer_id,
             order_id=invoice.order_id,
             invoice_id=invoice.id,
+            kunde=rechnung_kunde(invoice),
         )
     except EmailNotConfiguredError as e:
         raise HTTPException(status_code=503, detail=f"{nicht_versendet}{e}")
