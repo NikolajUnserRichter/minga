@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Search, FileText, Download, AlertCircle, CheckCircle, Clock } from 'lucide-react';
+import { Plus, Search, FileText, Download, AlertCircle, CheckCircle, Clock, Mail } from 'lucide-react';
 import { invoicesApi, salesApi, productsApi, integrationsApi } from '../services/api';
 import { Invoice, InvoiceStatus, InvoiceType, Customer } from '../types';
 import { PageHeader, FilterBar } from '../components/common/Layout';
@@ -21,6 +21,8 @@ import { ListPageSkeleton } from '../components/ui/Skeleton';
 import { dateinameAusHeader } from '../services/dateiname';
 import { ladePdfHerunter } from '../services/print';
 import { getErrorMessage } from '../services/errors';
+import { BelegVersandAuftrag } from '../services/api';
+import { VersandFormular, VersandProtokoll, versandMeldung, versandZeile } from '../components/domain/BelegVersand';
 import { sammelrechnungApi, SammelrechnungVorschauKunde } from '../services/api';
 import { istEntwurfsnummer, rechnungsnummerAnzeige, FINALISIEREN_RUECKFRAGE } from '../services/rechnungsnummer';
 import { lexofficeStatusLabel } from '../components/ui/statusLabels';
@@ -66,6 +68,23 @@ export default function Invoices() {
   const [showDatevExport, setShowDatevExport] = useState(false);
   // Storno: Grund-Auswahl + Freitext, erzeugt die Stornorechnung
   const [stornoFuer, setStornoFuer] = useState<Invoice | null>(null);
+  // Versand per E-Mail (Paket 3, Q2)
+  const [versandFuer, setVersandFuer] = useState<Invoice | null>(null);
+  const versandMutation = useMutation({
+    mutationFn: ({ inv, auftrag }: { inv: Invoice; auftrag: BelegVersandAuftrag }) =>
+      invoicesApi.sendInvoice(inv.id, auftrag),
+    onSuccess: (zeile) => {
+      // Nummer aus der Protokollzeile: ein Entwurf bekommt sie erst mit dem Versand (Q1)
+      versandMeldung(toast, `Rechnung ${zeile.document_number}`, [zeile]);
+      setVersandFuer(null);
+      queryClient.invalidateQueries({ queryKey: ['invoices'] });
+    },
+    // Ein Entwurf ist vor dem Versand finalisiert worden — auch wenn die Mail scheitert (Q1)
+    onError: (e: any) => {
+      toast.error(getErrorMessage(e, 'Fehler beim Versand'));
+      queryClient.invalidateQueries({ queryKey: ['invoices'] });
+    },
+  });
   const [stornoGrundCode, setStornoGrundCode] = useState('FALSCHE_MENGE');
   const [stornoGrund, setStornoGrund] = useState('');
   // Sammelrechnung: Zeitraum → Vorschau → Festschreiben
@@ -369,6 +388,15 @@ export default function Invoices() {
                         ? 'Stornorechnung'
                         : TYPE_LABELS[invoice.invoice_type]}
                     </div>
+                    {invoice.dispatches && invoice.dispatches.length > 0 && (
+                      <div
+                        className="flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400 max-w-xs truncate"
+                        title={invoice.dispatches.map(versandZeile).join('\n')}
+                      >
+                        <Mail className="w-3 h-3 shrink-0" />
+                        {versandZeile(invoice.dispatches[invoice.dispatches.length - 1])}
+                      </div>
+                    )}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white">
                     {invoice.customer_name || '-'}
@@ -517,6 +545,17 @@ export default function Invoices() {
                         Zahlung
                       </Button>
                     )}
+                    {(invoice.status !== 'STORNIERT'
+                      || (invoice.invoice_type === 'GUTSCHRIFT' && !!invoice.original_invoice_id)) && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        icon={<Mail className="w-4 h-4" />}
+                        onClick={(e) => { e.stopPropagation(); setVersandFuer(invoice); }}
+                      >
+                        Versenden
+                      </Button>
+                    )}
                     <Button variant="ghost" size="sm" onClick={() => setSelectedInvoice(invoice)}>
                       {invoice.status === 'ENTWURF' ? 'Bearbeiten' : 'Details'}
                     </Button>
@@ -585,6 +624,37 @@ export default function Invoices() {
       {/* DATEV Export Modal */}
       <Modal open={showDatevExport} onClose={() => setShowDatevExport(false)} title="DATEV Export">
         <DatevExportForm onClose={() => setShowDatevExport(false)} />
+      </Modal>
+
+      {/* Versand per E-Mail: eine Mail an alle Empfänger (Paket 3, Q2) */}
+      <Modal
+        open={!!versandFuer}
+        onClose={() => setVersandFuer(null)}
+        title={`Rechnung ${rechnungsnummerAnzeige(versandFuer?.invoice_number)} versenden`}
+      >
+        {versandFuer && (
+          <div className="space-y-3">
+            {versandFuer.status === 'ENTWURF' && (
+              <Alert variant="info">
+                Der Entwurf wird beim Mailen finalisiert: Er erhält die nächste freie Rechnungsnummer und lässt sich danach nur noch stornieren.
+              </Alert>
+            )}
+            <VersandProtokoll eintraege={versandFuer.dispatches} />
+            <VersandFormular
+              belegart="RE"
+              belegNummer={rechnungsnummerAnzeige(versandFuer.invoice_number)}
+              customerId={versandFuer.customer_id}
+              pending={versandMutation.isPending}
+              onSenden={(auftrag) => {
+                // Rückfrage aus Q1.7: Mailen eines Entwurfs schreibt ihn fest
+                if (versandFuer.status === 'ENTWURF'
+                    && !window.confirm(`Der Entwurf wird beim Mailen finalisiert. ${FINALISIEREN_RUECKFRAGE}`)) return;
+                versandMutation.mutate({ inv: versandFuer, auftrag });
+              }}
+              onAbbrechen={() => setVersandFuer(null)}
+            />
+          </div>
+        )}
       </Modal>
 
       {/* Storno: eigene Nummer aus dem regulären Kreis, Original wird gesperrt */}
