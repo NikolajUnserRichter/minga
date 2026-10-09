@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { Plus, Search, Trash, Tag } from 'lucide-react';
 import { CustomerPricesModal } from '../components/domain/CustomerPricesModal';
+import { adressListe } from '../components/domain/BelegVersand';
 import { salesApi } from '../services/api';
 import { Customer, CustomerType, Contact, CustomerAddress, AddressType, PfandAbrechnung } from '../types';
 import { getErrorMessage } from '../services/errors';
@@ -14,6 +15,7 @@ import { CreateOrderModal } from '../components/domain/CreateOrderModal';
 import {
   Button,
   Input,
+  Textarea,
   Select,
   Modal,
   ConfirmDialog,
@@ -244,6 +246,10 @@ function CustomerForm({ customer, onSubmit, onCancel }: CustomerFormProps) {
     packaging_fee_percent: customer?.packaging_fee_percent != null ? String(customer.packaging_fee_percent) : '0',
     show_prices_on_delivery_note: customer?.show_prices_on_delivery_note ?? false,
     pfand_abrechnung: customer?.pfand_abrechnung ?? ('JE_LIEFERUNG' as PfandAbrechnung),
+    // Belegversand: eine Adresse je Zeile (Paket 3, Q2)
+    confirmation_emails: (customer?.confirmation_emails ?? []).join('\n'),
+    delivery_note_emails: (customer?.delivery_note_emails ?? []).join('\n'),
+    invoice_emails: (customer?.invoice_emails ?? []).join('\n'),
     aktiv: customer?.aktiv ?? true,
   });
 
@@ -283,6 +289,10 @@ function CustomerForm({ customer, onSubmit, onCancel }: CustomerFormProps) {
         skonto_days: Number(formData.skonto_days) || 0,
         packaging_fee_amount: Number(formData.packaging_fee_amount) || 0,
         packaging_fee_percent: Number(formData.packaging_fee_percent) || 0,
+        // Belegversand: Zeilen → Listen; der Server prüft jede Adresse (422 mit Meldung)
+        confirmation_emails: adressListe(formData.confirmation_emails),
+        delivery_note_emails: adressListe(formData.delivery_note_emails),
+        invoice_emails: adressListe(formData.invoice_emails),
       };
 
       let saved: Customer;
@@ -429,6 +439,35 @@ function CustomerForm({ customer, onSubmit, onCancel }: CustomerFormProps) {
           <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
             Bei „IFCO-Clearing“ stehen Pfandkisten auf Bestellung und Lieferschein, aber nicht auf neu erzeugten Rechnungen.
           </p>
+        </div>
+      </div>
+
+      {/* Belegversand (Paket 3, Q2): eine Mail an alle Adressen der Belegart */}
+      <div className="bg-gray-50 dark:bg-gray-700/30 p-4 rounded-lg space-y-3">
+        <h4 className="font-medium text-sm text-gray-700 dark:text-gray-300">Belegversand per E-Mail</h4>
+        <p className="text-xs text-gray-500 dark:text-gray-400">
+          Eine Adresse je Zeile. Alle Adressen einer Belegart stehen gemeinsam im An-Feld einer Mail.
+          Leer = Haupt-E-Mail des Kunden.
+        </p>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <Textarea
+            label="Auftragsbestätigung an"
+            rows={3}
+            value={formData.confirmation_emails}
+            onChange={(e) => setFormData({ ...formData, confirmation_emails: e.target.value })}
+          />
+          <Textarea
+            label="Lieferschein an"
+            rows={3}
+            value={formData.delivery_note_emails}
+            onChange={(e) => setFormData({ ...formData, delivery_note_emails: e.target.value })}
+          />
+          <Textarea
+            label="Rechnung an"
+            rows={3}
+            value={formData.invoice_emails}
+            onChange={(e) => setFormData({ ...formData, invoice_emails: e.target.value })}
+          />
         </div>
       </div>
 
