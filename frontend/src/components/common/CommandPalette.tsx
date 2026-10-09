@@ -34,9 +34,11 @@ interface CommandItem {
 interface CommandPaletteProps {
   open: boolean;
   onClose: () => void;
+  /** Admin-Ziele nur für Administratoren, wie im Menü (Layout.tsx, Abschnitt „Admin"). */
+  istAdmin: boolean;
 }
 
-export default function CommandPalette({ open, onClose }: CommandPaletteProps) {
+export default function CommandPalette({ open, onClose, istAdmin }: CommandPaletteProps) {
   const navigate = useNavigate();
   const [query, setQuery] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -69,14 +71,16 @@ export default function CommandPalette({ open, onClose }: CommandPaletteProps) {
       { id: 'nav-suggestions', label: 'Produktionsvorschläge', section: 'Navigation', icon: Target, action: () => go('/suggestions'), keywords: ['vorschlag'] },
       { id: 'nav-accuracy', label: 'Accuracy Reports', section: 'Navigation', icon: BarChart3, action: () => go('/accuracy'), keywords: ['genauigkeit'] },
       { id: 'nav-settings', label: 'Einstellungen', section: 'Navigation', icon: Settings, action: () => go('/settings') },
-      { id: 'nav-users', label: 'Benutzerverwaltung', section: 'Navigation', icon: UserCog, action: () => go('/users'), keywords: ['benutzer'] },
+      ...(istAdmin
+        ? [{ id: 'nav-users', label: 'Benutzerverwaltung', section: 'Navigation', icon: UserCog, action: () => go('/users'), keywords: ['benutzer'] }]
+        : []),
       // Quick actions
       { id: 'action-new-order', label: 'Neue Bestellung erstellen', section: 'Aktionen', icon: Plus, action: () => go('/orders?action=create'), keywords: ['bestellung', 'order', 'neu'] },
       { id: 'action-new-batch', label: 'Neue Aussaat anlegen', section: 'Aktionen', icon: Plus, action: () => go('/production?action=create'), keywords: ['aussaat', 'batch', 'chargen', 'neu'] },
       { id: 'action-new-invoice', label: 'Neue Rechnung erstellen', section: 'Aktionen', icon: Plus, action: () => go('/invoices?action=create'), keywords: ['rechnung', 'invoice', 'neu'] },
       { id: 'action-new-customer', label: 'Neuen Kunden anlegen', section: 'Aktionen', icon: Plus, action: () => go('/customers?action=create'), keywords: ['kunde', 'customer', 'neu'] },
     ],
-    [go],
+    [go, istAdmin],
   );
 
   const filtered = useMemo(() => {
