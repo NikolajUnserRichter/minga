@@ -100,6 +100,9 @@ from app.models.attachment import (
 # App-Settings (Runtime-Konfiguration via Admin-Center)
 from app.models.app_setting import AppSetting
 
+# SEPA-Lastschriftmandate (B10)
+from app.models.sepa_mandate import SepaMandat, Zahlungsart, Mandatsart, LastschriftStatus
+
 # Druck-Warteschlange (Etikettendrucker im Hofnetz)
 from app.models.print_job import PrintJob, PrintJobStatus
 

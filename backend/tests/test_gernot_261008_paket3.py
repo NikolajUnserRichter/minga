@@ -2921,3 +2921,217 @@ class TestQ2Rechnungsversand:
 
         assert r.status_code == 200, r.text
         assert r.json()["sent_by_name"] == "ben"
+
+
+# ===========================================================================
+# Q5 — SEPA-Lastschriftmandat (B10)
+#
+# Mandat in eigener Tabelle und eigenem Router (nur Admin/Buchhaltung),
+# Zahlungsart am Kunden, Gläubiger-ID in den Firmeneinstellungen, Hinweis
+# als Snapshot beim Festschreiben, kein Mahnwesen vor einer Rücklastschrift.
+# Neue Module (sepa_service, sepa_mandate) nur INNERHALB der Tests
+# importieren — sonst sammelt die Datei vor Q5 nicht mehr.
+# ===========================================================================
+import re
+import uuid
+from datetime import date, timedelta
+from decimal import Decimal
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+from tests.conftest import TestingSessionLocal
+from tests.test_documents_preise import _pdf_text
+
+_Q5_IBAN = "DE89370400440532013000"
+_Q5_IBAN_NEU = "DE02120300000000202051"
+_Q5_GID = "DE98ZZZ09999999999"
+
+
+def _q5_als(rollen):
+    from app.api.deps import get_current_user
+    from app.main import app
+
+    async def override():
+        return {"id": "q5-test", "username": "q5", "email": "q5@example.com", "roles": rollen}
+    app.dependency_overrides[get_current_user] = override
+
+
+@pytest.fixture
+def q5_rolle(client):
+    """Rolle je Test setzen; danach wieder Admin wie im client-Fixture."""
+    yield _q5_als
+    _q5_als(["admin", "production_planner"])
+
+
+def _q5_glaeubiger(client, wert=_Q5_GID):
+    r = client.patch("/api/v1/admin/settings", json={"COMPANY_SEPA_GLAEUBIGER_ID": wert})
+    assert r.status_code == 200, r.text
+
+
+def _q5_kunde(client, name="Gasthof Zur Post", **extra):
+    r = client.post("/api/v1/sales/customers", json={
+        "name": name, "typ": "GASTRO", "payment_terms": "NET_14", **extra,
+    })
+    assert r.status_code == 201, r.text
+    return r.json()
+
+
+def _q5_mandat_orm(kunde, ref="ORM-1", aktiv=True):
+    """Mandat direkt über das ORM (für Tests vor dem SEPA-Router)."""
+    from app.models.sepa_mandate import SepaMandat
+    return SepaMandat(customer_id=uuid.UUID(kunde["id"]), mandatsreferenz=ref,
+                      unterschrieben_am=date(2026, 9, 1), kontoinhaber=kunde["name"],
+                      iban=_Q5_IBAN, aktiv=aktiv)
+
+
+def _q5_mandat(client, kunde, **extra):
+    daten = {
+        "mandatsreferenz": f"MG-{kunde['customer_number']}",
+        "mandatsart": "CORE",
+        "unterschrieben_am": "2026-09-01",
+        "kontoinhaber": kunde["name"],
+        "iban": "DE89 3704 0044 0532 0130 00",
+        "bank_name": "Commerzbank",
+        **extra,
+    }
+    r = client.post(f"/api/v1/sepa/kunden/{kunde['id']}/mandate", json=daten)
+    assert r.status_code == 201, r.text
+    return r.json()
+
+
+def _q5_lastschriftkunde(client, name="Gasthof Lastschrift"):
+    _q5_glaeubiger(client)
+    kunde = _q5_kunde(client, name)
+    mandat = _q5_mandat(client, kunde)
+    r = client.put(f"/api/v1/sepa/kunden/{kunde['id']}/zahlungsart", json={"zahlungsart": "LASTSCHRIFT"})
+    assert r.status_code == 200, r.text
+    return kunde, mandat
+
+
+def _q5_entwurf(client, kunde):
+    """2 × 10,00 € zu 7 % = 21,40 €."""
+    r = client.post("/api/v1/invoices", json={
+        "customer_id": kunde["id"],
+        "invoice_date": date.today().isoformat(),
+        "lines": [{"description": "Erbse 100 g", "quantity": "2", "unit": "STK",
+                   "unit_price": "10.00", "tax_rate": "REDUZIERT"}],
+    })
+    assert r.status_code == 201, r.text
+    return r.json()
+
+
+def _q5_festschreiben(client, rechnung):
+    """Festschreiben über POST /finalize (läuft seit Q1 durch die gemeinsame Funktion)."""
+    r = client.post(f"/api/v1/invoices/{rechnung['id']}/finalize")
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def _q5_senden(client, monkeypatch, invoice_id):
+    """POST /invoices/{id}/send mit abgefangenem Versand; liefert (Antwort, Mail-
+    Argumente wie body und attachment_bytes). Seit Q2 verschickt
+    app.services.belegversand und erwartet ein VersandErgebnis (Muster: Q2.7
+    Step 6). Der Query-Parameter to_email gilt dort weiter."""
+    from app.services.email_service import VersandErgebnis
+    # Seit Q1 prüft "Mailen" eines Entwurfs vorher die SMTP-Einstellungen
+    monkeypatch.setenv("SMTP_HOST", "smtp.farm.example")
+    monkeypatch.setenv("SMTP_USER", "versand@farm.example")
+    mail = {}
+    monkeypatch.setattr(
+        "app.services.belegversand.send_email",
+        lambda **kw: mail.update(kw) or VersandErgebnis(message_id="<q5@test>"),
+    )
+    r = client.post(f"/api/v1/invoices/{invoice_id}/send", params={"to_email": "einkauf@gasthof.example"})
+    return r, mail
+
+
+def _q5_mailen(client, monkeypatch, invoice_id) -> dict:
+    """Versand, der gelingen muss; liefert die Mail-Argumente."""
+    r, mail = _q5_senden(client, monkeypatch, invoice_id)
+    assert r.status_code == 200, r.text
+    return mail
+
+
+def _q5_texte(pdf_bytes) -> str:
+    teile = re.findall(r"\((.*?)\) Tj", _pdf_text(pdf_bytes).decode("latin-1", errors="ignore"))
+    return " ".join(teile)
+
+
+def _q5_pdf_texte(client, invoice_id) -> str:
+    r = client.get(f"/api/v1/invoices/{invoice_id}/pdf")
+    assert r.status_code == 200, r.text
+    return _q5_texte(r.content)
+
+
+def _q5_faellig_vor(invoice_id, tage):
+    """Nur im Test: Fälligkeit in die Vergangenheit legen."""
+    from app.models.invoice import Invoice
+    with TestingSessionLocal() as db:
+        db.get(Invoice, uuid.UUID(invoice_id)).due_date = date.today() - timedelta(days=tage)
+        db.commit()
+
+
+class TestQ5Datenmodell:
+    def test_auto_migrate_ergaenzt_spalten_null_ist_ueberweisung(self, tmp_path):
+        from sqlalchemy import create_engine, inspect, text
+        from app.tenancy import _auto_migrate
+
+        engine = create_engine(f"sqlite:///{tmp_path / 'alt.db'}")
+        with engine.begin() as conn:
+            conn.execute(text("CREATE TABLE customers (id CHAR(32) PRIMARY KEY, name VARCHAR(200))"))
+            conn.execute(text("CREATE TABLE invoices (id CHAR(32) PRIMARY KEY, invoice_number VARCHAR(20))"))
+            conn.execute(text("INSERT INTO customers (id, name) VALUES ('a', 'Altkunde')"))
+            conn.execute(text("INSERT INTO invoices (id, invoice_number) VALUES ('b', 'RE-2026-00001')"))
+
+        _auto_migrate(engine)
+
+        insp = inspect(engine)
+        assert "zahlungsart" in {c["name"] for c in insp.get_columns("customers")}
+        assert {"zahlungsart", "sepa_mandat_id", "sepa_hinweis", "lastschrift_status",
+                "lastschrift_eingereicht_am"} <= {c["name"] for c in insp.get_columns("invoices")}
+        with engine.connect() as conn:
+            assert conn.execute(text("SELECT zahlungsart FROM customers")).scalar() is None
+            assert tuple(conn.execute(text("SELECT zahlungsart, lastschrift_status FROM invoices")).one()) == (None, None)
+        engine.dispose()
+
+    def test_hoechstens_ein_aktives_mandat_je_kunde(self, client):
+        from sqlalchemy.exc import IntegrityError
+        kunde = _q5_kunde(client)
+        with TestingSessionLocal() as db:
+            db.add_all([_q5_mandat_orm(kunde, "ALT-1", False), _q5_mandat_orm(kunde, "ALT-2", False),
+                        _q5_mandat_orm(kunde, "NEU-1", True)])
+            db.commit()
+            db.add(_q5_mandat_orm(kunde, "NEU-2", True))
+            with pytest.raises(IntegrityError):
+                db.commit()
+
+    def test_kunde_mit_mandat_wird_nur_deaktiviert(self, client):
+        from sqlalchemy import func, select
+        from app.models.sepa_mandate import SepaMandat
+        kunde = _q5_kunde(client, "Ohne Belege")
+        with TestingSessionLocal() as db:
+            db.add(_q5_mandat_orm(kunde))
+            db.commit()
+
+        r = client.delete(f"/api/v1/sales/customers/{kunde['id']}")
+
+        assert r.status_code == 204, r.text
+        assert client.get(f"/api/v1/sales/customers/{kunde['id']}").json()["aktiv"] is False
+        with TestingSessionLocal() as db:
+            assert db.scalar(select(func.count()).select_from(SepaMandat)) == 1
+
+    def test_kunde_ohne_belege_und_mandat_wird_weiter_geloescht(self, client):
+        kunde = _q5_kunde(client, "Löschbar")
+        assert client.delete(f"/api/v1/sales/customers/{kunde['id']}").status_code == 204
+        assert client.get(f"/api/v1/sales/customers/{kunde['id']}").status_code == 404
+
+    def test_halle_darf_keinen_kunden_loeschen(self, client, q5_rolle):
+        """Seit .unique() wirkt DELETE wieder (vorher immer 500). Löschen und
+        Deaktivieren bleibt kaufmännisch (Q4: _nur_kaufmaennisch)."""
+        kunde = _q5_kunde(client, "Bleibt")
+        q5_rolle(["production_staff"])
+        r = client.delete(f"/api/v1/sales/customers/{kunde['id']}")
+        assert r.status_code == 403, r.text
+        q5_rolle(["admin"])
+        assert client.get(f"/api/v1/sales/customers/{kunde['id']}").json()["aktiv"] is True

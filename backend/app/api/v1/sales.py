@@ -163,7 +163,9 @@ async def update_customer(customer_id: UUID, customer_data: CustomerUpdate, db: 
     return CustomerResponse.model_validate(customer)
 
 
-@router.delete("/customers/{customer_id}", status_code=status.HTTP_204_NO_CONTENT)
+# Löschen/Deaktivieren nur kaufmännisch (Q4-Liste): seit .unique() unten wirkt
+# der Endpunkt wieder — vorher endete er für jede Rolle mit 500.
+@router.delete("/customers/{customer_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=_nur_kaufmaennisch)
 async def delete_customer(customer_id: UUID, db: DBSession):
     """
     Kunden löschen (nur wenn keine Bestellungen/Rechnungen vorhanden).
@@ -175,7 +177,9 @@ async def delete_customer(customer_id: UUID, db: DBSession):
         select(Customer)
         .options(joinedload(Customer.orders), joinedload(Customer.invoices))
         .where(Customer.id == customer_id)
-    ).scalar_one_or_none()
+    # unique(): joinedload auf Collections verlangt es in SQLAlchemy 2.0 —
+    # ohne endete jedes Löschen mit InvalidRequestError (500).
+    ).unique().scalar_one_or_none()
 
     if not customer:
         raise HTTPException(status_code=404, detail="Kunde nicht gefunden")

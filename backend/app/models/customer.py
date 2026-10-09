@@ -13,6 +13,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 
 from app.database import Base
+from app.models.sepa_mandate import Zahlungsart
 
 
 class CustomerType(str, Enum):
@@ -201,6 +202,13 @@ class Customer(Base):
         default=PfandAbrechnung.JE_LIEFERUNG, server_default=PfandAbrechnung.JE_LIEFERUNG.value,
     )
 
+    # Zahlungsart (B10 SEPA). NULL = Überweisung (Altkunden). Nur über
+    # PUT /api/v1/sepa/kunden/{id}/zahlungsart änderbar — bewusst NICHT in
+    # CustomerCreate/CustomerUpdate, sonst könnte die Halle sie umschalten.
+    zahlungsart: Mapped[Optional[Zahlungsart]] = mapped_column(
+        SQLEnum(Zahlungsart, length=20), nullable=True
+    )
+
     # DATEV-Kontonummer (Debitor)
     datev_account: Mapped[Optional[str]] = mapped_column(String(10))  # z.B. 10001
 
@@ -241,13 +249,18 @@ class Customer(Base):
     invoices: Mapped[list["Invoice"]] = relationship(
         "Invoice", back_populates="customer"
     )
+    # SEPA-Mandate: kein Cascade — der Mandatsnachweis muss erhalten bleiben.
+    sepa_mandate: Mapped[list["SepaMandat"]] = relationship(
+        "SepaMandat", back_populates="customer"
+    )
 
     def can_be_deleted(self) -> bool:
         """
         Prüft ob Kunde gelöscht werden kann.
         Kunden mit Bestellungen oder Rechnungen können nur deaktiviert werden.
+        Kunden mit SEPA-Mandat ebenfalls: der Mandatsnachweis muss bleiben.
         """
-        return len(self.orders) == 0 and len(self.invoices) == 0
+        return len(self.orders) == 0 and len(self.invoices) == 0 and len(self.sepa_mandate) == 0
 
     def deactivate(self) -> None:
         """Deaktiviert den Kunden (Soft Delete)"""

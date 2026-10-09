@@ -16,6 +16,7 @@ from app.database import Base
 
 
 from app.models.enums import InvoiceStatus, InvoiceType, TaxRate, PaymentMethod
+from app.models.sepa_mandate import Zahlungsart, LastschriftStatus
 
 
 def _cent(betrag: Decimal) -> Decimal:
@@ -168,6 +169,19 @@ class Invoice(Base):
     reminder_level: Mapped[int] = mapped_column(Integer, default=0)  # 0=keine, 1-3=Mahnstufe
     last_reminder_sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
     next_reminder_date: Mapped[Optional[date]] = mapped_column(Date)
+
+    # SEPA-Lastschrift (B10). Gesetzt erst beim Festschreiben (ENTWURF → OFFEN),
+    # nie beim Anlegen: ein Entwurf kann noch den Kunden wechseln.
+    # zahlungsart NULL = Überweisung (Altbestand).
+    zahlungsart: Mapped[Optional[Zahlungsart]] = mapped_column(SQLEnum(Zahlungsart, length=20))
+    sepa_mandat_id: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid, ForeignKey("sepa_mandates.id"))
+    #: Vorabankündigung, beim Festschreiben eingefroren (GoBD): PDF und Mail
+    #: lesen nur diesen Text, nie das Mandat. Enthält die IBAN nur maskiert.
+    sepa_hinweis: Mapped[Optional[str]] = mapped_column(Text)
+    lastschrift_status: Mapped[Optional[LastschriftStatus]] = mapped_column(SQLEnum(LastschriftStatus, length=20))
+    #: Tag, an dem die Rechnung in einer Einreichungsdatei (CSV) an die Bank
+    #: ging. Eine Rechnung wird nur einmal eingereicht (POST /sepa/einreichung).
+    lastschrift_eingereicht_am: Mapped[Optional[date]] = mapped_column(Date)
 
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
