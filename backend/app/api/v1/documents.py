@@ -29,6 +29,7 @@ from app.models.order import Order, OrderStatus
 from app.models.documents import (
     OrderConfirmation, DeliveryNote, PackingList, PackingListItem,
 )
+from app.services.beleg_dateiname import beleg_dateiname, content_disposition
 from app.models.enums import ConfirmationStatus, DeliveryNoteStatus
 from app.schemas.documents import (
     OrderConfirmationCreate, OrderConfirmationResponse, OrderConfirmationSend,
@@ -145,7 +146,7 @@ def send_confirmation(conf_id: UUID, data: OrderConfirmationSend, db: DBSession)
                     f"Mit freundlichen Grüßen\nIhr Team"
                 ),
                 attachment_bytes=pdf,
-                attachment_filename=f"{conf.confirmation_number}.pdf",
+                attachment_filename=beleg_dateiname(conf.confirmation_number),
             )
         except EmailNotConfiguredError as e:
             raise HTTPException(status_code=503, detail=str(e))
@@ -179,7 +180,7 @@ def download_confirmation_pdf(conf_id: UUID, db: DBSession):
     return StreamingResponse(
         BytesIO(pdf),
         media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="{conf.confirmation_number}.pdf"'},
+        headers={"Content-Disposition": content_disposition(beleg_dateiname(conf.confirmation_number))},
     )
 
 
@@ -384,7 +385,7 @@ def download_delivery_note_pdf(note_id: UUID, db: DBSession):
     return StreamingResponse(
         BytesIO(pdf),
         media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="{note.delivery_note_number}.pdf"'},
+        headers={"Content-Disposition": content_disposition(beleg_dateiname(note.delivery_note_number))},
     )
 
 
@@ -404,5 +405,5 @@ def download_packing_list_pdf(note_id: UUID, db: DBSession):
     return StreamingResponse(
         BytesIO(pdf),
         media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="{note.packing_list.packing_list_number}.pdf"'},
+        headers={"Content-Disposition": content_disposition(beleg_dateiname(note.packing_list.packing_list_number))},
     )

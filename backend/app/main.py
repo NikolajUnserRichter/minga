@@ -305,6 +305,10 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "Accept", "X-Correlation-ID"],
+    # B7: Das Frontend liest den Dateinamen aus Content-Disposition. Lokal
+    # (Vite :5173 -> API :8000) ist der Abruf cross-origin; ohne Freigabe
+    # sieht der Browser den Kopf nicht.
+    expose_headers=["Content-Disposition"],
 )
 
 

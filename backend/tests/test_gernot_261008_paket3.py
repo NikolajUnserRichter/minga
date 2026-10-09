@@ -1763,3 +1763,166 @@ class TestQ3Dateiname:
         from app.services.beleg_dateiname import content_disposition
         assert content_disposition("RE-2026-00002.pdf", art="inline").startswith(
             'inline; filename="RE-2026-00002.pdf"')
+
+
+_Q3_ZEILE = {"description": "Erbsen-Schale", "quantity": 4, "unit": "STK",
+             "unit_price": 2.50, "tax_rate": "REDUZIERT"}
+
+
+def _q3_kunde(client):
+    r = client.post("/api/v1/sales/customers", json={"name": "Fruchthof Nagel", "typ": "HANDEL"})
+    assert r.status_code == 201, r.text
+    return r.json()
+
+
+def _q3_rechnungsentwurf(client) -> dict:
+    r = client.post("/api/v1/invoices", json={
+        "customer_id": _q3_kunde(client)["id"],
+        "invoice_date": date.today().isoformat(),
+        "lines": [_Q3_ZEILE],
+    })
+    assert r.status_code == 201, r.text
+    rechnung = r.json()
+    assert rechnung["status"] == "ENTWURF", rechnung
+    return rechnung
+
+
+def _q3_nummer_setzen(invoice_id: str, nummer: str) -> None:
+    """Setzt die Nummer eines Entwurfs direkt: Platzhalter wie nach Q1 oder
+    RE-Nummer wie bei Alt-Entwürfen (Spec-Entscheidung 2). So gilt der Test
+    vor und nach Q1."""
+    from app.models.invoice import Invoice
+    with TestingSessionLocal() as db:
+        db.get(Invoice, uuid.UUID(invoice_id)).invoice_number = nummer
+        db.commit()
+
+
+def _q3_belegkette(client) -> tuple[dict, dict]:
+    """Bestellung mit AB und Lieferschein (samt Packliste)."""
+    from tests.test_documents_preise import _create_order
+    order_id = _create_order(client, _q3_kunde(client)["id"])
+    ab = client.post(f"/api/v1/sales/orders/{order_id}/confirmations", json={})
+    assert ab.status_code == 201, ab.text
+    ls = client.post(f"/api/v1/sales/orders/{order_id}/delivery-notes", json={})
+    assert ls.status_code == 201, ls.text
+    return ab.json(), ls.json()
+
+
+def _q3_kopf(nummer_pdf: str) -> str:
+    return f"attachment; filename=\"{nummer_pdf}\"; filename*=UTF-8''{nummer_pdf}"
+
+
+def _q3_mail_abfangen(monkeypatch) -> dict:
+    """Fängt den Mailversand ab und liefert die Argumente von send_email.
+
+    Bis zum Versand-Abschnitt (Q2) rufen die Endpunkte send_email direkt.
+    Q2 verschickt über app.services.belegversand und ändert dafür nur diesen
+    Rumpf; die Tests bleiben gleich."""
+    # Seit Q1 prüft "Mailen" eines Entwurfs vor dem Festschreiben die
+    # SMTP-Einstellungen — hier über die Umgebung "konfiguriert".
+    monkeypatch.setenv("SMTP_HOST", "smtp.farm.example")
+    monkeypatch.setenv("SMTP_USER", "versand@farm.example")
+    versendet = {}
+    monkeypatch.setattr("app.api.v1.invoices.send_email", lambda **kw: versendet.update(kw))
+    monkeypatch.setattr("app.api.v1.documents.send_email", lambda **kw: versendet.update(kw))
+    return versendet
+
+
+class TestQ3Downloads:
+
+    def test_rechnung_heisst_wie_ihre_nummer(self, client):
+        """Bisher Rechnung_RE-….pdf — Gernot will die Nummer (B7)."""
+        rechnung = _q3_rechnungsentwurf(client)
+        assert client.post(f"/api/v1/invoices/{rechnung['id']}/finalize").status_code == 200
+        nummer = client.get(f"/api/v1/invoices/{rechnung['id']}").json()["invoice_number"]
+
+        r = client.get(f"/api/v1/invoices/{rechnung['id']}/pdf")
+
+        assert r.status_code == 200, r.text
+        assert r.headers["content-disposition"] == _q3_kopf(f"{nummer}.pdf")
+
+    def test_rechnungsentwurf_heisst_entwurf(self, client):
+        """Ein Entwurf darf im Download-Ordner nicht wie die ausgestellte
+        Rechnung heißen — auch ein Alt-Entwurf mit RE-Nummer nicht."""
+        rechnung = _q3_rechnungsentwurf(client)
+        _q3_nummer_setzen(rechnung["id"], "RE-2026-00003")
+
+        r = client.get(f"/api/v1/invoices/{rechnung['id']}/pdf")
+
+        assert r.status_code == 200, r.text
+        assert r.headers["content-disposition"] == _q3_kopf("Entwurf-RE-2026-00003.pdf")
+
+    def test_entwurf_mit_platzhalter(self, client):
+        rechnung = _q3_rechnungsentwurf(client)
+        _q3_nummer_setzen(rechnung["id"], _Q3_PLATZHALTER)
+
+        r = client.get(f"/api/v1/invoices/{rechnung['id']}/pdf")
+
+        assert r.status_code == 200, r.text
+        assert r.headers["content-disposition"] == _q3_kopf("Entwurf-AB12CD34EF56.pdf")
+
+    def test_ab_lieferschein_und_packliste(self, client):
+        """Name war schon die Nummer; neu ist filename* (RFC 5987)."""
+        ab, ls = _q3_belegkette(client)
+
+        r_ab = client.get(f"/api/v1/sales/confirmations/{ab['id']}/pdf")
+        r_ls = client.get(f"/api/v1/sales/delivery-notes/{ls['id']}/pdf")
+        r_pl = client.get(f"/api/v1/sales/delivery-notes/{ls['id']}/packing-list/pdf")
+
+        assert r_ab.headers["content-disposition"] == _q3_kopf(f"{ab['confirmation_number']}.pdf")
+        assert r_ls.headers["content-disposition"] == _q3_kopf(f"{ls['delivery_note_number']}.pdf")
+        assert r_pl.headers["content-disposition"] == _q3_kopf(
+            f"{ls['packing_list']['packing_list_number']}.pdf")
+
+    def test_browser_darf_den_namen_lesen(self, client):
+        """Im Entwicklungsbetrieb (Vite :5173 → API :8000) ist der Abruf
+        cross-origin; ohne Expose-Header sieht das Frontend den Namen nicht."""
+        rechnung = _q3_rechnungsentwurf(client)
+
+        r = client.get(f"/api/v1/invoices/{rechnung['id']}/pdf",
+                       headers={"Origin": "http://localhost:5173"})
+
+        assert r.status_code == 200, r.text
+        assert "content-disposition" in r.headers.get("access-control-expose-headers", "").lower()
+
+
+class TestQ3Mailanhang:
+    """Charakterisierung: Der Anhang hieß schon {Nummer}.pdf. Er muss so
+    bleiben, wenn die Endpunkte auf beleg_dateiname umgestellt sind — und
+    nach dem Versand-Abschnitt (Q2), der nur _q3_mail_abfangen umhängt."""
+
+    def test_ausgestellte_rechnung_mailen(self, client, monkeypatch):
+        rechnung = _q3_rechnungsentwurf(client)
+        assert client.post(f"/api/v1/invoices/{rechnung['id']}/finalize").status_code == 200
+        nummer = client.get(f"/api/v1/invoices/{rechnung['id']}").json()["invoice_number"]
+        versendet = _q3_mail_abfangen(monkeypatch)
+
+        r = client.post(f"/api/v1/invoices/{rechnung['id']}/send",
+                        params={"to_email": "einkauf@fruchthof.example"})
+
+        assert r.status_code == 200, r.text
+        assert versendet["attachment_filename"] == f"{nummer}.pdf"
+
+    def test_altentwurf_mailen(self, client, monkeypatch):
+        """'Mailen' stellt einen Alt-Entwurf heute mit dem Versand aus
+        (ENTWURF -> OFFEN). Der Anhang heißt wie die Rechnung, nie 'Entwurf-…':
+        Der Mailweg nimmt beleg_dateiname(nummer), nicht rechnung_dateiname."""
+        rechnung = _q3_rechnungsentwurf(client)
+        _q3_nummer_setzen(rechnung["id"], "RE-2026-00003")
+        versendet = _q3_mail_abfangen(monkeypatch)
+
+        r = client.post(f"/api/v1/invoices/{rechnung['id']}/send",
+                        params={"to_email": "einkauf@fruchthof.example"})
+
+        assert r.status_code == 200, r.text
+        assert versendet["attachment_filename"] == "RE-2026-00003.pdf"
+
+    def test_ab_mailen(self, client, monkeypatch):
+        ab, _ = _q3_belegkette(client)
+        versendet = _q3_mail_abfangen(monkeypatch)
+
+        r = client.patch(f"/api/v1/sales/confirmations/{ab['id']}/send",
+                         json={"sent_to_email": "einkauf@fruchthof.example"})
+
+        assert r.status_code == 200, r.text
+        assert versendet["attachment_filename"] == f"{ab['confirmation_number']}.pdf"

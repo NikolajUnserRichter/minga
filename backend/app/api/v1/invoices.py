@@ -28,6 +28,7 @@ from app.services.datev_service import DatevService, erloeskonto_fuer, ist_stand
 from app.services.email_service import send_email, EmailNotConfiguredError
 from app.services.email_service import pruefe_smtp_konfiguration
 from app.services.pdf_service import load_company_settings
+from app.services.beleg_dateiname import beleg_dateiname, content_disposition, rechnung_dateiname
 
 router = APIRouter(prefix="/invoices", tags=["Rechnungen"])
 
@@ -366,7 +367,7 @@ def send_invoice_email(
             subject=betreff,
             body=text,
             attachment_bytes=pdf,
-            attachment_filename=f"{invoice.invoice_number}.pdf",
+            attachment_filename=beleg_dateiname(invoice.invoice_number),
         )
     except EmailNotConfiguredError as e:
         raise HTTPException(status_code=503, detail=f"{nicht_versendet}{e}")
@@ -622,14 +623,11 @@ def get_invoice_pdf(
     from app.services.pdf_service import PDFService
     pdf_content = PDFService.generate_invoice_pdf(invoice, settings=load_company_settings(db), db=db)
     
-    filename = f"Rechnung_{invoice.invoice_number}.pdf"
-    
     return Response(
         content=pdf_content,
         media_type="application/pdf",
-        headers={
-            "Content-Disposition": f"attachment; filename={filename}",
-        }
+        # B7: Dateiname = Rechnungsnummer, Entwurf → "Entwurf-….pdf"
+        headers={"Content-Disposition": content_disposition(rechnung_dateiname(invoice))},
     )
 
 
