@@ -197,7 +197,8 @@ async def delete_customer(customer_id: UUID, db: DBSession):
     return None
 
 
-@router.post("/customers/{customer_id}/reactivate", response_model=CustomerResponse)
+# Gegenstück zum Deaktivieren in delete_customer: dieselben Rollen (P4-D.1).
+@router.post("/customers/{customer_id}/reactivate", response_model=CustomerResponse, dependencies=_nur_kaufmaennisch)
 async def reactivate_customer(customer_id: UUID, db: DBSession):
     """Deaktivierten Kunden reaktivieren."""
     customer = db.get(Customer, customer_id)
@@ -278,7 +279,9 @@ async def update_address(customer_id: UUID, address_id: UUID, data: CustomerAddr
     return CustomerAddressResponse.model_validate(address)
 
 
-@router.delete("/customers/{customer_id}/addresses/{address_id}", status_code=status.HTTP_204_NO_CONTENT)
+# Mitarbeiter löschen keine Stammdaten (Gernot, 08.10. B8; P4-D.1):
+# Löschen nur ohne die Halle, Anlegen und Ändern bleiben offen (Gernot, 03.09.).
+@router.delete("/customers/{customer_id}/addresses/{address_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=_ohne_halle)
 async def delete_address(customer_id: UUID, address_id: UUID, db: DBSession):
     address = db.get(CustomerAddress, address_id)
     if not address or address.customer_id != customer_id:
@@ -451,7 +454,8 @@ async def update_contact(customer_id: UUID, contact_id: UUID, data: ContactUpdat
     return ContactResponse.model_validate(contact)
 
 
-@router.delete("/customers/{customer_id}/contacts/{contact_id}", status_code=status.HTTP_204_NO_CONTENT)
+# Wie delete_address: Löschen nur ohne die Halle (P4-D.1).
+@router.delete("/customers/{customer_id}/contacts/{contact_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=_ohne_halle)
 async def delete_contact(customer_id: UUID, contact_id: UUID, db: DBSession):
     contact = db.get(Contact, contact_id)
     if not contact or contact.customer_id != customer_id:

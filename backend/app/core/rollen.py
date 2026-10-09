@@ -75,6 +75,15 @@ KUNDENFELDER_EMPFAENGER = {
     "invoice_emails": "Empfänger Rechnung",
 }
 
+# Aktiv-Schalter des Kunden (P4-D.1; Gernot 08.10. B8: Mitarbeiter löschen
+# keine Stammdaten). Deaktivieren ist die weiche Form des Löschens:
+# delete_customer (sales.py) deaktiviert einen Kunden mit Belegen und ist nur
+# KAUFMAENNISCHE_ROLLEN erlaubt. PATCH aktiv (beide Richtungen) und
+# /reactivate folgen derselben Regel. Eigene Liste statt Eintrag in
+# KUNDENFELDER_KAUFMAENNISCH: "aktiv" ist keine Kondition und wird nicht
+# ausgeblendet.
+KUNDENFELD_AKTIV = {"aktiv": "Aktiv"}
+
 _HINWEIS_VERALTET = " Nicht selbst geändert? Dann ist das Formular veraltet – bitte neu laden."
 
 
@@ -139,6 +148,7 @@ def kundenfeldschutz(user: dict, neu: dict, vorher: dict, *, neuanlage: bool = F
       bei der Neuanlage (Standardwert des Schemas als 'vorher').
     - Empfänger (KUNDENFELDER_EMPFAENGER): nur ROLLEN_OHNE_HALLE; bei der
       Neuanlage frei.
+    - Aktiv-Schalter (KUNDENFELD_AKTIV): nur KAUFMAENNISCHE_ROLLEN (P4-D.1).
 
     Greift nur bei einer echten Änderung: Das Kundenformular (Customers.tsx)
     schickt immer alle Felder mit; ein unveränderter Wert ist keine Änderung.
@@ -149,6 +159,12 @@ def kundenfeldschutz(user: dict, neu: dict, vorher: dict, *, neuanlage: bool = F
             _ablehnen(
                 "Abrechnungsrelevante Kundenfelder ändern nur Verwaltung, Vertrieb und Buchhaltung",
                 KUNDENFELDER_KAUFMAENNISCH, geaendert, neuanlage=neuanlage,
+            )
+        geaendert = geaenderte_felder(KUNDENFELD_AKTIV, neu, vorher)
+        if geaendert and not neuanlage:
+            _ablehnen(
+                "Kunden deaktivieren und reaktivieren nur Verwaltung, Vertrieb und Buchhaltung",
+                KUNDENFELD_AKTIV, geaendert, neuanlage=False,
             )
     if neuanlage or hat_rolle(user, ROLLEN_OHNE_HALLE):
         return

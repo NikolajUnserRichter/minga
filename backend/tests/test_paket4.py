@@ -1481,3 +1481,187 @@ class TestP4CBelegstatusAnzeige:
         )
         assert r.returncode == 0, r.stdout + r.stderr
         assert r.stdout.strip() == "belegstatus.check: 29 Fälle ok"
+
+
+# =============================================================================
+# Abschnitt D — Rechte der Rolle Produktion bei Kunden-Stammdaten (G41, B8)
+# Präfixe: Klassen TestP4D…, Helfer _p4d_…, Konstanten _P4D_…
+# =============================================================================
+import pytest
+
+from app.api.deps import get_current_user
+from app.main import app
+
+_P4D_USER_ID = "123e4567-e89b-12d3-a456-426614174000"
+# Rollen außer der Halle (app.core.rollen.ROLLEN_OHNE_HALLE) bzw. kaufmännisch
+# (KAUFMAENNISCHE_ROLLEN) — als eigene Listen, damit ein Test eine geänderte
+# Matrix bemerkt.
+_P4D_OHNE_HALLE = ["admin", "sales", "accounting", "production_planner"]
+_P4D_KAUFMAENNISCH = ["admin", "sales", "accounting"]
+
+
+def _p4d_als(*rollen):
+    """Login mit genau diesen Rollen (Muster tests/test_rollen.py::_als).
+    Das client-Fixture setzt das Login beim nächsten Test neu."""
+    async def override():
+        return {"id": _P4D_USER_ID, "username": "p4d", "email": "p4d@example.com",
+                "roles": list(rollen)}
+    app.dependency_overrides[get_current_user] = override
+
+
+def _p4d_verwaltung():
+    """Zurück auf das Standard-Login des client-Fixtures (conftest.py)."""
+    _p4d_als("admin", "production_planner")
+
+
+def _p4d_kunde(client, **felder):
+    """Kunde, angelegt von der Verwaltung (darf auch Konditionen setzen)."""
+    _p4d_verwaltung()
+    r = client.post("/api/v1/sales/customers", json={
+        "name": "Großer Kern", "typ": "GASTRO", "email": "kueche@grosser-kern.de",
+        "liefertage": [1, 3], "confirmation_emails": ["ab@grosser-kern.de"], **felder})
+    assert r.status_code == 201, r.text
+    return r.json()
+
+
+def _p4d_adresse(client, kunde, **felder):
+    _p4d_verwaltung()
+    r = client.post(f"/api/v1/sales/customers/{kunde['id']}/addresses", json={
+        "address_type": "SHIPPING", "is_default": True, "strasse": "Lieferhof",
+        "hausnummer": "3", "plz": "80331", "ort": "München", **felder})
+    assert r.status_code == 201, r.text
+    return r.json()
+
+
+def _p4d_kontakt(client, kunde):
+    _p4d_verwaltung()
+    r = client.post(f"/api/v1/sales/customers/{kunde['id']}/contacts",
+                    json={"name": "Anna Koch", "email": "anna@grosser-kern.de"})
+    assert r.status_code == 201, r.text
+    return r.json()
+
+
+def _p4d_kunde_db(kunde_id):
+    from uuid import UUID
+    from app.models.customer import Customer
+    from tests.conftest import TestingSessionLocal
+    with TestingSessionLocal() as db:
+        k = db.get(Customer, UUID(kunde_id))
+        return {"aktiv": k.aktiv, "discount_percent": k.discount_percent,
+                "payment_terms": k.payment_terms.value, "telefon": k.telefon}
+
+
+class TestP4DStammdatenLoeschen:
+    """G41 (Gernot, 08.10. B8): Mitarbeiter löschen keine Stammdaten. Adressen und
+    Ansprechpartner löschen nur Rollen ohne die Halle (wie Sonderpreise, T5 R2);
+    Anlegen und Ändern bleiben der Halle erlaubt (Gernot, 03.09.)."""
+
+    def test_halle_loescht_keine_adresse(self, client):
+        kunde = _p4d_kunde(client)
+        adresse = _p4d_adresse(client, kunde)
+        _p4d_als("production_staff")
+
+        r = client.delete(f"/api/v1/sales/customers/{kunde['id']}/addresses/{adresse['id']}")
+
+        assert r.status_code == 403, r.text
+        _p4d_verwaltung()
+        ids = [a["id"] for a in client.get(f"/api/v1/sales/customers/{kunde['id']}/addresses").json()]
+        assert adresse["id"] in ids
+
+    def test_halle_loescht_keinen_ansprechpartner(self, client):
+        kunde = _p4d_kunde(client)
+        kontakt = _p4d_kontakt(client, kunde)
+        _p4d_als("production_staff")
+
+        r = client.delete(f"/api/v1/sales/customers/{kunde['id']}/contacts/{kontakt['id']}")
+
+        assert r.status_code == 403, r.text
+        _p4d_verwaltung()
+        ids = [c["id"] for c in client.get(f"/api/v1/sales/customers/{kunde['id']}/contacts").json()]
+        assert kontakt["id"] in ids
+
+    @pytest.mark.parametrize("rolle", _P4D_OHNE_HALLE)
+    def test_rollen_ohne_halle_loeschen_adresse_und_ansprechpartner(self, client, rolle):
+        kunde = _p4d_kunde(client)
+        adresse = _p4d_adresse(client, kunde)
+        kontakt = _p4d_kontakt(client, kunde)
+        _p4d_als(rolle)
+
+        assert client.delete(
+            f"/api/v1/sales/customers/{kunde['id']}/addresses/{adresse['id']}").status_code == 204
+        assert client.delete(
+            f"/api/v1/sales/customers/{kunde['id']}/contacts/{kontakt['id']}").status_code == 204
+
+    def test_halle_legt_adresse_und_ansprechpartner_weiter_an_und_aendert_sie(self, client):
+        """Gernot, 03.09.: bei Ausfall der Betriebsleitung erfassen die Mitarbeiter."""
+        kunde = _p4d_kunde(client)
+        _p4d_als("production_staff")
+
+        r = client.post(f"/api/v1/sales/customers/{kunde['id']}/addresses", json={
+            "address_type": "SHIPPING", "strasse": "Hof", "plz": "80331", "ort": "München"})
+        assert r.status_code == 201, r.text
+        r = client.patch(f"/api/v1/sales/customers/{kunde['id']}/addresses/{r.json()['id']}",
+                         json={"lieferhinweise": "Tor 2"})
+        assert r.status_code == 200, r.text
+        r = client.post(f"/api/v1/sales/customers/{kunde['id']}/contacts", json={"name": "Ben"})
+        assert r.status_code == 201, r.text
+        r = client.patch(f"/api/v1/sales/customers/{kunde['id']}/contacts/{r.json()['id']}",
+                         json={"telefon": "089 1"})
+        assert r.status_code == 200, r.text
+
+
+class TestP4DKundeAktivSchalter:
+    """Deaktivieren ist die weiche Form des Löschens: DELETE /customers deaktiviert
+    einen Kunden mit Belegen und ist nur kaufmännisch (Q4-Liste). Derselbe Schritt
+    über PATCH aktiv bzw. sein Gegenstück /reactivate folgt derselben Regel."""
+
+    def test_halle_deaktiviert_keinen_kunden(self, client):
+        kunde = _p4d_kunde(client)
+        _p4d_als("production_staff")
+
+        r = client.patch(f"/api/v1/sales/customers/{kunde['id']}", json={"aktiv": False})
+
+        assert r.status_code == 403, r.text
+        assert r.json()["detail"].startswith(
+            "Kunden deaktivieren und reaktivieren nur Verwaltung, Vertrieb und Buchhaltung: Aktiv.")
+        assert _p4d_kunde_db(kunde["id"])["aktiv"] is True
+
+    def test_planung_deaktiviert_keinen_kunden(self, client):
+        kunde = _p4d_kunde(client)
+        _p4d_als("production_planner")
+
+        r = client.patch(f"/api/v1/sales/customers/{kunde['id']}", json={"aktiv": False})
+
+        assert r.status_code == 403, r.text
+        assert _p4d_kunde_db(kunde["id"])["aktiv"] is True
+
+    def test_halle_reaktiviert_keinen_kunden(self, client):
+        kunde = _p4d_kunde(client)
+        assert client.patch(f"/api/v1/sales/customers/{kunde['id']}", json={"aktiv": False}).status_code == 200
+        _p4d_als("production_staff")
+
+        assert client.post(f"/api/v1/sales/customers/{kunde['id']}/reactivate").status_code == 403
+        assert client.patch(f"/api/v1/sales/customers/{kunde['id']}", json={"aktiv": True}).status_code == 403
+        assert _p4d_kunde_db(kunde["id"])["aktiv"] is False
+
+    @pytest.mark.parametrize("rolle", _P4D_KAUFMAENNISCH)
+    def test_kaufmaennische_rollen_deaktivieren_und_reaktivieren(self, client, rolle):
+        kunde = _p4d_kunde(client)
+        _p4d_als(rolle)
+
+        r = client.patch(f"/api/v1/sales/customers/{kunde['id']}", json={"aktiv": False})
+        assert r.status_code == 200, r.text
+        r = client.post(f"/api/v1/sales/customers/{kunde['id']}/reactivate")
+        assert r.status_code == 200, r.text
+        assert _p4d_kunde_db(kunde["id"])["aktiv"] is True
+
+    def test_unveraendertes_aktiv_bleibt_fuer_die_halle_erlaubt(self, client):
+        """Ein Formular schickt aktiv immer mit; ohne Änderung ist das kein Deaktivieren."""
+        kunde = _p4d_kunde(client)
+        _p4d_als("production_staff")
+
+        r = client.patch(f"/api/v1/sales/customers/{kunde['id']}",
+                         json={"aktiv": True, "telefon": "089 123"})
+
+        assert r.status_code == 200, r.text
+        assert _p4d_kunde_db(kunde["id"])["telefon"] == "089 123"
