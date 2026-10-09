@@ -70,6 +70,25 @@ class BereitsAbgerechnet(ValueError):
     """
 
 
+class BestellungFakturiert(BereitsAbgerechnet):
+    """Die Bestellung steht auf FAKTURIERT: außerhalb von NovaERP abgerechnet,
+    z. B. die über DATEV abgerechneten Bestellungen bis 07.10.2026 in minga
+    (Paket 4, B; G66). Unterklasse von BereitsAbgerechnet — die API
+    antwortet 409. NovaERP setzt FAKTURIERT nie selbst (keine Rechnung
+    ändert den Bestellstatus); der Status kommt aus dem Import oder der
+    Sammelaktion und ist endgültig (order_status_service).
+    """
+
+
+def fakturiert_meldung(order: Order) -> str:
+    """Meldung, wenn eine fakturierte Bestellung (noch einmal) berechnet würde."""
+    return (
+        f"Bestellung {order.order_number} ist als „Fakturiert“ gekennzeichnet: "
+        "Sie ist außerhalb von NovaERP abgerechnet (z. B. über DATEV). "
+        "Eine Rechnung hier würde sie doppelt berechnen."
+    )
+
+
 def empfaenger_nachtragen(db: Session) -> int:
     """Empfänger-Snapshot für Rechnungen, die vor Paket 3 festgeschrieben
     wurden (Paket 3, Q4.9; GoBD).
@@ -228,6 +247,10 @@ class InvoiceService:
         # angelegte Rechnungen mit Bestellbezug. Vor dem Anlegen der neuen
         # Rechnung — danach fände die Abfrage sie selbst.
         if order_id is not None and invoice_type == InvoiceType.RECHNUNG:
+            # FAKTURIERT = außerhalb abgerechnet, auch ohne Rechnung hier (Paket 4, B)
+            bestellung = self.db.get(Order, order_id)
+            if bestellung is not None and bestellung.status == OrderStatus.FAKTURIERT:
+                raise BestellungFakturiert(fakturiert_meldung(bestellung))
             vorhandene = self.aktive_rechnung_zur_bestellung(order_id)
             if vorhandene is not None:
                 order = self.db.get(Order, order_id)
@@ -338,6 +361,13 @@ class InvoiceService:
         if invoice.status != InvoiceStatus.ENTWURF:
             raise ValueError("Nur Entwürfe können bearbeitet werden")
 
+        # Eine Bestellposition holt ihre Bestellung in diesen Entwurf — auch in
+        # einen ohne Bestellbezug (Paket 4, B).
+        if order_item_id is not None:
+            bestellzeile = self.db.get(OrderLine, order_item_id)
+            if bestellzeile is not None and bestellzeile.order.status == OrderStatus.FAKTURIERT:
+                raise BestellungFakturiert(fakturiert_meldung(bestellzeile.order))
+
         # Position ermitteln
         max_pos = self.db.execute(
             select(func.max(InvoiceLine.position))
@@ -413,6 +443,10 @@ class InvoiceService:
             raise ValueError("Bestellung nicht gefunden")
         if order.status == OrderStatus.STORNIERT:
             raise BestellungStorniert("Bestellung ist storniert")
+        # Vor der Pfandprüfung: deren Meldung („nichts zu fakturieren“) führte
+        # bei einer fakturierten Bestellung in die Irre (Paket 4, B).
+        if order.status == OrderStatus.FAKTURIERT:
+            raise BestellungFakturiert(fakturiert_meldung(order))
 
         # Pfand über IFCO-Clearing bleibt auf dem Lieferschein, nicht auf der
         # Rechnung. Vor dem Anlegen prüfen: eine reine Pfandbestellung ergäbe
@@ -551,6 +585,9 @@ class InvoiceService:
             order = self.db.execute(
                 select(Order).where(Order.id == order_id).with_for_update()
             ).scalar_one_or_none()
+            # Entwurf älter als die Kennzeichnung FAKTURIERT (Paket 4, B)
+            if order is not None and order.status == OrderStatus.FAKTURIERT:
+                raise BestellungFakturiert(fakturiert_meldung(order) + " Diesen Entwurf verwerfen.")
             andere = self.aktive_rechnung_zur_bestellung(
                 order_id, ohne_rechnung_id=invoice.id, nur_festgeschrieben=True,
             )

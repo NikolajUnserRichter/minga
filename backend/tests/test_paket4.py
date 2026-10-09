@@ -461,3 +461,159 @@ class TestP4ATagesplanKnoepfe:
         }
         erwartet = {entwurf["order_number"]: (False, False), bestaetigt["order_number"]: (True, True)}
         assert knoepfe == {"verpacken": erwartet, "ausliefern": erwartet}
+
+
+# ============================================================
+# B — Abrechnung: Doppelabrechnung, Lieferschein beim Ausliefern,
+#     Rechnungsdatum beim Festschreiben
+# ============================================================
+
+import uuid as _p4b_uuid
+from datetime import date as _p4b_date, timedelta as _p4b_timedelta
+
+from tests.conftest import TestingSessionLocal as _P4B_Session
+
+
+def _p4b_kunde(client, name="Dorint Hotels Betriebs GmbH", **extra):
+    r = client.post("/api/v1/sales/customers", json={"name": name, "typ": "GASTRO", **extra})
+    assert r.status_code in (200, 201), r.text
+    return r.json()
+
+
+def _p4b_bestellung(client, kunde, liefertag=None, menge=10, preis="2.50"):
+    """Bestätigte Bestellung mit einer Freitextposition (10 × 2,50 € zu 7 %)."""
+    r = client.post("/api/v1/sales/orders", json={
+        "customer_id": kunde["id"],
+        "requested_delivery_date": (liefertag or _p4b_date.today()).isoformat(),
+        "lines": [{"product_name": "Erbsen-Schale", "quantity": menge, "unit": "STK",
+                   "unit_price": preis, "tax_rate": "REDUZIERT"}],
+    })
+    assert r.status_code == 201, r.text
+    bestellung = r.json()
+    r = client.post(f"/api/v1/sales/orders/{bestellung['id']}/confirm")
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def _p4b_status(client, bestellung, status, **extra):
+    r = client.post(f"/api/v1/sales/orders/{bestellung['id']}/status", json={"status": status, **extra})
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def _p4b_fakturiert(client, kunde):
+    """Bestellung, die außerhalb von NovaERP abgerechnet ist (wie die 574
+    DATEV-Bestellungen in minga): geliefert, dann FAKTURIERT."""
+    bestellung = _p4b_bestellung(client, kunde)
+    _p4b_status(client, bestellung, "GELIEFERT")
+    return _p4b_status(client, bestellung, "FAKTURIERT")
+
+
+def _p4b_rechnungen(kunde):
+    from app.models.invoice import Invoice
+    with _P4B_Session() as db:
+        return db.query(Invoice).filter(Invoice.customer_id == _p4b_uuid.UUID(kunde["id"])).count()
+
+
+def _p4b_meldung(bestellung):
+    return (
+        f"Bestellung {bestellung['order_number']} ist als „Fakturiert“ gekennzeichnet: "
+        "Sie ist außerhalb von NovaERP abgerechnet (z. B. über DATEV). "
+        "Eine Rechnung hier würde sie doppelt berechnen."
+    )
+
+
+class TestP4BFakturiert:
+    """G66: FAKTURIERT heißt abgerechnet — auch ohne Rechnung in NovaERP.
+    Kein Weg legt dafür eine Rechnung an oder schreibt sie fest."""
+
+    def test_rechnung_aus_bestellung_gesperrt(self, client):
+        kunde = _p4b_kunde(client)
+        bestellung = _p4b_fakturiert(client, kunde)
+
+        r = client.post(f"/api/v1/invoices/from-order/{bestellung['id']}")
+
+        assert r.status_code == 409, r.text
+        assert r.json()["detail"] == _p4b_meldung(bestellung)
+        assert _p4b_rechnungen(kunde) == 0
+
+    def test_rechnung_von_hand_mit_bestellbezug_gesperrt(self, client):
+        kunde = _p4b_kunde(client)
+        bestellung = _p4b_fakturiert(client, kunde)
+
+        r = client.post("/api/v1/invoices", json={
+            "customer_id": kunde["id"], "order_id": bestellung["id"],
+            "invoice_date": _p4b_date.today().isoformat(),
+            "lines": [{"description": "Erbsen-Schale", "quantity": 10, "unit": "STK",
+                       "unit_price": "2.50", "tax_rate": "REDUZIERT"}],
+        })
+
+        assert r.status_code == 409, r.text
+        assert r.json()["detail"] == _p4b_meldung(bestellung)
+        assert _p4b_rechnungen(kunde) == 0
+
+    def test_position_aus_fakturierter_bestellung_gesperrt(self, client):
+        """Eine Bestellposition (order_item_id) holt die Bestellung über einen
+        anderen Entwurf herein — derselbe Schutz."""
+        kunde = _p4b_kunde(client)
+        bestellung = _p4b_fakturiert(client, kunde)
+        zeile_id = client.get(f"/api/v1/sales/orders/{bestellung['id']}").json()["lines"][0]["id"]
+        r = client.post("/api/v1/invoices", json={
+            "customer_id": kunde["id"], "invoice_date": _p4b_date.today().isoformat()})
+        assert r.status_code == 201, r.text
+        entwurf = r.json()
+
+        r = client.post(f"/api/v1/invoices/{entwurf['id']}/lines", json={
+            "description": "Erbsen-Schale", "quantity": 10, "unit": "STK",
+            "unit_price": "2.50", "tax_rate": "REDUZIERT", "order_item_id": zeile_id})
+
+        assert r.status_code == 409, r.text
+        assert r.json()["detail"] == _p4b_meldung(bestellung)
+        assert client.get(f"/api/v1/invoices/{entwurf['id']}").json()["lines"] == []
+
+    def test_entwurf_einer_spaeter_fakturierten_bestellung_nicht_festschreibbar(self, client):
+        """Altfall: Der Entwurf entstand, bevor die Bestellung als abgerechnet
+        gekennzeichnet wurde. Er bekommt keine Nummer."""
+        kunde = _p4b_kunde(client)
+        bestellung = _p4b_bestellung(client, kunde)
+        _p4b_status(client, bestellung, "GELIEFERT")
+        r = client.post(f"/api/v1/invoices/from-order/{bestellung['id']}")
+        assert r.status_code == 201, r.text
+        entwurf = r.json()
+        _p4b_status(client, bestellung, "FAKTURIERT")
+
+        r = client.post(f"/api/v1/invoices/{entwurf['id']}/finalize")
+
+        assert r.status_code == 409, r.text
+        assert r.json()["detail"] == _p4b_meldung(bestellung) + " Diesen Entwurf verwerfen."
+        nachher = client.get(f"/api/v1/invoices/{entwurf['id']}").json()
+        assert nachher["status"] == "ENTWURF"
+        assert nachher["invoice_number"].startswith("ENTWURF-")
+
+    def test_gelieferte_bestellung_bleibt_abrechenbar(self, client):
+        """Wächter: nur FAKTURIERT sperrt."""
+        kunde = _p4b_kunde(client)
+        bestellung = _p4b_bestellung(client, kunde)
+        _p4b_status(client, bestellung, "GELIEFERT")
+
+        r = client.post(f"/api/v1/invoices/from-order/{bestellung['id']}")
+
+        assert r.status_code == 201, r.text
+
+    def test_sammellauf_laesst_fakturierte_aus(self, client):
+        """Wächter (Spec-Nachtrag 08.10.): Sammel- und Monatslauf schlossen
+        FAKTURIERT schon vorher aus."""
+        kunde = _p4b_kunde(client)
+        bestellung = _p4b_bestellung(client, kunde, liefertag=_p4b_date.today())
+        r = client.post(f"/api/v1/sales/orders/{bestellung['id']}/delivery-notes", json={})
+        assert r.status_code == 201, r.text
+        _p4b_status(client, bestellung, "GELIEFERT")
+        _p4b_status(client, bestellung, "FAKTURIERT")
+        heute = _p4b_date.today()
+
+        r = client.post("/api/v1/invoices/batch-run/preview", json={
+            "period_from": (heute - _p4b_timedelta(days=31)).isoformat(),
+            "period_to": heute.isoformat()})
+
+        assert r.status_code == 200, r.text
+        assert r.json()["kunden"] == []

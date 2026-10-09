@@ -600,6 +600,9 @@ def add_invoice_line(
         db.commit()
         db.refresh(line)
         return line
+    except BereitsAbgerechnet as e:
+        # Position aus einer fakturierten Bestellung (Paket 4, B)
+        raise HTTPException(status_code=409, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
