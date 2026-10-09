@@ -547,3 +547,245 @@ class TestB6Pfand:
         kunde = _b6_kunde(client, pfand_abrechnung="JE_LIEFERUNG")
         assert sorted(self._rechnungszeilen(client, kunde)) == [
             ("BIO Snackbox | Amaranth", False, "REDUZIERT"), ("IFCO-Kiste", True, "STANDARD")]
+
+
+# ------------------------------------------------ Task 4: Schnittstelle
+
+def _b6_abo_api(client, kunde, positionen=None, erwartet=201, **felder):
+    body = {"kunde_id": kunde["id"], "intervall": "WOECHENTLICH", "liefertage": [0, 3],
+            "gueltig_von": _B6_MO.isoformat(), **felder}
+    if positionen is not None:
+        body["positionen"] = positionen
+    r = client.post("/api/v1/sales/subscriptions", json=body)
+    assert r.status_code == erwartet, r.text
+    return r.json()
+
+
+def _b6_kurz(antwort):
+    """(position, bezeichnung, menge, einheit) aus einer API-Antwort."""
+    return [(p["position"], p["bezeichnung"], Decimal(str(p["menge"])), p["einheit"])
+            for p in antwort["positionen"]]
+
+
+class TestB6Schnittstelle:
+    """POST/PATCH/GET /sales/subscriptions mit Positionen; alte Einzelfelder bleiben gültig."""
+
+    def test_anlegen_mit_positionen(self, client):
+        kunde = _b6_kunde(client)
+        snack = _b6_produkt(client, "BIO Snackbox | Amaranth", "B6-SNACK", "4.50")
+        kresse = _b6_produkt(client, "Kresse Schale", "B6-KRESSE", "3.00")
+        kiste = _b6_variante(client, kresse, preis="30.00")
+        pfand = _b6_pfandkiste(client)
+
+        abo = _b6_abo_api(client, kunde, [
+            {"product_id": snack["id"], "menge": 2, "einheit": "STUECK"},
+            # Variante ohne product_id: die API ergänzt das Elternprodukt
+            {"product_variant_id": kiste["id"], "menge": 1, "einheit": "KISTE_12"},
+            {"product_id": pfand["id"], "menge": 1, "einheit": "STUECK"},
+        ])
+
+        assert _b6_kurz(abo) == [
+            (1, "BIO Snackbox | Amaranth", Decimal("2"), "STUECK"),
+            (2, "Kresse Schale — 12er Mehrwegkiste", Decimal("1"), "KISTE_12"),
+            (3, "IFCO-Kiste", Decimal("1"), "STUECK"),
+        ]
+        assert abo["positionen"][1]["product_id"] == kresse["id"]
+        # Kopf = Position 1 (Altleser: Liste, Prognose)
+        assert (abo["product_id"], Decimal(str(abo["menge"])), abo["einheit"], abo["product_name"]) == (
+            snack["id"], Decimal("2"), "STUECK", "BIO Snackbox | Amaranth")
+        assert _b6_kurz(client.get("/api/v1/sales/subscriptions").json()["items"][0]) == _b6_kurz(abo)
+
+    def test_anlegen_wie_bisher_mit_einem_produkt(self, client):
+        kunde = _b6_kunde(client)
+        snack = _b6_produkt(client, "BIO Snackbox | Amaranth", "B6-SNACK", "4.50")
+
+        abo = _b6_abo_api(client, kunde, product_id=snack["id"], menge=2, einheit="KISTE_6")
+
+        assert _b6_kurz(abo) == [(1, "BIO Snackbox | Amaranth", Decimal("2"), "KISTE_6")]
+
+    def test_abo_aus_der_schnittstelle_wird_beliefert(self, client):
+        kunde = _b6_kunde(client)
+        snack = _b6_produkt(client, "BIO Snackbox | Amaranth", "B6-SNACK", "4.50")
+        kresse = _b6_produkt(client, "Kresse Schale", "B6-KRESSE", "3.00")
+        abo = _b6_abo_api(client, kunde, [
+            {"product_id": snack["id"], "menge": 2, "einheit": "STUECK"},
+            {"product_id": kresse["id"], "menge": 3, "einheit": "SCHALE"},
+        ])
+
+        _b6_lauf(_B6_DO)
+
+        [bestellung] = _b6_bestellungen(abo["id"])
+        assert [(l["beschreibung"], l["quantity"], l["unit"]) for l in bestellung["lines"]] == [
+            ("BIO Snackbox | Amaranth", Decimal("2.000"), "STUECK"),
+            ("Kresse Schale", Decimal("3.000"), "SCHALE"),
+        ]
+
+    @pytest.mark.parametrize("felder", [
+        {},                                                    # nichts
+        {"positionen": []},                                    # leere Liste
+        {"menge": 2, "einheit": "STUECK"},                     # ohne Produkt
+    ])
+    def test_ohne_position_wird_abgelehnt(self, client, felder):
+        kunde = _b6_kunde(client)
+        body = {"kunde_id": kunde["id"], "intervall": "WOECHENTLICH",
+                "gueltig_von": _B6_MO.isoformat(), **felder}
+        r = client.post("/api/v1/sales/subscriptions", json=body)
+        assert r.status_code in (400, 422), r.text
+
+    def test_positionen_und_einzelprodukt_zugleich_werden_abgelehnt(self, client):
+        kunde = _b6_kunde(client)
+        snack = _b6_produkt(client, "BIO Snackbox | Amaranth", "B6-SNACK", "4.50")
+        _b6_abo_api(client, kunde, [{"product_id": snack["id"], "menge": 2, "einheit": "STUECK"}],
+                    erwartet=422, product_id=snack["id"], menge=1, einheit="STUECK")
+
+    def test_einzelfelder_pruefen_die_einheit_wie_eine_position(self, client):
+        """Einheit 1-20 Zeichen auch über die alten Einzelfelder: 422 statt 500
+        (Review 09.10.) und keine Einheit, mit der das Formular das Abo danach
+        nicht mehr speichern könnte."""
+        kunde = _b6_kunde(client)
+        snack = _b6_produkt(client, "BIO Snackbox | Amaranth", "B6-SNACK", "4.50")
+
+        fehler = _b6_abo_api(client, kunde, erwartet=422, product_id=snack["id"], menge=1, einheit="X" * 21)
+        assert [(f["type"], f["loc"][-1]) for f in fehler["detail"]] == [("string_too_long", "einheit")]
+
+        abo = _b6_abo_api(client, kunde, product_id=snack["id"], menge=2, einheit="STUECK")
+        r = client.patch(f"/api/v1/sales/subscriptions/{abo['id']}", json={"einheit": "X" * 21})
+        assert r.status_code == 422, r.text
+        assert _b6_positionen(abo["id"]) == [(1, "BIO Snackbox | Amaranth", Decimal("2.00"), "STUECK")]
+
+    def test_position_mit_preis_wird_abgelehnt(self, client):
+        """Abos tragen keine Preise (Paket 3, Q4): Darum dürfen auch Mitarbeiter
+        sie anlegen. Ein Preisfeld in einer Position ist ein Fehler, kein
+        stilles Weglassen."""
+        kunde = _b6_kunde(client)
+        snack = _b6_produkt(client, "BIO Snackbox | Amaranth", "B6-SNACK", "4.50")
+        fehler = _b6_abo_api(client, kunde, [{"product_id": snack["id"], "menge": 2, "einheit": "STUECK",
+                                              "unit_price": "1.00"}], erwartet=422)
+        assert [(f["type"], f["loc"][-1]) for f in fehler["detail"]] == [("extra_forbidden", "unit_price")]
+
+    def test_unbrauchbare_positionen_werden_beim_speichern_abgelehnt(self, client):
+        """Was der Lauf nie liefern kann, lehnt schon die Schnittstelle ab."""
+        kunde = _b6_kunde(client)
+        snack = _b6_produkt(client, "BIO Snackbox | Amaranth", "B6-SNACK", "4.50")
+        kresse = _b6_produkt(client, "Kresse Schale", "B6-KRESSE", "3.00")
+        fremde_kiste = _b6_variante(client, kresse)
+        tray = _b6_produkt(client, "Gastrotray 4 Sorten", "B6-TRAY", "18.00",
+                           is_variable_bundle=True, variable_bundle_min_slots=4,
+                           variable_bundle_max_slots=4)
+        alt = _b6_produkt(client, "Alte Kresse", "B6-ALT", "3.00")
+        assert client.delete(f"/api/v1/products/{alt['id']}").status_code == 204
+        gut = {"product_id": snack["id"], "menge": 1, "einheit": "STUECK"}
+        fremd = str(uuid.uuid4())
+
+        faelle = [
+            ({"product_id": snack["id"], "product_variant_id": fremde_kiste["id"],
+              "menge": 1, "einheit": "KISTE_12"}, 400, "Position 2: Variante gehört nicht zum gewählten Produkt"),
+            ({"product_id": tray["id"], "menge": 1, "einheit": "STUECK"}, 400,
+             "Position 2: Gastrotray 4 Sorten ist ein variables Bundle und braucht eine Sortenauswahl"),
+            ({"product_id": alt["id"], "menge": 1, "einheit": "STUECK"}, 400,
+             "Position 2: Produkt Alte Kresse ist deaktiviert"),
+            ({"product_id": fremd, "menge": 1, "einheit": "STUECK"}, 404,
+             f"Position 2: Produkt {fremd} nicht gefunden"),
+            ({"menge": 1, "einheit": "STUECK"}, 400, "Position 2: Bitte Produkt oder Saatgut auswählen"),
+        ]
+        for position, code, text in faelle:
+            r = client.post("/api/v1/sales/subscriptions", json={
+                "kunde_id": kunde["id"], "intervall": "WOECHENTLICH",
+                "gueltig_von": _B6_MO.isoformat(), "positionen": [gut, position],
+            })
+            assert (r.status_code, r.json().get("detail")) == (code, text)
+        assert client.get("/api/v1/sales/subscriptions").json()["total"] == 0
+
+    def test_positionen_aendern_ersetzt_die_liste(self, client):
+        kunde = _b6_kunde(client)
+        snack = _b6_produkt(client, "BIO Snackbox | Amaranth", "B6-SNACK", "4.50")
+        kresse = _b6_produkt(client, "Kresse Schale", "B6-KRESSE", "3.00")
+        abo = _b6_abo_api(client, kunde, product_id=snack["id"], menge=2, einheit="STUECK")
+
+        r = client.patch(f"/api/v1/sales/subscriptions/{abo['id']}", json={"positionen": [
+            {"product_id": kresse["id"], "menge": 4, "einheit": "SCHALE"},
+            {"product_id": snack["id"], "menge": 1, "einheit": "STUECK"},
+        ]})
+
+        assert r.status_code == 200, r.text
+        assert _b6_kurz(r.json()) == [
+            (1, "Kresse Schale", Decimal("4"), "SCHALE"),
+            (2, "BIO Snackbox | Amaranth", Decimal("1"), "STUECK"),
+        ]
+        assert (r.json()["product_name"], Decimal(str(r.json()["menge"]))) == ("Kresse Schale", Decimal("4"))
+        assert _b6_positionen(abo["id"]) == [
+            (1, "Kresse Schale", Decimal("4.00"), "SCHALE"),
+            (2, "BIO Snackbox | Amaranth", Decimal("1.00"), "STUECK"),
+        ]
+
+    def test_ungueltige_aenderung_laesst_das_abo_unveraendert(self, client):
+        kunde = _b6_kunde(client)
+        snack = _b6_produkt(client, "BIO Snackbox | Amaranth", "B6-SNACK", "4.50")
+        abo = _b6_abo_api(client, kunde, product_id=snack["id"], menge=2, einheit="STUECK")
+
+        r = client.patch(f"/api/v1/sales/subscriptions/{abo['id']}", json={
+            "intervall": "TAEGLICH",
+            "positionen": [{"product_id": str(uuid.uuid4()), "menge": 1, "einheit": "STUECK"}],
+        })
+
+        assert r.status_code == 404, r.text
+        nachher = client.get("/api/v1/sales/subscriptions").json()["items"][0]
+        assert nachher["intervall"] == "WOECHENTLICH"
+        assert _b6_kurz(nachher) == [(1, "BIO Snackbox | Amaranth", Decimal("2"), "STUECK")]
+
+    def test_menge_wie_bisher_aendert_die_einzige_position(self, client):
+        kunde = _b6_kunde(client)
+        snack = _b6_produkt(client, "BIO Snackbox | Amaranth", "B6-SNACK", "4.50")
+        abo = _b6_abo_api(client, kunde, product_id=snack["id"], menge=2, einheit="STUECK")
+
+        r = client.patch(f"/api/v1/sales/subscriptions/{abo['id']}", json={"menge": 5, "einheit": "SCHALE"})
+
+        assert r.status_code == 200, r.text
+        assert _b6_kurz(r.json()) == [(1, "BIO Snackbox | Amaranth", Decimal("5"), "SCHALE")]
+
+    def test_menge_wie_bisher_bei_mehreren_positionen_wird_abgelehnt(self, client):
+        kunde = _b6_kunde(client)
+        snack = _b6_produkt(client, "BIO Snackbox | Amaranth", "B6-SNACK", "4.50")
+        abo = _b6_abo_api(client, kunde, [
+            {"product_id": snack["id"], "menge": 2, "einheit": "STUECK"},
+            {"product_id": snack["id"], "menge": 1, "einheit": "SCHALE"},
+        ])
+
+        r = client.patch(f"/api/v1/sales/subscriptions/{abo['id']}", json={"menge": 5})
+
+        assert r.status_code == 400, r.text
+        assert r.json()["detail"] == (
+            "Das Abo hat mehrere Positionen. Menge und Einheit bitte je Position ändern.")
+
+    def test_deaktivieren_behaelt_die_positionen(self, client):
+        kunde = _b6_kunde(client)
+        snack = _b6_produkt(client, "BIO Snackbox | Amaranth", "B6-SNACK", "4.50")
+        abo = _b6_abo_api(client, kunde, [
+            {"product_id": snack["id"], "menge": 2, "einheit": "STUECK"},
+            {"product_id": snack["id"], "menge": 1, "einheit": "SCHALE"},
+        ])
+
+        r = client.patch(f"/api/v1/sales/subscriptions/{abo['id']}", json={"aktiv": False})
+
+        assert r.status_code == 200, r.text
+        assert len(r.json()["positionen"]) == 2
+
+    def test_rechte_wie_bisher_auch_die_halle_legt_abos_an(self, client):
+        """Abos hängen am Router sales (_deps_auftraege in main.py): alle fünf
+        Rollen lesen und schreiben, wie vor B6. Die Oberfläche zeigt der Halle
+        die Abo-Seite nicht (Layout.tsx). Ohne Preisfeld bleibt das so (Paket 3, Q4)."""
+        from app.api.deps import get_current_user
+        from app.main import app
+        kunde = _b6_kunde(client)
+        snack = _b6_produkt(client, "BIO Snackbox | Amaranth", "B6-SNACK", "4.50")
+
+        async def halle():
+            return {"id": "123e4567-e89b-12d3-a456-426614174077", "username": "halle",
+                    "email": "halle@example.com", "roles": ["production_staff"]}
+        app.dependency_overrides[get_current_user] = halle
+
+        abo = _b6_abo_api(client, kunde, [{"product_id": snack["id"], "menge": 2, "einheit": "STUECK"}])
+        assert len(abo["positionen"]) == 1
+        fehler = _b6_abo_api(client, kunde, [{"product_id": snack["id"], "menge": 2, "einheit": "STUECK",
+                                              "unit_price": "0.01"}], erwartet=422)
+        assert [(f["type"], f["loc"][-1]) for f in fehler["detail"]] == [("extra_forbidden", "unit_price")]

@@ -6,7 +6,7 @@ Mit Adressen, Payment Terms und Steuer-IDs
 from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID
-from pydantic import BaseModel, Field, ConfigDict, EmailStr, field_validator
+from pydantic import BaseModel, Field, ConfigDict, EmailStr, field_validator, model_validator
 from pydantic_core import PydanticCustomError
 
 from app.models.customer import CustomerType, SubscriptionInterval, PaymentTerms, AddressType, PfandAbrechnung
@@ -362,22 +362,100 @@ class SubscriptionBase(BaseModel):
     gueltig_bis: Optional[date] = Field(None, description="Enddatum")
 
 
+class SubscriptionPositionIn(BaseModel):
+    """Position eines Abos (B6): Produkt bzw. Verpackungsvariante, Menge, Einheit.
+
+    Kein Preisfeld: Der Preis kommt im Abo-Lauf wie in create_order aus
+    Sonderpreis, Variante und Basispreis. Paket 3 (Q4) lässt Abos für die
+    Halle offen, weil sie keine Preise tragen. extra="forbid": ein
+    mitgeschicktes unit_price o. ä. ist ein Fehler (422), kein stilles Weglassen.
+    """
+    model_config = ConfigDict(extra="forbid")
+
+    product_id: Optional[UUID] = Field(None, description="Produkt-ID")
+    product_variant_id: Optional[UUID] = Field(None, description="Verpackungs-Variante")
+    seed_id: Optional[UUID] = Field(None, description="Saatgut-ID (Legacy)")
+    menge: Decimal = Field(..., gt=0, description="Menge je Lieferung")
+    einheit: str = Field(..., min_length=1, max_length=20, description="Einheit (STUECK, SCHALE, KISTE_12 …)")
+
+
+class SubscriptionPositionResponse(BaseModel):
+    """Position eines Abos in der Antwort (B6)"""
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    position: int
+    product_id: Optional[UUID] = None
+    product_variant_id: Optional[UUID] = None
+    seed_id: Optional[UUID] = None
+    menge: Decimal
+    einheit: str
+    # "Produkt — Variante" bzw. Sorte (SubscriptionItem.bezeichnung)
+    bezeichnung: Optional[str] = None
+
+
 class SubscriptionCreate(SubscriptionBase):
-    """Schema zum Erstellen eines Abonnements"""
+    """Schema zum Erstellen eines Abonnements.
+
+    Seit B6 mit `positionen` (ein oder mehrere Produkte je Lieferung). Die
+    Einzelfelder product_id/product_variant_id/seed_id mit menge und einheit
+    gelten weiter und ergeben genau eine Position; beides zugleich ist ein
+    Fehler (422).
+    """
     kunde_id: UUID = Field(..., description="Kunden-ID")
     seed_id: Optional[UUID] = Field(None, description="Saatgut-ID (Legacy)")
     product_id: Optional[UUID] = Field(None, description="Produkt-ID")
     product_variant_id: Optional[UUID] = Field(None, description="Verpackungs-Variante")
+    menge: Optional[Decimal] = Field(None, gt=0, description="Bestellmenge (ohne positionen)")
+    # Grenzen wie SubscriptionPositionIn.einheit: als_positionen() baut daraus
+    # eine Position, ein zu langer Wert wäre dort ein 500 statt 422.
+    einheit: Optional[str] = Field(None, min_length=1, max_length=20, description="Einheit (ohne positionen)")
+    positionen: Optional[list[SubscriptionPositionIn]] = Field(
+        None, min_length=1, max_length=50, description="Positionen je Lieferung (B6)"
+    )
+
+    @model_validator(mode="after")
+    def _positionen_oder_einzelprodukt(self):
+        einzelfelder = (self.product_id, self.product_variant_id, self.seed_id, self.menge, self.einheit)
+        if self.positionen is not None:
+            if any(wert is not None for wert in einzelfelder):
+                raise ValueError(
+                    "Entweder positionen oder product_id/seed_id mit menge und einheit, nicht beides"
+                )
+        elif self.menge is None or not self.einheit:
+            raise ValueError("Bitte mindestens eine Position angeben (positionen oder menge und einheit)")
+        return self
+
+    def als_positionen(self) -> list[SubscriptionPositionIn]:
+        """Die Positionen des neuen Abos; die Einzelfelder ergeben genau eine."""
+        if self.positionen is not None:
+            return self.positionen
+        return [SubscriptionPositionIn(
+            product_id=self.product_id, product_variant_id=self.product_variant_id,
+            seed_id=self.seed_id, menge=self.menge, einheit=self.einheit,
+        )]
 
 
 class SubscriptionUpdate(BaseModel):
-    """Schema zum Aktualisieren eines Abonnements"""
+    """Schema zum Aktualisieren eines Abonnements.
+
+    `positionen` ersetzt die ganze Liste (B6). menge/einheit wie bisher ändern
+    die einzige Position; bei mehreren Positionen antwortet die API mit 400.
+    """
     menge: Optional[Decimal] = Field(None, gt=0)
-    einheit: Optional[str] = None
+    # Grenzen wie SubscriptionPositionIn.einheit: der Wert landet in der Position
+    einheit: Optional[str] = Field(None, min_length=1, max_length=20)
     intervall: Optional[SubscriptionInterval] = None
     liefertage: Optional[list[int]] = None
     gueltig_bis: Optional[date] = None
     aktiv: Optional[bool] = None
+    positionen: Optional[list[SubscriptionPositionIn]] = Field(None, min_length=1, max_length=50)
+
+    @model_validator(mode="after")
+    def _positionen_oder_menge(self):
+        if self.positionen is not None and (self.menge is not None or self.einheit is not None):
+            raise ValueError("Entweder positionen oder menge/einheit ändern, nicht beides")
+        return self
 
 
 class SubscriptionResponse(SubscriptionBase):
@@ -400,6 +478,9 @@ class SubscriptionResponse(SubscriptionBase):
     kunde_name: Optional[str] = None
     seed_name: Optional[str] = None
     product_name: Optional[str] = None
+
+    # B6: alle Positionen; die Kopffelder oben spiegeln Position 1
+    positionen: list[SubscriptionPositionResponse] = []
 
 
 class SubscriptionListResponse(BaseModel):

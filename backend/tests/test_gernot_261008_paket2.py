@@ -1365,10 +1365,15 @@ class TestP4AboPosition:
         (sales.py, 'bitte Sorten auswählen'); ein Abo hat keine Auswahl."""
         from app.tasks.subscription_tasks import AboUebersprungen
         kunde = _p4_kunde(client)
-        tray = _p4_produkt(client, "Gastrotray 4 Sorten", "P4-TRAY", "18.00",
-                           is_variable_bundle=True, variable_bundle_min_slots=4,
-                           variable_bundle_max_slots=4)
+        tray = _p4_produkt(client, "Gastrotray 4 Sorten", "P4-TRAY", "18.00")
         abo = _p4_abo(client, kunde, product_id=tray["id"])
+        # Seit B6 lehnt schon das Anlegen ein variables Bundle ab; der Lauf
+        # muss es trotzdem überspringen, wenn das Produkt erst danach eins wird.
+        r = client.patch(f"/api/v1/products/{tray['id']}", json={
+            "is_variable_bundle": True, "variable_bundle_min_slots": 4,
+            "variable_bundle_max_slots": 4,
+        })
+        assert r.status_code == 200, r.text
 
         with pytest.raises(AboUebersprungen, match="variables Bundle"):
             _p4_anlegen(abo["id"])

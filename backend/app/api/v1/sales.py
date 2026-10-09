@@ -8,11 +8,11 @@ from uuid import UUID
 from decimal import Decimal
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Response
 from sqlalchemy import select, func, or_
-from sqlalchemy.orm import joinedload
+from sqlalchemy.orm import joinedload, selectinload
 
 from app.api.deps import DBSession, Pagination, CurrentUser, require_role
 from app.core.rollen import KAUFMAENNISCHE_ROLLEN, ROLLEN_OHNE_HALLE, kundenfeldschutz, standardwerte
-from app.models.customer import Customer, CustomerType, Contact, CustomerAddress, AddressType, Subscription
+from app.models.customer import Customer, CustomerType, Contact, CustomerAddress, AddressType, Subscription, SubscriptionItem
 from app.models.order import Order, OrderLine, OrderStatus, OrderAuditLog, TaxRate, vat_from_lines
 from app.models.seed import Seed
 from app.models.product import Product, ProductVariant
@@ -21,7 +21,8 @@ from app.schemas.customer import (
     CustomerCreate, CustomerUpdate, CustomerResponse, CustomerListResponse,
     ContactCreate, ContactUpdate, ContactResponse,
     CustomerAddressBase, CustomerAddressUpdate, CustomerAddressResponse,
-    SubscriptionCreate, SubscriptionUpdate, SubscriptionResponse, SubscriptionListResponse
+    SubscriptionCreate, SubscriptionUpdate, SubscriptionResponse, SubscriptionListResponse,
+    SubscriptionPositionIn,
 )
 from app.schemas.order import (
     OrderCreate, OrderUpdate, OrderResponse, OrderListResponse,
@@ -477,6 +478,86 @@ async def export_customers_datev(db: DBSession):
 
 # ============== Subscription Endpoints ==============
 
+# Abo mit Kunde, Kopfnamen und allen Positionen samt Produkt, Variante, Sorte
+_ABO_LADEN = (
+    joinedload(Subscription.kunde),
+    joinedload(Subscription.seed),
+    joinedload(Subscription.product),
+    selectinload(Subscription.positionen).options(
+        joinedload(SubscriptionItem.product),
+        joinedload(SubscriptionItem.variante).joinedload(ProductVariant.parent_product),
+        joinedload(SubscriptionItem.seed),
+    ),
+)
+
+
+def _abo_antwort(sub: Subscription) -> SubscriptionResponse:
+    """Antwort mit Kunden- und Produktnamen; Positionen über from_attributes."""
+    response = SubscriptionResponse.model_validate(sub)
+    response.kunde_name = sub.kunde.name if sub.kunde else None
+    response.seed_name = sub.seed.name if sub.seed else None
+    # Produkt-Abos (Bundles/Kartons) haben kein seed — ohne product_name
+    # fällt die UI auf die UUID zurück ("7f4322c5" statt "Genussmix Karton").
+    response.product_name = sub.product.name if sub.product else None
+    return response
+
+
+def _abo_positionen_bauen(db: DBSession, positionen: list[SubscriptionPositionIn]) -> list[SubscriptionItem]:
+    """Abo-Positionen prüfen und als SubscriptionItem 1..n bauen (B6).
+
+    Abgelehnt wird, was der Abo-Lauf nie liefern könnte
+    (subscription_tasks._abo_produkt): unbekanntes Produkt bzw. unbekannte
+    Variante oder Sorte, eine Variante eines anderen Produkts, ein
+    deaktiviertes Produkt, ein variables Bundle (braucht eine Sortenauswahl,
+    die ein Abo nicht hat) und eine Position ohne Produkt und Sorte. Bei
+    mehreren Positionen nennt die Meldung die Nummer ("Position 2: …").
+    Eine Variante ohne product_id bekommt ihr Elternprodukt.
+    """
+    mehrere = len(positionen) > 1
+
+    def ablehnen(code: int, text: str, nr: int):
+        raise HTTPException(status_code=code, detail=f"Position {nr}: {text}" if mehrere else text)
+
+    items = []
+    for nr, pos in enumerate(positionen, start=1):
+        product_id = pos.product_id
+        if pos.product_variant_id:
+            variante = db.get(ProductVariant, pos.product_variant_id)
+            if variante is None:
+                ablehnen(404, "Verpackungs-Variante nicht gefunden", nr)
+            if product_id and variante.parent_product_id != product_id:
+                ablehnen(400, "Variante gehört nicht zum gewählten Produkt", nr)
+            product_id = variante.parent_product_id
+        if product_id:
+            produkt = db.get(Product, product_id)
+            if produkt is None:
+                ablehnen(404, f"Produkt {product_id} nicht gefunden", nr)
+            if produkt.is_active is False:
+                ablehnen(400, f"Produkt {produkt.name} ist deaktiviert", nr)
+            if produkt.is_variable_bundle:
+                ablehnen(400, f"{produkt.name} ist ein variables Bundle und braucht eine Sortenauswahl", nr)
+        elif pos.seed_id:
+            if db.get(Seed, pos.seed_id) is None:
+                ablehnen(404, f"Saatgut {pos.seed_id} nicht gefunden", nr)
+        else:
+            ablehnen(400, "Bitte Produkt oder Saatgut auswählen", nr)
+        items.append(SubscriptionItem(
+            position=nr,
+            product_id=product_id,
+            product_variant_id=pos.product_variant_id,
+            seed_id=pos.seed_id,
+            menge=pos.menge,
+            einheit=pos.einheit,
+        ))
+    return items
+
+
+def _abo_laden(db: DBSession, sub_id: UUID) -> Optional[Subscription]:
+    return db.execute(
+        select(Subscription).options(*_ABO_LADEN).where(Subscription.id == sub_id)
+    ).unique().scalar_one_or_none()
+
+
 @router.get("/subscriptions", response_model=SubscriptionListResponse)
 async def list_subscriptions(
     db: DBSession,
@@ -491,10 +572,7 @@ async def list_subscriptions(
     - **kunde_id**: Abos eines bestimmten Kunden
     - **aktiv**: Nur aktive Abos
     """
-    query = select(Subscription).options(
-        joinedload(Subscription.kunde),
-        joinedload(Subscription.seed)
-    )
+    query = select(Subscription).options(*_ABO_LADEN)
 
     if kunde_id:
         query = query.where(Subscription.kunde_id == kunde_id)
@@ -509,17 +587,7 @@ async def list_subscriptions(
     query = query.offset(pagination.offset).limit(pagination.page_size)
     subscriptions = db.execute(query).scalars().unique().all()
 
-    items = []
-    for sub in subscriptions:
-        response = SubscriptionResponse.model_validate(sub)
-        response.kunde_name = sub.kunde.name if sub.kunde else None
-        response.seed_name = sub.seed.name if sub.seed else None
-        # Produkt-Abos (Bundles/Kartons) haben kein seed — ohne diese Zeile
-        # fällt die UI auf die UUID zurück ("7f4322c5" statt "Genussmix Karton").
-        response.product_name = sub.product.name if sub.product else None
-        items.append(response)
-
-    return SubscriptionListResponse(items=items, total=total)
+    return SubscriptionListResponse(items=[_abo_antwort(sub) for sub in subscriptions], total=total)
 
 
 @router.post("/subscriptions", response_model=SubscriptionResponse, status_code=status.HTTP_201_CREATED)
@@ -535,71 +603,60 @@ async def create_subscription(sub_data: SubscriptionCreate, db: DBSession):
     if not customer:
         raise HTTPException(status_code=404, detail="Kunde nicht gefunden")
 
-    # Entweder Product ODER Saatgut muss gewählt sein (Abos auf neuer Produkt-Welt
-    # oder Legacy-Saatgut-Welt)
-    payload = sub_data.model_dump()
-    product_id = payload.get("product_id")
-    seed_id = payload.get("seed_id")
-
-    product = None
-    seed = None
-    if product_id:
-        product = db.get(Product, product_id)
-        if not product:
-            raise HTTPException(status_code=404, detail=f"Produkt {product_id} nicht gefunden")
-    elif seed_id:
-        seed = db.get(Seed, seed_id)
-        if not seed:
-            raise HTTPException(status_code=404, detail=f"Saatgut {seed_id} nicht gefunden")
-    else:
-        raise HTTPException(
-            status_code=400,
-            detail="Bitte Produkt oder Saatgut auswählen",
-        )
-
-    subscription = Subscription(**payload)
+    # B6: ein oder mehrere Produkte je Lieferung. Die alten Einzelfelder
+    # (product_id bzw. seed_id mit menge/einheit) ergeben genau eine Position.
+    positionen = _abo_positionen_bauen(db, sub_data.als_positionen())
+    payload = sub_data.model_dump(exclude={
+        "positionen", "product_id", "product_variant_id", "seed_id", "menge", "einheit",
+    })
+    subscription = Subscription(**payload, positionen=positionen)
+    subscription.kopf_aus_erster_position()
     db.add(subscription)
     db.commit()
-    db.refresh(subscription)
 
-    response = SubscriptionResponse.model_validate(subscription)
-    response.kunde_name = customer.name
-    response.seed_name = (seed.name if seed else (product.name if product else None))
-    response.product_name = product.name if product else None
-    return response
+    return _abo_antwort(_abo_laden(db, subscription.id))
 
 
 @router.patch("/subscriptions/{sub_id}", response_model=SubscriptionResponse)
 async def update_subscription(sub_id: UUID, sub_data: SubscriptionUpdate, db: DBSession):
-    """Abonnement aktualisieren."""
-    subscription = db.execute(
-        select(Subscription)
-        .options(
-            joinedload(Subscription.kunde),
-            joinedload(Subscription.seed),
-            joinedload(Subscription.product),
-        )
-        .where(Subscription.id == sub_id)
-    ).scalar_one_or_none()
+    """Abonnement aktualisieren. `positionen` ersetzt die ganze Liste (B6)."""
+    subscription = _abo_laden(db, sub_id)
 
     if not subscription:
         raise HTTPException(status_code=404, detail="Abonnement nicht gefunden")
 
     update_data = sub_data.model_dump(exclude_unset=True)
+    update_data.pop("positionen", None)
+    # Zuerst prüfen, dann ändern: eine abgelehnte Position lässt das Abo unverändert.
+    neue_positionen = (
+        _abo_positionen_bauen(db, sub_data.positionen) if sub_data.positionen is not None else None
+    )
+    einzeln = {feld: update_data.pop(feld) for feld in ("menge", "einheit") if feld in update_data}
+    if einzeln and len(subscription.positionen) > 1:
+        raise HTTPException(
+            status_code=400,
+            detail="Das Abo hat mehrere Positionen. Menge und Einheit bitte je Position ändern.",
+        )
+
     for field, value in update_data.items():
         setattr(subscription, field, value)
+    # Bis B6 änderte das Formular Menge und Einheit des Kopfes; bei einem Abo
+    # mit einer Position gilt das weiter für diese Position.
+    for feld, wert in einzeln.items():
+        setattr(subscription, feld, wert)
+        for position in subscription.positionen:
+            setattr(position, feld, wert)
+    if neue_positionen is not None:
+        subscription.positionen = neue_positionen
+        subscription.kopf_aus_erster_position()
 
     db.commit()
-    db.refresh(subscription)
 
-    response = SubscriptionResponse.model_validate(subscription)
     # Produkt-Abos (Bundles/Kartons) haben kein seed. Ohne die Null-Prüfung
-    # endete jedes Speichern und jedes Deaktivieren eines Produkt-Abos in
-    # einem 500er — in der UI sichtbar als "Fehler beim Aktualisieren".
-    response.kunde_name = subscription.kunde.name if subscription.kunde else None
-    response.seed_name = subscription.seed.name if subscription.seed else None
-    response.product_name = subscription.product.name if subscription.product else None
-    return response
+    # in _abo_antwort endete jedes Speichern und jedes Deaktivieren eines
+    # Produkt-Abos in einem 500er — in der UI "Fehler beim Aktualisieren".
+    return _abo_antwort(_abo_laden(db, sub_id))
+
 
 @router.post("/subscriptions/process-today", status_code=status.HTTP_200_OK)
 async def process_today_subscriptions(db: DBSession):
