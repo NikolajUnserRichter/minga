@@ -418,6 +418,23 @@ def _auto_migrate(engine: Engine) -> None:
     except Exception as e:
         logger.error(f"[auto-migrate] Index ux_invoices_monatsrechnung fehlgeschlagen: {e}")
 
+    # Abo-Positionen (B6): Bestands-Abos bekommen ihren Kopf (Produkt,
+    # Variante, Sorte, Menge, Einheit) als Position 1 — nur Abos ohne
+    # Position, also idempotent. Die Tabelle subscription_items legt
+    # create_all an. Eigener try-Block; der Korrekturblock A3 bleibt der
+    # letzte Block.
+    try:
+        from sqlalchemy.orm import Session as _AboSession
+        from app.services.abo_positionen import positionen_nachtragen
+        if inspector.has_table("subscriptions") and inspector.has_table("subscription_items"):
+            with _AboSession(engine) as session:
+                anzahl = positionen_nachtragen(session)
+                session.commit()
+            if anzahl:
+                logger.info(f"[auto-migrate] Abo-Positionen für {anzahl} Abos nachgetragen")
+    except Exception as e:
+        logger.error(f"[auto-migrate] Abo-Positionen fehlgeschlagen: {e}")
+
     # Einmalige Datenkorrektur (A3, 08.10.2026): Steuersatz offener
     # Bestellpositionen an den Produktstamm angleichen. Eigener try-Block —
     # scheitert sie, laufen die Schema-Migrationen trotzdem, und ohne Marker

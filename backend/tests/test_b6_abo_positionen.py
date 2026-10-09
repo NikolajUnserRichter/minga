@@ -243,3 +243,150 @@ class TestB6Modell:
         assert r.status_code == 204, r.text
         with TestingSessionLocal() as db:
             assert db.execute(select(func.count()).select_from(SubscriptionItem)).scalar() == 0
+
+
+# ------------------------------------------------ Task 2: Migration
+
+def _b6_mandant(tmp_path, monkeypatch, slug="b6alt"):
+    """Mandanten-DB wie in Produktion (WAL, foreign_keys=ON) in tmp_path."""
+    from app import tenancy
+    monkeypatch.setattr(tenancy, "TENANTS_DIR", tmp_path)
+    tenancy.registry.dispose_all()
+    tenancy.provision_tenant(slug, seed_defaults=False)
+    return tenancy.registry.get_engine(slug)
+
+
+def _b6_bestand_vor_b6(engine):
+    """Stand vor B6: drei Abos nur mit Kopf (Produkt, Variante, Sorte; eins
+    inaktiv) und ein Schema ohne subscription_items."""
+    from sqlalchemy.orm import Session
+    from app.models.customer import Customer, CustomerType, Subscription, SubscriptionInterval
+    from app.models.product import Product, ProductVariant
+    from app.models.seed import Seed
+    from app.models.unit import UnitOfMeasure, UnitCategory
+    with Session(engine) as db:
+        stk = UnitOfMeasure(code="STK", name="Stück", category=UnitCategory.COUNT)
+        kiste = UnitOfMeasure(code="KISTE_12", name="Kiste", category=UnitCategory.COUNT)
+        kunde = Customer(name="Gastro Süd", typ=CustomerType.GASTRO)
+        db.add_all([stk, kiste, kunde])
+        db.flush()
+        tray = Product(sku="MG-14001", name="Gastrotray", category="MICROGREEN",
+                       base_unit_id=stk.id, base_price=Decimal("18.00"))
+        db.add(tray)
+        db.flush()
+        variante = ProductVariant(parent_product_id=tray.id, packaging_unit_id=kiste.id,
+                                  name_suffix="12er Mehrwegkiste")
+        sorte = Seed(name="Gartenkresse", keimdauer_tage=3, wachstumsdauer_tage=3,
+                     erntefenster_min_tage=6, erntefenster_optimal_tage=7,
+                     erntefenster_max_tage=8, ertrag_gramm_pro_tray=350)
+        db.add_all([variante, sorte])
+        db.flush()
+        gemeinsam = dict(kunde_id=kunde.id, intervall=SubscriptionInterval.WOECHENTLICH,
+                         liefertage=[1, 4], gueltig_von=_B6_MO)
+        abos = [
+            Subscription(product_id=tray.id, menge=Decimal("3"), einheit="STUECK", **gemeinsam),
+            Subscription(product_id=tray.id, product_variant_id=variante.id,
+                         menge=Decimal("1"), einheit="KISTE_12", **gemeinsam),
+            Subscription(seed_id=sorte.id, menge=Decimal("150"), einheit="G",
+                         aktiv=False, **gemeinsam),
+        ]
+        db.add_all(abos)
+        db.commit()
+        erwartet = {
+            str(a.id): [(1, a.product_id, a.product_variant_id, a.seed_id, a.menge, a.einheit)]
+            for a in abos
+        }
+    with engine.begin() as conn:
+        conn.exec_driver_sql("DROP TABLE subscription_items")
+    return erwartet
+
+
+def _b6_positionen_je_abo(engine):
+    from sqlalchemy import select
+    from sqlalchemy.orm import Session
+    from app.models.customer import Subscription
+    with Session(engine) as db:
+        return {
+            str(sub.id): [(p.position, p.product_id, p.product_variant_id, p.seed_id, p.menge, p.einheit)
+                          for p in sub.positionen]
+            for sub in db.execute(select(Subscription)).scalars().all()
+        }
+
+
+def _b6_start(engine):
+    """Was init_all_existing_tenants und der Demo-Reset beim Start tun."""
+    from app import tenancy
+    from app.database import Base
+    Base.metadata.create_all(bind=engine)
+    tenancy._auto_migrate(engine)
+
+
+class TestB6Migration:
+    """Bestands-Abos verlustfrei: der Kopf wird Position 1, einmal."""
+
+    def test_bestands_abos_bekommen_ihren_kopf_als_position_1(self, tmp_path, monkeypatch):
+        from app import tenancy
+        engine = _b6_mandant(tmp_path, monkeypatch)
+        try:
+            erwartet = _b6_bestand_vor_b6(engine)
+
+            _b6_start(engine)
+
+            assert _b6_positionen_je_abo(engine) == erwartet
+        finally:
+            tenancy.registry.dispose_all()
+
+    def test_zweiter_start_legt_nichts_doppelt_an(self, tmp_path, monkeypatch):
+        from app import tenancy
+        engine = _b6_mandant(tmp_path, monkeypatch)
+        try:
+            erwartet = _b6_bestand_vor_b6(engine)
+
+            _b6_start(engine)
+            _b6_start(engine)
+
+            assert _b6_positionen_je_abo(engine) == erwartet
+        finally:
+            tenancy.registry.dispose_all()
+
+    def test_abo_mit_positionen_bleibt_unberuehrt(self, tmp_path, monkeypatch):
+        """Nachgetragen wird nur bei Abos ohne Position; ein Abo mit zwei
+        Positionen behält beide, auch wenn sein Kopf anders aussieht."""
+        from sqlalchemy.orm import Session
+        from app import tenancy
+        from app.models.customer import Subscription, SubscriptionItem
+        engine = _b6_mandant(tmp_path, monkeypatch)
+        try:
+            erwartet = _b6_bestand_vor_b6(engine)
+            _b6_start(engine)
+            abo_id = next(iter(erwartet))
+            with Session(engine) as db:
+                sub = db.get(Subscription, uuid.UUID(abo_id))
+                sub.positionen.append(SubscriptionItem(
+                    position=2, product_id=sub.product_id, menge=Decimal("5"), einheit="SCHALE"))
+                db.commit()
+
+            _b6_start(engine)
+
+            positionen = _b6_positionen_je_abo(engine)[abo_id]
+            assert [(p[0], p[4], p[5]) for p in positionen] == [
+                (1, Decimal("3.00"), "STUECK"), (2, Decimal("5.00"), "SCHALE")]
+        finally:
+            tenancy.registry.dispose_all()
+
+    def test_demo_reset_traegt_positionen_nach(self, tmp_path, monkeypatch):
+        """Der Golden Seed (demo.seed.db) bleibt auf dem Stand vor B6; der
+        Reset um 03:30 ruft create_all und _auto_migrate."""
+        from app import tenancy
+        from app.services.demo_reset_service import reset_demo_from_seed, snapshot_demo_seed
+        engine = _b6_mandant(tmp_path, monkeypatch, slug="demo")
+        try:
+            erwartet = _b6_bestand_vor_b6(engine)
+            snapshot_demo_seed("demo")
+
+            ergebnis = reset_demo_from_seed("demo")
+
+            assert ergebnis["migriert"] is True
+            assert _b6_positionen_je_abo(tenancy.registry.get_engine("demo")) == erwartet
+        finally:
+            tenancy.registry.dispose_all()
