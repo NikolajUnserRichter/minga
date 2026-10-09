@@ -40,6 +40,10 @@ KNOWN_SETTINGS: dict[str, dict] = {
     "COMPANY_BANK_NAME":  {"is_secret": False, "label": "Bank"},
     "COMPANY_IBAN":       {"is_secret": False, "label": "IBAN"},
     "COMPANY_BIC":        {"is_secret": False, "label": "BIC"},
+    # SEPA-Lastschrift (B10): Gläubiger-ID gehört der Firma, nicht dem Kunden.
+    # Gelesen OHNE Umgebungs-Rückfall (gälte sonst für alle Mandanten im Container).
+    "COMPANY_SEPA_GLAEUBIGER_ID": {"is_secret": False, "label": "Gläubiger-Identifikationsnummer (SEPA)"},
+    "SEPA_VORABANKUENDIGUNG_TAGE": {"is_secret": False, "label": "SEPA: Vorabankündigung, Tage vor Einzug (leer = 14)"},
     # Integration: Lexware Office (lexoffice) — Kunde hinterlegt eigenen API-Key
     "LEXOFFICE_ENABLED":  {"is_secret": False, "label": "Lexware Office aktiv"},
     "LEXOFFICE_API_KEY":  {"is_secret": True,  "label": "lexoffice API-Key"},

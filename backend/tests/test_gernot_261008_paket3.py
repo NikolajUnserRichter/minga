@@ -3184,3 +3184,31 @@ class TestQ5Pruefungen:
         assert einzugsdatum(date(2027, 3, 12), 14, 14, date(2027, 3, 12)) == date(2027, 3, 30)
         # Zahlungsziel bestimmt: 01.10. + 30 = Sa 31.10. → Mo 02.11.
         assert einzugsdatum(date(2026, 10, 1), 30, 14, date(2026, 10, 8)) == date(2026, 11, 2)
+
+
+class TestQ5Einstellungen:
+    def test_glaeubiger_id_wird_geprueft_und_normalisiert(self, client):
+        r = client.patch("/api/v1/admin/settings", json={"COMPANY_SEPA_GLAEUBIGER_ID": "de98 zzz0 9999 9999 99"})
+        assert r.status_code == 200, r.text
+        werte = {s["key"]: s["value"] for s in client.get("/api/v1/admin/settings").json()}
+        assert werte["COMPANY_SEPA_GLAEUBIGER_ID"] == _Q5_GID
+
+    def test_falsche_glaeubiger_id_422_und_nichts_gespeichert(self, client):
+        r = client.patch("/api/v1/admin/settings", json={
+            "COMPANY_NAME": "Minga Greens", "COMPANY_SEPA_GLAEUBIGER_ID": "DE75ZZZ0002442146"})
+        assert r.status_code == 422, r.text
+        assert "18 Zeichen" in r.json()["detail"]
+        werte = {s["key"]: s for s in client.get("/api/v1/admin/settings").json()}
+        assert werte["COMPANY_SEPA_GLAEUBIGER_ID"]["source"] != "db"
+        assert werte["COMPANY_NAME"]["source"] != "db"
+
+    @pytest.mark.parametrize("wert,status", [("5", 200), ("abc", 422), ("0", 422), ("31", 422)])
+    def test_vorabankuendigungsfrist(self, client, wert, status):
+        r = client.patch("/api/v1/admin/settings", json={"SEPA_VORABANKUENDIGUNG_TAGE": wert})
+        assert r.status_code == status, r.text
+
+    def test_leerer_wert_loescht_wie_bisher(self, client):
+        _q5_glaeubiger(client)
+        assert client.patch("/api/v1/admin/settings", json={"COMPANY_SEPA_GLAEUBIGER_ID": ""}).status_code == 200
+        werte = {s["key"]: s for s in client.get("/api/v1/admin/settings").json()}
+        assert werte["COMPANY_SEPA_GLAEUBIGER_ID"]["has_value"] is False

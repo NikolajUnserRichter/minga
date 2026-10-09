@@ -20,6 +20,7 @@ from pydantic import BaseModel
 from app.api.deps import DBSession
 from app.services.settings_service import KNOWN_SETTINGS, get_setting, set_setting
 from app.services.email_service import send_email, EmailNotConfiguredError
+from app.services.sepa_service import einstellung_pruefen
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
 
@@ -81,6 +82,12 @@ def update_settings(db: DBSession, updates: dict[str, Optional[str]] = Body(...)
                 db.delete(existing)
                 changed += 1
             continue
+        # Inhaltsprüfung je Schlüssel (z. B. Gläubiger-ID). Bei Fehler wird
+        # nichts committet — auch kein anderer Schlüssel dieses Aufrufs.
+        try:
+            raw_value = einstellung_pruefen(key, raw_value)
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=f"{KNOWN_SETTINGS[key]['label']}: {e}")
         set_setting(db, key, raw_value)
         changed += 1
     db.commit()
