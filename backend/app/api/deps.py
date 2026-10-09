@@ -73,7 +73,7 @@ async def get_current_user(
     if not request_tenant:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Anmeldung nur ueber die Adresse des eigenen Arbeitsbereichs moeglich.",
+            detail="Anmeldung nur über die Adresse des eigenen Arbeitsbereichs möglich.",
         )
     token_tenant = payload.get("tenant_slug")
 

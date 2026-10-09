@@ -126,7 +126,7 @@ def test_get_current_user_rejects_request_without_tenant(host, token_tenant, tok
 
     assert exc_info.value.status_code == 403
     assert exc_info.value.detail == (
-        "Anmeldung nur ueber die Adresse des eigenen Arbeitsbereichs moeglich."
+        "Anmeldung nur über die Adresse des eigenen Arbeitsbereichs möglich."
     )
 
 
