@@ -140,3 +140,56 @@ class WiderrufResponse(BaseModel):
     #: Festgeschriebene Rechnungen mit Lastschrifthinweis, deren Einzug noch
     #: aussteht: nicht mehr einziehen; für Überweisung stornieren und neu ausstellen.
     offene_lastschriften: list[str]
+
+
+class EinzugZeile(BaseModel):
+    invoice_id: UUID
+    invoice_number: str
+    customer_id: UUID
+    customer_name: str
+    rechnungsdatum: date
+    betrag: Decimal
+    waehrung: str
+    einzugsdatum: date
+    ueberfaellig_seit_tagen: int
+    #: Erster erfolgreicher Mailversand der Rechnung (= der Vorabankündigung)
+    versendet_am: Optional[datetime]
+    #: RECHTZEITIG | ZU_SPAET | NICHT_PER_MAIL
+    ankuendigung: str
+    #: Tag der Einreichung bei der Bank (CSV); eine Rechnung nur einmal
+    eingereicht_am: Optional[date]
+    mandat_id: UUID
+    mandatsreferenz: str
+    mandatsart: Mandatsart
+    unterschrieben_am: date
+    kontoinhaber: str
+    iban: str
+    bic: Optional[str]
+    bank_name: Optional[str]
+    mandat_aktiv: bool
+
+
+class EinreichungRequest(BaseModel):
+    invoice_ids: list[UUID] = Field(..., min_length=1)
+    #: Für Rechnungen ohne rechtzeitig per Mail versendete Vorabankündigung:
+    #: Sie ging nachweislich auf anderem Weg rechtzeitig hinaus (wird an der
+    #: Rechnung vermerkt). Ohne Bestätigung: 409.
+    ankuendigung_bestaetigt: bool = False
+
+
+class EinzugBuchenRequest(BaseModel):
+    invoice_ids: list[UUID] = Field(..., min_length=1)
+    datum: date
+
+    @field_validator("datum")
+    @classmethod
+    def _nicht_in_der_zukunft(cls, v):
+        if v > heute_berlin():
+            raise ValueError("Einzugsdatum liegt in der Zukunft — gebucht wird, was auf dem Konto ist")
+        return v
+
+
+class EinzugBuchenResponse(BaseModel):
+    gebucht: list[str]
+    #: z. B. "eingezogen am …, angekündigt war der …" (früher als angekündigt)
+    hinweise: list[str] = []

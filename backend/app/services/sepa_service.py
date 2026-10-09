@@ -342,3 +342,250 @@ def versand_pruefen(db: Session, invoice) -> None:
             f"angekündigt werden muss er {frist} Tage vorher. Die Rechnung ist festgeschrieben — "
             "stornieren und neu ausstellen, dann gilt ein neues Einzugsdatum."
         )
+
+
+# --------------------------------------------------------------------------
+# Einzugsliste, Einreichung bei der Bank, Einzug buchen
+# --------------------------------------------------------------------------
+
+def _einzug_offen_bedingungen():
+    """Festgeschriebene Lastschriftrechnung mit offenem Betrag, Einzug steht aus.
+    Kein Entwurf (sepa_hinweis entsteht erst beim Festschreiben), nichts
+    Bezahltes, nichts Storniertes."""
+    from app.models.invoice import Invoice, InvoiceStatus, InvoiceType
+    return (
+        Invoice.zahlungsart == Zahlungsart.LASTSCHRIFT,
+        Invoice.lastschrift_status == LastschriftStatus.AUSSTEHEND,
+        Invoice.invoice_type == InvoiceType.RECHNUNG,
+        Invoice.status.in_((InvoiceStatus.OFFEN, InvoiceStatus.TEILBEZAHLT, InvoiceStatus.UEBERFAELLIG)),
+        Invoice.sepa_hinweis.is_not(None),
+        Invoice.total > Invoice.paid_amount,
+    )
+
+
+def _mandat_aktiv_bedingung():
+    """Das Mandat der Rechnung ist (noch) aktiv — als SQL fürs bedingte UPDATE."""
+    from app.models.invoice import Invoice
+    return Invoice.sepa_mandat_id.in_(select(SepaMandat.id).where(SepaMandat.aktiv.is_(True)))
+
+
+def _versandtag(invoice) -> Optional[date]:
+    """Tag des ersten erfolgreichen Mailversands in Europe/Berlin (sent_at;
+    seit Q2 setzt es nur der Versand)."""
+    if invoice.sent_at is None:
+        return None
+    zeit = invoice.sent_at if invoice.sent_at.tzinfo else invoice.sent_at.replace(tzinfo=timezone.utc)
+    return zeit.astimezone(ZoneInfo("Europe/Berlin")).date()
+
+
+def ankuendigung(invoice, frist_tage: int) -> str:
+    """Wie die Vorabankündigung belegt ist: RECHTZEITIG (per Mail, mindestens
+    frist_tage vor dem Einzug), ZU_SPAET, NICHT_PER_MAIL (nie über das System
+    versendet — etwa ausgedruckt mitgegeben oder gar nicht)."""
+    tag = _versandtag(invoice)
+    if tag is None:
+        return "NICHT_PER_MAIL"
+    return "RECHTZEITIG" if (invoice.due_date - tag).days >= frist_tage else "ZU_SPAET"
+
+
+def einzugsliste(db: Session, bis: Optional[date] = None, invoice_ids: Optional[list] = None) -> list[dict]:
+    """Arbeitsliste „Einzug fällig": je Rechnung Restbetrag, Einzugsdatum,
+    Versand der Vorabankündigung, Einreichung, Mandat und IBAN."""
+    from app.models.customer import Customer
+    from app.models.invoice import Invoice
+
+    abfrage = (
+        select(Invoice, SepaMandat, Customer)
+        .join(SepaMandat, Invoice.sepa_mandat_id == SepaMandat.id)
+        .join(Customer, Invoice.customer_id == Customer.id)
+        .where(*_einzug_offen_bedingungen())
+        .order_by(Invoice.due_date, Invoice.invoice_number)
+    )
+    if bis is not None:
+        abfrage = abfrage.where(Invoice.due_date <= bis)
+    if invoice_ids is not None:
+        abfrage = abfrage.where(Invoice.id.in_(invoice_ids))
+
+    heute = heute_berlin()
+    frist = vorabankuendigung_tage(db)
+    return [{
+        "invoice_id": inv.id,
+        "invoice_number": inv.invoice_number,
+        "customer_id": kunde.id,
+        "customer_name": kunde.name,
+        "rechnungsdatum": inv.invoice_date,
+        "betrag": inv.remaining_amount,
+        "waehrung": inv.currency or "EUR",
+        "einzugsdatum": inv.due_date,
+        "ueberfaellig_seit_tagen": max(0, (heute - inv.due_date).days),
+        "versendet_am": inv.sent_at,
+        "ankuendigung": ankuendigung(inv, frist),
+        "eingereicht_am": inv.lastschrift_eingereicht_am,
+        "mandat_id": mandat.id,
+        "mandatsreferenz": mandat.mandatsreferenz,
+        "mandatsart": mandat.mandatsart,
+        "unterschrieben_am": mandat.unterschrieben_am,
+        "kontoinhaber": mandat.kontoinhaber,
+        "iban": mandat.iban,
+        "bic": mandat.bic,
+        "bank_name": mandat.bank_name,
+        "mandat_aktiv": mandat.aktiv,
+    } for inv, mandat, kunde in db.execute(abfrage).all()]
+
+
+EINZUG_CSV_SPALTEN = (
+    "Rechnungsnummer", "Kunde", "Kontoinhaber", "IBAN", "BIC", "Bank",
+    "Mandatsreferenz", "Mandatsart", "Mandatsdatum", "Betrag", "Waehrung",
+    "Einzugsdatum", "Verwendungszweck",
+)
+
+#: Zellanfänge, die Excel und LibreOffice als Formel lesen (CSV-Injection).
+_FORMEL_ANFANG = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _csv_zelle(wert) -> str:
+    """Text für die CSV, Formelanfänge mit ' entschärft. Kundennamen ändern
+    auch Vertrieb und Halle; eine Zelle =HYPERLINK(…D2…) schickte sonst beim
+    Öffnen in Excel die IBAN einer anderen Zeile nach außen."""
+    text = "" if wert is None else str(wert)
+    return "'" + text if text.startswith(_FORMEL_ANFANG) else text
+
+
+def einzugsliste_csv(zeilen: list[dict]) -> str:
+    """CSV für die Eingabe im Online-Banking: Semikolon, Dezimalkomma,
+    UTF-8 mit BOM (Excel erkennt sonst die Umlaute nicht)."""
+    import csv
+    import io
+    puffer = io.StringIO()
+    schreiber = csv.writer(puffer, delimiter=";", lineterminator="\r\n")
+    schreiber.writerow(EINZUG_CSV_SPALTEN)
+    for z in zeilen:
+        schreiber.writerow([_csv_zelle(w) for w in (
+            z["invoice_number"], z["customer_name"], z["kontoinhaber"], z["iban"],
+            z["bic"], z["bank_name"], z["mandatsreferenz"],
+            z["mandatsart"].value, z["unterschrieben_am"].strftime("%d.%m.%Y"),
+            f"{z['betrag']:.2f}".replace(".", ","), z["waehrung"],
+            z["einzugsdatum"].strftime("%d.%m.%Y"), f"Rechnung {z['invoice_number']}",
+        )])
+    return "\ufeff" + puffer.getvalue()
+
+
+def _zeitpunkt() -> str:
+    return datetime.now(ZoneInfo("Europe/Berlin")).strftime("%d.%m.%Y %H:%M")
+
+
+def einreichen(db: Session, invoice_ids: list, *, ankuendigung_bestaetigt: bool,
+               benutzer: Optional[str]) -> list[dict]:
+    """Markiert die Rechnungen als bei der Bank eingereicht und liefert genau
+    ihre Zeilen für die CSV. Jede Rechnung nur EINMAL: ein zweiter Export
+    (anderer Tag, zweite Person, zweiter Klick) lehnt sie ab, statt sie noch
+    einmal in eine Datei zu schreiben. Ohne rechtzeitig per Mail versendete
+    Vorabankündigung nur mit ausdrücklicher Bestätigung (an der Rechnung
+    vermerkt). Alles oder nichts (ValueError)."""
+    from app.models.invoice import Invoice
+
+    ids = list(dict.fromkeys(invoice_ids))
+    zeilen = {z["invoice_id"]: z for z in einzugsliste(db, invoice_ids=ids)}
+    fehlend = [str(i) for i in ids if i not in zeilen]
+    if fehlend:
+        raise ValueError(
+            "Nicht in der Einzugsliste (Entwurf, bezahlt, storniert, kein Lastschrifteinzug "
+            f"ausstehend oder unbekannt): {', '.join(fehlend)}"
+        )
+    probleme, ohne_mail = [], []
+    for z in zeilen.values():
+        if z["eingereicht_am"] is not None:
+            probleme.append(f"{z['invoice_number']} bereits am {z['eingereicht_am'].strftime('%d.%m.%Y')} eingereicht")
+        elif not z["mandat_aktiv"]:
+            probleme.append(f"{z['invoice_number']}: Mandat widerrufen — nicht einziehen")
+        elif z["ankuendigung"] != "RECHTZEITIG":
+            ohne_mail.append(z["invoice_id"])
+            if not ankuendigung_bestaetigt:
+                probleme.append(f"{z['invoice_number']}: Vorabankündigung nicht rechtzeitig per Mail versendet")
+    if probleme:
+        raise ValueError("Nichts eingereicht — " + "; ".join(probleme))
+
+    heute = heute_berlin()
+    # Zuerst schreiben, dann lesen (Muster festschreiben, Q1): das bedingte
+    # UPDATE holt die Schreibsperre der Mandanten-DB. Ein gleichzeitiger
+    # zweiter Export wartet und findet die Rechnungen danach eingereicht.
+    getroffen = db.execute(
+        update(Invoice)
+        .where(Invoice.id.in_(ids), Invoice.lastschrift_eingereicht_am.is_(None),
+               _mandat_aktiv_bedingung(), *_einzug_offen_bedingungen())
+        .values(lastschrift_eingereicht_am=heute)
+        .execution_options(synchronize_session=False)
+    ).rowcount
+    if getroffen != len(ids):
+        raise ValueError("Gleichzeitig eingereicht oder geändert — Einzugsliste neu laden; nichts eingereicht")
+    db.expire_all()  # ab hier frisch gelesen: wir halten die Schreibsperre
+
+    vermerk = f"SEPA-Einreichung am {_zeitpunkt()} von {benutzer or 'unbekannt'}"
+    for inv in db.execute(select(Invoice).where(Invoice.id.in_(ids))).scalars():
+        zusatz = " — Vorabankündigung außerhalb des Systems bestätigt" if inv.id in ohne_mail else ""
+        inv.internal_notes = f"{inv.internal_notes or ''}\n\n{vermerk}{zusatz}".strip()
+    frisch = {z["invoice_id"]: z for z in einzugsliste(db, invoice_ids=ids)}
+    return [frisch[i] for i in ids]
+
+
+def einzug_buchen(db: Session, invoice_ids: list, datum: date, *, benutzer: Optional[str]) -> tuple[list[str], list[str]]:
+    """Bucht den Einzug als Zahlung (LASTSCHRIFT, Restbetrag, Mandatsreferenz).
+    Alles oder nichts: eine ungeeignete Rechnung → ValueError, nichts gebucht.
+    Liefert (gebuchte Rechnungsnummern, Hinweise)."""
+    from app.models.invoice import Invoice, PaymentMethod
+    from app.services.invoice_service import InvoiceService
+
+    ids = list(dict.fromkeys(invoice_ids))
+    if datum > heute_berlin():
+        raise ValueError("Einzugsdatum liegt in der Zukunft — gebucht wird, was auf dem Konto ist")
+    zeilen = {z["invoice_id"]: z for z in einzugsliste(db, invoice_ids=ids)}
+    fehlend = [str(i) for i in ids if i not in zeilen]
+    if fehlend:
+        raise ValueError(
+            "Nicht in der Einzugsliste (Entwurf, bezahlt, storniert, kein Lastschrifteinzug "
+            f"ausstehend oder unbekannt): {', '.join(fehlend)}"
+        )
+    widerrufen = [z["invoice_number"] for z in zeilen.values() if not z["mandat_aktiv"]]
+    if widerrufen:
+        raise ValueError(f"Mandat widerrufen — nicht einziehen: {', '.join(widerrufen)}")
+    zu_frueh = [z["invoice_number"] for z in zeilen.values() if datum < z["rechnungsdatum"]]
+    if zu_frueh:
+        raise ValueError(f"Einzugsdatum liegt vor dem Rechnungsdatum: {', '.join(zu_frueh)}")
+
+    # Zuerst schreiben, dann lesen (Muster festschreiben, Q1): pysqlite beginnt
+    # die Transaktion erst mit dem ersten Schreibzugriff. Das bedingte UPDATE
+    # holt die Schreibsperre; ein gleichzeitiger zweiter Aufruf wartet und
+    # findet die Rechnungen danach nicht mehr AUSSTEHEND → nichts doppelt.
+    getroffen = db.execute(
+        update(Invoice)
+        .where(Invoice.id.in_(ids), _mandat_aktiv_bedingung(), *_einzug_offen_bedingungen())
+        .values(lastschrift_status=LastschriftStatus.EINGEZOGEN)
+        .execution_options(synchronize_session=False)
+    ).rowcount
+    if getroffen != len(ids):
+        raise ValueError("Gleichzeitig gebucht oder geändert — Einzugsliste neu laden; nichts gebucht")
+    db.expire_all()  # ab hier frisch gelesen: wir halten die Schreibsperre
+
+    service = InvoiceService(db)
+    vermerk = f"SEPA-Einzug, gebucht am {_zeitpunkt()} von {benutzer or 'unbekannt'}"
+    gebucht, hinweise = [], []
+    for invoice_id in ids:
+        inv = db.get(Invoice, invoice_id)
+        mandat = db.get(SepaMandat, inv.sepa_mandat_id)
+        if datum < inv.due_date:
+            hinweise.append(
+                f"{inv.invoice_number}: eingezogen am {datum.strftime('%d.%m.%Y')}, "
+                f"angekündigt war der {inv.due_date.strftime('%d.%m.%Y')}"
+            )
+        service.record_payment(
+            invoice_id=inv.id,
+            amount=inv.remaining_amount,
+            payment_date=datum,
+            payment_method=PaymentMethod.LASTSCHRIFT,
+            reference=mandat.mandatsreferenz,
+            notes=vermerk,
+        )
+        if mandat.letzter_einzug_am is None or mandat.letzter_einzug_am < datum:
+            mandat.letzter_einzug_am = datum
+        gebucht.append(inv.invoice_number)
+    return gebucht, hinweise

