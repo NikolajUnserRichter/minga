@@ -32,6 +32,7 @@ from app.models.enums import DispatchDocType
 from app.schemas.documents import DocumentDispatchResponse
 from app.services.email_service import pruefe_smtp_konfiguration
 from app.services.pdf_service import load_company_settings
+from app.services.sepa_service import LastschriftNichtMoeglich, versand_pruefen, zahlungszeile_fuer_mail
 from app.services.beleg_dateiname import beleg_dateiname, content_disposition, rechnung_dateiname
 
 router = APIRouter(prefix="/invoices", tags=["Rechnungen"])
@@ -307,6 +308,16 @@ def send_invoice_email(
         raise HTTPException(status_code=400, detail="Stornierte Rechnungen können nicht versendet werden")
     if not invoice.lines:
         raise HTTPException(status_code=400, detail="Rechnung hat keine Positionen")
+    # SEPA-Lastschrift (B10, Q5) — vor Empfängern, Festschreiben und Versand:
+    # Entwurf eines Lastschriftkunden ohne Mandat/Gläubiger-ID → 400, bleibt
+    # Entwurf; festgeschriebene Lastschriftrechnung mit widerrufenem Mandat
+    # oder zu spätem Erstversand (Vorabankündigungsfrist) → 409.
+    try:
+        versand_pruefen(db, invoice)
+    except LastschriftNichtMoeglich as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
 
     # Empfänger VOR dem Festschreiben klären (Paket 3, Q2): ohne gültige
     # Empfänger bleibt ein Entwurf Entwurf und verbraucht keine Nummer.
@@ -382,7 +393,8 @@ def send_invoice_email(
                 f"Sehr geehrte Damen und Herren bei {invoice.customer.name},\n\n"
                 f"anbei finden Sie die Rechnung {invoice.invoice_number} über\n"
                 f"{invoice.total:.2f} {invoice.currency}.\n\n"
-                f"Fällig am: {invoice.due_date.strftime('%d.%m.%Y') if invoice.due_date else '—'}\n\n"
+                # Lastschrift: eingefrorener Hinweis statt "Fällig am" (B10)
+                f"{zahlungszeile_fuer_mail(invoice)}\n\n"
                 f"{gruss(db)}"
             )
         eintrag = versende_beleg(

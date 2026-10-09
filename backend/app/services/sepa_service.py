@@ -295,3 +295,50 @@ def lastschrift_festschreiben(db: Session, invoice, zahlungsziel_tage: int) -> N
         betrag=invoice.total, waehrung=invoice.currency or "EUR",
         einzug=einzug, mandat=mandat, glaeubiger=glaeubiger,
     )
+
+
+def zahlungszeile_fuer_mail(invoice) -> str:
+    """Zeile unter dem Betrag in der Rechnungsmail. Solange der Einzug aussteht:
+    der eingefrorene Lastschrifthinweis. Sonst (Überweisung, Einzug gebucht,
+    Rücklastschrift) wie bisher die Fälligkeit — nach einer Rücklastschrift
+    soll der Kunde überweisen, die Mail darf ihm das nicht ausreden. Der
+    Mailtext ist kein Beleg; Beleg ist das PDF mit dem eingefrorenen Hinweis."""
+    if invoice.sepa_hinweis and invoice.lastschrift_status == LastschriftStatus.AUSSTEHEND:
+        return invoice.sepa_hinweis
+    return f"Fällig am: {invoice.due_date.strftime('%d.%m.%Y') if invoice.due_date else '—'}"
+
+
+def versand_pruefen(db: Session, invoice) -> None:
+    """Vor dem Mailversand einer Rechnung (POST /invoices/{id}/send).
+
+    Entwurf: Lastschrift-Voraussetzungen des aktuellen Kunden prüfen, bevor
+    der Versand ihn festschreibt (LastschriftNichtMoeglich → 400).
+    Festgeschriebene Lastschriftrechnung mit ausstehendem Einzug (ValueError → 409):
+    - Mandat widerrufen: die Rechnung kündigt einen Einzug an, der nicht kommt.
+    - noch nie per Mail versendet (sent_at leer) und der Einzug liegt näher
+      als die Vorabankündigungsfrist (T2 Regel 2, Risiko 12). Ein erneuter
+      Versand ist frei: angekündigt hat der erste.
+    Das Einzugsdatum wird nicht verschoben: es steht im eingefrorenen Hinweis
+    der festgeschriebenen Rechnung (GoBD). Korrektur: Storno und Neuausstellung.
+    """
+    from app.models.invoice import InvoiceStatus
+
+    if invoice.status == InvoiceStatus.ENTWURF:
+        lastschrift_voraussetzungen(db, invoice)
+        return
+    if invoice.zahlungsart != Zahlungsart.LASTSCHRIFT or invoice.lastschrift_status != LastschriftStatus.AUSSTEHEND:
+        return
+    mandat = db.get(SepaMandat, invoice.sepa_mandat_id)
+    if mandat is None or not mandat.aktiv:
+        raise ValueError(
+            "Das SEPA-Mandat dieser Rechnung ist widerrufen — sie kündigt einen Einzug an, "
+            "der nicht stattfindet. Rechnung stornieren und als Überweisung neu ausstellen."
+        )
+    frist = vorabankuendigung_tage(db)
+    heute = heute_berlin()
+    if invoice.sent_at is None and (invoice.due_date - heute).days < frist:
+        raise ValueError(
+            f"Vorabankündigungsfrist nicht einhaltbar: Einzug am {invoice.due_date.strftime('%d.%m.%Y')}, "
+            f"angekündigt werden muss er {frist} Tage vorher. Die Rechnung ist festgeschrieben — "
+            "stornieren und neu ausstellen, dann gilt ein neues Einzugsdatum."
+        )

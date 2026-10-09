@@ -417,6 +417,15 @@ class PDFService:
             elements.append(totals_table)
             elements.append(Spacer(1, 16))
 
+        # SEPA-Lastschrift (B10): die beim Festschreiben eingefrorene
+        # Vorabankündigung — nie live aus dem Mandat, denn das PDF entsteht bei
+        # jedem Abruf neu. Nicht abschaltbar (Pflichtangaben der Vorabankündigung).
+        # getattr: die Vorlagen-Vorschau rendert ein Ersatzobjekt ohne das Feld.
+        sepa_hinweis = getattr(invoice, "sepa_hinweis", None)
+        if sepa_hinweis:
+            elements.append(Paragraph(f"<b>SEPA-Lastschrift:</b> {escape(sepa_hinweis)}", styles['Normal']))
+            elements.append(Spacer(1, 8))
+
         # Skonto-Hinweis wenn Customer Skonto hat
         if _en(tmpl, "skonto_hint", default=True):
             skonto_pct = Decimal(str(empfaenger["skonto_percent"] or 0))

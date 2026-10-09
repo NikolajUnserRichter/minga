@@ -3592,3 +3592,101 @@ class TestQ5Festschreiben:
             rechnung = _q5_festschreiben(client, rechnung)
         assert rechnung["status"] == "OFFEN"
         assert mandat["mandatsreferenz"] in rechnung["sepa_hinweis"]
+
+
+class TestQ5PdfUndMail:
+    def test_pdf_zeigt_hinweis_ohne_volle_iban(self, client):
+        kunde, mandat = _q5_lastschriftkunde(client)
+        rechnung = _q5_festschreiben(client, _q5_entwurf(client, kunde))
+        text = _q5_pdf_texte(client, rechnung["id"])
+        assert "SEPA-Lastschrift" in text
+        assert mandat["mandatsreferenz"] in text and _Q5_GID in text
+        assert _Q5_IBAN not in text
+
+    def test_pdf_einer_ueberweisungsrechnung_ohne_hinweis(self, client):
+        rechnung = _q5_festschreiben(client, _q5_entwurf(client, _q5_kunde(client)))
+        assert "SEPA-Lastschrift" not in _q5_pdf_texte(client, rechnung["id"])
+
+    def test_pdf_snapshot_nach_mandatsaenderung(self, client):
+        kunde, mandat = _q5_lastschriftkunde(client)
+        rechnung = _q5_festschreiben(client, _q5_entwurf(client, kunde))
+        vorher = _q5_pdf_texte(client, rechnung["id"])
+        client.patch(f"/api/v1/sepa/mandate/{mandat['id']}", json={"iban": _Q5_IBAN_NEU, "bank_name": "Sparkasse"})
+        nachher = _q5_pdf_texte(client, rechnung["id"])
+        assert nachher == vorher and "Sparkasse" not in nachher
+
+    def test_mail_einer_festgeschriebenen_lastschriftrechnung(self, client, monkeypatch):
+        kunde, _ = _q5_lastschriftkunde(client)
+        rechnung = _q5_festschreiben(client, _q5_entwurf(client, kunde))
+        mail = _q5_mailen(client, monkeypatch, rechnung["id"])
+        assert rechnung["sepa_hinweis"] in mail["body"]
+        assert "Fällig am" not in mail["body"] and _Q5_IBAN not in mail["body"]
+
+    def test_mailen_eines_entwurfs_schreibt_vorher_fest(self, client, monkeypatch):
+        """/send auf einen Entwurf: Hinweis entsteht VOR Mailtext und PDF."""
+        kunde, mandat = _q5_lastschriftkunde(client)
+        entwurf = _q5_entwurf(client, kunde)
+
+        mail = _q5_mailen(client, monkeypatch, entwurf["id"])
+
+        hinweis = client.get(f"/api/v1/invoices/{entwurf['id']}").json()["sepa_hinweis"]
+        assert hinweis and hinweis in mail["body"]
+        assert "Fällig am" not in mail["body"]
+        assert mandat["mandatsreferenz"] in _q5_texte(mail["attachment_bytes"])
+
+    def test_mail_einer_ueberweisungsrechnung_unveraendert(self, client, monkeypatch):
+        """Charakterisierung: Überweisungsrechnungen behalten 'Fällig am:'."""
+        rechnung = _q5_festschreiben(client, _q5_entwurf(client, _q5_kunde(client)))
+        mail = _q5_mailen(client, monkeypatch, rechnung["id"])
+        faellig = date.fromisoformat(rechnung["due_date"]).strftime("%d.%m.%Y")
+        assert f"Fällig am: {faellig}" in mail["body"]
+
+    def test_mailen_eines_lastschrift_entwurfs_ohne_mandat_400(self, client, monkeypatch):
+        """/send stellt einen Entwurf aus — ohne Mandat 400 wie /finalize, nicht 500."""
+        from app.models.sepa_mandate import SepaMandat
+        kunde, mandat = _q5_lastschriftkunde(client)
+        entwurf = _q5_entwurf(client, kunde)
+        with TestingSessionLocal() as db:  # Altzustand nachstellen (die API verhindert ihn)
+            db.get(SepaMandat, uuid.UUID(mandat["id"])).aktiv = False
+            db.commit()
+
+        r, mail = _q5_senden(client, monkeypatch, entwurf["id"])
+
+        assert r.status_code == 400, r.text
+        assert "kein aktives SEPA-Mandat" in r.json()["detail"]
+        assert mail == {}
+        assert client.get(f"/api/v1/invoices/{entwurf['id']}").json()["status"] == "ENTWURF"
+
+    def test_erstversand_nach_ablauf_der_frist_409(self, client, monkeypatch):
+        """Festgeschrieben und erst Tage später gemailt: die Vorabankündigung
+        käme zu spät beim Kunden an (T2 Regel 2, Risiko 12)."""
+        kunde, _ = _q5_lastschriftkunde(client)
+        rechnung = _q5_festschreiben(client, _q5_entwurf(client, kunde))
+        monkeypatch.setattr("app.services.sepa_service.heute_berlin",
+                            lambda: date.today() + timedelta(days=10))
+
+        r, mail = _q5_senden(client, monkeypatch, rechnung["id"])
+
+        assert r.status_code == 409, r.text
+        assert "Vorabankündigungsfrist" in r.json()["detail"]
+        assert mail == {}
+        assert client.get(f"/api/v1/invoices/{rechnung['id']}").json()["sent_at"] is None
+
+    def test_erneuter_versand_bleibt_moeglich(self, client, monkeypatch):
+        """Charakterisierung: angekündigt hat der erste, rechtzeitige Versand."""
+        kunde, _ = _q5_lastschriftkunde(client)
+        rechnung = _q5_festschreiben(client, _q5_entwurf(client, kunde))
+        _q5_mailen(client, monkeypatch, rechnung["id"])
+        monkeypatch.setattr("app.services.sepa_service.heute_berlin",
+                            lambda: date.today() + timedelta(days=10))
+        _q5_mailen(client, monkeypatch, rechnung["id"])
+
+    def test_versand_bei_widerrufenem_mandat_409(self, client, monkeypatch):
+        kunde, mandat = _q5_lastschriftkunde(client)
+        rechnung = _q5_festschreiben(client, _q5_entwurf(client, kunde))
+        client.post(f"/api/v1/sepa/mandate/{mandat['id']}/widerruf", json={})
+
+        r, mail = _q5_senden(client, monkeypatch, rechnung["id"])
+
+        assert r.status_code == 409 and "widerrufen" in r.json()["detail"]
+        assert mail == {}
