@@ -17,6 +17,7 @@ import ShopifyOrders from './pages/ShopifyOrders';
 import ProductionSuggestions from './pages/ProductionSuggestions';
 import Products from './pages/Products';
 import Invoices from './pages/Invoices';
+import Belegstatus from './pages/Belegstatus';
 import Inventory from './pages/Inventory';
 import Analytics from './pages/Analytics';
 import Harvests from './pages/Harvests';
@@ -70,6 +71,7 @@ function App() {
           <Route path="subscriptions" element={<Abonnements />} />
           <Route path="purchasing" element={<Purchasing />} />
           <Route path="invoices" element={<Invoices />} />
+          <Route path="belegstatus" element={<Belegstatus />} />
           <Route path="sales" element={<Sales />} />
 
           {/* Forecasting */}

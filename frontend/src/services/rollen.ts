@@ -51,7 +51,7 @@ export const MANDANTEN_ROLLEN: RollenInfo[] = [
     label: 'Vertrieb',
     beschreibung:
       'Kunden, Bestellungen, Abos, Auftragsbestätigungen, Lieferscheine, Produkte, ' +
-      'Preislisten und Auswertungen. Kein Zugriff auf Tagesplan und Produktion.',
+      'Preislisten, Auswertungen und Belegstatus. Kein Zugriff auf Tagesplan und Produktion.',
     hinweis: 'Darf Rechnungen anlegen, finalisieren und versenden.',
     badge: 'info',
   },
@@ -59,7 +59,7 @@ export const MANDANTEN_ROLLEN: RollenInfo[] = [
     wert: 'accounting',
     label: 'Buchhaltung',
     beschreibung:
-      'Rechnungen, Zahlungen, Mahnungen, DATEV-Export, Preislisten und Auswertungen; ' +
+      'Rechnungen, Belegstatus, Zahlungen, Mahnungen, DATEV-Export, Preislisten und Auswertungen; ' +
       'dazu Kunden, Bestellungen und Belege. Kein Zugriff auf Tagesplan und Produktion.',
     hinweis: 'Darf Rechnungen anlegen, finalisieren und versenden.',
     badge: 'gray',

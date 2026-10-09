@@ -22,6 +22,7 @@ import {
   ChevronDown,
   Warehouse,
   Receipt,
+  ListChecks,
   Tag,
   QrCode,
   Moon,
@@ -204,6 +205,14 @@ const navigationSections: NavSection[] = [
         name: 'Rechnungen',
         href: '/invoices',
         icon: Receipt,
+        roles: ['ADMIN', 'SALES', 'ACCOUNTING'],
+      },
+      {
+        // Paket 4, C: je Bestellung Lieferschein, Rechnung, Versand, Zahlung —
+        // Rollen wie die Rechnungen (Server: _deps_geld)
+        name: 'Belegstatus',
+        href: '/belegstatus',
+        icon: ListChecks,
         roles: ['ADMIN', 'SALES', 'ACCOUNTING'],
       },
     ],
