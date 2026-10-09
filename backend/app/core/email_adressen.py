@@ -50,8 +50,8 @@ def pruefe_empfaenger(
             )
         try:
             geprueft = validate_email(text, allow_smtputf8=False, check_deliverability=False)
-        except EmailNotValidError as e:
-            raise ValueError(f"{feld}: „{text}“ ist keine gültige E-Mail-Adresse ({e})") from None
+        except EmailNotValidError:
+            raise ValueError(f"{feld}: „{text}“ ist keine gültige E-Mail-Adresse") from None
         adresse = (geprueft.ascii_email or geprueft.normalized).lower()
         if adresse not in ergebnis:
             ergebnis.append(adresse)

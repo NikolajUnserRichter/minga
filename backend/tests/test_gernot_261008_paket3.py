@@ -6366,3 +6366,38 @@ class TestAbnahmeSepaBerlin:
     assert.equal(download.download, 'Lastschrift-Einreichung_2026-10-09.csv');
 })().catch(error => { console.error(error); process.exitCode = 1; });
 """)
+
+
+class TestAbnahmeEmpfaengerfehler:
+    @pytest.mark.parametrize("feld,titel", [
+        ("confirmation_emails", "Empfänger Auftragsbestätigung"),
+        ("delivery_note_emails", "Empfänger Lieferschein"),
+        ("invoice_emails", "Empfänger Rechnung"),
+    ])
+    @pytest.mark.parametrize("methode", ["post", "patch"])
+    def test_deutsche_meldung_ohne_technisches_praefix(self, client, feld, titel, methode):
+        url = "/api/v1/sales/customers"
+        daten = {"name": "Abnahme", "typ": "HANDEL", feld: ["ungueltig"]}
+        if methode == "patch":
+            kunde = _q1_kunde(client)
+            url += f"/{kunde['id']}"
+        response = getattr(client, methode)(url, json=daten)
+
+        assert response.status_code == 422, response.text
+        fehler = response.json()["detail"][0]
+        assert fehler["loc"] == ["body", feld]
+        assert fehler["msg"] == f"{titel}: „ungueltig“ ist keine gültige E-Mail-Adresse"
+        assert "Value error" not in response.text
+
+    def test_frontend_meldung_und_feldzuordnung(self):
+        _abnahme_frontend("""
+const { getErrorMessage, getFieldErrors } = laden('src/services/errors.ts');
+const meldung = 'Empfänger Rechnung: „ungueltig“ ist keine gültige E-Mail-Adresse';
+const fehler = { response: { data: { detail: [
+    { type: 'empfaengerliste', loc: ['body', 'invoice_emails'], msg: meldung }
+] } } };
+assert.equal(getErrorMessage(fehler), meldung);
+assert.equal(getFieldErrors(fehler).invoice_emails, meldung);
+assert.equal(getFieldErrors(fehler).delivery_note_emails, undefined);
+assert.equal(Object.keys(getFieldErrors({ response: { data: { detail: 'Serverfehler' } } })).length, 0);
+""")

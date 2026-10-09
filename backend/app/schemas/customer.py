@@ -7,6 +7,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID
 from pydantic import BaseModel, Field, ConfigDict, EmailStr, field_validator
+from pydantic_core import PydanticCustomError
 
 from app.models.customer import CustomerType, SubscriptionInterval, PaymentTerms, AddressType, PfandAbrechnung
 from app.models.customer import InvoiceMode
@@ -26,7 +27,10 @@ _EMPFAENGER_TITEL = {
 
 def _empfaengerliste(v, info):
     """None/[] = Haupt-E-Mail; sonst geprüft, klein geschrieben, ohne Dubletten."""
-    return pruefe_empfaenger(v, feld=_EMPFAENGER_TITEL[info.field_name])
+    try:
+        return pruefe_empfaenger(v, feld=_EMPFAENGER_TITEL[info.field_name])
+    except ValueError as error:
+        raise PydanticCustomError("empfaengerliste", "{meldung}", {"meldung": str(error)}) from None
 
 
 # ============================================================

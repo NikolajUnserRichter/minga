@@ -8,7 +8,7 @@ import { adressListe } from '../components/domain/BelegVersand';
 import { salesApi } from '../services/api';
 import { Customer, CustomerType, Contact, CustomerAddress, AddressType, PfandAbrechnung } from '../types';
 import type { InvoiceMode } from '../types';
-import { getErrorMessage } from '../services/errors';
+import { getErrorMessage, getFieldErrors } from '../services/errors';
 import { ExcelImport } from '../components/common/ExcelImport';
 import { useDebounce } from '../hooks/useDebounce';
 import { PageHeader, FilterBar } from '../components/common/Layout';
@@ -255,6 +255,7 @@ function CustomerForm({ customer, onSubmit, onCancel }: CustomerFormProps) {
   const darfBankdaten = ['admin', 'accounting'].some((r) => user?.roles?.includes(r));
   const istAdmin = !!user?.roles?.includes('admin');
   const [loading, setLoading] = useState(false);
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [formData, setFormData] = useState({
     name: customer?.name || '',
     typ: customer?.typ || ('GASTRO' as CustomerType),
@@ -311,6 +312,7 @@ function CustomerForm({ customer, onSubmit, onCancel }: CustomerFormProps) {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
+    setFieldErrors({});
 
     try {
       const payload = {
@@ -336,6 +338,7 @@ function CustomerForm({ customer, onSubmit, onCancel }: CustomerFormProps) {
       }
       onSubmit(saved);
     } catch (error: any) {
+      setFieldErrors(getFieldErrors(error));
       toast.error(getErrorMessage(error, 'Fehler beim Speichern'));
     } finally {
       setLoading(false);
@@ -498,18 +501,21 @@ function CustomerForm({ customer, onSubmit, onCancel }: CustomerFormProps) {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <Textarea
             label="Auftragsbestätigung an"
+            error={fieldErrors.confirmation_emails}
             rows={3}
             value={formData.confirmation_emails}
             onChange={(e) => setFormData({ ...formData, confirmation_emails: e.target.value })}
           />
           <Textarea
             label="Lieferschein an"
+            error={fieldErrors.delivery_note_emails}
             rows={3}
             value={formData.delivery_note_emails}
             onChange={(e) => setFormData({ ...formData, delivery_note_emails: e.target.value })}
           />
           <Textarea
             label="Rechnung an"
+            error={fieldErrors.invoice_emails}
             rows={3}
             value={formData.invoice_emails}
             onChange={(e) => setFormData({ ...formData, invoice_emails: e.target.value })}
