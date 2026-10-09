@@ -9,6 +9,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field, ConfigDict, field_validator
 
 from app.models.invoice import InvoiceStatus, InvoiceType, TaxRate, PaymentMethod
+from app.schemas.documents import DocumentDispatchResponse
 
 
 # ============================================================
@@ -236,6 +237,9 @@ class InvoiceResponse(InvoiceBase):
     # Expandierte Felder
     customer_name: Optional[str] = None
     customer_number: Optional[str] = None
+
+    # Versandprotokoll (Paket 3, Q2), älteste zuerst
+    dispatches: list[DocumentDispatchResponse] = []
 
 
 class InvoiceDetailResponse(InvoiceResponse):

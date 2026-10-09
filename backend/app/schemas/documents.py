@@ -1,14 +1,45 @@
 """Pydantic-Schemas für die Belegkette."""
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Optional
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from app.models.enums import ConfirmationStatus, DeliveryNoteStatus
+from app.core.email_adressen import MAX_EMPFAENGER, pruefe_empfaenger
+from app.models.enums import (
+    ConfirmationStatus, DeliveryNoteStatus, DispatchDocType, DispatchStatus,
+)
+
+
+# ==================== VERSANDPROTOKOLL (Paket 3, Q2) ====================
+
+class DocumentDispatchResponse(BaseModel):
+    """Eine Zeile des Versandprotokolls."""
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    doc_type: DispatchDocType
+    document_number: str
+    status: DispatchStatus
+    to_addrs: list[str] = []
+    cc_addrs: list[str] = []
+    refused: Optional[dict[str, str]] = None
+    subject: Optional[str] = None
+    attachment_filename: Optional[str] = None
+    attachment_sha256: Optional[str] = None
+    message_id: Optional[str] = None
+    sent_at: datetime
+    sent_by_name: Optional[str] = None
+
+    @field_validator("sent_at")
+    @classmethod
+    def _als_utc(cls, v: datetime) -> datetime:
+        # SQLite liefert naive Zeitstempel; gespeichert wird UTC. Mit
+        # Zeitzone ausgeben, sonst liest der Browser sie als Ortszeit.
+        return v.replace(tzinfo=timezone.utc) if v.tzinfo is None else v
 
 
 # ==================== AUFTRAGSBESTÄTIGUNG ====================
@@ -34,6 +65,7 @@ class OrderConfirmationResponse(BaseModel):
     notes: Optional[str]
     created_at: datetime
     updated_at: datetime
+    dispatches: list[DocumentDispatchResponse] = []
 
 
 # ==================== LIEFERSCHEIN ====================
@@ -112,3 +144,4 @@ class DeliveryNoteResponse(BaseModel):
     packing_list: Optional[PackingListResponse] = None
     created_at: datetime
     updated_at: datetime
+    dispatches: list[DocumentDispatchResponse] = []

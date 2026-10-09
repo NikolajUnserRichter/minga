@@ -189,6 +189,14 @@ class Invoice(Base):
     payments: Mapped[list["Payment"]] = relationship(
         "Payment", back_populates="invoice", cascade="all, delete-orphan"
     )
+    # Versandprotokoll (Paket 3, Q2), älteste zuerst — Modell in models/documents.py
+    dispatches: Mapped[list["DocumentDispatch"]] = relationship(
+        "DocumentDispatch",
+        foreign_keys="DocumentDispatch.invoice_id",
+        order_by="DocumentDispatch.sent_at",
+        lazy="selectin",
+        viewonly=True,
+    )
 
     def calculate_totals(self) -> None:
         """Berechnet Zwischensumme, Rabatt, MwSt und Gesamtbetrag.

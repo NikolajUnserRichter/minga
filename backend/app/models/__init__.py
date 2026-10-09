@@ -84,8 +84,11 @@ from app.models.documents import (
     DeliveryNote,
     PackingList,
     PackingListItem,
+    DocumentDispatch,
 )
-from app.models.enums import ConfirmationStatus, DeliveryNoteStatus
+from app.models.enums import (
+    ConfirmationStatus, DeliveryNoteStatus, DispatchDocType, DispatchStatus,
+)
 
 # Anhänge (Zertifikate, Datenblätter)
 from app.models.attachment import (
@@ -194,8 +197,11 @@ __all__ = [
     "DeliveryNote",
     "PackingList",
     "PackingListItem",
+    "DocumentDispatch",
     "ConfirmationStatus",
     "DeliveryNoteStatus",
+    "DispatchDocType",
+    "DispatchStatus",
     # Attachments
     "Attachment",
     "ATTACHMENT_ENTITY_TYPES",

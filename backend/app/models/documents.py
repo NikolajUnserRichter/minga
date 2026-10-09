@@ -15,11 +15,13 @@ from sqlalchemy import (
     String, Integer, Numeric, Boolean, DateTime, Date, ForeignKey, Text,
     Enum as SQLEnum,
 )
-from sqlalchemy.types import Uuid
+from sqlalchemy.types import Uuid, JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
-from app.models.enums import ConfirmationStatus, DeliveryNoteStatus
+from app.models.enums import (
+    ConfirmationStatus, DeliveryNoteStatus, DispatchDocType, DispatchStatus,
+)
 
 
 class OrderConfirmation(Base):
@@ -56,6 +58,14 @@ class OrderConfirmation(Base):
     )
 
     order: Mapped["Order"] = relationship("Order", foreign_keys=[order_id])
+    # Versandprotokoll (Paket 3, Q2), älteste zuerst
+    dispatches: Mapped[list["DocumentDispatch"]] = relationship(
+        "DocumentDispatch",
+        foreign_keys="DocumentDispatch.confirmation_id",
+        order_by="DocumentDispatch.sent_at",
+        lazy="selectin",
+        viewonly=True,
+    )
 
     def is_locked(self) -> bool:
         return self.status == ConfirmationStatus.VERSENDET
@@ -106,6 +116,14 @@ class DeliveryNote(Base):
     packing_list: Mapped[Optional["PackingList"]] = relationship(
         "PackingList", back_populates="delivery_note", uselist=False,
         cascade="all, delete-orphan"
+    )
+    # Versandprotokoll (Paket 3, Q2), älteste zuerst
+    dispatches: Mapped[list["DocumentDispatch"]] = relationship(
+        "DocumentDispatch",
+        foreign_keys="DocumentDispatch.delivery_note_id",
+        order_by="DocumentDispatch.sent_at",
+        lazy="selectin",
+        viewonly=True,
     )
 
     def is_locked(self) -> bool:
@@ -185,3 +203,53 @@ class PackingListItem(Base):
     packing_list: Mapped["PackingList"] = relationship(
         "PackingList", back_populates="items"
     )
+
+
+class DocumentDispatch(Base):
+    """Versandprotokoll (Paket 3, Q2): eine Zeile je verschickter Mail bzw.
+    je Markierung ohne Mail — für AB, Lieferschein und Rechnung.
+
+    Genau eine der drei Beleg-Spalten ist gesetzt. Belegnummer und Empfänger
+    sind Schnappschüsse; das PDF selbst wird nicht gespeichert, nur seine
+    SHA-256 (PDFs sind seit Q2 bei gleichem Inhalt byte-gleich, siehe
+    pdf_service: invariant=1). Gespeichert wird nur, was geklappt hat:
+    scheitert der Versand, gibt es keine Zeile.
+    """
+    __tablename__ = "document_dispatches"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    doc_type: Mapped[DispatchDocType] = mapped_column(SQLEnum(DispatchDocType, length=5), nullable=False)
+    document_number: Mapped[str] = mapped_column(String(30), nullable=False)
+
+    confirmation_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid, ForeignKey("order_confirmations.id", ondelete="SET NULL"), index=True
+    )
+    delivery_note_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid, ForeignKey("delivery_notes.id", ondelete="SET NULL"), index=True
+    )
+    invoice_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid, ForeignKey("invoices.id", ondelete="SET NULL"), index=True
+    )
+    order_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid, ForeignKey("orders.id", ondelete="SET NULL"), index=True
+    )
+    customer_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid, ForeignKey("customers.id", ondelete="SET NULL")
+    )
+
+    status: Mapped[DispatchStatus] = mapped_column(SQLEnum(DispatchStatus, length=20), nullable=False)
+    to_addrs: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    cc_addrs: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    # Vom Mailserver einzeln abgelehnte Adressen: {"adresse": "550 …"}
+    refused: Mapped[Optional[dict]] = mapped_column(JSON)
+    subject: Mapped[Optional[str]] = mapped_column(String(300))
+    attachment_filename: Mapped[Optional[str]] = mapped_column(String(100))
+    attachment_sha256: Mapped[Optional[str]] = mapped_column(String(64))
+    message_id: Mapped[Optional[str]] = mapped_column(String(255))
+
+    sent_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc), nullable=False
+    )
+    # String, nicht UUID: Basic-Auth-Logins haben IDs wie "basic-auth:name"
+    sent_by_id: Mapped[Optional[str]] = mapped_column(String(100))
+    sent_by_name: Mapped[Optional[str]] = mapped_column(String(200))

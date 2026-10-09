@@ -74,3 +74,17 @@ class DeliveryNoteStatus(str, Enum):
     ENTWURF = "ENTWURF"      # Editierbar
     AUSGESTELLT = "AUSGESTELLT"  # PDF generiert, aber noch nicht ausgeliefert
     GELIEFERT = "GELIEFERT"  # Vom Empfänger quittiert – immutable
+
+
+class DispatchDocType(str, Enum):
+    """Belegart im Versandprotokoll (Paket 3, Q2)"""
+    AB = "AB"  # Auftragsbestätigung
+    LS = "LS"  # Lieferschein
+    RE = "RE"  # Rechnung, auch Stornorechnung
+
+
+class DispatchStatus(str, Enum):
+    """Ergebnis eines Versands (Paket 3, Q2)"""
+    GESENDET = "GESENDET"          # Mailserver hat alle Empfänger angenommen
+    TEILWEISE = "TEILWEISE"        # einzelne Empfänger abgelehnt (siehe refused)
+    NUR_MARKIERT = "NUR_MARKIERT"  # ohne Mail als versendet/ausgestellt markiert

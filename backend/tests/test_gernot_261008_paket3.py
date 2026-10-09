@@ -2292,3 +2292,163 @@ class TestQ2Empfaengerlisten:
         with engine.connect() as conn:
             assert conn.execute(text("SELECT invoice_emails FROM customers")).scalar() is None
         engine.dispose()
+
+
+
+
+class TestQ2Versandprotokoll:
+    """Tabelle document_dispatches, Empfängerregel und Protokoll in den Antworten."""
+
+    def test_belege_liefern_ihr_protokoll(self, client):
+        bestellung = _q2_bestellung(client, _q2_kunde(client))
+        _q2_ab(client, bestellung)
+        _q2_ls(client, bestellung)
+        rechnung = _q2_rechnung(client, bestellung)
+
+        assert _q2_abs(client, bestellung)[0]["dispatches"] == []
+        ls_liste = client.get(f"/api/v1/sales/orders/{bestellung['id']}/delivery-notes").json()
+        assert ls_liste[0]["dispatches"] == []
+        assert client.get(f"/api/v1/invoices/{rechnung['id']}").json()["dispatches"] == []
+        assert client.get("/api/v1/invoices").json()[0]["dispatches"] == []
+
+    def test_empfaenger_regel(self, client):
+        from app.models.customer import Customer
+        from app.models.enums import DispatchDocType
+        from app.services.belegversand import KeinEmpfaenger, ermittle_empfaenger
+        kunde = _q2_kunde(client, email="info@oekoring.example",
+                          invoice_emails=["rechnung@oekoring.example"])
+        with TestingSessionLocal() as db:
+            k = db.get(Customer, uuid.UUID(kunde["id"]))
+            # Ausdrücklich übergeben schlägt den Kundenstamm
+            assert ermittle_empfaenger(k, DispatchDocType.RE, to=["x@kunde.example"],
+                                       use_customer_recipients=True) == ["x@kunde.example"]
+            assert ermittle_empfaenger(k, DispatchDocType.RE, to=None,
+                                       use_customer_recipients=True) == ["rechnung@oekoring.example"]
+            # Keine Liste für die Belegart: Haupt-E-Mail
+            assert ermittle_empfaenger(k, DispatchDocType.AB, to=None,
+                                       use_customer_recipients=True) == ["info@oekoring.example"]
+            # Ohne Adressen und ohne Wunsch nach der Kundenliste: keine Mail
+            assert ermittle_empfaenger(k, DispatchDocType.AB, to=None,
+                                       use_customer_recipients=False) == []
+            k.email = None
+            with pytest.raises(KeinEmpfaenger):
+                ermittle_empfaenger(k, DispatchDocType.LS, to=None, use_customer_recipients=True)
+
+    def test_versand_schreibt_protokollzeile(self, client, _q2_smtp):
+        from app.models.documents import DocumentDispatch
+        from app.models.enums import DispatchDocType, DispatchStatus
+        from app.services.belegversand import versende_beleg
+        _q2_smtp.abzulehnen = {"alt@kunde.example": (550, b"User unknown")}
+
+        with TestingSessionLocal() as db:
+            eintrag = versende_beleg(
+                db, doc_type=DispatchDocType.AB, document_number="AB-20261008-0001",
+                an=["neu@kunde.example", "alt@kunde.example"], cc=["chef@kunde.example"],
+                betreff="Auftragsbestätigung AB-20261008-0001", text="Hallo",
+                pdf=b"%PDF-1.4 q2", user={"id": "basic-auth:anna", "username": "anna"},
+            )
+            db.commit()
+            zeile = db.get(DocumentDispatch, eintrag.id)
+
+            assert zeile.status == DispatchStatus.TEILWEISE
+            assert zeile.to_addrs == ["neu@kunde.example", "alt@kunde.example"]
+            assert zeile.cc_addrs == ["chef@kunde.example"]
+            assert zeile.refused == {"alt@kunde.example": "550 User unknown"}
+            assert zeile.attachment_filename == "AB-20261008-0001.pdf"
+            assert zeile.attachment_sha256 == _q2_sha(b"%PDF-1.4 q2")
+            assert (zeile.sent_by_id, zeile.sent_by_name) == ("basic-auth:anna", "anna")
+            assert zeile.message_id == _q2_smtp.gesendet[0]["msg"]["Message-ID"]
+        assert len(_q2_smtp.gesendet) == 1
+
+    def test_gescheiterter_versand_hinterlaesst_keine_zeile(self, client, _q2_ohne_smtp):
+        from app.models.documents import DocumentDispatch
+        from app.models.enums import DispatchDocType
+        from app.services.belegversand import versende_beleg
+        from app.services.email_service import EmailNotConfiguredError
+
+        with TestingSessionLocal() as db:
+            with pytest.raises(EmailNotConfiguredError):
+                versende_beleg(
+                    db, doc_type=DispatchDocType.LS, document_number="LS-20261008-0001",
+                    an=["lager@kunde.example"], cc=None, betreff="Lieferschein", text="Hallo",
+                    pdf=b"%PDF-1.4 q2", user={"id": "1", "username": "anna"},
+                )
+            db.rollback()
+            assert db.query(DocumentDispatch).count() == 0
+
+    def test_cc_und_obergrenze_nach_der_kundenliste(self, client):
+        """Die Schema-Prüfung sieht nur die übergebenen Adressen. Erst nach dem
+        Auflösen der Kundenliste steht das An-Feld fest: Cc ohne Dubletten,
+        An + Cc zusammen höchstens 10 — sonst ginge per API eine Mail an
+        10 hinterlegte Adressen plus 10 Cc hinaus."""
+        from app.models.customer import Customer
+        from app.models.enums import DispatchDocType
+        from app.services.belegversand import empfaenger_fuer_versand
+        kunde = _q2_kunde(client, confirmation_emails=[f"a{i}@oekoring.example" for i in range(10)])
+        with TestingSessionLocal() as db:
+            k = db.get(Customer, uuid.UUID(kunde["id"]))
+            an, cc = empfaenger_fuer_versand(
+                k, DispatchDocType.AB, to=["x@kunde.example"],
+                cc=["X@Kunde.example", "chef@kunde.example"], use_customer_recipients=False,
+            )
+            assert (an, cc) == (["x@kunde.example"], ["chef@kunde.example"])
+            with pytest.raises(ValueError, match="Höchstens 10"):
+                empfaenger_fuer_versand(
+                    k, DispatchDocType.AB, to=None,
+                    cc=["a0@oekoring.example", "b@kunde.example"], use_customer_recipients=True,
+                )
+            # Ohne Mail kein Cc
+            assert empfaenger_fuer_versand(
+                k, DispatchDocType.AB, to=None, cc=[], use_customer_recipients=False,
+            ) == ([], [])
+
+
+
+
+class TestQ2DemoReset:
+    """Charakterisierung (T5-Risiko 11, behoben in Paket 1 d8e1db2): Der
+    nächtliche Reset kopiert den Golden-Seed über die Demo-DB und gleicht danach
+    das Schema an. Ein Seed von vor Q2 bekommt so die Empfängerlisten und das
+    Versandprotokoll — sonst endete jede Kundenabfrage der Demo mit 500."""
+
+    def test_reset_bringt_alten_seed_auf_den_aktuellen_stand(self, tmp_path, monkeypatch):
+        from sqlalchemy import create_engine, inspect, text
+        from app.services import demo_reset_service as drs
+
+        live = tmp_path / "demo.db"
+        alt = create_engine(f"sqlite:///{drs._seed_path(live)}")
+        with alt.begin() as conn:
+            conn.execute(text("CREATE TABLE customers (id CHAR(32) PRIMARY KEY, name VARCHAR(200))"))
+        alt.dispose()
+        live.write_bytes(drs._seed_path(live).read_bytes())
+
+        engines = []
+
+        class _Registry:
+            def path_for(self, slug):
+                return live
+
+            def dispose_tenant(self, slug):
+                for engine in engines:
+                    engine.dispose()
+
+            def get_engine(self, slug):
+                engine = create_engine(f"sqlite:///{live}")
+                engines.append(engine)
+                return engine
+
+        monkeypatch.setattr("app.tenancy.registry", _Registry(), raising=False)
+
+        ergebnis = drs.reset_demo_from_seed("demo")
+        assert (ergebnis["status"], ergebnis["migriert"]) == ("reset", True)
+
+        pruef = create_engine(f"sqlite:///{live}")
+        try:
+            spalten = {c["name"] for c in inspect(pruef).get_columns("customers")}
+            assert {"pfand_abrechnung", "confirmation_emails", "delivery_note_emails",
+                    "invoice_emails"} <= spalten
+            assert inspect(pruef).has_table("document_dispatches")
+        finally:
+            pruef.dispose()
+            for engine in engines:
+                engine.dispose()
