@@ -5,6 +5,7 @@ import { StatCard } from '../components/domain/StatCard';
 import { GrowBatchStatusBadge, EmptyState, Badge, Modal, useToast } from '../components/ui';
 import { DashboardSkeleton } from '../components/ui/Skeleton';
 import { HarvestForm } from '../components/domain/HarvestForm';
+import { useMonatsrechnungenVormonat, offeneMonatsarbeit } from '../components/domain/MonatsrechnungenDialog';
 import {
   Sprout,
   Package,
@@ -94,6 +95,10 @@ export default function Dashboard() {
     enabled: showSalesSection,
     retry: 0,
   });
+
+  // Monatsrechnungen des Vormonats (B5): Hinweis für den Admin, der sie freigibt
+  const { data: monatsrechnungen } = useMonatsrechnungenVormonat(role === 'ADMIN');
+  const offeneMonatsrechnungen = role === 'ADMIN' ? offeneMonatsarbeit(monatsrechnungen) : null;
 
   const approveMutation = useMutation({
     mutationFn: (id: string) => forecastingApi.approveSuggestion(id),
@@ -331,6 +336,24 @@ export default function Dashboard() {
           </div>
         </div>
       </div >
+
+      {/* Monatsrechnungen zur Prüfung (B5) — nur Admin */}
+      {offeneMonatsrechnungen && (
+        <a href="/invoices" className="flex items-center justify-between gap-4 p-4 rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20 hover:bg-amber-100 dark:hover:bg-amber-900/30 transition-colors">
+          <div className="flex items-center gap-3">
+            <Receipt className="w-6 h-6 text-amber-600 dark:text-amber-400" />
+            <div>
+              <p className="font-medium text-gray-900 dark:text-white">Monatsrechnungen {offeneMonatsrechnungen.monat} zur Prüfung</p>
+              <p className="text-sm text-gray-600 dark:text-gray-300">
+                {offeneMonatsrechnungen.entwuerfe} Entwurf/Entwürfe · {offeneMonatsrechnungen.netto.toFixed(2)} € netto
+                {offeneMonatsrechnungen.ohneEntwurf > 0 && ` · ${offeneMonatsrechnungen.ohneEntwurf} Kunde(n) ohne Entwurf`}
+                {offeneMonatsrechnungen.hinweise > 0 && ` · ${offeneMonatsrechnungen.hinweise} Hinweis(e)`}
+              </p>
+            </div>
+          </div>
+          <ArrowRight className="w-4 h-4 text-gray-400" />
+        </a>
+      )}
 
       {/* Role-Specific Section */}
       {showSalesSection && (
