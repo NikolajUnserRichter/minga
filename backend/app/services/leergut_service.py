@@ -254,3 +254,169 @@ def erfasse(
         neu.append(bewegung)
     db.flush()
     return neu
+
+
+# ------------------------------------------------------------ Monatsabrechnung
+
+def monatsgrenzen(monat: Optional[str]) -> tuple[str, date, date]:
+    """'YYYY-MM' → (monat, erster, letzter Tag). Ohne Angabe der Vormonat (Berlin)."""
+    heute = heute_berlin()
+    if monat is None:
+        vormonat_letzter = heute.replace(day=1).toordinal() - 1
+        erster = date.fromordinal(vormonat_letzter).replace(day=1)
+    else:
+        jahr, mon = (int(t) for t in monat.split("-"))
+        erster = date(jahr, mon, 1)
+    letzter = erster.replace(day=monthrange(erster.year, erster.month)[1])
+    if erster > heute:
+        raise LeergutFehler(f"{erster:%m/%Y} liegt in der Zukunft")
+    return f"{erster:%Y-%m}", erster, letzter
+
+
+def _offener_entwurf(db: Session, customer_id: UUID) -> Optional[Invoice]:
+    return db.execute(
+        select(Invoice).where(
+            Invoice.customer_id == customer_id,
+            Invoice.beleg_art == BELEG_ART_LEERGUT,
+            Invoice.status == InvoiceStatus.ENTWURF,
+        ).limit(1)
+    ).scalar_one_or_none()
+
+
+def _plane(db: Session, monat: Optional[str], customer_ids: Optional[list[UUID]]) -> dict:
+    """Was der Lauf abrechnen würde — rechnet nur, schreibt nichts."""
+    monat, von, bis = monatsgrenzen(monat)
+    kunden: dict = {}
+
+    def eintrag(kunde: Customer) -> dict:
+        return kunden.setdefault(kunde.id, {"kunde": kunde, "bewegungen": [], "nachzug": []})
+
+    abfrage = select(LeergutBewegung).where(
+        LeergutBewegung.invoice_id.is_(None),
+        LeergutBewegung.bereits_berechnet.is_(False),
+        LeergutBewegung.leistungsdatum <= bis,
+    )
+    if customer_ids is not None:
+        abfrage = abfrage.where(LeergutBewegung.customer_id.in_(customer_ids))
+    for b in db.execute(abfrage).scalars():
+        eintrag(db.get(Customer, b.customer_id))["bewegungen"].append(b)
+
+    # Nachzug: geliefert (oder fällig), aber ohne Ausgabe — nur bis heute
+    grenze = min(bis, heute_berlin())
+    monatskunden = select(Customer).where(Customer.pfand_abrechnung == PfandAbrechnung.MONATLICH)
+    if customer_ids is not None:
+        monatskunden = monatskunden.where(Customer.id.in_(customer_ids))
+    for kunde in db.execute(monatskunden).scalars():
+        for order in db.execute(
+            select(Order).where(Order.customer_id == kunde.id, Order.status.in_(_NACHZUG_STATUS))
+        ).scalars():
+            if leistungsdatum(order) > grenze:
+                continue
+            for line in order.lines:
+                produkt = ausgabe_faellig(db, order, line)
+                if produkt is not None:
+                    eintrag(kunde)["nachzug"].append((order, line, produkt))
+
+    uebersprungen = []
+    plaene = []
+    for k in sorted(kunden.values(), key=lambda k: k["kunde"].name):
+        entwurf = _offener_entwurf(db, k["kunde"].id)
+        if entwurf is not None:
+            uebersprungen.append({
+                "customer_id": k["kunde"].id, "customer_name": k["kunde"].name,
+                "grund": f"Leergutbeleg {entwurf.invoice_number} ist noch ein Entwurf — "
+                         "erst freigeben oder verwerfen",
+            })
+            continue
+        positionen: dict = {}
+        for b in k["bewegungen"]:
+            p = positionen.setdefault((b.product_id, b.einzelwert), {
+                "produkt": b.product, "aus": 0, "zurueck": 0})
+            if b.art.vorzeichen > 0:
+                p["aus"] += b.menge
+            else:
+                p["zurueck"] += b.menge
+        for order, line, produkt in k["nachzug"]:
+            p = positionen.setdefault((produkt.id, pfandwert(produkt)), {
+                "produkt": produkt, "aus": 0, "zurueck": 0})
+            p["aus"] += _stueck(line.quantity)
+        tage = [b.leistungsdatum for b in k["bewegungen"]] + [leistungsdatum(o) for o, _, _ in k["nachzug"]]
+        plaene.append({**k, "positionen": positionen, "von": min([von, *tage]), "bis": bis})
+    return {"monat": monat, "von": von, "bis": bis, "plaene": plaene, "uebersprungen": uebersprungen}
+
+
+def vorschau(db: Session, monat: Optional[str], customer_ids: Optional[list[UUID]]) -> dict:
+    plan = _plane(db, monat, customer_ids)
+    kunden = []
+    for p in plan["plaene"]:
+        positionen = []
+        for (product_id, wert), pos in sorted(p["positionen"].items(), key=lambda e: e[1]["produkt"].name):
+            positionen.append({
+                "product_id": product_id, "artikel": pos["produkt"].name, "einzelwert": wert,
+                "ausgegeben": pos["aus"], "zurueckgenommen": pos["zurueck"],
+                "betrag_netto": (pos["aus"] - pos["zurueck"]) * wert,
+            })
+        summe = sum((x["betrag_netto"] for x in positionen), Decimal("0.00"))
+        kunden.append({
+            "customer_id": p["kunde"].id, "customer_name": p["kunde"].name,
+            "pfand_abrechnung": p["kunde"].pfand_abrechnung,
+            "leistungszeitraum": [p["von"], p["bis"]],
+            "positionen": positionen, "summe_netto": summe, "minderung": summe < 0,
+            "nachzug": [{"order_number": o.order_number, "leistungsdatum": leistungsdatum(o),
+                         "artikel": produkt.name, "menge": _stueck(l.quantity)}
+                        for o, l, produkt in p["nachzug"]],
+        })
+    return {"monat": plan["monat"], "period_from": plan["von"], "period_to": plan["bis"],
+            "kunden": kunden, "uebersprungen": plan["uebersprungen"]}
+
+
+def belege_anlegen(
+    db: Session, monat: Optional[str], customer_ids: Optional[list[UUID]], *, erfasst_von: Optional[str],
+) -> tuple[list[Invoice], list[dict]]:
+    """Je Kunde ein Leergutbeleg als ENTWURF. Bucht den Nachzug, reserviert
+    die Bewegungen (invoice_id). Committet nicht."""
+    from app.services.invoice_service import InvoiceService
+
+    plan = _plane(db, monat, customer_ids)
+    service = InvoiceService(db)
+    belege = []
+    for p in plan["plaene"]:
+        kunde = p["kunde"]
+        bewegungen = list(p["bewegungen"])
+        for order, line, produkt in p["nachzug"]:
+            nachgebucht = LeergutBewegung(
+                customer_id=kunde.id, product_id=produkt.id, art=LeergutArt.AUSGABE,
+                menge=_stueck(line.quantity), einzelwert=pfandwert(produkt),
+                leistungsdatum=leistungsdatum(order), order_line_id=line.id,
+                erfasst_von=SYSTEM_MONATSABRECHNUNG,
+                notiz=f"Nachgebucht aus {order.order_number} ({erfasst_von or 'unbekannt'})",
+            )
+            db.add(nachgebucht)
+            bewegungen.append(nachgebucht)
+        db.flush()
+
+        beleg = service.create_invoice(
+            customer_id=kunde.id,
+            header_text=(f"Leergutabrechnung — Leistungszeitraum "
+                         f"{p['von']:%d.%m.%Y}–{p['bis']:%d.%m.%Y}"),
+        )
+        # Kein Jahresrabatt auf Pfand: create_invoice setzt ihn sonst
+        # automatisch (eine übergebene 0 gilt als "nicht überschrieben").
+        beleg.discount_percent = Decimal("0")
+        beleg.beleg_art = BELEG_ART_LEERGUT
+        beleg.service_period_start = p["von"]
+        beleg.service_period_end = p["bis"]
+        for (product_id, wert), pos in sorted(p["positionen"].items(), key=lambda e: e[1]["produkt"].name):
+            produkt = pos["produkt"]
+            for text, menge in (("Leergut ausgegeben", pos["aus"]), ("Leergut zurückgenommen", -pos["zurueck"])):
+                if menge:
+                    service.add_line(
+                        invoice_id=beleg.id, description=f"{text}: {produkt.name}",
+                        quantity=Decimal(menge), unit="STK", unit_price=wert,
+                        product_id=produkt.id, sku=produkt.sku, tax_rate=produkt.tax_rate,
+                    )
+        for b in bewegungen:
+            b.invoice_id = beleg.id
+        service.recalculate_totals(beleg)
+        belege.append(beleg)
+    return belege, plan["uebersprungen"]

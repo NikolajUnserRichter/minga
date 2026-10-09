@@ -4832,3 +4832,180 @@ class TestQ6Ruecknahmen:
         _q6_als(["production_staff"])
 
         assert client.delete(f"/api/v1/leergut/bewegungen/{b['id']}").status_code == 403
+
+
+# ------------------------------------------------ Task Q6.7: Monatsabrechnung
+
+@pytest.mark.usefixtures("_q6_ohne_forecast")
+class TestQ6Monatsabrechnung:
+    def _september(self, client, aus=10, zurueck=4, **kunde_extra):
+        kunde, kiste = _q6_monatskunde(client, **kunde_extra), _q6_kiste(client)
+        _q6_liefern(client, _q6_bestellung(client, kunde, _q6_ware(client), kiste, kisten=aus))
+        if zurueck:
+            _q6_ruecknahme(client, kunde, kiste, zurueck)
+        return kunde, kiste
+
+    def test_vorschau_rechnet_und_schreibt_nichts(self, client):
+        kunde, _ = self._september(client)
+
+        r = client.post(Q6_PREVIEW, json={"monat": Q6_MONAT})
+
+        assert r.status_code == 200, r.text
+        [k] = r.json()["kunden"]
+        assert k["leistungszeitraum"] == ["2026-09-01", "2026-09-30"]
+        [p] = k["positionen"]
+        assert (p["artikel"], p["ausgegeben"], p["zurueckgenommen"], _q6_d(p["betrag_netto"])) == (
+            "E2-Kiste", 10, 4, Decimal("18.00"))
+        assert (_q6_d(k["summe_netto"]), k["minderung"], k["nachzug"]) == (Decimal("18.00"), False, [])
+        assert client.get("/api/v1/invoices", params={"customer_id": kunde["id"]}).json() == []
+        assert all(b["invoice_id"] is None for b in _q6_konto(client, kunde)["bewegungen"])
+
+    def test_ein_beleg_als_entwurf(self, client):
+        kunde, kiste = self._september(client)
+
+        beleg = _q6_beleg(client)
+
+        d = _q6_detail(client, beleg)
+        assert (d["status"], d["invoice_type"], d["beleg_art"]) == ("ENTWURF", "RECHNUNG", "LEERGUT")
+        assert (d["service_period_start"], d["service_period_end"]) == ("2026-09-01", "2026-09-30")
+        assert [(l["description"], _q6_d(l["quantity"]), _q6_d(l["unit_price"]), l["tax_rate"], l["is_deposit"])
+                for l in d["lines"]] == [
+            ("Leergut ausgegeben: E2-Kiste", Decimal("10"), Decimal("3.00"), "STANDARD", True),
+            ("Leergut zurückgenommen: E2-Kiste", Decimal("-4"), Decimal("3.00"), "STANDARD", True)]
+        assert (_q6_d(d["subtotal"]), _q6_d(d["tax_amount"]), _q6_d(d["total"])) == (
+            Decimal("18.00"), Decimal("3.42"), Decimal("21.42"))
+        assert {b["invoice_id"] for b in _q6_konto(client, kunde)["bewegungen"]} == {beleg["id"]}
+
+    def test_zweiter_lauf_rechnet_nichts_doppelt(self, client):
+        self._september(client)
+        _q6_beleg(client)
+
+        r = client.post(Q6_COMMIT, json={"monat": Q6_MONAT})
+
+        assert r.status_code == 201, r.text
+        assert r.json() == {"rechnungen": [], "uebersprungen": []}
+
+    def test_kein_jahresrabatt_auf_leergut(self, client):
+        self._september(client, discount_percent="5")
+
+        d = _q6_detail(client, _q6_beleg(client))
+
+        assert (_q6_d(d["discount_percent"]), _q6_d(d["total"])) == (Decimal("0"), Decimal("21.42"))
+
+    def test_mehr_zurueck_als_ausgegeben_ist_eine_minderung(self, client):
+        self._september(client, aus=2, zurueck=5)
+
+        vorschau = client.post(Q6_PREVIEW, json={"monat": Q6_MONAT}).json()
+        d = _q6_detail(client, _q6_beleg(client))
+
+        assert vorschau["kunden"][0]["minderung"] is True
+        assert (d["invoice_type"], _q6_d(d["total"])) == ("RECHNUNG", Decimal("-10.71"))
+
+    def test_saldo_null_beleg_mit_beiden_zeilen(self, client):
+        """Steuerberater offen (Q6, Offene Punkte): bis zur Antwort ein Beleg über 0,00 €."""
+        self._september(client, aus=3, zurueck=3)
+
+        d = _q6_detail(client, _q6_beleg(client))
+
+        assert (len(d["lines"]), _q6_d(d["total"])) == (2, Decimal("0.00"))
+
+    def test_nachzug_erst_beim_anlegen(self, client):
+        """Bestätigt, aber nie auf GELIEFERT gesetzt: die Vorschau zeigt es,
+        gebucht wird erst beim Anlegen."""
+        kunde = _q6_monatskunde(client)
+        bestellung = _q6_bestellung(client, kunde, kiste=_q6_kiste(client), liefertag=date(2026, 9, 12))
+        _q6_bestaetigen(client, bestellung)
+
+        vorschau = client.post(Q6_PREVIEW, json={"monat": Q6_MONAT}).json()
+
+        assert [(n["order_number"], n["menge"]) for n in vorschau["kunden"][0]["nachzug"]] == [
+            (bestellung["order_number"], 10)]
+        assert _q6_konto(client, kunde)["bewegungen"] == []
+
+        beleg = _q6_beleg(client)
+
+        [b] = _q6_konto(client, kunde)["bewegungen"]
+        assert (b["art"], b["menge"], b["invoice_id"], b["erfasst_von"]) == (
+            "AUSGABE", 10, beleg["id"], "System (Monatsabrechnung)")
+
+    def test_kein_nachzug_vor_dem_stichtag(self, client):
+        """Importierte Altbestellungen und Lieferungen vor dem Wechsel bleiben draußen."""
+        kunde = _q6_monatskunde(client)
+        bestellung = _q6_bestellung(client, kunde, kiste=_q6_kiste(client), liefertag=date(2026, 8, 28))
+        _q6_bestaetigen(client, bestellung)
+
+        r = client.post(Q6_PREVIEW, json={"monat": Q6_MONAT})
+
+        assert r.json()["kunden"] == []
+
+    def test_offener_entwurf_wird_nicht_verdoppelt(self, client):
+        kunde, kiste = self._september(client)
+        beleg = _q6_beleg(client)
+        _q6_ruecknahme(client, kunde, kiste, 1, tag=date(2026, 9, 25))
+
+        r = client.post(Q6_PREVIEW, json={"monat": Q6_MONAT})
+
+        assert r.json()["kunden"] == []
+        [u] = r.json()["uebersprungen"]
+        assert u["customer_id"] == kunde["id"] and beleg["invoice_number"] in u["grund"]
+
+    def test_monatsgrenze(self, client):
+        kunde, kiste = _q6_monatskunde(client), _q6_kiste(client)
+        _q6_liefern(client, _q6_bestellung(client, kunde, kiste=kiste, liefertag=date(2026, 9, 30)),
+                    tag=date(2026, 9, 30))
+        _q6_ruecknahme(client, kunde, kiste, 4, tag=date(2026, 10, 1))
+
+        [k] = client.post(Q6_PREVIEW, json={"monat": Q6_MONAT}).json()["kunden"]
+
+        assert [(p["ausgegeben"], p["zurueckgenommen"]) for p in k["positionen"]] == [(10, 0)]
+
+    def test_bestaetigt_nach_monatsende_nicht_im_nachzug(self, client):
+        """Nachzug nur bis Monatsende: bestätigt für den 02.10., nie geliefert —
+        gehört in den Oktober, nicht in den September."""
+        kunde = _q6_monatskunde(client)
+        bestellung = _q6_bestellung(client, kunde, kiste=_q6_kiste(client), liefertag=date(2026, 10, 2))
+        _q6_bestaetigen(client, bestellung)
+
+        september = client.post(Q6_PREVIEW, json={"monat": Q6_MONAT}).json()
+        oktober = client.post(Q6_PREVIEW, json={"monat": "2026-10"}).json()
+
+        assert september["kunden"] == []
+        assert [n["order_number"] for n in oktober["kunden"][0]["nachzug"]] == [bestellung["order_number"]]
+
+    def test_nach_wechsel_weg_wird_der_rest_abgerechnet(self, client):
+        """Nichts geht verloren: offene Bewegungen werden auch nach einem
+        Wechsel auf JE_LIEFERUNG noch abgerechnet."""
+        kunde, _ = self._september(client, zurueck=0)
+        client.patch(f"/api/v1/sales/customers/{kunde['id']}", json={"pfand_abrechnung": "JE_LIEFERUNG"})
+
+        [k] = client.post(Q6_PREVIEW, json={"monat": Q6_MONAT}).json()["kunden"]
+
+        assert (k["pfand_abrechnung"], k["positionen"][0]["ausgegeben"]) == ("JE_LIEFERUNG", 10)
+
+    @pytest.mark.parametrize("anfrage, code", [
+        ({"monat": "2999-01"}, 400),
+        ({"monat": "2026-13"}, 422),
+        ({"monat": Q6_MONAT, "customer_ids": []}, 422),
+    ])
+    def test_ungueltige_anfrage(self, client, anfrage, code):
+        assert client.post(Q6_PREVIEW, json=anfrage).status_code == code
+
+    def test_ohne_monat_der_vormonat(self, client):
+        heute = _q6_heute()
+        vormonat = date.fromordinal(heute.replace(day=1).toordinal() - 1)
+
+        r = client.post(Q6_PREVIEW, json={})
+
+        assert r.status_code == 200, r.text
+        assert r.json()["monat"] == f"{vormonat:%Y-%m}"
+
+    def test_halle_rechnet_nicht_ab(self, client, _q6_als):
+        _q6_als(["production_staff"])
+        assert client.post(Q6_PREVIEW, json={"monat": Q6_MONAT}).status_code == 403
+
+    def test_abgerechnete_ruecknahme_nicht_loeschbar(self, client):
+        kunde, _ = self._september(client)
+        _q6_beleg(client)
+        ruecknahme = next(b for b in _q6_konto(client, kunde)["bewegungen"] if b["art"] == "RUECKNAHME")
+
+        assert client.delete(f"/api/v1/leergut/bewegungen/{ruecknahme['id']}").status_code == 400

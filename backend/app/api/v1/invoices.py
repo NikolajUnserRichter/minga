@@ -918,3 +918,47 @@ def invoice_delivery_notes(invoice_id: UUID, db: DBSession):
         ).isoformat(),
         "betrag_netto": betraege[n.id],
     } for n in notes]
+
+
+# =====================================================================
+# Leergutabrechnung (Paket 3, Q6): ein Beleg je Kunde und Monat
+# =====================================================================
+
+from app.services import leergut_service as _leergut
+
+
+class LeergutLaufRequest(_BaseModel):
+    monat: Optional[str] = _Field(
+        None, pattern=r"^\d{4}-(0[1-9]|1[0-2])$", description="YYYY-MM; leer = Vormonat (Europe/Berlin)")
+    customer_ids: Optional[list[UUID]] = _Field(
+        None, min_length=1, description="weglassen = alle Kunden mit offenen Leergutbewegungen")
+
+
+@router.post("/leergut-run/preview")
+def leergut_run_preview(anfrage: LeergutLaufRequest, db: DBSession):
+    """Vorschau der Leergutabrechnung — rechnet, schreibt nichts. Lieferungen
+    ohne gebuchte Ausgabe erscheinen unter "nachzug" und werden erst beim
+    Anlegen gebucht."""
+    try:
+        return _leergut.vorschau(db, anfrage.monat, anfrage.customer_ids)
+    except _leergut.LeergutFehler as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/leergut-run/commit", status_code=201)
+def leergut_run_commit(anfrage: LeergutLaufRequest, db: DBSession, user: CurrentUser):
+    """Legt je Kunde einen Leergutbeleg als ENTWURF an (Freigabe über
+    /finalize), bucht den Nachzug und reserviert die Bewegungen."""
+    try:
+        belege, uebersprungen = _leergut.belege_anlegen(
+            db, anfrage.monat, anfrage.customer_ids,
+            erfasst_von=(user or {}).get("username"),
+        )
+    except _leergut.LeergutFehler as e:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+    db.commit()
+    return {
+        "rechnungen": [InvoiceResponse.model_validate(b) for b in belege],
+        "uebersprungen": uebersprungen,
+    }

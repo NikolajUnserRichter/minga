@@ -202,6 +202,8 @@ class InvoiceResponse(InvoiceBase):
     # Leistungszeitraum (gesetzt bei Sammelrechnungen)
     service_period_start: Optional[date] = None
     service_period_end: Optional[date] = None
+    # Belegart innerhalb RECHNUNG: "LEERGUT" = monatliche Leergutabrechnung (Q6)
+    beleg_art: Optional[str] = None
 
     # Adressen
     billing_address: Optional[dict]
