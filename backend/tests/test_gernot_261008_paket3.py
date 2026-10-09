@@ -3212,3 +3212,195 @@ class TestQ5Einstellungen:
         assert client.patch("/api/v1/admin/settings", json={"COMPANY_SEPA_GLAEUBIGER_ID": ""}).status_code == 200
         werte = {s["key"]: s for s in client.get("/api/v1/admin/settings").json()}
         assert werte["COMPANY_SEPA_GLAEUBIGER_ID"]["has_value"] is False
+
+
+class TestQ5Mandate:
+    def test_anlegen_normalisiert_und_liefert_glaeubiger_id(self, client):
+        _q5_glaeubiger(client)
+        kunde = _q5_kunde(client)
+        mandat = _q5_mandat(client, kunde, bic="cobadeffxxx")
+
+        assert mandat["iban"] == _Q5_IBAN
+        assert mandat["iban_maskiert"] == "DE89 xxxx xxxx xxxx xxxx 00"
+        assert mandat["bic"] == "COBADEFFXXX"
+        assert mandat["aktiv"] is True and mandat["created_by"] == "testuser"
+        uebersicht = client.get(f"/api/v1/sepa/kunden/{kunde['id']}/mandate").json()
+        assert uebersicht["glaeubiger_id"] == _Q5_GID
+        assert uebersicht["zahlungsart"] is None
+
+    @pytest.mark.parametrize("feld,wert", [
+        ("iban", "DE89 3704 0044 0532 0130 01"),
+        ("bic", "COBA"),
+        ("mandatsreferenz", "MG 001"),
+        ("mandatsart", "SEPA"),
+        ("unterschrieben_am", (date.today() + timedelta(days=30)).isoformat()),
+    ])
+    def test_ungueltige_eingaben_422(self, client, feld, wert):
+        kunde = _q5_kunde(client)
+        r = client.post(f"/api/v1/sepa/kunden/{kunde['id']}/mandate", json={
+            "mandatsreferenz": "MG-1", "unterschrieben_am": "2026-09-01",
+            "kontoinhaber": "X", "iban": _Q5_IBAN, feld: wert})
+        assert r.status_code == 422, r.text
+
+    def test_zweites_aktives_mandat_und_doppelte_referenz_409(self, client):
+        kunde = _q5_kunde(client, "Erster")
+        andere = _q5_kunde(client, "Zweiter")
+        erstes = _q5_mandat(client, kunde)
+
+        r = client.post(f"/api/v1/sepa/kunden/{kunde['id']}/mandate", json={
+            "mandatsreferenz": "MG-NEU", "unterschrieben_am": "2026-09-01",
+            "kontoinhaber": "X", "iban": _Q5_IBAN_NEU})
+        assert r.status_code == 409, r.text
+        r = client.post(f"/api/v1/sepa/kunden/{andere['id']}/mandate", json={
+            "mandatsreferenz": erstes["mandatsreferenz"], "unterschrieben_am": "2026-09-01",
+            "kontoinhaber": "X", "iban": _Q5_IBAN_NEU})
+        assert r.status_code == 409, r.text
+
+    def test_aenderung_wird_maskiert_protokolliert(self, client):
+        kunde = _q5_kunde(client)
+        mandat = _q5_mandat(client, kunde)
+
+        r = client.patch(f"/api/v1/sepa/mandate/{mandat['id']}", json={"iban": _Q5_IBAN_NEU, "bank_name": "Sparkasse"})
+
+        assert r.status_code == 200, r.text
+        assert r.json()["iban"] == _Q5_IBAN_NEU
+        eintrag = next(e for e in r.json()["aenderungen"] if e["feld"] == "iban")
+        assert (eintrag["alt"], eintrag["neu"], eintrag["von"]) == (
+            "DE89 xxxx xxxx xxxx xxxx 00", "DE02 xxxx xxxx xxxx xxxx 51", "testuser")
+        assert _Q5_IBAN not in str(r.json()["aenderungen"]) and _Q5_IBAN_NEU not in str(r.json()["aenderungen"])
+
+    def test_zahlungsart_lastschrift_braucht_mandat_und_glaeubiger_id(self, client):
+        kunde = _q5_kunde(client)
+        url = f"/api/v1/sepa/kunden/{kunde['id']}/zahlungsart"
+        _q5_glaeubiger(client)
+        r = client.put(url, json={"zahlungsart": "LASTSCHRIFT"})
+        assert r.status_code == 422 and "Mandat" in r.json()["detail"]
+
+        _q5_mandat(client, kunde)
+        assert client.put(url, json={"zahlungsart": "LASTSCHRIFT"}).status_code == 200
+        assert client.get(f"/api/v1/sales/customers/{kunde['id']}").json()["zahlungsart"] == "LASTSCHRIFT"
+
+    def test_glaeubiger_id_ohne_umgebungs_rueckfall(self, client, monkeypatch):
+        """Eine Umgebungsvariable gilt für alle Mandanten im Container."""
+        monkeypatch.setenv("COMPANY_SEPA_GLAEUBIGER_ID", _Q5_GID)
+        kunde = _q5_kunde(client)
+        _q5_mandat(client, kunde)
+        r = client.put(f"/api/v1/sepa/kunden/{kunde['id']}/zahlungsart", json={"zahlungsart": "LASTSCHRIFT"})
+        assert r.status_code == 422, r.text
+        assert "Gläubiger-ID" in r.json()["detail"]
+
+    def test_widerruf_stellt_auf_ueberweisung(self, client):
+        kunde, mandat = _q5_lastschriftkunde(client)
+
+        r = client.post(f"/api/v1/sepa/mandate/{mandat['id']}/widerruf", json={})
+
+        assert r.status_code == 200, r.text
+        assert r.json()["mandat"]["aktiv"] is False
+        assert r.json()["mandat"]["widerrufen_am"] is not None
+        assert r.json()["zahlungsart"] == "UEBERWEISUNG"
+        assert r.json()["offene_lastschriften"] == []
+        # Danach ist ein neues Mandat möglich
+        _q5_mandat(client, kunde, mandatsreferenz="MG-NACHFOLGER")
+
+    def test_widerruf_und_zahlungsart_mit_wer_und_wann(self, client):
+        """Nachvollziehbarkeit (GoBD): wer hat auf Lastschrift gestellt, wer widerrufen."""
+        kunde, mandat = _q5_lastschriftkunde(client)
+        client.post(f"/api/v1/sepa/mandate/{mandat['id']}/widerruf", json={})
+
+        protokoll = client.get(f"/api/v1/sepa/kunden/{kunde['id']}/mandate").json()["mandate"][0]["aenderungen"]
+
+        eintraege = [(e["feld"], e["alt"], e["neu"], e["von"]) for e in protokoll]
+        assert ("zahlungsart", None, "LASTSCHRIFT", "testuser") in eintraege
+        assert ("widerrufen_am", None, date.today().isoformat(), "testuser") in eintraege
+        assert ("zahlungsart", "LASTSCHRIFT", "UEBERWEISUNG", "testuser") in eintraege
+        assert all(e["am"] for e in protokoll)
+
+    def test_widerrufsdatum_geprueft(self, client):
+        kunde = _q5_kunde(client)
+        mandat = _q5_mandat(client, kunde)  # unterschrieben am 01.09.2026
+        url = f"/api/v1/sepa/mandate/{mandat['id']}/widerruf"
+        assert client.post(url, json={"widerrufen_am": "2026-08-31"}).status_code == 422
+        morgen = (date.today() + timedelta(days=1)).isoformat()
+        assert client.post(url, json={"widerrufen_am": morgen}).status_code == 422
+        assert client.get(f"/api/v1/sepa/kunden/{kunde['id']}/mandate").json()["mandate"][0]["aktiv"] is True
+
+    def test_referenz_kollision_beim_speichern_409_ohne_iban_im_log(self, client, monkeypatch, caplog):
+        """Zwischen Prüfung und Speichern vergibt ein anderer Vorgang dieselbe
+        Referenz (nachgestellt: Vorprüfung aus). Erwartet 409 statt 500 mit
+        der SQL-Meldung samt neuer IBAN im Log."""
+        erstes = _q5_mandat(client, _q5_kunde(client, "Erster"))
+        zweites = _q5_mandat(client, _q5_kunde(client, "Zweiter"))
+        monkeypatch.setattr("app.api.v1.sepa._referenz_frei", lambda *a, **kw: None)
+
+        r = client.patch(f"/api/v1/sepa/mandate/{zweites['id']}",
+                         json={"mandatsreferenz": erstes["mandatsreferenz"], "iban": _Q5_IBAN_NEU})
+
+        assert r.status_code == 409, r.text
+        assert _Q5_IBAN_NEU not in caplog.text
+
+    def test_demo_nur_beispiel_ibans(self, client, monkeypatch):
+        """Demo-Zugänge gehen an Interessenten: keine echten Bankdaten dort."""
+        monkeypatch.setattr("app.api.v1.sepa.get_request_tenant", lambda request: "demo")
+        kunde = _q5_kunde(client)
+        echt = {"mandatsreferenz": "MG-DEMO", "unterschrieben_am": "2026-09-01",
+                "kontoinhaber": "X", "iban": "DE02500105170137075030"}
+        r = client.post(f"/api/v1/sepa/kunden/{kunde['id']}/mandate", json=echt)
+        assert r.status_code == 422 and "Demo" in r.json()["detail"]
+        mandat = _q5_mandat(client, kunde)  # Beispiel-IBAN DE89 … geht
+        r = client.patch(f"/api/v1/sepa/mandate/{mandat['id']}", json={"iban": "DE02500105170137075030"})
+        assert r.status_code == 422
+
+
+class TestQ5Rechte:
+    @pytest.mark.parametrize("rolle", ["sales", "production_planner", "production_staff"])
+    def test_alle_sepa_routen_nur_admin_und_buchhaltung(self, client, q5_rolle, rolle):
+        """Wachhund: jede Route unter /api/v1/sepa, auch jede später
+        hinzukommende, ist für Vertrieb, Planung und Halle gesperrt — lesend
+        wie schreibend (Muster: Q4-Wachhund)."""
+        from fastapi.routing import APIRoute
+        from app.main import app
+        routen = sorted((m, r.path) for r in app.routes if isinstance(r, APIRoute)
+                        and r.path.startswith("/api/v1/sepa") for m in r.methods)
+        assert len(routen) >= 5, routen
+        q5_rolle([rolle])
+        fremd = str(uuid.uuid4())
+        for methode, pfad in routen:
+            r = client.request(methode, re.sub(r"\{[^}]+\}", fremd, pfad), json={})
+            assert r.status_code == 403, (methode, pfad, r.status_code, r.text)
+
+    @pytest.mark.parametrize("rolle", ["sales", "production_planner", "production_staff"])
+    def test_nur_admin_und_buchhaltung(self, client, q5_rolle, rolle):
+        kunde = _q5_kunde(client)
+        q5_rolle([rolle])
+        assert client.get(f"/api/v1/sepa/kunden/{kunde['id']}/mandate").status_code == 403
+        r = client.post(f"/api/v1/sepa/kunden/{kunde['id']}/mandate", json={
+            "mandatsreferenz": "MG-1", "unterschrieben_am": "2026-09-01",
+            "kontoinhaber": "X", "iban": _Q5_IBAN})
+        assert r.status_code == 403
+        r = client.put(f"/api/v1/sepa/kunden/{kunde['id']}/zahlungsart", json={"zahlungsart": "UEBERWEISUNG"})
+        assert r.status_code == 403
+
+    def test_buchhaltung_darf(self, client, q5_rolle):
+        kunde = _q5_kunde(client)
+        q5_rolle(["accounting"])
+        _q5_mandat(client, kunde)
+        assert client.get(f"/api/v1/sepa/kunden/{kunde['id']}/mandate").status_code == 200
+
+    def test_kundenantworten_ohne_bankdaten(self, client, q5_rolle):
+        kunde, _ = _q5_lastschriftkunde(client)
+        q5_rolle(["production_staff"])
+        for url in ("/api/v1/sales/customers", f"/api/v1/sales/customers/{kunde['id']}"):
+            r = client.get(url)
+            assert r.status_code == 200, r.text
+            for verboten in ("iban", "kontoinhaber", "mandatsreferenz", _Q5_IBAN):
+                assert verboten not in r.text
+
+    def test_halle_kann_zahlungsart_nicht_umschalten(self, client, q5_rolle):
+        kunde, _ = _q5_lastschriftkunde(client)
+        q5_rolle(["production_staff"])
+        r = client.patch(f"/api/v1/sales/customers/{kunde['id']}", json={"zahlungsart": "UEBERWEISUNG"})
+        # Heute 200 (unbekanntes Feld still ignoriert); 403/422, falls der
+        # B8-Feldschutz (Q4) Fremdfelder ablehnt. Maßgeblich: unverändert.
+        assert r.status_code in (200, 403, 422), r.text
+        q5_rolle(["admin"])
+        assert client.get(f"/api/v1/sales/customers/{kunde['id']}").json()["zahlungsart"] == "LASTSCHRIFT"

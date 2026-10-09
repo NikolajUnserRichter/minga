@@ -32,6 +32,7 @@ from app.api.v1 import print_jobs
 from app.api.v1 import reports
 from app.api.v1 import ratgeber as ratgeber_admin
 from app.api.v1 import seo_dashboard
+from app.api.v1 import sepa
 from app.api import ratgeber_public, seo_public
 from app.api.deps import get_current_user
 from app.core.security import verify_token
@@ -123,6 +124,8 @@ _deps_katalog = _rollen(SALES, BUCHHALTUNG, PLANER, PRODUKTION, schreiben=[SALES
 # Übriges Kaufmännisches — ohne die Halle
 _deps_vertrieb = _rollen(SALES, BUCHHALTUNG, PLANER)
 _deps_geld = _rollen(SALES, BUCHHALTUNG)
+# Bankdaten (SEPA-Mandate, volle IBAN): nur Admin und Buchhaltung — nicht der Vertrieb
+_deps_bank = _rollen(BUCHHALTUNG)
 # Prognosen liest auch der Vertrieb; genehmigt werden sie von der Planung
 _deps_planung = _rollen(PLANER, SALES, BUCHHALTUNG, schreiben=[PLANER])
 # Belegkette: Lieferscheine und Packlisten erstellt auch die Halle
@@ -770,6 +773,12 @@ app.include_router(
     invoices.router,
     prefix="/api/v1",
     dependencies=_deps_geld,
+)
+
+app.include_router(
+    sepa.router,
+    prefix="/api/v1",
+    dependencies=_deps_bank,
 )
 
 app.include_router(

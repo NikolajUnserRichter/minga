@@ -9,6 +9,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field, ConfigDict, EmailStr, field_validator
 
 from app.models.customer import CustomerType, SubscriptionInterval, PaymentTerms, AddressType, PfandAbrechnung
+from app.models.sepa_mandate import Zahlungsart
 
 
 from app.core.email_adressen import pruefe_empfaenger
@@ -243,6 +244,9 @@ class CustomerResponse(CustomerBase):
     show_prices_on_delivery_note: bool = False
     pfand_abrechnung: PfandAbrechnung = PfandAbrechnung.JE_LIEFERUNG
     datev_account: Optional[str]
+    # Nur lesend (B10): geändert über PUT /sepa/kunden/{id}/zahlungsart.
+    # NULL = Überweisung. Bankdaten stehen nie im Kunden-Schema.
+    zahlungsart: Optional[Zahlungsart] = None
     notizen: Optional[str]
     aktiv: bool
     created_at: datetime
