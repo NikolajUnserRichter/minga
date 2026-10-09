@@ -49,11 +49,14 @@ _sentry_dsn = os.environ.get("SENTRY_DSN", "").strip()
 if _sentry_dsn:
     try:
         import sentry_sdk
+        from app.core.sentry_filter import ohne_bankdaten
         sentry_sdk.init(
             dsn=_sentry_dsn,
             environment=os.environ.get("SENTRY_ENV", "production"),
             traces_sample_rate=float(os.environ.get("SENTRY_TRACES_RATE", "0.0")),
             send_default_pii=False,
+            # Keine Bankdaten (B10): Body und Frame-Variablen von /sepa weg, IBAN-Muster ersetzt
+            before_send=ohne_bankdaten,
         )
         logger.info("[sentry] Error-Tracking aktiv")
     except Exception as e:

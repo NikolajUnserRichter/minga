@@ -113,6 +113,9 @@ class _TenantRegistry:
             max_overflow=10,
             pool_pre_ping=False,
             pool_recycle=-1,
+            # Keine Parameterwerte in SQL-Fehlermeldungen (Log, Sentry): sonst
+            # stünde z. B. eine IBAN aus /api/v1/sepa im Klartext darin (B10).
+            hide_parameters=True,
         )
 
         # SQLites eingebautes lower() faltet nur ASCII — Umlaute bleiben.

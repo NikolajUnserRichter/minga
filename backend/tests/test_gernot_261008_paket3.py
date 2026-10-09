@@ -4114,3 +4114,44 @@ class TestQ5Ruecklastschrift:
         zeilen = [z for z in csv.reader(io.StringIO(r.json()["csv_content"]), delimiter=";")
                   if z and z[-1].startswith("Zahlung")]
         assert sorted((z[0], z[1]) for z in zeilen) == [("21,40", "H"), ("21,40", "S")]
+
+
+class TestQ5KeineBankdatenInLogs:
+    def test_sql_fehler_ohne_parameter(self, monkeypatch, tmp_path):
+        """Mandanten-Engine: eine SQL-Fehlermeldung (Log, Sentry) nennt die
+        Parameter nicht — sonst stünde die IBAN darin."""
+        from sqlalchemy import text
+        from sqlalchemy.exc import OperationalError
+        from app import tenancy
+        monkeypatch.setattr(tenancy, "TENANTS_DIR", tmp_path)
+        registry = tenancy._TenantRegistry()
+        try:
+            with registry.get_engine("q5log").connect() as conn:
+                with pytest.raises(OperationalError) as fehler:
+                    conn.execute(text("SELECT * FROM gibt_es_nicht WHERE iban = :iban"), {"iban": _Q5_IBAN})
+            assert _Q5_IBAN not in str(fehler.value)
+        finally:
+            registry.dispose_tenant("q5log")
+
+    def test_sentry_ohne_bankdaten(self):
+        from app.core.sentry_filter import ohne_bankdaten
+        sepa = {
+            "request": {"url": "https://minga.novaerp.de/api/v1/sepa/mandate/x", "data": {"iban": _Q5_IBAN}},
+            "exception": {"values": [{"value": "kaputt",
+                                      "stacktrace": {"frames": [{"vars": {"data": f"iban='{_Q5_IBAN}'"}}]}}]},
+        }
+        anderes = {"request": {"url": "https://minga.novaerp.de/api/v1/sales/customers", "data": {"name": "Post"}},
+                   "message": "Konto DE89 3704 0044 0532 0130 00 und DE89370400440532013000"}
+
+        assert _Q5_IBAN not in str(ohne_bankdaten(sepa, {}))
+        bereinigt = ohne_bankdaten(anderes, {})
+        assert bereinigt["request"]["data"] == {"name": "Post"}
+        assert "3704" not in bereinigt["message"]
+
+    def test_sentry_filter_ist_eingehaengt(self):
+        """main.py initialisiert Sentry nur mit SENTRY_DSN — hier am Quelltext geprüft."""
+        from pathlib import Path
+        import app.main
+        quelle = Path(app.main.__file__).read_text()
+        assert "before_send=ohne_bankdaten" in quelle
+        assert "from app.core.sentry_filter import ohne_bankdaten" in quelle
