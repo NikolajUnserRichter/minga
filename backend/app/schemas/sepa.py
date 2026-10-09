@@ -193,3 +193,25 @@ class EinzugBuchenResponse(BaseModel):
     gebucht: list[str]
     #: z. B. "eingezogen am …, angekündigt war der …" (früher als angekündigt)
     hinweise: list[str] = []
+
+
+class RuecklastschriftRequest(BaseModel):
+    datum: date
+    grund: str = Field(..., min_length=1, max_length=500)
+    #: Neue Zahlungsfrist für die Überweisung; leer = heute + 14 Tage
+    zahlbar_bis: Optional[date] = None
+
+    @field_validator("datum")
+    @classmethod
+    def _nicht_in_der_zukunft(cls, v):
+        if v > heute_berlin():
+            raise ValueError("Datum der Rücklastschrift liegt in der Zukunft")
+        return v
+
+
+class RuecklastschriftResponse(BaseModel):
+    invoice_number: str
+    status: str
+    lastschrift_status: LastschriftStatus
+    gegenbuchung: Decimal
+    faellig_am: date

@@ -284,8 +284,11 @@ class DatevService:
 
                 # Booking: Bank (1200) S an Debitor H
                 row_payment = [
-                    _betrag(payment.amount),
-                    "S",
+                    # Rücklastschrift (B10): Gegenbuchung mit negativem Betrag.
+                    # DATEV erwartet den Umsatz positiv; die Richtung steht im
+                    # Soll/Haben-Kennzeichen (Bank H an Debitor).
+                    _betrag(abs(payment.amount)),
+                    "H" if payment.amount < 0 else "S",
                     "EUR", "", "",
                     bank_account,
                     _debitor(customer),

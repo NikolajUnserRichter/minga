@@ -589,3 +589,101 @@ def einzug_buchen(db: Session, invoice_ids: list, datum: date, *, benutzer: Opti
             mandat.letzter_einzug_am = datum
         gebucht.append(inv.invoice_number)
     return gebucht, hinweise
+
+
+# --------------------------------------------------------------------------
+# Rücklastschrift
+# --------------------------------------------------------------------------
+
+#: Neue Zahlungsfrist nach einer Rücklastschrift (T2 Regel 6: "OFFEN mit
+#: neuer Frist"); ab dann überweist der Kunde. Offener Punkt 10 an Gernot.
+RUECKLASTSCHRIFT_FRIST_TAGE = 14
+
+
+def _lastschrift_summe(db: Session, invoice_id) -> Decimal:
+    """Summe der Lastschriftzahlungen der Rechnung, frisch aus der DB (nicht aus
+    einer geladenen Collection)."""
+    from app.models.invoice import Payment, PaymentMethod
+    wert = db.execute(
+        select(func.coalesce(func.sum(Payment.amount), 0))
+        .where(Payment.invoice_id == invoice_id, Payment.payment_method == PaymentMethod.LASTSCHRIFT)
+    ).scalar()
+    return Decimal(str(wert)).quantize(Decimal("0.01"))
+
+
+def ruecklastschrift(db: Session, invoice_id, datum: date, grund: str, *,
+                     benutzer: Optional[str] = None, zahlbar_bis: Optional[date] = None):
+    """Gegenbuchung der Lastschriftzahlungen; die Rechnung ist wieder offen,
+    bekommt eine neue Frist und ist ab jetzt mahnfähig. Nach einem Storno (die
+    Bank gibt einen schon gebuchten Einzug zurück) nur die Gegenbuchung, der
+    Status bleibt STORNIERT. Gibt (Rechnung, Betrag der Gegenbuchung) zurück."""
+    from app.models.invoice import Invoice, InvoiceStatus, Payment, PaymentMethod
+
+    inv = db.get(Invoice, invoice_id)
+    if inv is None:
+        raise LookupError("Rechnung nicht gefunden")
+    heute = heute_berlin()
+    if datum > heute:
+        raise ValueError("Datum der Rücklastschrift liegt in der Zukunft")
+    if datum < inv.invoice_date:
+        raise ValueError("Datum der Rücklastschrift liegt vor dem Rechnungsdatum")
+    if zahlbar_bis is not None and zahlbar_bis < heute:
+        raise ValueError("Neue Zahlungsfrist liegt in der Vergangenheit")
+
+    # Zuerst schreiben, dann lesen (Muster festschreiben, Q1): das bedingte
+    # UPDATE holt die Schreibsperre. Ein gleichzeitiger zweiter Aufruf wartet
+    # und findet danach RUECKLASTSCHRIFT vor → abgelehnt, statt doppelt
+    # gegenzubuchen.
+    erlaubt = or_(
+        and_(Invoice.status.not_in((InvoiceStatus.ENTWURF, InvoiceStatus.STORNIERT)),
+             Invoice.lastschrift_status.in_((LastschriftStatus.AUSSTEHEND, LastschriftStatus.EINGEZOGEN))),
+        and_(Invoice.status == InvoiceStatus.STORNIERT,
+             Invoice.lastschrift_status == LastschriftStatus.EINGEZOGEN),
+    )
+    getroffen = db.execute(
+        update(Invoice)
+        .where(Invoice.id == invoice_id, Invoice.zahlungsart == Zahlungsart.LASTSCHRIFT, erlaubt)
+        .values(lastschrift_status=LastschriftStatus.RUECKLASTSCHRIFT)
+        .execution_options(synchronize_session=False)
+    ).rowcount
+    if getroffen != 1:
+        raise ValueError(
+            "Keine Lastschriftrechnung mit ausstehendem oder gebuchtem Einzug "
+            "(Überweisung, Entwurf, storniert ohne Einzug oder schon zurückgegeben)"
+        )
+    db.expire_all()  # ab hier frisch gelesen: wir halten die Schreibsperre
+    inv = db.get(Invoice, invoice_id)
+
+    eingezogen = _lastschrift_summe(db, inv.id)
+    vermerk = f"gebucht am {_zeitpunkt()} von {benutzer or 'unbekannt'}"
+    if eingezogen > 0:
+        # Gegenbuchung statt Löschen: Zahlungen bleiben nachvollziehbar (GoBD).
+        mandat = db.get(SepaMandat, inv.sepa_mandat_id)
+        db.add(Payment(
+            invoice_id=inv.id,
+            payment_date=datum,
+            amount=-eingezogen,
+            payment_method=PaymentMethod.LASTSCHRIFT,
+            reference=f"Rücklastschrift {mandat.mandatsreferenz}"[:100],
+            notes=f"{grund} ({vermerk})",
+        ))
+        db.flush()
+    inv.paid_amount = Decimal(str(db.execute(
+        select(func.coalesce(func.sum(Payment.amount), 0)).where(Payment.invoice_id == inv.id)
+    ).scalar())).quantize(Decimal("0.01"))
+    if inv.status != InvoiceStatus.STORNIERT:
+        # record_payment setzt den Status nur nach oben — hier ausdrücklich zurück.
+        if inv.paid_amount >= inv.total:
+            inv.status = InvoiceStatus.BEZAHLT
+        elif inv.paid_amount > 0:
+            inv.status = InvoiceStatus.TEILBEZAHLT
+        else:
+            inv.status = InvoiceStatus.OFFEN
+        # Neue Frist: sonst wäre die Rechnung am nächsten Morgen überfällig und
+        # gemahnt (Fälligkeit = altes Einzugsdatum). due_date steht nicht im
+        # Rechnungs-PDF (dort der eingefrorene Hinweis), nur in Mail und Mahnung.
+        inv.due_date = zahlbar_bis or heute + timedelta(days=RUECKLASTSCHRIFT_FRIST_TAGE)
+    inv.internal_notes = (
+        f"{inv.internal_notes or ''}\n\nRücklastschrift am {datum.strftime('%d.%m.%Y')}: {grund} ({vermerk})"
+    ).strip()
+    return inv, eingezogen

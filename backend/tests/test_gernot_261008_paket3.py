@@ -3996,3 +3996,121 @@ class TestQ5Einzug:
         assert ergebnisse == ["abgelehnt", "ok"]
         assert betraege == [Decimal("21.40")]
         assert bezahlt == Decimal("21.40")
+
+
+class TestQ5Ruecklastschrift:
+    def _einziehen(self, client):
+        kunde, _ = _q5_lastschriftkunde(client)
+        rechnung = _q5_festschreiben(client, _q5_entwurf(client, kunde))
+        r = client.post("/api/v1/sepa/einzug", json={"invoice_ids": [rechnung["id"]], "datum": date.today().isoformat()})
+        assert r.status_code == 200, r.text
+        return rechnung
+
+    def _zurueck(self, client, rechnung, grund="Widerspruch", **extra):
+        return client.post(f"/api/v1/sepa/rechnungen/{rechnung['id']}/ruecklastschrift",
+                           json={"datum": date.today().isoformat(), "grund": grund, **extra})
+
+    def test_ruecklastschrift_nach_einzug(self, client):
+        rechnung = self._einziehen(client)
+
+        r = self._zurueck(client, rechnung)
+
+        assert r.status_code == 200, r.text
+        assert Decimal(str(r.json()["gegenbuchung"])) == Decimal("21.40")
+        detail = client.get(f"/api/v1/invoices/{rechnung['id']}").json()
+        assert (detail["status"], detail["lastschrift_status"]) == ("OFFEN", "RUECKLASTSCHRIFT")
+        assert Decimal(str(detail["paid_amount"])) == Decimal("0")
+        assert sorted(Decimal(str(p["amount"])) for p in detail["payments"]) == [Decimal("-21.40"), Decimal("21.40")]
+        gegen = next(p for p in detail["payments"] if Decimal(str(p["amount"])) < 0)
+        assert "Widerspruch" in gegen["notes"] and "testuser" in gegen["notes"]
+        # Neue Frist (T2 Regel 6): heute + 14 Tage, nicht das alte Einzugsdatum
+        assert detail["due_date"] == (date.today() + timedelta(days=14)).isoformat()
+        assert r.json()["faellig_am"] == detail["due_date"]
+        assert client.get(f"/api/v1/invoices/{rechnung['id']}/payments").status_code == 200
+
+    def test_ruecklastschrift_vor_gebuchtem_einzug(self, client):
+        kunde, _ = _q5_lastschriftkunde(client)
+        rechnung = _q5_festschreiben(client, _q5_entwurf(client, kunde))
+        r = self._zurueck(client, rechnung, "Konto erloschen")
+        assert r.status_code == 200 and Decimal(str(r.json()["gegenbuchung"])) == Decimal("0")
+        assert client.get(f"/api/v1/invoices/{rechnung['id']}").json()["payments"] == []
+
+    def test_neue_frist_kein_sofortiger_mahnlauf(self, client):
+        """Einzugsdatum lag schon zurück: ohne neue Frist käme am nächsten
+        Morgen die Zahlungserinnerung zum alten Datum."""
+        rechnung = self._einziehen(client)
+        _q5_faellig_vor(rechnung["id"], 5)
+        assert self._zurueck(client, rechnung).status_code == 200
+        assert TestQ5Mahnwesen()._jobs() == (0, 0)
+
+    def test_nach_ruecklastschrift_mahnfaehig(self, client):
+        rechnung = self._einziehen(client)
+        self._zurueck(client, rechnung)
+        _q5_faellig_vor(rechnung["id"], 10)
+
+        assert rechnung["id"] in {i["id"] for i in client.get("/api/v1/invoices/overdue").json()}
+        assert client.post(f"/api/v1/invoices/{rechnung['id']}/payment-reminder").status_code == 200
+
+    def test_mail_nach_ruecklastschrift_ohne_lastschrifthinweis(self, client, monkeypatch):
+        """Der Mailtext ist kein Beleg: nach der Rücklastschrift soll der Kunde
+        überweisen — kein 'Bitte überweisen Sie den Betrag nicht' mehr."""
+        rechnung = self._einziehen(client)
+        r = self._zurueck(client, rechnung)
+
+        mail = _q5_mailen(client, monkeypatch, rechnung["id"])
+
+        faellig = date.fromisoformat(r.json()["faellig_am"]).strftime("%d.%m.%Y")
+        assert f"Fällig am: {faellig}" in mail["body"]
+        assert "buchen wir" not in mail["body"]
+
+    def test_nur_fuer_lastschrift_und_nur_einmal(self, client):
+        ueberweisung = _q5_festschreiben(client, _q5_entwurf(client, _q5_kunde(client, "Überweiser")))
+        assert self._zurueck(client, ueberweisung).status_code == 409
+        rechnung = self._einziehen(client)
+        assert self._zurueck(client, rechnung).status_code == 200
+        assert self._zurueck(client, rechnung).status_code == 409
+
+    def test_datum_geprueft(self, client):
+        rechnung = self._einziehen(client)
+        morgen = (date.today() + timedelta(days=1)).isoformat()
+        r = client.post(f"/api/v1/sepa/rechnungen/{rechnung['id']}/ruecklastschrift",
+                        json={"datum": morgen, "grund": "Widerspruch"})
+        assert r.status_code == 422, r.text
+        gestern = (date.today() - timedelta(days=1)).isoformat()
+        assert self._zurueck(client, rechnung, zahlbar_bis=gestern).status_code == 409
+        assert client.get(f"/api/v1/invoices/{rechnung['id']}").json()["lastschrift_status"] == "EINGEZOGEN"
+
+    def test_ruecklastschrift_nach_storno(self, client):
+        """Die Bank gibt einen gebuchten Einzug zurück, die Rechnung ist schon
+        storniert: Gegenbuchung ja, Status bleibt STORNIERT."""
+        rechnung = self._einziehen(client)
+        r = client.post(f"/api/v1/invoices/{rechnung['id']}/cancel",
+                        json={"reason": "Test", "create_credit_note": True})
+        assert r.status_code == 200, r.text
+
+        r = self._zurueck(client, rechnung)
+
+        assert r.status_code == 200, r.text
+        assert (r.json()["status"], Decimal(str(r.json()["gegenbuchung"]))) == ("STORNIERT", Decimal("21.40"))
+        assert Decimal(str(client.get(f"/api/v1/invoices/{rechnung['id']}").json()["paid_amount"])) == Decimal("0")
+
+    def test_ruecklastschrift_gleichzeitig_nur_einmal(self, monkeypatch, tmp_path):
+        """Zwei Tabs buchen dieselbe Rücklastschrift: genau eine Gegenbuchung."""
+        ergebnisse, betraege, bezahlt = _q5_nebenlaeufig(monkeypatch, tmp_path, "ruecklastschrift")
+        assert ergebnisse == ["abgelehnt", "ok"]
+        assert betraege == [Decimal("-21.40"), Decimal("21.40")]
+        assert bezahlt == Decimal("0.00")
+
+    def test_datev_bucht_gegenbuchung_im_haben(self, client):
+        import csv
+        import io
+        rechnung = self._einziehen(client)
+        self._zurueck(client, rechnung)
+
+        r = client.post("/api/v1/invoices/datev-export", json={
+            "from_date": date.today().isoformat(), "to_date": date.today().isoformat()})
+
+        assert r.status_code == 200, r.text
+        zeilen = [z for z in csv.reader(io.StringIO(r.json()["csv_content"]), delimiter=";")
+                  if z and z[-1].startswith("Zahlung")]
+        assert sorted((z[0], z[1]) for z in zeilen) == [("21,40", "H"), ("21,40", "S")]

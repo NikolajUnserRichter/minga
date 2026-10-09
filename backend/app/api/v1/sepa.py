@@ -17,6 +17,7 @@ from app.models.invoice import Invoice, InvoiceStatus
 from app.models.sepa_mandate import LastschriftStatus, SepaMandat, Zahlungsart
 from app.schemas.sepa import (
     EinreichungRequest, EinzugBuchenRequest, EinzugBuchenResponse, EinzugZeile,
+    RuecklastschriftRequest, RuecklastschriftResponse,
     MandatCreate, MandatResponse, MandateUebersicht, MandatUpdate,
     WiderrufRequest, WiderrufResponse, ZahlungsartUpdate,
 )
@@ -269,3 +270,23 @@ def post_einzug(data: EinzugBuchenRequest, db: DBSession, user: CurrentUser):
         raise HTTPException(status_code=409, detail=str(e))
     db.commit()
     return EinzugBuchenResponse(gebucht=gebucht, hinweise=hinweise)
+
+
+@router.post("/rechnungen/{invoice_id}/ruecklastschrift", response_model=RuecklastschriftResponse)
+def post_ruecklastschrift(invoice_id: UUID, data: RuecklastschriftRequest, db: DBSession, user: CurrentUser):
+    """Rücklastschrift: Gegenbuchung, Rechnung wieder offen mit neuer Frist und mahnfähig."""
+    try:
+        inv, betrag = sepa_service.ruecklastschrift(
+            db, invoice_id, data.datum, data.grund,
+            benutzer=user.get("username"), zahlbar_bis=data.zahlbar_bis,
+        )
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(e))
+    db.commit()
+    return RuecklastschriftResponse(
+        invoice_number=inv.invoice_number, status=inv.status.value,
+        lastschrift_status=inv.lastschrift_status, gegenbuchung=betrag, faellig_am=inv.due_date,
+    )

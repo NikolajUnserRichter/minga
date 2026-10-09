@@ -115,6 +115,11 @@ class PaymentResponse(PaymentBase):
     """Schema für Zahlungs-Antwort"""
     model_config = ConfigDict(from_attributes=True)
 
+    # Ohne gt=0: die Rücklastschrift ist eine Gegenbuchung mit negativem
+    # Betrag (B10). Erfasst werden Zahlungen weiter nur positiv
+    # (POST /invoices/{id}/payments nimmt PaymentBase mit gt=0).
+    amount: Decimal
+
     id: UUID
     invoice_id: UUID
     datev_exported: bool
