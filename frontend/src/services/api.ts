@@ -965,6 +965,15 @@ export const analyticsApi = {
     api.get<YieldStats[]>('/analytics/yield').then(r => r.data),
 }
 
+/** Neue bzw. geänderte Abo-Position (B6). Kein Preisfeld: die API lehnt es mit 422 ab. */
+export interface SubscriptionPositionInput {
+  product_id?: string
+  product_variant_id?: string
+  seed_id?: string
+  menge: number
+  einheit: string
+}
+
 // Subscriptions API
 export const subscriptionsApi = {
   list: (params?: { kunde_id?: string; aktiv?: boolean }) =>
@@ -975,24 +984,21 @@ export const subscriptionsApi = {
 
   create: (data: {
     kunde_id: string
-    product_id?: string
-    seed_id?: string
-    menge: number
-    einheit: string
     intervall: 'TAEGLICH' | 'WOECHENTLICH' | 'ZWEIWOECHENTLICH' | 'MONATLICH'
     liefertage?: number[]
     gueltig_von: string
     gueltig_bis?: string
+    positionen: SubscriptionPositionInput[]
   }) =>
     api.post<Subscription>('/sales/subscriptions', data).then(r => r.data),
 
+  // positionen ersetzt die ganze Liste (B6)
   update: (id: string, data: Partial<{
-    menge: number
-    einheit: string
     intervall: 'TAEGLICH' | 'WOECHENTLICH' | 'ZWEIWOECHENTLICH' | 'MONATLICH'
     liefertage: number[]
     gueltig_bis: string
     aktiv: boolean
+    positionen: SubscriptionPositionInput[]
   }>) =>
     api.patch<Subscription>(`/sales/subscriptions/${id}`, data).then(r => r.data),
 

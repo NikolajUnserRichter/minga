@@ -418,14 +418,30 @@ export interface ForecastAccuracyMetrics {
 // Subscription
 export type SubscriptionInterval = 'TAEGLICH' | 'WOECHENTLICH' | 'ZWEIWOECHENTLICH' | 'MONATLICH'
 
+/** Position eines Abos (B6): Produkt bzw. Variante, Menge, Einheit — kein Preis. */
+export interface SubscriptionPosition {
+  id: string
+  position: number
+  product_id: string | null
+  product_variant_id: string | null
+  /** Legacy: Sorten-Abo ohne Produkt */
+  seed_id: string | null
+  menge: number
+  einheit: string
+  /** "Produkt — Variante" bzw. Sorte */
+  bezeichnung: string | null
+}
+
 export interface Subscription {
   id: string
   kunde_id: string
-  // Entweder Saatgut ODER Produkt-Abo — beide optional befüllt
+  // Kopf = Position 1 (B6); maßgeblich sind die Positionen
   seed_id: string | null
   product_id?: string | null
+  product_variant_id?: string | null
   menge: number
   einheit: string
+  positionen: SubscriptionPosition[]
   intervall: SubscriptionInterval
   liefertage: number[] | null
   gueltig_von: string

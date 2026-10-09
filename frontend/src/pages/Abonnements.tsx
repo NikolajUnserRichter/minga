@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { subscriptionsApi, salesApi, seedsApi, productsApi } from '../services/api';
+import { getErrorMessage } from '../services/errors';
 import { PageHeader, FilterBar } from '../components/common/Layout';
 import {
     Modal,
@@ -11,8 +12,8 @@ import {
     InlineLoader,
     Badge,
 } from '../components/ui';
-import { Plus, RefreshCw, Calendar, User, Leaf, Trash2, Edit2, Play } from 'lucide-react';
-import type { Subscription, Customer, Seed, SubscriptionInterval } from '../types';
+import { Plus, RefreshCw, Calendar, User, Leaf, Trash2, Edit2, Play, X } from 'lucide-react';
+import type { Subscription, SubscriptionPosition, Customer, Seed, SubscriptionInterval, ProductVariant } from '../types';
 
 const INTERVAL_LABELS: Record<SubscriptionInterval, string> = {
     TAEGLICH: 'Täglich',
@@ -22,6 +23,59 @@ const INTERVAL_LABELS: Record<SubscriptionInterval, string> = {
 };
 
 const WEEKDAYS = ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'];
+
+// Einheiten der Abo-Position (wie bisher im Formular)
+const EINHEITEN: Array<{ value: string; label: string }> = [
+    { value: 'GRAMM', label: 'Gramm' },
+    { value: 'BUND', label: 'Bund' },
+    { value: 'SCHALE', label: 'Schale' },
+    { value: 'STUECK', label: 'Stück' },
+    { value: 'TRAY', label: 'Tray (8 Schalen)' },
+    { value: 'KISTE_12', label: 'Mehrwegkiste (12 Schalen)' },
+    { value: 'KISTE_6', label: 'Mehrwegkiste (6 Schalen)' },
+    { value: 'KARTON_6', label: 'Karton (6 Schalen)' },
+];
+
+const einheitLabel = (code: string) => EINHEITEN.find(e => e.value === code)?.label ?? code;
+
+// Eine Zeile im Formular. Kein Preis: der Abo-Lauf nimmt Sonderpreis,
+// Variantenpreis bzw. Basispreis wie das Bestellformular (B6).
+interface PositionRow {
+    product_id: string;
+    product_variant_id: string;
+    seed_id: string;
+    menge: string;
+    einheit: string;
+    /** Anzeigename der gespeicherten Position (nur Bearbeiten), falls ihr Produkt nicht mehr wählbar ist */
+    bisher?: string;
+}
+
+const leerePosition = (): PositionRow => ({
+    product_id: '',
+    product_variant_id: '',
+    seed_id: '',
+    menge: '',
+    einheit: 'STUECK',
+});
+
+const heuteIso = () => new Date().toISOString().split('T')[0];
+
+const leeresFormular = () => ({
+    kunde_id: '',
+    intervall: 'WOECHENTLICH' as SubscriptionInterval,
+    liefertage: [] as number[],
+    gueltig_von: heuteIso(),
+    gueltig_bis: '',
+    // Nur im Bearbeiten-Dialog sichtbar; Speichern ändert den Status nur über diesen Schalter
+    aktiv: true,
+    positionen: [leerePosition()],
+});
+
+// Positionen eines Abos für Tabelle und Dialoge; ohne Positionen (vor B6) der Kopf
+const positionenVon = (sub: Subscription): Array<Pick<SubscriptionPosition, 'menge' | 'einheit' | 'bezeichnung'>> =>
+    sub.positionen && sub.positionen.length > 0
+        ? sub.positionen
+        : [{ menge: sub.menge, einheit: sub.einheit, bezeichnung: sub.product_name || sub.seed_name || null }];
 
 export default function Abonnements() {
     const toast = useToast();
@@ -37,17 +91,8 @@ export default function Abonnements() {
     const [deletingSub, setDeletingSub] = useState<Subscription | null>(null);
 
     // Form state
-    const [formData, setFormData] = useState({
-        kunde_id: '',
-        seed_id: '',
-        product_id: '',
-        menge: '',
-        einheit: 'STUECK',
-        intervall: 'WOECHENTLICH' as SubscriptionInterval,
-        liefertage: [] as number[],
-        gueltig_von: new Date().toISOString().split('T')[0],
-        gueltig_bis: '',
-    });
+    const [formData, setFormData] = useState(leeresFormular);
+    const [variantenJeProdukt, setVariantenJeProdukt] = useState<Record<string, ProductVariant[]>>({});
 
     // Data queries
     const { data: subscriptionsData, isLoading } = useQuery({
@@ -69,11 +114,35 @@ export default function Abonnements() {
         queryFn: () => productsApi.list({ is_active: true }),
     });
     const products = productsData || [];
+    // Variable Bundles (Gastrotray mit Sortenwahl) brauchen eine Auswahl je
+    // Bestellung; ein Abo hat keine, die API lehnt sie ab.
+    const produktOptionen = products
+        .filter((p) => !p.is_variable_bundle)
+        .map((p) => ({ value: p.id, label: `${p.is_bundle ? '📦 ' : ''}${p.name}` }));
+    // Ein gespeichertes Produkt, das nicht mehr wählbar ist (deaktiviert oder
+    // inzwischen variables Bundle), bleibt sichtbar statt eines leeren Felds.
+    const produktOptionenFuer = (pos: PositionRow) =>
+        !productsData || !pos.product_id || produktOptionen.some((o) => o.value === pos.product_id)
+            ? produktOptionen
+            : [
+                { value: pos.product_id, label: pos.bisher || 'Bisheriges Produkt', hint: 'nicht mehr wählbar', disabled: true },
+                ...produktOptionen,
+            ];
 
     const { data: seedsData } = useQuery({
         queryKey: ['seeds', 'active'],
         queryFn: () => seedsApi.list({ aktiv: true }),
     });
+
+    const ladeVarianten = async (productId: string) => {
+        if (!productId || variantenJeProdukt[productId] !== undefined) return;
+        try {
+            const varianten = await productsApi.listVariants(productId);
+            setVariantenJeProdukt((prev) => ({ ...prev, [productId]: varianten }));
+        } catch {
+            setVariantenJeProdukt((prev) => ({ ...prev, [productId]: [] }));
+        }
+    };
 
     // Mutations
     const createMutation = useMutation({
@@ -85,8 +154,8 @@ export default function Abonnements() {
             resetForm();
             toast.success('Abonnement erfolgreich erstellt');
         },
-        onError: () => {
-            toast.error('Fehler beim Erstellen des Abonnements');
+        onError: (error) => {
+            toast.error(getErrorMessage(error, 'Fehler beim Erstellen des Abonnements'));
         },
     });
 
@@ -99,8 +168,8 @@ export default function Abonnements() {
             resetForm();
             toast.success('Abonnement aktualisiert');
         },
-        onError: () => {
-            toast.error('Fehler beim Aktualisieren');
+        onError: (error) => {
+            toast.error(getErrorMessage(error, 'Fehler beim Aktualisieren'));
         },
     });
 
@@ -127,60 +196,117 @@ export default function Abonnements() {
     });
 
     const resetForm = () => {
-        setFormData({
-            kunde_id: '',
-            seed_id: '',
-            product_id: '',
-            menge: '',
-            einheit: 'STUECK',
-            intervall: 'WOECHENTLICH',
-            liefertage: [],
-            gueltig_von: new Date().toISOString().split('T')[0],
-            gueltig_bis: '',
+        setFormData(leeresFormular());
+    };
+
+    // Positionen bearbeiten
+    const setzePosition = (index: number, aenderung: Partial<PositionRow>) => {
+        setFormData((prev) => ({
+            ...prev,
+            positionen: prev.positionen.map((p, i) => (i === index ? { ...p, ...aenderung } : p)),
+        }));
+    };
+
+    const waehleProdukt = (index: number, productId: string) => {
+        // Neues Produkt: Variante und Legacy-Sorte gehören nicht mehr dazu
+        setzePosition(index, { product_id: productId, product_variant_id: '', seed_id: '' });
+        void ladeVarianten(productId);
+    };
+
+    const waehleVariante = (index: number, productId: string, variantId: string) => {
+        const variante = (variantenJeProdukt[productId] || []).find((v) => v.id === variantId);
+        // Mit Variante gilt ihre Verpackungseinheit (so rechnet auch der Abo-Lauf)
+        setzePosition(index, {
+            product_variant_id: variantId,
+            ...(variante?.packaging_unit_code ? { einheit: variante.packaging_unit_code } : {}),
         });
+    };
+
+    const positionHinzufuegen = () => {
+        setFormData((prev) => ({ ...prev, positionen: [...prev.positionen, leerePosition()] }));
+    };
+
+    const positionEntfernen = (index: number) => {
+        setFormData((prev) => ({
+            ...prev,
+            positionen: prev.positionen.length > 1 ? prev.positionen.filter((_, i) => i !== index) : prev.positionen,
+        }));
     };
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
 
+        if (!editingSub && !formData.kunde_id) {
+            toast.error('Bitte einen Kunden wählen');
+            return;
+        }
+        if (formData.positionen.some((p) => !p.product_id && !p.seed_id)) {
+            toast.error('Bitte in jeder Position ein Produkt wählen');
+            return;
+        }
+        if (formData.positionen.some((p) => !(parseFloat(p.menge) > 0))) {
+            toast.error('Jede Position braucht eine Menge größer 0');
+            return;
+        }
+
+        const positionen = formData.positionen.map((p) => ({
+            product_id: p.product_id || undefined,
+            product_variant_id: p.product_variant_id || undefined,
+            seed_id: p.product_id ? undefined : p.seed_id || undefined,
+            menge: parseFloat(p.menge),
+            einheit: p.einheit,
+        }));
+
         if (editingSub) {
             updateMutation.mutate({
                 id: editingSub.id,
                 data: {
-                    menge: parseFloat(formData.menge),
-                    einheit: formData.einheit,
                     intervall: formData.intervall,
                     liefertage: formData.liefertage,
                     gueltig_bis: formData.gueltig_bis || undefined,
-                    aktiv: true,
+                    aktiv: formData.aktiv,
+                    positionen,
                 },
             });
         } else {
             createMutation.mutate({
                 kunde_id: formData.kunde_id,
-                product_id: formData.product_id || undefined,
-                seed_id: formData.seed_id || undefined,
-                menge: parseFloat(formData.menge),
-                einheit: formData.einheit,
                 intervall: formData.intervall,
                 liefertage: formData.liefertage.length > 0 ? formData.liefertage : undefined,
                 gueltig_von: formData.gueltig_von,
                 gueltig_bis: formData.gueltig_bis || undefined,
+                positionen,
             });
         }
     };
 
     const openEditModal = (sub: Subscription) => {
+        const positionen: PositionRow[] = sub.positionen && sub.positionen.length > 0
+            ? sub.positionen.map((p) => ({
+                product_id: p.product_id || '',
+                product_variant_id: p.product_variant_id || '',
+                seed_id: p.seed_id || '',
+                menge: String(p.menge),
+                einheit: p.einheit,
+                bisher: p.bezeichnung || undefined,
+            }))
+            : [{
+                product_id: sub.product_id || '',
+                product_variant_id: sub.product_variant_id || '',
+                seed_id: sub.seed_id || '',
+                menge: String(sub.menge),
+                einheit: sub.einheit,
+                bisher: sub.product_name || undefined,
+            }];
+        positionen.forEach((p) => { void ladeVarianten(p.product_id); });
         setFormData({
             kunde_id: sub.kunde_id,
-            seed_id: sub.seed_id || '',
-            product_id: (sub as any).product_id || '',
-            menge: sub.menge.toString(),
-            einheit: sub.einheit,
             intervall: sub.intervall,
             liefertage: sub.liefertage || [],
             gueltig_von: sub.gueltig_von,
             gueltig_bis: sub.gueltig_bis || '',
+            aktiv: sub.aktiv,
+            positionen,
         });
         setEditingSub(sub);
     };
@@ -323,8 +449,7 @@ export default function Abonnements() {
                         <thead>
                             <tr>
                                 <th>Kunde</th>
-                                <th>Produkt</th>
-                                <th className="text-right">Menge</th>
+                                <th>Positionen je Lieferung</th>
                                 <th>Intervall</th>
                                 <th>Liefertage</th>
                                 <th>Gültigkeit</th>
@@ -342,13 +467,18 @@ export default function Abonnements() {
                                         </div>
                                     </td>
                                     <td>
-                                        <div className="flex items-center gap-2">
-                                            <Leaf className="w-4 h-4 text-green-500" />
-                                            {sub.product_name || sub.seed_name || (sub.product_id ?? sub.seed_id ?? '').slice(0, 8) || '—'}
-                                        </div>
-                                    </td>
-                                    <td className="text-right font-semibold">
-                                        {sub.menge} {sub.einheit}
+                                        <ul className="space-y-0.5">
+                                            {positionenVon(sub).map((p, i) => (
+                                                <li key={i} className="flex items-center gap-2">
+                                                    <Leaf className="w-4 h-4 text-green-500 shrink-0" />
+                                                    <span className="font-semibold tabular-nums">
+                                                        {Number(p.menge).toLocaleString('de-DE')}
+                                                    </span>
+                                                    <span className="text-gray-500 dark:text-gray-400">{einheitLabel(p.einheit)}</span>
+                                                    <span>{p.bezeichnung || '—'}</span>
+                                                </li>
+                                            ))}
+                                        </ul>
                                     </td>
                                     <td>
                                         <Badge variant="info">
@@ -422,80 +552,122 @@ export default function Abonnements() {
             >
                 <form onSubmit={handleSubmit} className="space-y-4">
                     {!editingSub && (
-                        <>
-                            <Combobox
-                                label="Kunde *"
-                                value={formData.kunde_id}
-                                onChange={(v) => setFormData({ ...formData, kunde_id: v })}
-                                placeholder="Kunde suchen…"
-                                options={customers.map((c: Customer) => ({ value: c.id, label: c.name }))}
-                            />
-
-                            <div>
-                                <Combobox
-                                    label="Produkt *"
-                                    value={formData.product_id}
-                                    onChange={(v) => setFormData({ ...formData, product_id: v, seed_id: '' })}
-                                    placeholder="Produkt oder Bundle suchen…"
-                                    options={products.map((p) => ({
-                                        value: p.id,
-                                        label: `${(p.is_bundle || p.is_variable_bundle) ? '📦 ' : ''}${p.name}`,
-                                    }))}
-                                />
-                                {products.length === 0 && seeds.length > 0 && (
-                                    <div className="mt-2">
-                                        <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">
-                                            (Keine Produkte angelegt — Saatgut wählen)
-                                        </label>
-                                        <select
-                                            value={formData.seed_id}
-                                            onChange={(e) => setFormData({ ...formData, seed_id: e.target.value, product_id: '' })}
-                                            className={selectClassName}
-                                        >
-                                            <option value="">Saatgut auswählen...</option>
-                                            {seeds.map((seed: Seed) => (
-                                                <option key={seed.id} value={seed.id}>{seed.name}</option>
-                                            ))}
-                                        </select>
-                                    </div>
-                                )}
-                            </div>
-                        </>
+                        <Combobox
+                            label="Kunde *"
+                            value={formData.kunde_id}
+                            onChange={(v) => setFormData({ ...formData, kunde_id: v })}
+                            placeholder="Kunde suchen…"
+                            options={customers.map((c: Customer) => ({ value: c.id, label: c.name }))}
+                        />
                     )}
 
-                    <div className="grid grid-cols-2 gap-4">
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                                Menge *
-                            </label>
-                            <Input
-                                type="number"
-                                step="0.01"
-                                min="0"
-                                value={formData.menge}
-                                onChange={(e) => setFormData({ ...formData, menge: e.target.value })}
-                                required
-                            />
+                    {/* Positionen je Lieferung (B6): mehrere Produkte, je mit Menge und Einheit */}
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                            Positionen je Lieferung *
+                        </label>
+                        <div className="space-y-3">
+                            {formData.positionen.map((pos, index) => {
+                                const varianten = variantenJeProdukt[pos.product_id] || [];
+                                return (
+                                    <div
+                                        key={index}
+                                        className="rounded-lg border border-gray-200 dark:border-gray-700 p-3 space-y-2"
+                                    >
+                                        <div className="flex items-start gap-2">
+                                            <div className="flex-1">
+                                                {products.length === 0 && seeds.length > 0 ? (
+                                                    <select
+                                                        value={pos.seed_id}
+                                                        onChange={(e) => setzePosition(index, { seed_id: e.target.value, product_id: '', product_variant_id: '' })}
+                                                        className={selectClassName}
+                                                        aria-label={`Saatgut Position ${index + 1}`}
+                                                    >
+                                                        <option value="">(Keine Produkte angelegt — Saatgut wählen)</option>
+                                                        {seeds.map((seed: Seed) => (
+                                                            <option key={seed.id} value={seed.id}>{seed.name}</option>
+                                                        ))}
+                                                    </select>
+                                                ) : (
+                                                    <Combobox
+                                                        value={pos.product_id}
+                                                        onChange={(v) => waehleProdukt(index, v)}
+                                                        placeholder="Produkt suchen…"
+                                                        options={produktOptionenFuer(pos)}
+                                                    />
+                                                )}
+                                            </div>
+                                            <button
+                                                type="button"
+                                                className="p-2 text-gray-500 dark:text-gray-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/30 rounded disabled:opacity-40 disabled:cursor-not-allowed"
+                                                onClick={() => positionEntfernen(index)}
+                                                disabled={formData.positionen.length === 1}
+                                                title="Position entfernen"
+                                                aria-label={`Position ${index + 1} entfernen`}
+                                            >
+                                                <X className="w-4 h-4" />
+                                            </button>
+                                        </div>
+                                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                                            {varianten.length > 0 ? (
+                                                <select
+                                                    value={pos.product_variant_id}
+                                                    onChange={(e) => waehleVariante(index, pos.product_id, e.target.value)}
+                                                    className={selectClassName}
+                                                    aria-label={`Variante Position ${index + 1}`}
+                                                >
+                                                    <option value="">Ohne Variante</option>
+                                                    {varianten.map((v) => (
+                                                        <option key={v.id} value={v.id}>
+                                                            {v.name_suffix || v.packaging_unit_code || 'Variante'}
+                                                        </option>
+                                                    ))}
+                                                </select>
+                                            ) : (
+                                                <div className="hidden sm:block" />
+                                            )}
+                                            <Input
+                                                type="number"
+                                                step="0.01"
+                                                min="0"
+                                                placeholder="Menge"
+                                                aria-label={`Menge Position ${index + 1}`}
+                                                value={pos.menge}
+                                                onChange={(e) => setzePosition(index, { menge: e.target.value })}
+                                                required
+                                            />
+                                            <select
+                                                value={pos.einheit}
+                                                onChange={(e) => setzePosition(index, { einheit: e.target.value })}
+                                                className={selectClassName}
+                                                disabled={!!pos.product_variant_id}
+                                                title={pos.product_variant_id ? 'Einheit der Variante' : undefined}
+                                                aria-label={`Einheit Position ${index + 1}`}
+                                            >
+                                                {!EINHEITEN.some((e) => e.value === pos.einheit) && (
+                                                    <option value={pos.einheit}>{pos.einheit}</option>
+                                                )}
+                                                {EINHEITEN.map((e) => (
+                                                    <option key={e.value} value={e.value}>{e.label}</option>
+                                                ))}
+                                            </select>
+                                        </div>
+                                    </div>
+                                );
+                            })}
                         </div>
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                                Einheit *
-                            </label>
-                            <select
-                                value={formData.einheit}
-                                onChange={(e) => setFormData({ ...formData, einheit: e.target.value })}
-                                className={selectClassName}
-                            >
-                                <option value="GRAMM">Gramm</option>
-                                <option value="BUND">Bund</option>
-                                <option value="SCHALE">Schale</option>
-                                <option value="STUECK">Stück</option>
-                                <option value="TRAY">Tray (8 Schalen)</option>
-                                <option value="KISTE_12">Mehrwegkiste (12 Schalen)</option>
-                                <option value="KISTE_6">Mehrwegkiste (6 Schalen)</option>
-                                <option value="KARTON_6">Karton (6 Schalen)</option>
-                            </select>
-                        </div>
+                        <button
+                            type="button"
+                            className="btn btn-secondary btn-sm mt-2"
+                            onClick={positionHinzufuegen}
+                        >
+                            <Plus className="w-4 h-4" />
+                            Position hinzufügen
+                        </button>
+                        <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                            Alle Positionen kommen an jedem Liefertag in eine Bestellung. Preise wie im
+                            Bestellformular: Sonderpreis des Kunden, sonst Varianten- bzw. Produktpreis.
+                        </p>
                     </div>
 
                     <div>
@@ -562,6 +734,20 @@ export default function Abonnements() {
                         />
                     </div>
 
+                    {editingSub && (
+                        <label className="flex items-center gap-2">
+                            <input
+                                type="checkbox"
+                                checked={formData.aktiv}
+                                onChange={(e) => setFormData({ ...formData, aktiv: e.target.checked })}
+                                className="w-4 h-4 rounded border-gray-300 dark:border-gray-600 text-minga-600 dark:text-minga-400 focus:ring-minga-500"
+                            />
+                            <span className="text-sm text-gray-700 dark:text-gray-300">
+                                Aktiv (wird an den Liefertagen beliefert)
+                            </span>
+                        </label>
+                    )}
+
                     <div className="flex justify-end gap-3 pt-4 border-t dark:border-gray-700">
                         <button
                             type="button"
@@ -594,8 +780,11 @@ export default function Abonnements() {
                 <div className="space-y-4">
                     <p className="text-gray-600 dark:text-gray-400">
                         Möchten Sie das Abonnement für{' '}
-                        <strong>{deletingSub?.kunde_name}</strong> ({deletingSub?.product_name || deletingSub?.seed_name || '—'}) wirklich
-                        deaktivieren?
+                        <strong>{deletingSub?.kunde_name}</strong> (
+                        {deletingSub
+                            ? positionenVon(deletingSub).map((p) => p.bezeichnung || '—').join(', ')
+                            : '—'}
+                        ) wirklich deaktivieren?
                     </p>
                     <div className="flex justify-end gap-3">
                         <button className="btn btn-secondary" onClick={() => setDeletingSub(null)}>
