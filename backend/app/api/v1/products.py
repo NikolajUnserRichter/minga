@@ -121,6 +121,35 @@ def create_microgreen_product(
         raise HTTPException(status_code=400, detail=str(e))
 
 
+def _bundle_art_ableiten(db: Session, product: Product) -> None:
+    """Bundle-Art beim Speichern aus der Stückliste ableiten (Paket 4, G11/G74).
+
+    - Variabel (Gastrotray): die Bestellung wählt die Sorten, also kein festes
+      Bundle, auch wenn noch eine alte Stückliste anhängt.
+    - Sonst: wer eine Stückliste hat, ist ein festes Bundle (Mischkiste).
+    - Ohne Stückliste bleibt das Kennzeichen, wie es ist.
+
+    add_bundle_component setzt is_bundle seit 19.08.2026. Das Produktformular
+    schickte beim Speichern aber is_bundle aus dem Stand vom Öffnen mit (false)
+    und setzte das Kennzeichen zurück. Packplan, Bestandsabzug und Belege lesen
+    is_bundle; der Tagesplan zeigte den Mix deshalb ungeteilt (Prod 09.10.2026:
+    24 von 25 Artikeln mit Stückliste auf 0). Ein mitgeschicktes is_bundle
+    entscheidet hier nicht.
+    """
+    if product.is_variable_bundle:
+        product.is_bundle = False
+        return
+    if product.is_bundle:
+        return
+    hat_stueckliste = db.execute(
+        select(BundleComponent.id)
+        .where(BundleComponent.parent_product_id == product.id)
+        .limit(1)
+    ).first() is not None
+    if hat_stueckliste:
+        product.is_bundle = True
+
+
 @router.patch("/{product_id}", response_model=ProductResponse)
 def update_product(
     product_id: UUID,
@@ -138,6 +167,7 @@ def update_product(
     update_data = pfand_vorgaben(update_data, set(update_data), bisher=product)
     for field, value in update_data.items():
         setattr(product, field, value)
+    _bundle_art_ableiten(db, product)
 
     db.commit()
     db.refresh(product)
