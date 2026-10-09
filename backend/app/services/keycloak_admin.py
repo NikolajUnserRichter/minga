@@ -351,6 +351,14 @@ def _users_cfg() -> dict:
     return {"url": url, "realm": realm, "svc_id": svc_id, "svc_secret": svc_secret}
 
 
+def _json_antwort(antwort: httpx.Response, *, geschrieben: bool = False):
+    try:
+        return antwort.json()
+    except ValueError as fehler:
+        fehlerklasse = KeycloakErgebnisUnbekannt if geschrieben else KeycloakNichtErreichbar
+        raise fehlerklasse("Keycloak hat keine gültige JSON-Antwort geliefert.") from fehler
+
+
 def _neues_token(c: dict, client: httpx.Client) -> tuple[str, float]:
     """Anmeldung des Service-Accounts (client_credentials) im Ziel-Realm.
     Rückgabe: (Token, gültig bis — monotone Uhr, 30 s Puffer)."""
@@ -365,7 +373,7 @@ def _neues_token(c: dict, client: httpx.Client) -> tuple[str, float]:
         raise KeycloakNichtErreichbar(
             f"Anmeldung der Benutzerverwaltung bei Keycloak abgelehnt (HTTP {r.status_code})."
         )
-    antwort = r.json()
+    antwort = _json_antwort(r)
     laufzeit = float(antwort.get("expires_in") or 60)
     return antwort["access_token"], time.monotonic() + max(0.0, laufzeit - 30)
 
@@ -389,6 +397,7 @@ class _Benutzerzugang:
     """Eine Keycloak-Sitzung je API-Aufruf: Client, Token, Basis-URL des Realms."""
 
     def __init__(self) -> None:
+        self._geschrieben = False
         self.c = _users_cfg()
         self.base = f"{self.c['url']}/admin/realms/{self.c['realm']}"
         self.client = _http_client()
@@ -420,6 +429,10 @@ class _Benutzerzugang:
         if r.status_code >= 500:
             fehlerklasse = KeycloakErgebnisUnbekannt if method in ("POST", "PUT", "PATCH", "DELETE") else KeycloakNichtErreichbar
             raise fehlerklasse(f"Keycloak meldet einen Serverfehler (HTTP {r.status_code}).")
+        if method in ("POST", "PUT", "PATCH", "DELETE") and 200 <= r.status_code < 300:
+            self._geschrieben = True
+        if method == "GET" and r.status_code == 200:
+            _json_antwort(r, geschrieben=self._geschrieben)
         return r
 
 

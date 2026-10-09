@@ -1302,3 +1302,89 @@ class TestAbgewieseneVersuche:
         assert "geheim@fremdfirma.de" not in json.dumps(eintrag.details) + caplog.text + antwort.text
         assert len(_audit_zeilen(caplog)) == 1
         assert _audit_zeilen(caplog)[0]["mandant"] == MANDANT
+
+
+class TestNichtJsonAntwort:
+    @pytest.mark.parametrize("inhalt", ["<html>Wartungsseite</html>", ""])
+    @pytest.mark.parametrize("schritt", ["token", "aufrufer", "liste", "einzel", "rollen", "anlage_vorher", "aendern_vorher", "reset_vorher"])
+    def test_vor_schreiben_503_ohne_erfolgs_audit(self, admin, kc, db, monkeypatch, schritt, inhalt):
+        ziel = kc.add_user("ziel@beispielfirma.de", MANDANT, roles={"sales"})
+        pfad = {
+            "token": TOKEN_PFAD,
+            "aufrufer": f"/users/{ADMIN_ID}",
+            "liste": "/users",
+            "einzel": f"/users/{ziel}",
+            "rollen": f"/users/{ziel}/role-mappings/realm",
+            "anlage_vorher": "/roles/production_staff",
+            "aendern_vorher": f"/users/{ziel}/role-mappings",
+            "reset_vorher": f"/users/{ziel}/groups",
+        }[schritt]
+        original = kc.handler
+
+        def handler(request):
+            antwort = original(request)
+            if request.url.path.endswith(pfad):
+                return httpx.Response(200, text=inhalt, headers={"content-type": "text/html"})
+            return antwort
+
+        monkeypatch.setattr(keycloak_admin, "_http_client",
+                            lambda: httpx.Client(transport=httpx.MockTransport(handler)))
+        if schritt == "anlage_vorher":
+            antwort = _neu(admin)
+        elif schritt == "aendern_vorher":
+            antwort = admin.patch(f"/api/v1/users/{ziel}", json={"enabled": False})
+        elif schritt == "reset_vorher":
+            antwort = admin.post(f"/api/v1/users/{ziel}/reset-password")
+        else:
+            antwort = admin.get(f"/api/v1/users/{ziel}" if schritt in ("einzel", "rollen") else "/api/v1/users")
+        assert antwort.status_code == 503, antwort.text
+        assert "JSON" in antwort.json()["detail"]
+        assert kc.schreibende_calls() == []
+        assert _audit_saetze(db) == []
+
+    @pytest.mark.parametrize("inhalt", ["<html>Wartungsseite</html>", ""])
+    @pytest.mark.parametrize("schritt", ["anlage", "anlage_suche", "aendern", "aendern_rollen"])
+    def test_nach_schreiben_ergebnis_unbekannt(self, admin, kc, db, monkeypatch, caplog, schritt, inhalt):
+        ziel = kc.add_user("ziel@beispielfirma.de", MANDANT, roles={"sales"})
+        original = kc.handler
+        geschrieben = False
+
+        def handler(request):
+            nonlocal geschrieben
+            antwort = original(request)
+            if request.method in ("PUT", "POST") and "/admin/realms/" in request.url.path:
+                geschrieben = True
+                if schritt == "anlage_suche" and request.url.path.endswith("/users"):
+                    return httpx.Response(201)
+            if geschrieben and request.method == "GET":
+                ist_ziel = request.url.path.endswith(f"/users/{ziel}")
+                ist_rollen = request.url.path.endswith(f"/users/{ziel}/role-mappings/realm")
+                if schritt.startswith("anlage") or (schritt == "aendern" and ist_ziel) or (schritt == "aendern_rollen" and ist_rollen):
+                    return httpx.Response(200, text=inhalt, headers={"content-type": "text/html"})
+            return antwort
+
+        monkeypatch.setattr(keycloak_admin, "_http_client",
+                            lambda: httpx.Client(transport=httpx.MockTransport(handler)))
+        if schritt.startswith("anlage"):
+            antwort = _neu(admin)
+            assert any(konto["email"] == "lena@beispielfirma.de" for konto in kc.users.values())
+        else:
+            antwort = admin.patch(f"/api/v1/users/{ziel}", json={"enabled": False})
+            assert kc.users[ziel]["enabled"] is False
+        assert antwort.status_code == 503, antwort.text
+        assert "Stand des Kontos" in antwort.json()["detail"]
+        (eintrag,) = _audit_saetze(db)
+        assert eintrag.details["ergebnis"] == "ERGEBNIS_UNBEKANNT"
+        assert eintrag.ausgefuehrt_von == ADMIN_ID
+        if schritt.startswith("anlage"):
+            assert eintrag.aktion == "BENUTZER_ANGELEGT"
+            assert eintrag.ziel_email == "lena@beispielfirma.de"
+            assert eintrag.details["aenderungen"]["role"] == "production_staff"
+        else:
+            assert eintrag.aktion == "BENUTZER_GEAENDERT"
+            assert eintrag.ziel_user_id == ziel
+            assert eintrag.details["aenderungen"] == {"enabled": False}
+        assert len(_audit_zeilen(caplog)) == 1
+        assert "Wartungsseite" not in caplog.text + antwort.text + json.dumps(eintrag.details)
+        for passwort in kc.passwords.values():
+            assert passwort["value"] not in caplog.text + antwort.text + json.dumps(eintrag.details)
