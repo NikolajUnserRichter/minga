@@ -5675,3 +5675,112 @@ class TestQ7SammelrechnungAnlegen:
 
         assert _q7_rechnungen(kunde) == []
         assert _q7_ls_frei(ls)
+
+
+# ---------------------------------------------------------------------------
+# Q7.5 — Monat und Vorschau
+# ---------------------------------------------------------------------------
+
+class TestQ7Monat:
+
+    @pytest.mark.parametrize("monat,von,bis", [
+        ("2026-10", date(2026, 10, 1), date(2026, 10, 31)),
+        ("2026-12", date(2026, 12, 1), date(2026, 12, 31)),
+        ("2027-02", date(2027, 2, 1), date(2027, 2, 28)),
+        ("2028-02", date(2028, 2, 1), date(2028, 2, 29)),
+    ])
+    def test_grenzen(self, monat, von, bis):
+        from app.services.monatsrechnung_service import monat_grenzen
+        assert monat_grenzen(monat) == (von, bis)
+
+    @pytest.mark.parametrize("monat", ["2026-13", "2026-1", "10-2026", "2026-00", "", "2026-10-01"])
+    def test_ungueltig(self, monat):
+        from app.services.monatsrechnung_service import monat_grenzen
+        with pytest.raises(ValueError):
+            monat_grenzen(monat)
+
+    @pytest.mark.parametrize("heute,monat", [
+        (date(2026, 11, 1), "2026-10"),
+        (date(2026, 10, 31), "2026-09"),
+        (date(2027, 1, 1), "2026-12"),
+        (date(2028, 3, 1), "2028-02"),
+    ])
+    def test_vormonat(self, heute, monat):
+        from app.services.monatsrechnung_service import vormonat
+        assert vormonat(heute) == monat
+
+    def test_heute_in_berlin_nicht_utc(self):
+        """31.10. 23:30 UTC ist in Berlin schon der 1.11. — der Lauf rechnet Oktober."""
+        from datetime import datetime, timezone
+        from app.services.monatsrechnung_service import heute_berlin, vormonat
+        heute = heute_berlin(datetime(2026, 10, 31, 23, 30, tzinfo=timezone.utc))
+        assert heute == date(2026, 11, 1)
+        assert vormonat(heute) == "2026-10"
+
+
+@pytest.mark.usefixtures("_q7_ohne_forecast")
+class TestQ7Vorschau:
+
+    def _vorschau(self, monat=Q7_MONAT):
+        from app.services.monatsrechnung_service import vorschau
+        with TestingSessionLocal() as db:
+            return vorschau(db, monat)
+
+    def _hinweise(self, ergebnis, art):
+        return [h for h in ergebnis["hinweise"] if h["art"] == art]
+
+    def test_nur_monatskunden_und_schreibt_nichts(self, client):
+        monat = _q7_monatskunde(client)
+        einzeln = _q7_kunde(client, "Knuspr")
+        _q7_geliefert(client, monat)
+        _q7_geliefert(client, monat, "2026-03-20", menge=4)
+        _, ls_einzeln = _q7_geliefert(client, einzeln)
+
+        v = self._vorschau()
+
+        assert [(k["customer_name"], k["anzahl_lieferscheine"], _q7_d(k["summe_netto"]))
+                for k in v["vorgeschlagen"]] == [("Ökoring Handels GmbH", 2, Decimal("35.00"))]
+        einzel = self._hinweise(v, "EINZELABRECHNUNG")
+        assert [(h["customer_name"], h["belege"]) for h in einzel] == [
+            ("Knuspr", [ls_einzeln["delivery_note_number"]])]
+        assert v["zeitraum_von"] == "2026-03-01" and v["zeitraum_bis"] == "2026-03-31"
+        assert _q7_rechnungen() == [] and _q7_laeufe() == []
+
+    def test_bestellung_ohne_lieferschein_ist_ein_hinweis(self, client):
+        kunde = _q7_monatskunde(client)
+        _q7_geliefert(client, kunde)
+        ohne = _q7_bestellung(client, kunde, "2026-03-12")
+        storniert = _q7_bestellung(client, kunde, "2026-03-13")
+        fakturiert = _q7_bestellung(client, kunde, "2026-03-14")
+        _q7_bestellung(client, kunde, "2026-04-02")          # anderer Monat
+        from app.models.enums import OrderStatus
+        from app.models.order import Order
+        with TestingSessionLocal() as db:   # Zustände wie nach Storno bzw. GELIEFERT → FAKTURIERT
+            db.get(Order, uuid.UUID(storniert["id"])).status = OrderStatus.STORNIERT
+            db.get(Order, uuid.UUID(fakturiert["id"])).status = OrderStatus.FAKTURIERT
+            db.commit()
+
+        hinweise = self._hinweise(self._vorschau(), "OHNE_LIEFERSCHEIN")
+
+        assert [h["belege"] for h in hinweise] == [[ohne["order_number"]]]
+
+    def test_lieferschein_aus_frueherem_monat_ist_ein_hinweis(self, client):
+        kunde = _q7_monatskunde(client)
+        _, alt = _q7_geliefert(client, kunde, "2026-02-26")
+
+        v = self._vorschau()
+
+        assert v["vorgeschlagen"] == []
+        assert [h["belege"] for h in self._hinweise(v, "FRUEHERER_MONAT")] == [[alt["delivery_note_number"]]]
+
+    def test_ohne_lieferungen_und_inaktiv(self, client):
+        leer = _q7_monatskunde(client, "Bodan")
+        inaktiv = _q7_monatskunde(client, "Fruchthof Nagel")
+        _q7_geliefert(client, inaktiv)
+        assert client.patch(f"/api/v1/sales/customers/{inaktiv['id']}", json={"aktiv": False}).status_code == 200
+
+        v = self._vorschau()
+
+        assert v["vorgeschlagen"] == []
+        assert [h["customer_name"] for h in self._hinweise(v, "KEINE_LIEFERUNGEN")] == ["Bodan"]
+        assert [h["customer_name"] for h in self._hinweise(v, "INAKTIV")] == ["Fruchthof Nagel"]
