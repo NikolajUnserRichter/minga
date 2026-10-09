@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { capacityApi, adminApi, integrationsApi } from '../services/api';
+import { capacityApi, adminApi, integrationsApi, invoicesApi } from '../services/api';
 import { SepaEinstellungenKarte } from '../components/domain/SepaEinstellungenKarte';
 import { PageHeader } from '../components/common/Layout';
 import { CapacityIndicator, Input, Select, SelectOption, Button, useToast } from '../components/ui';
@@ -95,6 +95,7 @@ export default function Settings() {
         {/* SMTP Settings */}
         <SeasonSettingsCard />
         <MonatsrechnungSettingsCard />
+        <DatevSettingsCard />
         <SmtpSettingsCard />
         <SepaEinstellungenKarte />
 
@@ -577,6 +578,72 @@ export function SeasonSettingsCard() {
             </button>
           ))}
         </div>
+      </div>
+    </div>
+  );
+}
+
+
+// ==================== DATEV-Export (Nachtrag 09.10., D) ====================
+
+export function DatevSettingsCard() {
+  const toast = useToast();
+  const queryClient = useQueryClient();
+
+  const { data } = useQuery({
+    queryKey: ['datev-einstellungen'],
+    queryFn: () => invoicesApi.datevEinstellungen(),
+  });
+
+  const saveMutation = useMutation({
+    mutationFn: (rahmen: string) => adminApi.updateSettings({ DATEV_KONTENRAHMEN: rahmen }),
+    onSuccess: (_r, rahmen) => {
+      toast.success(`DATEV-Kontenrahmen: ${rahmen}`);
+      queryClient.invalidateQueries({ queryKey: ['datev-einstellungen'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-settings'] });
+    },
+    // 422 mit Klartext, z. B. nach dem ersten Export nicht mehr änderbar
+    onError: (e) => toast.error(getErrorMessage(e, 'Speichern fehlgeschlagen')),
+  });
+
+  // Volle Breite: im Raster (lg:grid-cols-2) steht die Karte zwischen
+  // Monatsrechnungen (halb) und SMTP (volle Breite) — halb breit bliebe
+  // rechts eine leere Zelle. Die Knöpfe bleiben schmal (max-w-md).
+  return (
+    <div className="card lg:col-span-2">
+      <div className="card-header">
+        <h3 className="card-title">DATEV-Export</h3>
+      </div>
+      <div className="card-body space-y-3">
+        <p className="text-sm text-gray-500 dark:text-gray-400">
+          Kontenrahmen der Buchhaltung in DATEV. Nach dem ersten Export nicht mehr änderbar.
+        </p>
+        <div className="flex gap-2 max-w-md">
+          {(['SKR03', 'SKR04'] as const).map((rahmen) => (
+            <button
+              key={rahmen}
+              type="button"
+              disabled={!data || saveMutation.isPending}
+              onClick={() => rahmen !== data?.kontenrahmen && saveMutation.mutate(rahmen)}
+              className={`flex-1 p-2 rounded-lg border-2 text-sm transition-colors ${data?.kontenrahmen === rahmen
+                ? 'border-minga-500 bg-minga-50 dark:bg-minga-900/30 font-medium'
+                : 'border-gray-200 dark:border-gray-700 hover:border-gray-300'
+                }`}
+            >
+              {rahmen}
+            </button>
+          ))}
+        </div>
+        {data && (
+          <p className="text-xs text-gray-500 dark:text-gray-400">
+            {data.konten.map((k) => `${k.bezeichnung} ${k.konto}`).join(' · ')}
+          </p>
+        )}
+        {data?.sperrgrund && (
+          <p className="text-xs text-amber-700 dark:text-amber-300">
+            Export gesperrt: {data.sperrgrund}
+          </p>
+        )}
       </div>
     </div>
   );

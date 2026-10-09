@@ -794,6 +794,10 @@ export const invoicesApi = {
     api.post<Payment>(`/invoices/${invoiceId}/payments`, data).then(r => r.data),
 
   // DATEV
+  /** Kontenrahmen, bebuchte Konten und Sperre für den Export-Dialog (Nachtrag 09.10., D) */
+  datevEinstellungen: () =>
+    api.get<DatevEinstellungen>('/invoices/datev-export/einstellungen').then(r => r.data),
+
   exportDatev: (data: { from_date: string; to_date: string; include_payments?: boolean; erneut_exportieren?: boolean }) =>
     api.post('/invoices/datev-export', data).then(r => r.data),
 
@@ -1194,6 +1198,13 @@ export const customerPricesApi = {
 }
 
 // ==================== ADMIN SETTINGS (SMTP etc.) ====================
+
+/** GET /invoices/datev-export/einstellungen — sperrgrund null = Export frei */
+export interface DatevEinstellungen {
+  kontenrahmen: 'SKR03' | 'SKR04'
+  konten: { bezeichnung: string; konto: string }[]
+  sperrgrund: string | null
+}
 
 export interface AppSettingResponse {
   key: string

@@ -972,6 +972,13 @@ function PaymentForm({ invoice, onSubmit, onCancel }: PaymentFormProps) {
 function DatevExportForm({ onClose }: { onClose: () => void }) {
   const toast = useToast();
   const [loading, setLoading] = useState(false);
+  // Kontenrahmen und Sperre des Mandanten (Nachtrag 09.10., D). Das Backend
+  // lehnt einen gesperrten Export ohnehin mit 409 ab; der Dialog sagt es vorher.
+  const { data: einstellungen } = useQuery({
+    queryKey: ['datev-einstellungen'],
+    queryFn: () => invoicesApi.datevEinstellungen(),
+  });
+  const sperrgrund = einstellungen?.sperrgrund ?? null;
   const [formData, setFormData] = useState({
     from_date: new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0],
     to_date: new Date().toISOString().split('T')[0],
@@ -1002,7 +1009,8 @@ function DatevExportForm({ onClose }: { onClose: () => void }) {
 
       onClose();
     } catch (error) {
-      toast.error('Fehler beim Export');
+      // 409 mit Klartext: Sperre oder Sonderkonto, das nicht zum Kontenrahmen passt
+      toast.error(getErrorMessage(error, 'Fehler beim Export'));
     } finally {
       setLoading(false);
     }
@@ -1010,6 +1018,22 @@ function DatevExportForm({ onClose }: { onClose: () => void }) {
 
   return (
     <div className="space-y-4">
+      {einstellungen && (
+        <div className="rounded-lg border border-gray-200 dark:border-gray-700 p-3 text-sm text-gray-600 dark:text-gray-300">
+          <div className="font-medium text-gray-800 dark:text-gray-100">
+            Kontenrahmen {einstellungen.kontenrahmen}
+          </div>
+          <div className="text-xs mt-1">
+            {einstellungen.konten.map((k) => `${k.bezeichnung} ${k.konto}`).join(' · ')}
+          </div>
+        </div>
+      )}
+      {sperrgrund && (
+        <div className="rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-900/30 dark:border-amber-700 p-3 text-sm text-amber-800 dark:text-amber-200">
+          <div className="font-medium">DATEV-Export gesperrt</div>
+          <div>{sperrgrund}</div>
+        </div>
+      )}
       <div className="grid grid-cols-2 gap-4">
         <Input
           label="Von"
@@ -1056,7 +1080,7 @@ function DatevExportForm({ onClose }: { onClose: () => void }) {
         <Button type="button" variant="secondary" onClick={onClose}>
           Abbrechen
         </Button>
-        <Button onClick={handleExport} loading={loading} fullWidth icon={<Download className="w-4 h-4" />}>
+        <Button onClick={handleExport} loading={loading} disabled={!!sperrgrund} fullWidth icon={<Download className="w-4 h-4" />}>
           Exportieren
         </Button>
       </div>
