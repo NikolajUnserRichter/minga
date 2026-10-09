@@ -18,8 +18,10 @@ from __future__ import annotations
 import logging
 import smtplib
 import ssl
+from dataclasses import dataclass, field
 from email.message import EmailMessage
-from typing import Optional
+from email.utils import make_msgid
+from typing import Optional, Union
 
 from sqlalchemy.orm import Session
 
@@ -35,6 +37,19 @@ class EmailNotConfiguredError(RuntimeError):
 
 def _truthy(s: Optional[str]) -> bool:
     return (s or "").strip().lower() in ("true", "1", "yes", "ja")
+
+
+@dataclass
+class VersandErgebnis:
+    """Antwort des Mailservers auf eine verschickte Mail.
+
+    message_id: Message-ID der Mail (steht im Versandprotokoll).
+    abgelehnt:  Adressen, die der Server einzeln abgelehnt hat, mit seiner
+                Antwort ("550 …"). Leer = alle Empfänger angenommen. Lehnt
+                der Server ALLE ab, wirft smtplib SMTPRecipientsRefused.
+    """
+    message_id: str
+    abgelehnt: dict[str, str] = field(default_factory=dict)
 
 
 def pruefe_smtp_konfiguration(db: Session) -> None:
@@ -54,14 +69,20 @@ def pruefe_smtp_konfiguration(db: Session) -> None:
 
 def send_email(
     db: Session,
-    to: str,
+    to: Union[str, list[str]],
     subject: str,
     body: str,
     attachment_bytes: Optional[bytes] = None,
     attachment_filename: Optional[str] = None,
     attachment_mimetype: str = "application/pdf",
-) -> None:
-    """Verschickt eine E-Mail mit optionalem Anhang.
+    cc: Optional[list[str]] = None,
+) -> VersandErgebnis:
+    """Verschickt EINE E-Mail mit optionalem Anhang an alle Empfänger.
+
+    `to` ist eine Adresse oder eine Liste; alle stehen gemeinsam im An-Feld
+    (Gernot, 08.10.2026: eine Mail, alle Adressen sichtbar). `cc` optional.
+    Die Adressen prüft der Aufrufer (app.core.email_adressen.pruefe_empfaenger).
+    Rückgabe: Message-ID und die vom Server einzeln abgelehnten Adressen.
 
     Settings werden aus DB (Admin-Center) gelesen — Fallback auf env-Vars.
     Wirft `EmailNotConfiguredError` wenn SMTP nicht konfiguriert ist.
@@ -84,10 +105,19 @@ def send_email(
     except (TypeError, ValueError):
         port = 587
 
+    an = [to] if isinstance(to, str) else list(to)
+    kopie = list(cc or [])
+    if not an:
+        raise ValueError("Kein Empfänger angegeben")
+
     msg = EmailMessage()
     msg["From"] = f"{from_name} <{from_email}>" if from_name else from_email
-    msg["To"] = to
+    msg["To"] = ", ".join(an)
+    if kopie:
+        msg["Cc"] = ", ".join(kopie)
     msg["Subject"] = subject
+    absender_domain = from_email.rsplit("@", 1)[-1] if from_email and "@" in from_email else "localhost"
+    msg["Message-ID"] = make_msgid(domain=absender_domain)
     msg.set_content(body)
 
     if attachment_bytes and attachment_filename:
@@ -100,11 +130,12 @@ def send_email(
         )
 
     timeout = 10
+    umschlag = an + kopie
     if use_ssl:
         context = ssl.create_default_context()
         with smtplib.SMTP_SSL(host, port, timeout=timeout, context=context) as smtp:
             smtp.login(user, password)
-            smtp.send_message(msg)
+            abgelehnt_roh = smtp.send_message(msg, to_addrs=umschlag)
     else:
         with smtplib.SMTP(host, port, timeout=timeout) as smtp:
             smtp.ehlo()
@@ -113,6 +144,14 @@ def send_email(
                 smtp.ehlo()
             if user:
                 smtp.login(user, password)
-            smtp.send_message(msg)
+            abgelehnt_roh = smtp.send_message(msg, to_addrs=umschlag)
 
-    logger.info("Email '%s' an %s verschickt", subject, to)
+    abgelehnt: dict[str, str] = {}
+    for adresse, antwort in (abgelehnt_roh or {}).items():
+        code, text = antwort if isinstance(antwort, tuple) else ("", antwort)
+        if isinstance(text, bytes):
+            text = text.decode("utf-8", errors="replace")
+        abgelehnt[adresse] = f"{code} {text}".strip()
+
+    logger.info("Email '%s' an %s verschickt (abgelehnt: %s)", subject, umschlag, list(abgelehnt))
+    return VersandErgebnis(message_id=msg["Message-ID"], abgelehnt=abgelehnt)

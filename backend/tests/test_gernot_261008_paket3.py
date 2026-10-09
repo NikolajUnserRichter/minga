@@ -1926,3 +1926,259 @@ class TestQ3Mailanhang:
 
         assert r.status_code == 200, r.text
         assert versendet["attachment_filename"] == f"{ab['confirmation_number']}.pdf"
+
+
+
+# ============================================================
+# Q2 — Belegversand: mehrere Empfänger, Versandprotokoll,
+#      Lieferschein-Versand, sent_at nur bei Versand (B2/B3)
+#
+# Gernot (08.10.2026): EINE Mail, alle Adressen im An-Feld. Kein Test
+# verschickt echte Mails: _q2_smtp ersetzt smtplib.SMTP und schreibt jede
+# Nachricht samt SMTP-Umschlag mit.
+# ============================================================
+import hashlib
+import uuid
+
+import pytest
+
+from tests.conftest import TestingSessionLocal
+
+
+class _Q2FakeSMTP:
+    """Ersetzt smtplib.SMTP: verschickt nichts, merkt sich Mail und Umschlag."""
+    gesendet: list = []
+    abzulehnen: dict = {}  # Adresse -> (Code, Antwort) für Teilablehnungen
+
+    def __init__(self, host, port, timeout=None):
+        self.host, self.port = host, port
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def ehlo(self):
+        pass
+
+    def starttls(self, context=None):
+        pass
+
+    def login(self, user, password):
+        pass
+
+    def send_message(self, msg, from_addr=None, to_addrs=None):
+        umschlag = list(to_addrs or [])
+        type(self).gesendet.append({"msg": msg, "umschlag": umschlag})
+        return {a: v for a, v in type(self).abzulehnen.items() if a in umschlag}
+
+
+@pytest.fixture
+def _q2_smtp(monkeypatch):
+    """SMTP über Umgebungsvariablen 'konfiguriert', Versand abgefangen."""
+    for schluessel, wert in {
+        "SMTP_HOST": "smtp.farm.example", "SMTP_PORT": "587",
+        "SMTP_USER": "versand@farm.example", "SMTP_USE_TLS": "false",
+        "SMTP_USE_SSL": "false", "EMAILS_FROM_EMAIL": "versand@farm.example",
+        "EMAILS_FROM_NAME": "Testfarm",
+    }.items():
+        monkeypatch.setenv(schluessel, wert)
+    _Q2FakeSMTP.gesendet = []
+    _Q2FakeSMTP.abzulehnen = {}
+    monkeypatch.setattr("smtplib.SMTP", _Q2FakeSMTP)
+    return _Q2FakeSMTP
+
+
+@pytest.fixture
+def _q2_ohne_smtp(monkeypatch):
+    """Kein SMTP konfiguriert (auch nicht aus der Umgebung des Rechners)."""
+    for schluessel in ("SMTP_HOST", "SMTP_USER", "SMTP_PASSWORD", "EMAILS_FROM_EMAIL"):
+        monkeypatch.delenv(schluessel, raising=False)
+
+
+@pytest.fixture
+def _q2_rolle(client):
+    """Setzt das Login für den Rest des Tests auf genau diese Rollen."""
+    from app.api.deps import get_current_user
+    from app.main import app
+
+    vorher = app.dependency_overrides.get(get_current_user)
+
+    def _als(rollen, name="mia"):
+        async def override():
+            return {"id": "123e4567-e89b-12d3-a456-426614174099", "username": name,
+                    "email": f"{name}@farm.example", "roles": rollen}
+        app.dependency_overrides[get_current_user] = override
+
+    yield _als
+    if vorher is not None:
+        app.dependency_overrides[get_current_user] = vorher
+
+
+def _q2_kunde(client, **extra):
+    r = client.post("/api/v1/sales/customers",
+                    json={"name": "Ökoring Handels GmbH", "typ": "HANDEL", **extra})
+    assert r.status_code in (200, 201), r.text
+    return r.json()
+
+
+def _q2_bestellung(client, kunde):
+    """Freitext-Position mit ausdrücklichem Satz, bestätigt (Quittieren und
+    Lieferschein brauchen nach Paket 2 eine bestätigte Bestellung)."""
+    r = client.post("/api/v1/sales/orders", json={
+        "customer_id": kunde["id"],
+        "requested_delivery_date": "2026-03-05",
+        "lines": [{"product_name": "Erbsen-Schale", "quantity": 10, "unit": "STK",
+                   "unit_price": 2.50, "tax_rate": "REDUZIERT"}],
+    })
+    assert r.status_code == 201, r.text
+    bestellung = r.json()
+    r = client.post(f"/api/v1/sales/orders/{bestellung['id']}/confirm")
+    assert r.status_code == 200, r.text
+    return bestellung
+
+
+def _q2_position_nachtragen(client, bestellung):
+    r = client.post(f"/api/v1/sales/orders/{bestellung['id']}/lines", json={
+        "product_name": "Rettich-Schale", "quantity": 2, "unit": "STK",
+        "unit_price": 3.00, "tax_rate": "REDUZIERT",
+    })
+    assert r.status_code == 201, r.text
+
+
+def _q2_ab(client, bestellung):
+    r = client.post(f"/api/v1/sales/orders/{bestellung['id']}/confirmations", json={})
+    assert r.status_code == 201, r.text
+    return r.json()
+
+
+def _q2_ls(client, bestellung):
+    r = client.post(f"/api/v1/sales/orders/{bestellung['id']}/delivery-notes", json={})
+    assert r.status_code == 201, r.text
+    return r.json()
+
+
+def _q2_rechnung(client, bestellung):
+    r = client.post(f"/api/v1/invoices/from-order/{bestellung['id']}")
+    assert r.status_code == 201, r.text
+    return r.json()
+
+
+def _q2_ab_senden(client, ab, body):
+    return client.patch(f"/api/v1/sales/confirmations/{ab['id']}/send", json=body)
+
+
+def _q2_ls_senden(client, ls, body):
+    return client.post(f"/api/v1/sales/delivery-notes/{ls['id']}/send", json=body)
+
+
+def _q2_abs(client, bestellung):
+    return client.get(f"/api/v1/sales/orders/{bestellung['id']}/confirmations").json()
+
+
+def _q2_anhang(mail):
+    """(Dateiname, Bytes) des einzigen Anhangs einer abgefangenen Mail."""
+    teile = list(mail["msg"].iter_attachments())
+    assert len(teile) == 1, teile
+    return teile[0].get_filename(), teile[0].get_content()
+
+
+def _q2_firmenname(name):
+    from app.services.settings_service import set_setting
+    with TestingSessionLocal() as db:
+        set_setting(db, "COMPANY_NAME", name)
+        db.commit()
+
+
+def _q2_sha(daten: bytes) -> str:
+    return hashlib.sha256(daten).hexdigest()
+
+
+def _q2_attrappe(sammler: dict):
+    """Ersatz für app.services.belegversand.send_email in Tests, die nur die
+    Mail-Argumente prüfen (Paket 1, Q1, Q3, Q5, Q6; umgehängt in Q2.5/Q2.7):
+    merkt sich die Argumente und antwortet wie ein Mailserver, der alle
+    Empfänger annimmt."""
+    from app.services.email_service import VersandErgebnis
+
+    def senden(**kw):
+        sammler.update(kw)
+        return VersandErgebnis(message_id="<attrappe@test.example>")
+    return senden
+
+
+class TestQ2Adressen:
+    """Eine Prüfregel für Kundenstamm und Versand (app.core.email_adressen)."""
+
+    def test_normalisiert_und_entfernt_dubletten(self):
+        from app.core.email_adressen import pruefe_empfaenger
+        assert pruefe_empfaenger([
+            " Rechnung@Kunde.example ", "rechnung@kunde.example", "", None, "einkauf@kunde.example",
+        ]) == ["rechnung@kunde.example", "einkauf@kunde.example"]
+        assert pruefe_empfaenger(None) == []
+        assert pruefe_empfaenger("chef@kunde.example") == ["chef@kunde.example"]
+
+    def test_umlaut_vor_dem_at_wird_abgelehnt(self):
+        """Gernots Beispiel 'einkäufer@…' — ohne SMTPUTF8 bräche der Versand ab."""
+        from app.core.email_adressen import pruefe_empfaenger
+        with pytest.raises(ValueError, match="Umlaute"):
+            pruefe_empfaenger(["einkäufer@kunde.example"])
+
+    def test_umlaut_in_der_domain_geht_als_ascii(self):
+        from app.core.email_adressen import pruefe_empfaenger
+        assert pruefe_empfaenger(["info@müller.example"]) == ["info@xn--mller-kva.example"]
+
+    @pytest.mark.parametrize("adresse", [
+        "kein-at-zeichen", "a@b", "x@kunde.example\r\nBcc: fremd@boese.example", "a b@kunde.example",
+    ])
+    def test_ungueltige_adresse(self, adresse):
+        from app.core.email_adressen import pruefe_empfaenger
+        with pytest.raises(ValueError, match="keine gültige E-Mail-Adresse"):
+            pruefe_empfaenger([adresse])
+
+    def test_hoechstens_zehn(self):
+        from app.core.email_adressen import pruefe_empfaenger
+        assert len(pruefe_empfaenger([f"a{i}@kunde.example" for i in range(10)])) == 10
+        with pytest.raises(ValueError, match="höchstens 10"):
+            pruefe_empfaenger([f"a{i}@kunde.example" for i in range(11)])
+
+
+class TestQ2Mailversand:
+    """send_email: eine Mail, alle Empfänger im An-Feld, Cc, Message-ID, Ablehnungen."""
+
+    def test_eine_mail_an_alle(self, client, _q2_smtp):
+        from app.services.email_service import send_email
+        with TestingSessionLocal() as db:
+            ergebnis = send_email(
+                db=db, to=["rechnung@kunde.example", "einkauf@kunde.example"],
+                cc=["chef@kunde.example"], subject="Test", body="Hallo",
+                attachment_bytes=b"%PDF-1.4 test", attachment_filename="AB-1.pdf",
+            )
+
+        assert len(_q2_smtp.gesendet) == 1
+        mail = _q2_smtp.gesendet[0]
+        assert mail["msg"]["To"] == "rechnung@kunde.example, einkauf@kunde.example"
+        assert mail["msg"]["Cc"] == "chef@kunde.example"
+        assert mail["umschlag"] == ["rechnung@kunde.example", "einkauf@kunde.example", "chef@kunde.example"]
+        assert ergebnis.message_id == mail["msg"]["Message-ID"]
+        assert ergebnis.message_id.endswith("@farm.example>")
+        assert ergebnis.abgelehnt == {}
+
+    def test_einzelne_ablehnung_wird_gemeldet(self, client, _q2_smtp):
+        from app.services.email_service import send_email
+        _q2_smtp.abzulehnen = {"alt@kunde.example": (550, b"5.1.1 User unknown")}
+        with TestingSessionLocal() as db:
+            ergebnis = send_email(db=db, to=["alt@kunde.example", "neu@kunde.example"],
+                                  subject="Test", body="Hallo")
+
+        assert ergebnis.abgelehnt == {"alt@kunde.example": "550 5.1.1 User unknown"}
+
+    def test_eine_adresse_als_text_bleibt_moeglich(self, client, _q2_smtp):
+        """admin.py (SMTP-Test) ruft weiter mit einem String auf."""
+        from app.services.email_service import send_email
+        with TestingSessionLocal() as db:
+            send_email(db=db, to="admin@farm.example", subject="SMTP-Test", body="x")
+
+        assert _q2_smtp.gesendet[0]["umschlag"] == ["admin@farm.example"]
+        assert "Cc" not in _q2_smtp.gesendet[0]["msg"]
