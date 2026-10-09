@@ -2,11 +2,12 @@ import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { capacityApi, adminApi, integrationsApi, invoicesApi } from '../services/api';
 import { SepaEinstellungenKarte } from '../components/domain/SepaEinstellungenKarte';
+import { FirmendatenKarte } from '../components/domain/FirmendatenKarte';
 import { PageHeader } from '../components/common/Layout';
 import { CapacityIndicator, Input, Select, SelectOption, Button, useToast } from '../components/ui';
 import { SkeletonStatCard } from '../components/ui/Skeleton';
 import { CapacityModal } from '../components/domain/CapacityModal';
-import { Database, Server, Key, Bell, Pencil, Building2, Save, Globe, Hash, Mail, Send, Plug, CheckCircle2, XCircle, ShoppingBag } from 'lucide-react';
+import { Database, Server, Key, Bell, Pencil, Save, Mail, Send, Plug, CheckCircle2, XCircle, ShoppingBag } from 'lucide-react';
 import { Capacity } from '../types';
 import { getErrorMessage } from '../services/errors';
 
@@ -21,18 +22,6 @@ export default function Settings() {
 
   const [capacityModalOpen, setCapacityModalOpen] = useState(false);
   const [editingCapacity, setEditingCapacity] = useState<Capacity | null>(null);
-
-  const [company, setCompany] = useState(() => {
-    const saved = localStorage.getItem('minga_settings_company');
-    return saved ? JSON.parse(saved) : {
-    name: 'Minga Greens GmbH',
-    address: 'Breisacher Str. 12, 81667 München',
-    taxId: 'DE328451962',
-    email: 'info@minga-greens.de',
-    phone: '+49 89 123 456 0',
-    website: 'www.minga-greens.de',
-  };
-  });
 
   const [notifications, setNotifications] = useState(() => {
     const saved = localStorage.getItem('minga_settings_notifications');
@@ -69,11 +58,6 @@ export default function Settings() {
     setCapacityModalOpen(true);
   };
 
-  const handleSaveCompany = () => {
-    localStorage.setItem('minga_settings_company', JSON.stringify(company));
-    toast.success('Firmendaten gespeichert');
-  };
-
   const handleSaveNotifications = () => {
     localStorage.setItem('minga_settings_notifications', JSON.stringify(notifications));
     toast.success('Benachrichtigungen aktualisiert');
@@ -105,57 +89,8 @@ export default function Settings() {
         {/* Integration: Shopify */}
         <ShopifyIntegrationCard />
 
-        {/* Company Profile */}
-        <div className="card lg:col-span-2">
-          <div className="card-header">
-            <h3 className="card-title flex items-center gap-2">
-              <Building2 className="w-5 h-5 text-minga-600 dark:text-minga-400" />
-              Firmendaten
-            </h3>
-          </div>
-          <div className="card-body">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <Input
-                label="Firmenname"
-                value={company.name}
-                onChange={(e) => setCompany({ ...company, name: e.target.value })}
-              />
-              <Input
-                label="Adresse"
-                value={company.address}
-                onChange={(e) => setCompany({ ...company, address: e.target.value })}
-              />
-              <Input
-                label="USt-IdNr."
-                value={company.taxId}
-                onChange={(e) => setCompany({ ...company, taxId: e.target.value })}
-                startIcon={<Hash className="w-4 h-4" />}
-              />
-              <Input
-                label="E-Mail"
-                type="email"
-                value={company.email}
-                onChange={(e) => setCompany({ ...company, email: e.target.value })}
-              />
-              <Input
-                label="Telefon"
-                value={company.phone}
-                onChange={(e) => setCompany({ ...company, phone: e.target.value })}
-              />
-              <Input
-                label="Website"
-                value={company.website}
-                onChange={(e) => setCompany({ ...company, website: e.target.value })}
-                startIcon={<Globe className="w-4 h-4" />}
-              />
-            </div>
-            <div className="flex justify-end mt-4">
-              <Button icon={<Save className="w-4 h-4" />} onClick={handleSaveCompany}>
-                Speichern
-              </Button>
-            </div>
-          </div>
-        </div>
+        {/* Firmendaten — auf dem Server (Abschnitt F) */}
+        <FirmendatenKarte />
 
         {/* System Info */}
         <div className="card">
@@ -711,6 +646,14 @@ export function MonatsrechnungSettingsCard() {
   );
 }
 
+// Schlüssel der SMTP-Karte. „Speichern“ schickt nur sie — vorher schickte die
+// Karte jede bekannte Einstellung mit dem zuletzt geladenen Wert zurück, auch
+// Werte aus Umgebungsvariablen (Firmendaten, Gläubiger-ID, Monatsrechnungen).
+const SMTP_KEYS = [
+  'SMTP_HOST', 'SMTP_PORT', 'SMTP_USER', 'SMTP_PASSWORD', 'SMTP_USE_TLS',
+  'SMTP_USE_SSL', 'EMAILS_FROM_EMAIL', 'EMAILS_FROM_NAME',
+];
+
 export function SmtpSettingsCard() {
   const toast = useToast();
   const queryClient = useQueryClient();
@@ -844,7 +787,7 @@ export function SmtpSettingsCard() {
             loading={saveMutation.isPending}
             onClick={() => {
               const updates: Record<string, string | null> = {};
-              data.forEach((s) => {
+              data.filter((s) => SMTP_KEYS.includes(s.key)).forEach((s) => {
                 const current = edit[s.key] ?? '';
                 // Bei Secrets: maskiertes "***" beibehalten = no-op (Backend ignoriert)
                 if (s.is_secret && current === '***') return;
