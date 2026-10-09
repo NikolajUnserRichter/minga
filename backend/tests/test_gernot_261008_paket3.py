@@ -1563,3 +1563,32 @@ class TestQ4SonderpreiseDatevKatalogpreis:
         r = client.get(f"/api/v1/products/{produkt['id']}/price", params={"customer_id": kunde["id"]})
 
         assert r.status_code == 200, r.text
+
+
+class TestQ4DevRollen:
+    """Abnahme ohne Keycloak: Im Dev-Modus (AUTH_DISABLED) lässt sich das Login
+    auf einzelne Rollen einschränken. Ohne AUTH_DISABLED wirkt DEV_ROLES nicht."""
+
+    def _login(self, monkeypatch, auth_disabled, dev_roles):
+        import asyncio
+        from types import SimpleNamespace
+        from app.api import deps
+        monkeypatch.setattr(deps.settings, "auth_disabled", auth_disabled)
+        monkeypatch.setattr(deps.settings, "dev_roles", dev_roles)
+        # Ohne Basic-Auth-Nutzer und ohne Token — wie ein Browser im Dev-Modus
+        anfrage = SimpleNamespace(state=SimpleNamespace())
+        return asyncio.run(deps.get_current_user(request=anfrage, token=None))
+
+    def test_ohne_dev_roles_alle_rollen(self, monkeypatch):
+        user = self._login(monkeypatch, True, "")
+        assert user["roles"] == ["admin", "sales", "production_planner", "production_staff", "accounting"]
+
+    def test_dev_roles_schraenkt_ein(self, monkeypatch):
+        user = self._login(monkeypatch, True, " production_staff , ")
+        assert user["roles"] == ["production_staff"]
+
+    def test_dev_roles_ohne_auth_disabled_wirkungslos(self, monkeypatch):
+        from fastapi import HTTPException
+        with pytest.raises(HTTPException) as fehler:
+            self._login(monkeypatch, False, "admin")
+        assert fehler.value.status_code == 401

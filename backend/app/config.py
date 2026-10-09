@@ -25,6 +25,10 @@ class Settings(BaseSettings):
     secret_key: str = "your-secret-key-change-in-production"
     access_token_expire_minutes: int = 60 * 24  # 24 Stunden
     auth_disabled: bool = False
+    # Nur zusammen mit AUTH_DISABLED: Rollen des Dev-Logins, kommagetrennt
+    # (z. B. "production_staff"), um die Oberfläche einer Rolle lokal
+    # abzunehmen. Leer = alle Rollen wie bisher.
+    dev_roles: str = ""
     basic_auth_enabled: bool = False
     basic_auth_user_1: str = ""
     basic_auth_password_1: str = ""

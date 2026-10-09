@@ -21,12 +21,22 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+// VITE_DEV_ROLES (nur mit VITE_AUTH_DISABLED): Dev-Login auf einzelne Rollen
+// einschränken, z. B. "production_staff" — Gegenstück zu DEV_ROLES im Backend.
+// Leer = alle Rollen wie bisher.
+const DEV_ROLES = String(import.meta.env.VITE_DEV_ROLES ?? '')
+    .split(',')
+    .map((r) => r.trim())
+    .filter(Boolean);
+
 const DEV_USER = {
     username: 'admin',
     email: 'admin@minga-greens.de',
     firstName: 'Admin',
     lastName: 'Minga',
-    roles: ['admin', 'sales', 'production_planner', 'production_staff', 'accounting'],
+    roles: DEV_ROLES.length > 0
+        ? DEV_ROLES
+        : ['admin', 'sales', 'production_planner', 'production_staff', 'accounting'],
 };
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {

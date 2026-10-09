@@ -37,11 +37,13 @@ async def get_current_user(
     """
     if settings.auth_disabled:
         dev_user_id = "00000000-0000-0000-0000-000000000001"
+        # DEV_ROLES: Dev-Login auf einzelne Rollen einschränken (Abnahme je Rolle)
+        dev_roles = [r.strip() for r in settings.dev_roles.split(",") if r.strip()]
         return {
             "id": dev_user_id,
             "username": "admin",
             "email": "admin@minga-greens.de",
-            "roles": ["admin", "sales", "production_planner", "production_staff", "accounting"],
+            "roles": dev_roles or ["admin", "sales", "production_planner", "production_staff", "accounting"],
             "raw": {"sub": dev_user_id},
         }
 
