@@ -4652,3 +4652,64 @@ class TestQ6AusgabeBeiLieferung:
         assert r.status_code == 500
         assert client.get(f"/api/v1/sales/orders/{bestellung['id']}").json()["status"] == "BESTAETIGT"
         assert _q6_konto(client, kunde)["bewegungen"] == []
+
+
+# ------------------------------------------------ Task Q6.5: Lieferrechnung ohne Pfand
+
+@pytest.mark.usefixtures("_q6_ohne_forecast")
+class TestQ6KeinPfandAufLieferrechnung:
+    def test_rechnung_aus_bestellung_ohne_kiste(self, client):
+        kunde = _q6_monatskunde(client)
+        bestellung = _q6_bestellung(client, kunde, _q6_ware(client), _q6_kiste(client))
+
+        r = client.post(f"/api/v1/invoices/from-order/{bestellung['id']}")
+
+        assert r.status_code == 201, r.text
+        d = _q6_detail(client, r.json())
+        assert [l["description"] for l in d["lines"]] == ["Erbsen-Schale"]
+        assert (_q6_d(d["subtotal"]), _q6_d(d["total_deposit"])) == (Decimal("25.00"), Decimal("0.00"))
+
+    def test_sammelrechnung_ohne_kiste_nur_beim_monatskunden(self, client):
+        monat = _q6_monatskunde(client, name="Knuspr")
+        normal = _q6_kunde(client, name="Großer Kern")
+        ware, kiste = _q6_ware(client), _q6_kiste(client)
+        for kunde in (monat, normal):
+            _q6_lieferschein(client, _q6_bestellung(client, kunde, ware, kiste))
+
+        r = client.post("/api/v1/invoices/batch-run/preview",
+                        json={"period_from": "2026-09-01", "period_to": "2026-09-30"})
+
+        assert r.status_code == 200, r.text
+        positionen = {k["customer_name"]: sorted(p["description"] for p in k["positionen"])
+                      for k in r.json()["kunden"]}
+        assert positionen == {"Knuspr": ["Erbsen-Schale"], "Großer Kern": ["E2-Kiste", "Erbsen-Schale"]}
+
+    def test_nur_kisten_keine_leere_rechnung(self, client):
+        kunde = _q6_monatskunde(client)
+        bestellung = _q6_bestellung(client, kunde, kiste=_q6_kiste(client))
+
+        r = client.post(f"/api/v1/invoices/from-order/{bestellung['id']}")
+
+        assert r.status_code == 400, r.text
+        assert "Leergutkonto" in r.json()["detail"]
+
+    def test_vor_dem_stichtag_bleibt_die_kiste_auf_der_rechnung(self, client):
+        """Charakterisierung (vor dem Fix grün): Lieferungen vor dem Wechsel
+        rechnet die alte Art ab."""
+        kunde = _q6_monatskunde(client, stichtag=date(2026, 9, 15))
+        bestellung = _q6_bestellung(client, kunde, _q6_ware(client), _q6_kiste(client))
+
+        d = _q6_detail(client, client.post(f"/api/v1/invoices/from-order/{bestellung['id']}").json())
+
+        assert sorted(l["description"] for l in d["lines"]) == ["E2-Kiste", "Erbsen-Schale"]
+
+    def test_gebuchte_kiste_kommt_nach_wechsel_nicht_auf_die_rechnung(self, client):
+        """Gegenrichtung MONATLICH → JE_LIEFERUNG: die Kiste steckt schon im Konto."""
+        kunde = _q6_monatskunde(client)
+        bestellung = _q6_bestellung(client, kunde, _q6_ware(client), _q6_kiste(client))
+        _q6_liefern(client, bestellung)
+        client.patch(f"/api/v1/sales/customers/{kunde['id']}", json={"pfand_abrechnung": "JE_LIEFERUNG"})
+
+        d = _q6_detail(client, client.post(f"/api/v1/invoices/from-order/{bestellung['id']}").json())
+
+        assert [l["description"] for l in d["lines"]] == ["Erbsen-Schale"]

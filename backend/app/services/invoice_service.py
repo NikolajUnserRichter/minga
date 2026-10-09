@@ -24,6 +24,7 @@ from app.models.product import Product
 from app.models.documents import DeliveryNote
 from app.models.enums import DeliveryNoteStatus
 from app.services.steuersatz import produkt_der_position, steuersatz_der_position
+from app.services.leergut_service import hat_bewegung, im_leergutkonto
 from app.services.datev_service import erloeskonto_fuer
 
 
@@ -124,18 +125,27 @@ def waehle_vertreter(lieferscheine):
 def ist_clearing_pfand(db: Session, kunde: Optional[Customer], line: OrderLine) -> bool:
     """Gehört diese Bestellposition NICHT auf die Rechnung?
 
-    Kunden mit pfand_abrechnung = KEINE (z. B. Ökoring, Bodan) rechnen das
-    Pfand für IFCO-Kisten über das IFCO-Clearing ab, nicht über Minga Greens.
-    Die Pfandposition bleibt auf Bestellung und Lieferschein (Nachweis der
-    gelieferten Kisten), fehlt aber auf der Rechnung. Erkannt wird Pfand am
-    Produktstamm (is_deposit) — Freitext-Pfandzeilen ohne Produkt bleiben
-    stehen, weil nichts sie als Pfand ausweist. MONATLICH (Leergutkonto)
-    kommt mit Paket 3 und muss hier ergänzt werden.
+    Pfand ist eine Position, deren Produkt (direkt oder über die Variante)
+    is_deposit trägt — Freitext-Pfandzeilen ohne Produkt bleiben stehen, weil
+    nichts sie als Pfand ausweist. Sie fehlt auf der Rechnung, wenn
+    - der Kunde pfand_abrechnung = KEINE hat (IFCO-Clearing, z. B. Ökoring),
+    - der Kunde MONATLICH abrechnet und die Lieferung ab seinem Stichtag
+      liegt (Leergutkonto, Paket 3 Q6), oder
+    - die Position schon eine Leergutbewegung hat — gleich, wie der Kunde
+      heute steht. Sonst würde eine Lieferung, die unter MONATLICH ins Konto
+      ging, nach einem Wechsel auf JE_LIEFERUNG ein zweites Mal berechnet.
+    Bestellung und Lieferschein behalten die Pfandposition.
     """
-    if kunde is None or kunde.pfand_abrechnung != PfandAbrechnung.KEINE:
-        return False
     produkt = produkt_der_position(db, line.product_id, line.product_variant_id)
-    return produkt is not None and bool(produkt.is_deposit)
+    if produkt is None or not produkt.is_deposit:
+        return False
+    if hat_bewegung(db, line.id):
+        return True
+    if kunde is None:
+        return False
+    if kunde.pfand_abrechnung == PfandAbrechnung.KEINE:
+        return True
+    return im_leergutkonto(kunde, line.order)
 
 
 def netto_je_lieferschein(db: Session, invoice: Invoice, lieferscheine: list[DeliveryNote]) -> dict[UUID, Decimal]:
@@ -398,9 +408,12 @@ class InvoiceService:
         # sonst eine leere Rechnung (und verbrauchte eine Nummer).
         positionen = [l for l in order.lines if not ist_clearing_pfand(self.db, order.customer, l)]
         if order.lines and not positionen:
+            weg = ("über IFCO-Clearing"
+                   if order.customer and order.customer.pfand_abrechnung == PfandAbrechnung.KEINE
+                   else "monatlich über das Leergutkonto")
             raise ValueError(
-                "Die Bestellung enthält nur Pfandpositionen. Dieser Kunde rechnet Pfand "
-                "über IFCO-Clearing ab — es gibt nichts zu fakturieren."
+                f"Die Bestellung enthält nur Pfandpositionen. Dieser Kunde rechnet Pfand "
+                f"{weg} ab — es gibt nichts zu fakturieren."
             )
 
         offene = self.db.execute(
