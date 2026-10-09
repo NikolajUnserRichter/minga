@@ -278,7 +278,10 @@ class PDFService:
         # Invoice Title
         if _en(tmpl, "title", default=True):
             if invoice.invoice_type == InvoiceType.RECHNUNG:
-                title = "Rechnung"
+                # Q6: monatliche Leergutabrechnung — auch bei negativem Saldo
+                # nie "Gutschrift" (§ 14 Abs. 4 Nr. 10 UStG meint die
+                # Abrechnung durch den Leistungsempfänger).
+                title = "Leergutabrechnung" if invoice.beleg_art == "LEERGUT" else "Rechnung"
             elif invoice.original_invoice_id:
                 # R1.5: der Storno heißt auf dem Beleg Stornorechnung und
                 # nennt das Original mit Nummer und Datum.
@@ -294,6 +297,13 @@ class PDFService:
             else:
                 kopf = f"{title} Nr. {invoice.invoice_number}"
             elements.append(Paragraph(kopf, styles['Heading2']))
+            if title == "Leergutabrechnung" and invoice.total < 0:
+                # Wortlaut vorläufig — mit dem Steuerberater abzustimmen (Q6)
+                elements.append(Paragraph(
+                    f"Minderung: Für zurückgenommenes Leergut steht Ihnen ein Betrag von "
+                    f"{abs(invoice.total):.2f} € zu.",
+                    styles['Normal'],
+                ))
             if title == "Stornorechnung" and invoice.original_invoice is not None:
                 elements.append(Paragraph(
                     f"Stornorechnung zur Rechnung Nr. {invoice.original_invoice.invoice_number} "
@@ -406,7 +416,8 @@ class PDFService:
             # Pfand steckt im Gesamtbetrag, gehört aber dem Kunden: er bekommt
             # es mit dem Gebinde zurück. Deshalb nachrichtlich ausweisen.
             deposit = invoice.total_deposit or 0
-            if deposit > 0:
+            # Der Leergutbeleg ist ganz Pfand — der Hinweis wäre dort doppelt (Q6).
+            if deposit > 0 and invoice.beleg_art != "LEERGUT":
                 totals_data.append(["darin enthaltenes Pfand:", f"{deposit:.2f} €"])
             totals_table = Table(totals_data, colWidths=[13.5*cm, 3.5*cm])
             totals_table.setStyle(TableStyle([
@@ -430,7 +441,10 @@ class PDFService:
         if _en(tmpl, "skonto_hint", default=True):
             skonto_pct = Decimal(str(empfaenger["skonto_percent"] or 0))
             skonto_days = empfaenger["skonto_days"] or 0
-            if skonto_pct and skonto_days:
+            # Kein Skonto auf einen Leergutbeleg zugunsten des Kunden (Q6). Nur
+            # Leergutbelege: das PDF ausgestellter Belege (auch Stornorechnungen
+            # von Skonto-Kunden) sieht bei jedem Abruf aus wie bisher (GoBD).
+            if skonto_pct and skonto_days and not (invoice.beleg_art == "LEERGUT" and invoice.total <= 0):
                 skonto_amount = float(invoice.total) * float(skonto_pct) / 100
                 skonto_text = (
                     f"<b>Skonto:</b> Bei Zahlung innerhalb von {skonto_days} Tagen "

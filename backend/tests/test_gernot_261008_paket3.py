@@ -5138,3 +5138,125 @@ class TestQ6StornoUndMahnung:
         assert r.status_code == 400, r.text
         with TestingSessionLocal() as db:
             assert not db.get(Invoice, uuid.UUID(beleg["id"])).reminder_level
+
+
+# ------------------------------------------------ Task Q6.9: Beleg, PDF, Mail
+
+@pytest.mark.usefixtures("_q6_ohne_forecast")
+class TestQ6Leergutbeleg:
+    def _pdf(self, client, beleg):
+        from tests.test_documents_preise import _pdf_text
+        r = client.get(f"/api/v1/invoices/{beleg['id']}/pdf")
+        assert r.status_code == 200, r.text
+        return _pdf_text(r.content).decode("latin-1", errors="ignore")
+
+    def _beleg(self, client, aus, zurueck):
+        kunde, kiste = _q6_monatskunde(client), _q6_kiste(client)
+        _q6_liefern(client, _q6_bestellung(client, kunde, kiste=kiste, kisten=aus))
+        _q6_ruecknahme(client, kunde, kiste, zurueck)
+        return _q6_beleg(client)
+
+    def _mailen(self, client, monkeypatch, beleg):
+        """Seit Q2 verschickt app.services.belegversand; die Attrappe liefert
+        ein VersandErgebnis (wie Q2.7 Step 6)."""
+        from app.services.email_service import VersandErgebnis
+        versendet = {}
+        monkeypatch.setattr("app.services.belegversand.send_email",
+                            lambda **kw: versendet.update(kw) or VersandErgebnis(message_id="<q6@test>"))
+        r = client.post(f"/api/v1/invoices/{beleg['id']}/send", json={"to": ["einkauf@kunde.example"]})
+        assert r.status_code == 200, r.text
+        return versendet
+
+    def test_pdf_heisst_leergutabrechnung(self, client):
+        text = self._pdf(client, self._beleg(client, 10, 4))
+
+        assert "Leergutabrechnung" in text
+        assert "darin enthaltenes Pfand" not in text
+
+    def test_pdf_minderung_ohne_gutschrift(self, client):
+        text = self._pdf(client, self._beleg(client, 2, 5))
+
+        assert "Minderung" in text and "10.71" in text
+        assert "Gutschrift" not in text
+
+    def test_mail_zur_forderung_mit_zahlungszeile(self, client, monkeypatch):
+        beleg = self._beleg(client, 10, 4)
+        assert client.post(f"/api/v1/invoices/{beleg['id']}/finalize").status_code == 200
+
+        mail = self._mailen(client, monkeypatch, beleg)
+
+        assert mail["subject"].startswith("Leergutabrechnung ")
+        assert "21.42 EUR" in mail["body"] and "Fällig am: " in mail["body"]
+
+    def test_mail_zur_minderung(self, client, monkeypatch):
+        beleg = self._beleg(client, 2, 5)
+        assert client.post(f"/api/v1/invoices/{beleg['id']}/finalize").status_code == 200
+
+        mail = self._mailen(client, monkeypatch, beleg)
+
+        assert mail["subject"].startswith("Leergutabrechnung ")
+        assert "steht Ihnen ein Betrag von 10.71 EUR zu" in mail["body"]
+        assert "Fällig am" not in mail["body"]
+
+    def test_mail_bei_saldo_null(self, client, monkeypatch):
+        beleg = self._beleg(client, 3, 3)
+        assert client.post(f"/api/v1/invoices/{beleg['id']}/finalize").status_code == 200
+
+        mail = self._mailen(client, monkeypatch, beleg)
+
+        assert mail["subject"].startswith("Leergutabrechnung ")
+        assert "nichts zu zahlen" in mail["body"]
+        assert "steht Ihnen" not in mail["body"] and "Fällig am" not in mail["body"]
+
+    @pytest.mark.parametrize("aus, zurueck", [(10, 4), (2, 5)])
+    def test_stornorechnung_behaelt_den_stornotext(self, client, monkeypatch, aus, zurueck):
+        """Charakterisierung (vor dem Fix grün): Die Stornorechnung eines
+        Leergutbelegs trägt beleg_art LEERGUT (Q6.2), ihre Mail bleibt die
+        Stornomail aus Q2 — keine Leergutabrechnung, keine Zahlungsaufforderung."""
+        beleg = self._beleg(client, aus, zurueck)
+        original = client.post(f"/api/v1/invoices/{beleg['id']}/finalize").json()
+        r = client.post(f"/api/v1/invoices/{beleg['id']}/cancel", json={"reason": "Zählfehler"})
+        assert r.status_code == 200, r.text
+        storno = r.json()["credit_note"]
+
+        mail = self._mailen(client, monkeypatch, storno)
+
+        assert mail["subject"].startswith("Stornorechnung ")
+        assert f"zur Rechnung {original['invoice_number']}" in mail["body"]
+        assert "Leergut" not in mail["subject"] and "Fällig am" not in mail["body"]
+
+    def test_skonto_auf_stornorechnung_bleibt(self, client):
+        """Charakterisierung (GoBD): Die Skonto-Bedingung gilt nur für
+        Leergutbelege — ausgestellte Stornorechnungen (Betrag < 0) von
+        Skonto-Kunden drucken den Skonto-Satz bei jedem Abruf weiter."""
+        kunde = _q6_kunde(client, skonto_percent="2", skonto_days=10)
+        bestellung = _q6_bestellung(client, kunde, ware=_q6_ware(client))
+        rechnung = client.post(f"/api/v1/invoices/from-order/{bestellung['id']}").json()
+        assert client.post(f"/api/v1/invoices/{rechnung['id']}/finalize").status_code == 200
+        storno = client.post(f"/api/v1/invoices/{rechnung['id']}/cancel",
+                             json={"reason": "Test", "reason_code": "PREISFEHLER"}).json()["credit_note"]
+
+        assert "Skonto" in self._pdf(client, storno)
+
+    def test_belegart_in_liste_und_detail(self, client):
+        """Seit Q6.7 grün (Feld beleg_art) — sichert die Liste ab."""
+        beleg = self._beleg(client, 10, 4)
+
+        assert beleg["beleg_art"] == "LEERGUT"
+        assert [i["beleg_art"] for i in client.get("/api/v1/invoices").json()] == ["LEERGUT"]
+
+    def test_rechnungsliste_neueste_anlage_zuerst(self, client):
+        """Charakterisierung (seit Q1.1 grün, N1 aus Paket 1): am selben Tag
+        entscheidet die Anlage, nicht die Nummer — Entwürfe tragen Platzhalter."""
+        from app.models.invoice import Invoice
+        kunde = _q6_kunde(client)
+        anlage = {"customer_id": kunde["id"], "invoice_date": _q6_heute().isoformat()}
+        erste = client.post("/api/v1/invoices", json=anlage).json()
+        zweite = client.post("/api/v1/invoices", json=anlage).json()
+        with TestingSessionLocal() as db:  # Platzhalternummer, die vor "ENTWURF-…" der ersten sortiert
+            db.get(Invoice, uuid.UUID(zweite["id"])).invoice_number = "ENTWURF-000000000001"
+            db.commit()
+
+        r = client.get("/api/v1/invoices")
+
+        assert [i["id"] for i in r.json()] == [zweite["id"], erste["id"]]

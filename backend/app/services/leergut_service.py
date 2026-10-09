@@ -446,3 +446,34 @@ def gib_bewegungen_frei(db: Session, invoice_id: UUID) -> int:
     for b in bewegungen:
         b.invoice_id = None
     return len(bewegungen)
+
+
+def mailtext(invoice: Invoice, *, zusatz: str, gruss: str, zahlungszeile: str) -> tuple[str, str]:
+    """Betreff und Text der Mail zu einem Leergutbeleg (nicht zu seiner
+    Stornorechnung — die schreibt send_invoice_email selbst).
+
+    zusatz (" — Firmenname") und gruss kommen aus app.services.belegversand
+    (Q2), zahlungszeile aus sepa_service.zahlungszeile_fuer_mail (Q5) — wie
+    in der Rechnungsmail. Saldo > 0: Betrag und Zahlungszeile; < 0: der
+    Betrag steht dem Kunden zu (Minderung); 0: nichts zu zahlen.
+    """
+    kunde = invoice.customer.name if invoice.customer else ""
+    betreff = f"Leergutabrechnung {invoice.invoice_number}{zusatz}"
+    if invoice.total > 0:
+        mitte = (
+            f"anbei finden Sie die Leergutabrechnung {invoice.invoice_number} über\n"
+            f"{invoice.total:.2f} {invoice.currency}.\n\n"
+            f"{zahlungszeile}\n\n"
+        )
+    elif invoice.total < 0:
+        mitte = (
+            f"anbei finden Sie die Leergutabrechnung {invoice.invoice_number}.\n"
+            f"Für zurückgenommenes Leergut steht Ihnen ein Betrag von "
+            f"{abs(invoice.total):.2f} {invoice.currency} zu.\n\n"
+        )
+    else:
+        mitte = (
+            f"anbei finden Sie die Leergutabrechnung {invoice.invoice_number}.\n"
+            f"Ausgegebenes und zurückgenommenes Leergut gleichen sich aus — es ist nichts zu zahlen.\n\n"
+        )
+    return betreff, f"Sehr geehrte Damen und Herren bei {kunde},\n\n" + mitte + gruss

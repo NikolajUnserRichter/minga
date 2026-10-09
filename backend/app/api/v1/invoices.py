@@ -25,7 +25,7 @@ from app.schemas.invoice import (
 )
 from app.services.invoice_service import InvoiceService, BereitsAbgerechnet, BestellungStorniert, waehle_vertreter, ist_clearing_pfand, netto_je_lieferschein
 from app.services.datev_service import DatevService, erloeskonto_fuer, ist_standard_erloeskonto
-from app.services.leergut_service import LEERGUTBELEG_FEST, ist_leergutbeleg
+from app.services.leergut_service import LEERGUTBELEG_FEST, ist_leergutbeleg, mailtext as leergut_mailtext
 from app.services.email_service import EmailNotConfiguredError
 from app.services.belegversand import empfaenger_fuer_versand, firmenzusatz, gruss, versende_beleg
 from app.core.email_adressen import pruefe_empfaenger
@@ -414,6 +414,14 @@ def send_invoice_email(
                 # Lastschrift: eingefrorener Hinweis statt "Fällig am" (B10)
                 f"{zahlungszeile_fuer_mail(invoice)}\n\n"
                 f"{gruss(db)}"
+            )
+        # Q6: Leergutbeleg — eigener Betreff und Text, bei Saldo ≤ 0 ohne
+        # Zahlungszeile. Nicht für seine Stornorechnung (sie trägt beleg_art
+        # LEERGUT, ihr Text oben bleibt): sonst bekäme der Kunde zum Storno
+        # einer Minderung eine Zahlungsaufforderung.
+        if ist_leergutbeleg(invoice) and not ist_storno:
+            betreff, text = leergut_mailtext(
+                invoice, zusatz=firmenzusatz(db), gruss=gruss(db), zahlungszeile=zahlungszeile_fuer_mail(invoice),
             )
         eintrag = versende_beleg(
             db,
