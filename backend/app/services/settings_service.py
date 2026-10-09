@@ -55,6 +55,10 @@ KNOWN_SETTINGS: dict[str, dict] = {
     "SEASON_MODE":           {"is_secret": False, "label": "Saisonzyklus (SOMMER | WINTER)"},
     # Monatsrechnungen (B5): am 1. des Folgemonats 06:30 Entwürfe anlegen
     "MONATSRECHNUNG_AUTO":   {"is_secret": False, "label": "Monatsrechnungen automatisch als Entwurf (true | false)"},
+    # DATEV-Export (Nachtrag 09.10., D): Kontenrahmen je Mandant, ohne Eintrag
+    # SKR03. Gelesen OHNE Umgebungs-Rückfall (app.services.kontenrahmen).
+    "DATEV_KONTENRAHMEN":    {"is_secret": False, "label": "DATEV-Kontenrahmen (SKR03 | SKR04)"},
+    "DATEV_EXPORT_SPERRE":   {"is_secret": False, "label": "DATEV-Export gesperrt — Grund (leer = Export frei)"},
 }
 
 

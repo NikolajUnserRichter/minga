@@ -20,6 +20,7 @@ from pydantic import BaseModel
 from app.api.deps import DBSession
 from app.services.settings_service import KNOWN_SETTINGS, get_setting, set_setting
 from app.services.email_service import send_email, EmailNotConfiguredError
+from app.services import kontenrahmen
 from app.services.sepa_service import einstellung_pruefen
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
@@ -74,6 +75,14 @@ def update_settings(db: DBSession, updates: dict[str, Optional[str]] = Body(...)
         # "***" bei Secrets = no-op (Wert behalten)
         if KNOWN_SETTINGS[key]["is_secret"] and raw_value == "***":
             continue
+        # Kontenrahmen (Nachtrag 09.10., D): vor dem Löschzweig prüfen — einen
+        # gespeicherten Rahmen leeren wäre ein stiller Wechsel auf SKR03; nach
+        # dem ersten Export gesperrt. Ohne Eintrag ist null ein No-op.
+        if key == kontenrahmen.EINSTELLUNG:
+            try:
+                raw_value = kontenrahmen.wechsel_pruefen(db, raw_value)
+            except ValueError as e:
+                raise HTTPException(status_code=422, detail=f"{KNOWN_SETTINGS[key]['label']}: {e}")
         # Empty/None löscht (lässt env-Fallback durchscheinen)
         if raw_value is None or raw_value == "":
             from app.models.app_setting import AppSetting
