@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { capacityApi, adminApi, integrationsApi, invoicesApi } from '../services/api';
 import { SepaEinstellungenKarte } from '../components/domain/SepaEinstellungenKarte';
+import { BelegordnerKarte } from '../components/domain/BelegordnerKarte';
 import { FirmendatenKarte } from '../components/domain/FirmendatenKarte';
 import { PageHeader } from '../components/common/Layout';
 import { CapacityIndicator, Input, Select, SelectOption, Button, useToast } from '../components/ui';
@@ -82,6 +83,7 @@ export default function Settings() {
         <DatevSettingsCard />
         <SmtpSettingsCard />
         <SepaEinstellungenKarte />
+        <BelegordnerKarte />
 
         {/* Integration: Lexware Office */}
         <LexofficeIntegrationCard />
