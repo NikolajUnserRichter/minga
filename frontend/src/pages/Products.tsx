@@ -343,7 +343,9 @@ function ProductForm({ product, growPlans, productGroups, onSubmit, onCancel }: 
     shelf_life_days: product?.shelf_life_days || 7,
     is_deposit: product?.is_deposit ?? false,
     deposit_value: product?.deposit_value ?? 0,
-    is_bundle: product?.is_bundle ?? false,
+    // is_bundle schickt das Formular nicht: der Server leitet es aus der
+    // Stückliste ab (Paket 4, products._bundle_art_ableiten). Bis Paket 4 ging
+    // hier der Stand vom Öffnen mit und setzte das Kennzeichen zurück.
     is_variable_bundle: product?.is_variable_bundle ?? false,
     variable_bundle_min_slots: product?.variable_bundle_min_slots ?? 1,
     variable_bundle_max_slots: product?.variable_bundle_max_slots ?? 8,
@@ -534,7 +536,7 @@ function ProductForm({ product, growPlans, productGroups, onSubmit, onCancel }: 
             <input
               type="radio"
               checked={!formData.is_variable_bundle}
-              onChange={() => setFormData({ ...formData, is_variable_bundle: false, is_bundle: true })}
+              onChange={() => setFormData({ ...formData, is_variable_bundle: false })}
             />
             <span className="text-sm">Fest (Mischkiste): definierte Komponenten</span>
           </label>
@@ -542,7 +544,7 @@ function ProductForm({ product, growPlans, productGroups, onSubmit, onCancel }: 
             <input
               type="radio"
               checked={formData.is_variable_bundle}
-              onChange={() => setFormData({ ...formData, is_variable_bundle: true, is_bundle: false })}
+              onChange={() => setFormData({ ...formData, is_variable_bundle: true })}
             />
             <span className="text-sm">Variabel (Gastrotray): Sorten werden je Bestellung gewählt</span>
           </label>
