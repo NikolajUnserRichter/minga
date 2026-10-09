@@ -4155,3 +4155,250 @@ class TestQ5KeineBankdatenInLogs:
         quelle = Path(app.main.__file__).read_text()
         assert "before_send=ohne_bankdaten" in quelle
         assert "from app.core.sentry_filter import ohne_bankdaten" in quelle
+
+
+# =====================================================================
+# Q6 — Leergutkonto: Pfandabrechnung MONATLICH mit Retouren
+#
+# Kunden mit pfand_abrechnung = MONATLICH: Pfandkisten stehen ab dem
+# Stichtag nicht auf der Lieferrechnung, sondern im Leergutkonto
+# (ausgegeben, zurückgenommen); einmal im Monat ein Leergutbeleg je Kunde.
+# Die Tests liefern im September 2026 und datieren den Stichtag auf den
+# 01.09.2026 zurück (_q6_monatskunde).
+# =====================================================================
+import uuid
+from datetime import date, datetime, timedelta
+from decimal import Decimal
+from unittest.mock import patch
+from zoneinfo import ZoneInfo
+
+import pytest
+
+from tests.conftest import TestingSessionLocal
+
+Q6_MONAT = "2026-09"
+Q6_STICHTAG = date(2026, 9, 1)
+Q6_LIEFERTAG = date(2026, 9, 10)
+Q6_PREVIEW = "/api/v1/invoices/leergut-run/preview"
+Q6_COMMIT = "/api/v1/invoices/leergut-run/commit"
+Q6_TEST_USER = {"id": "123e4567-e89b-12d3-a456-426614174000", "username": "testuser",
+                "email": "test@example.com"}
+
+
+@pytest.fixture
+def _q6_ohne_forecast(monkeypatch):
+    """Bestätigen und neue Bestellungen stoßen per Celery eine Prognose an.
+    Ohne Redis hängt jeder Aufruf im Reconnect — für diese Tests ohne Belang."""
+    monkeypatch.setattr("app.api.v1.sales._trigger_forecast_update", lambda *a, **k: None)
+
+
+@pytest.fixture
+def _q6_als():
+    """Rolle je Test setzen; der client-Fixture räumt den Override danach ab."""
+    from app.api.deps import get_current_user
+    from app.main import app
+
+    def setzen(rollen):
+        async def override():
+            return {**Q6_TEST_USER, "roles": rollen}
+        app.dependency_overrides[get_current_user] = override
+    return setzen
+
+
+def _q6_d(wert):
+    return Decimal(str(wert))
+
+
+def _q6_heute():
+    return datetime.now(ZoneInfo("Europe/Berlin")).date()
+
+
+def _q6_einheit():
+    """Produktanlage braucht die Standard-Basiseinheit G — die Test-DB startet leer."""
+    from app.models.unit import UnitOfMeasure, UnitCategory
+    with TestingSessionLocal() as db:
+        if db.query(UnitOfMeasure).filter_by(code="G").first() is None:
+            db.add(UnitOfMeasure(name="Gramm", code="G", symbol="g", category=UnitCategory.WEIGHT,
+                                 conversion_factor=1, is_base_unit=True, is_active=True))
+            db.commit()
+
+
+def _q6_kunde(client, name="Großer Kern", **extra):
+    r = client.post("/api/v1/sales/customers", json={"name": name, "typ": "HANDEL", **extra})
+    assert r.status_code == 201, r.text
+    return r.json()
+
+
+def _q6_stichtag(kunde, tag=Q6_STICHTAG):
+    """Stichtag zurückdatieren: der Wechsel auf MONATLICH setzt ihn auf heute."""
+    from app.models.customer import Customer
+    with TestingSessionLocal() as db:
+        db.get(Customer, uuid.UUID(kunde["id"])).pfand_monatlich_ab = tag
+        db.commit()
+
+
+def _q6_monatskunde(client, name="Großer Kern", stichtag=Q6_STICHTAG, **extra):
+    kunde = _q6_kunde(client, name=name, pfand_abrechnung="MONATLICH", **extra)
+    _q6_stichtag(kunde, stichtag)
+    return kunde
+
+
+def _q6_kiste(client, sku="PFAND-E2", name="E2-Kiste", wert="3.00"):
+    _q6_einheit()
+    r = client.post("/api/v1/products", json={
+        "sku": sku, "name": name, "category": "PFAND", "base_price": wert, "deposit_value": wert,
+    })
+    assert r.status_code == 201, r.text
+    assert (r.json()["is_deposit"], r.json()["tax_rate"]) == (True, "STANDARD")
+    return r.json()
+
+
+def _q6_ware(client):
+    _q6_einheit()
+    r = client.post("/api/v1/products", json={
+        "sku": "MG-ERBSE-Q6", "name": "Erbsen-Schale", "category": "MICROGREEN",
+        "base_price": "2.50", "tax_rate": "REDUZIERT",
+    })
+    assert r.status_code == 201, r.text
+    return r.json()
+
+
+def _q6_bestellung(client, kunde, ware=None, kiste=None, kisten=10, liefertag=Q6_LIEFERTAG):
+    zeilen = []
+    if ware:
+        zeilen.append({"product_id": ware["id"], "product_name": ware["name"],
+                       "quantity": 10, "unit": "STK", "unit_price": "2.50"})
+    if kiste:
+        zeilen.append({"product_id": kiste["id"], "product_name": kiste["name"],
+                       "quantity": kisten, "unit": "STK", "unit_price": "3.00"})
+    r = client.post("/api/v1/sales/orders", json={
+        "customer_id": kunde["id"], "requested_delivery_date": liefertag.isoformat(), "lines": zeilen,
+    })
+    assert r.status_code == 201, r.text
+    return r.json()
+
+
+def _q6_bestaetigen(client, bestellung):
+    r = client.post(f"/api/v1/sales/orders/{bestellung['id']}/confirm")
+    assert r.status_code == 200, r.text
+
+
+def _q6_lieferschein(client, bestellung):
+    r = client.post(f"/api/v1/sales/orders/{bestellung['id']}/delivery-notes", json={})
+    assert r.status_code == 201, r.text
+    return r.json()
+
+
+def _q6_quittieren(client, lieferschein, tag=Q6_LIEFERTAG):
+    return client.patch(f"/api/v1/sales/delivery-notes/{lieferschein['id']}/mark-delivered",
+                        json={"signed_by": "Fahrer", "actual_delivery_date": tag.isoformat()})
+
+
+def _q6_liefern(client, bestellung, tag=Q6_LIEFERTAG):
+    """Bestätigen, Lieferschein, quittieren — mit und ohne Paket 2 derselbe Weg nach GELIEFERT."""
+    _q6_bestaetigen(client, bestellung)
+    ls = _q6_lieferschein(client, bestellung)
+    r = _q6_quittieren(client, ls, tag)
+    assert r.status_code == 200, r.text
+    return ls
+
+
+def _q6_konto(client, kunde):
+    r = client.get(f"/api/v1/leergut/kunden/{kunde['id']}")
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def _q6_bewegung(kunde, kiste, art, menge, tag=Q6_LIEFERTAG, **extra):
+    """Bewegung direkt über das ORM — für Tests vor den Erfassungs-Endpunkten."""
+    from app.models.leergut import LeergutArt, LeergutBewegung
+    with TestingSessionLocal() as db:
+        b = LeergutBewegung(customer_id=uuid.UUID(kunde["id"]), product_id=uuid.UUID(kiste["id"]),
+                            art=LeergutArt(art), menge=menge, einzelwert=Decimal("3.00"),
+                            leistungsdatum=tag, **extra)
+        db.add(b)
+        db.commit()
+        return str(b.id)
+
+
+def _q6_ruecknahme(client, kunde, kiste, menge, tag=date(2026, 9, 20)):
+    r = client.post(f"/api/v1/leergut/kunden/{kunde['id']}/ruecknahmen", json={
+        "leistungsdatum": tag.isoformat(), "positionen": [{"product_id": kiste["id"], "menge": menge}],
+    })
+    assert r.status_code == 201, r.text
+    return r.json()
+
+
+def _q6_detail(client, rechnung):
+    r = client.get(f"/api/v1/invoices/{rechnung['id']}")
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def _q6_beleg(client, monat=Q6_MONAT):
+    r = client.post(Q6_COMMIT, json={"monat": monat})
+    assert r.status_code == 201, r.text
+    assert len(r.json()["rechnungen"]) == 1, r.json()
+    return r.json()["rechnungen"][0]
+
+
+# ------------------------------------------------ Task Q6.1: MONATLICH und Stichtag
+
+class TestQ6Abrechnungsart:
+    """MONATLICH ist wählbar; der Wechsel setzt den Stichtag des Leergutkontos."""
+
+    def test_monatlich_waehlbar_setzt_stichtag(self, client):
+        kunde = _q6_kunde(client)
+
+        r = client.patch(f"/api/v1/sales/customers/{kunde['id']}", json={"pfand_abrechnung": "MONATLICH"})
+
+        assert r.status_code == 200, r.text
+        assert r.json()["pfand_abrechnung"] == "MONATLICH"
+        assert r.json()["pfand_monatlich_ab"] == _q6_heute().isoformat()
+
+    def test_anlage_mit_monatlich_setzt_stichtag(self, client):
+        kunde = _q6_kunde(client, pfand_abrechnung="MONATLICH")
+        assert kunde["pfand_monatlich_ab"] == _q6_heute().isoformat()
+
+    def test_gleicher_wert_laesst_stichtag_stehen(self, client):
+        """Das Kundenformular schickt bei jedem Speichern alle Felder mit."""
+        kunde = _q6_monatskunde(client)
+
+        r = client.patch(f"/api/v1/sales/customers/{kunde['id']}",
+                         json={"name": "Großer Kern GmbH", "pfand_abrechnung": "MONATLICH"})
+
+        assert r.status_code == 200, r.text
+        assert r.json()["pfand_monatlich_ab"] == Q6_STICHTAG.isoformat()
+
+    def test_wechsel_weg_loescht_stichtag(self, client):
+        kunde = _q6_monatskunde(client)
+
+        r = client.patch(f"/api/v1/sales/customers/{kunde['id']}", json={"pfand_abrechnung": "JE_LIEFERUNG"})
+
+        assert r.status_code == 200, r.text
+        assert r.json()["pfand_monatlich_ab"] is None
+
+    def test_stichtag_nicht_per_api_setzbar(self, client):
+        kunde = _q6_kunde(client)
+
+        r = client.patch(f"/api/v1/sales/customers/{kunde['id']}", json={"pfand_monatlich_ab": "2020-01-01"})
+
+        assert r.status_code == 200, r.text
+        assert r.json()["pfand_monatlich_ab"] is None
+
+    def test_auto_migrate_ergaenzt_stichtag(self, tmp_path):
+        from sqlalchemy import create_engine, inspect, text
+        from app.tenancy import _auto_migrate
+
+        engine = create_engine(f"sqlite:///{tmp_path / 'alt.db'}")
+        with engine.begin() as conn:
+            conn.execute(text("CREATE TABLE customers (id CHAR(32) PRIMARY KEY, name VARCHAR(200))"))
+            conn.execute(text("INSERT INTO customers (id, name) VALUES ('a', 'Ökoring')"))
+
+        _auto_migrate(engine)
+
+        spalten = {c["name"] for c in inspect(engine).get_columns("customers")}
+        assert "pfand_monatlich_ab" in spalten
+        with engine.connect() as conn:
+            assert conn.execute(text("SELECT pfand_monatlich_ab FROM customers")).scalar() is None
+        engine.dispose()

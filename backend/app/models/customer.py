@@ -9,7 +9,8 @@ from enum import Enum
 from typing import Optional
 from sqlalchemy import String, Integer, Numeric, Boolean, DateTime, Date, ForeignKey, Text, Enum as SQLEnum
 from sqlalchemy.types import Uuid, JSON
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
+from zoneinfo import ZoneInfo
 
 
 from app.database import Base
@@ -67,11 +68,19 @@ class PfandAbrechnung(str, Enum):
     JE_LIEFERUNG: Pfandpositionen stehen auf jeder Rechnung (z. B. Knuspr).
     KEINE: Pfand läuft über das IFCO-Clearing — Pfandpositionen stehen auf
         Bestellung und Lieferschein, aber nicht auf der Rechnung (z. B. Ökoring).
-    MONATLICH (Leergutkonto: ausgegeben minus Retouren, einmal im Monat)
-    folgt mit Paket 3 (Spec, Nachtrag 08.10.2026).
+    MONATLICH: Pfandpositionen gehen ab dem Stichtag pfand_monatlich_ab ins
+        Leergutkonto (ausgegeben minus Retouren) und werden einmal im Monat
+        mit einem eigenen Leergutbeleg abgerechnet, nicht auf der
+        Lieferrechnung (Paket 3, Q6).
     """
     JE_LIEFERUNG = "JE_LIEFERUNG"
     KEINE = "KEINE"
+    MONATLICH = "MONATLICH"
+
+
+def _heute_berlin() -> date:
+    """Kalendertag in München — der Server läuft in UTC."""
+    return datetime.now(ZoneInfo("Europe/Berlin")).date()
 
 
 class CustomerAddress(Base):
@@ -201,6 +210,12 @@ class Customer(Base):
         SQLEnum(PfandAbrechnung, length=20), nullable=False,
         default=PfandAbrechnung.JE_LIEFERUNG, server_default=PfandAbrechnung.JE_LIEFERUNG.value,
     )
+    # Stichtag des Leergutkontos (Q6): ab diesem Liefertag gehen Pfandpositionen
+    # ins Konto statt auf die Rechnung. Setzt nur der Wechsel auf MONATLICH
+    # (_stichtag_leergutkonto) — nicht per API änderbar. Was davor geliefert
+    # wurde, bleibt in der alten Abrechnungsart (keine Doppel-, keine
+    # Nichtabrechnung beim Wechsel; importierte Altbestellungen bleiben draußen).
+    pfand_monatlich_ab: Mapped[Optional[date]] = mapped_column(Date)
 
     # Zahlungsart (B10 SEPA). NULL = Überweisung (Altkunden). Nur über
     # PUT /api/v1/sepa/kunden/{id}/zahlungsart änderbar — bewusst NICHT in
@@ -253,6 +268,19 @@ class Customer(Base):
     sepa_mandate: Mapped[list["SepaMandat"]] = relationship(
         "SepaMandat", back_populates="customer"
     )
+
+    @validates("pfand_abrechnung")
+    def _stichtag_leergutkonto(self, key, wert):
+        """Wechsel auf MONATLICH setzt den Stichtag auf heute (Berlin), ein
+        Wechsel weg davon löscht ihn. Gleicher Wert ändert nichts — das
+        Kundenformular schickt bei jedem Speichern alle Felder mit."""
+        neu = PfandAbrechnung(wert) if wert is not None else None
+        if neu == PfandAbrechnung.MONATLICH:
+            if self.pfand_abrechnung != PfandAbrechnung.MONATLICH:
+                self.pfand_monatlich_ab = _heute_berlin()
+        else:
+            self.pfand_monatlich_ab = None
+        return wert
 
     def can_be_deleted(self) -> bool:
         """

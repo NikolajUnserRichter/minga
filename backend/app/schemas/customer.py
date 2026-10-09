@@ -134,7 +134,10 @@ class CustomerCreate(CustomerBase):
     # Pfandabrechnung: JE_LIEFERUNG (auf jeder Rechnung) oder KEINE (IFCO-Clearing)
     pfand_abrechnung: PfandAbrechnung = Field(
         default=PfandAbrechnung.JE_LIEFERUNG,
-        description="JE_LIEFERUNG: Pfand auf jeder Rechnung; KEINE: über IFCO-Clearing, nicht auf der Rechnung",
+        description=(
+            "JE_LIEFERUNG: Pfand auf jeder Rechnung; KEINE: über IFCO-Clearing, nicht auf der Rechnung; "
+            "MONATLICH: Leergutkonto, einmal im Monat abgerechnet"
+        ),
     )
 
     # DATEV
@@ -243,6 +246,8 @@ class CustomerResponse(CustomerBase):
     packaging_fee_percent: Decimal = Decimal("0")
     show_prices_on_delivery_note: bool = False
     pfand_abrechnung: PfandAbrechnung = PfandAbrechnung.JE_LIEFERUNG
+    # Stichtag des Leergutkontos (nur bei MONATLICH, vom Server gesetzt)
+    pfand_monatlich_ab: Optional[date] = None
     datev_account: Optional[str]
     # Nur lesend (B10): geändert über PUT /sepa/kunden/{id}/zahlungsart.
     # NULL = Überweisung. Bankdaten stehen nie im Kunden-Schema.

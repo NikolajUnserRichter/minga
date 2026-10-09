@@ -2427,9 +2427,9 @@ class TestS5KundenfeldPfandAbrechnung:
     def test_anlage_mit_keine(self, client):
         assert _s5_kunde(client, pfand_abrechnung="KEINE")["pfand_abrechnung"] == "KEINE"
 
-    @pytest.mark.parametrize("wert", ["MONATLICH", "JA", None])
+    @pytest.mark.parametrize("wert", ["JA", None])
     def test_unbekannter_wert_und_null_werden_abgewiesen(self, client, wert):
-        """MONATLICH kommt erst mit Paket 3 — bis dahin gäbe es keine Logik dazu.
+        """MONATLICH ist seit Paket 3 (Q6) gültig, siehe test_gernot_261008_paket3.py.
         null hieße nicht 'unverändert', sondern schriebe NULL in eine NOT-NULL-Spalte."""
         kunde = _s5_kunde(client)
 
