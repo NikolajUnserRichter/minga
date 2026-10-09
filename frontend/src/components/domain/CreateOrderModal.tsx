@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Modal } from '../ui/Modal';
 import { Input, Select, Button, Combobox, useToast } from '../ui';
-import { salesApi, productsApi, seedsApi, customerPricesApi } from '../../services/api';
+import { salesApi, productsApi, customerPricesApi } from '../../services/api';
 import { Customer } from '../../types';
 import { Plus, Trash } from 'lucide-react';
 import { getErrorMessage } from '../../services/errors';
@@ -59,42 +59,27 @@ export function CreateOrderModal({ open, onClose, preselectedCustomer }: CreateO
     });
 
     // Fetch Products for selection
-    const { data: productsData } = useQuery({
+    const { data: productsData, isError: produkteFehler } = useQuery({
         queryKey: ['products', { is_active: true }],
         queryFn: () => productsApi.list({ is_active: true }),
         enabled: open,
     });
 
-    // Fallback to Seeds if no products are available
-    const { data: seedsData } = useQuery({
-        queryKey: ['seeds', { aktiv: true }],
-        queryFn: () => seedsApi.list({ aktiv: true }),
-        enabled: open && (!productsData || productsData.length === 0),
-    });
-
-    // Determine available items (prefer products, fallback to seeds)
-    const availableItems = productsData && productsData.length > 0
-        ? productsData.map(p => ({
-            id: p.id,
-            name: (p.is_bundle || p.is_variable_bundle) ? `📦 ${p.name}` : p.name,
-            price: Number(p.base_price || 0),
-            // Standard: Stück (es wird aktuell nichts abgewogen verkauft); pro Position überschreibbar
-            unit: 'STK',
-            is_bundle: p.is_bundle,
-            is_variable_bundle: p.is_variable_bundle,
-            variable_bundle_min_slots: p.variable_bundle_min_slots,
-            variable_bundle_max_slots: p.variable_bundle_max_slots,
-        }))
-        : (seedsData?.items || []).map(s => ({
-            id: s.id,
-            name: s.name,
-            price: 10,
-            unit: 'g',
-            is_bundle: false,
-            is_variable_bundle: false,
-            variable_bundle_min_slots: null as number | null,
-            variable_bundle_max_slots: null as number | null,
-        }));
+    // Nur Produkte: create_order verlangt eine Produkt-ID und antwortet sonst mit
+    // 404 "Produkt … nicht gefunden" (sales.py). Der frühere Saatgut-Ersatz zeigte
+    // bei leerer oder gesperrter Produktliste (Halle vor B8) Sorten zu 10 €/g,
+    // deren ID das Speichern dann ablehnte.
+    const availableItems = (productsData || []).map(p => ({
+        id: p.id,
+        name: (p.is_bundle || p.is_variable_bundle) ? `📦 ${p.name}` : p.name,
+        price: Number(p.base_price || 0),
+        // Standard: Stück (es wird aktuell nichts abgewogen verkauft); pro Position überschreibbar
+        unit: 'STK',
+        is_bundle: p.is_bundle,
+        is_variable_bundle: p.is_variable_bundle,
+        variable_bundle_min_slots: p.variable_bundle_min_slots,
+        variable_bundle_max_slots: p.variable_bundle_max_slots,
+    }));
 
     // Picker-Auswahl: Nur Nicht-Bundle-Produkte (vermeidet rekursive Bundles)
     const pickableSorten = (productsData || []).filter(p => !p.is_bundle && !p.is_variable_bundle && p.is_active);
@@ -365,6 +350,16 @@ export function CreateOrderModal({ open, onClose, preselectedCustomer }: CreateO
 
                 <div className="space-y-2">
                     <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Positionen</label>
+                    {produkteFehler && (
+                        <p className="text-sm text-red-700 dark:text-red-300">
+                            Produktliste konnte nicht geladen werden. Ohne Produkt lässt sich keine Bestellung speichern.
+                        </p>
+                    )}
+                    {productsData && productsData.length === 0 && (
+                        <p className="text-sm text-gray-500 dark:text-gray-400 italic">
+                            Noch keine aktiven Produkte angelegt (Stammdaten → Produkte).
+                        </p>
+                    )}
                     {lines.map((line, index) => {
                         const variants = variantsByProduct[line.product_id] || [];
                         const hasVariants = variants.length > 0;
