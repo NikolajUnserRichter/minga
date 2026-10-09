@@ -149,6 +149,17 @@ def load_company_settings(db) -> dict[str, str]:
     return {k: (get_setting(db, k) or "") for k in COMPANY_KEYS}
 
 
+def _auszeichnung_maskieren(wert: str) -> str:
+    """Freitext (Firmendaten, Abschnitt F) für ReportLabs Paragraph-Auszeichnung.
+
+    Maskiert "&" und "<" — sonst verschluckt ReportLab "<...>" still, bricht an
+    "<B>" ab oder druckt "AT&T" als "AT&T;". ">" bleibt: ReportLab druckt es
+    unmaskiert richtig, maskiert ergäbe es andere PDF-Bytes. So bleiben PDFs mit
+    bisher richtig gedruckten Werten bytegleich (Versandnachweis, SHA-256).
+    """
+    return wert.replace("&", "&amp;").replace("<", "&lt;")
+
+
 def render_company_header_block(settings: dict[str, str], logo_path: Optional[str] = None, custom_header_text: Optional[str] = None):
     """Rendert den Briefkopf-Block — Logo (falls vorhanden) + Firmenname + Adresse
     oder Custom-Header-Text aus Template."""
@@ -156,9 +167,12 @@ def render_company_header_block(settings: dict[str, str], logo_path: Optional[st
     from reportlab.platypus import Paragraph, Image, Table, TableStyle
     from reportlab.lib import colors
 
-    name = settings.get("COMPANY_NAME") or "Minga Greens"
-    addr1 = settings.get("COMPANY_ADDRESS_LINE1") or ""
-    addr2 = settings.get("COMPANY_ADDRESS_LINE2") or ""
+    # Firmendaten sind Freitext aus den Einstellungen (Karte "Firmendaten",
+    # Abschnitt F): maskieren (_auszeichnung_maskieren). Der Vorlagentext
+    # (header_text) bleibt unmaskiert, er darf <b> und <br/> enthalten.
+    name = _auszeichnung_maskieren(settings.get("COMPANY_NAME") or "Minga Greens")
+    addr1 = _auszeichnung_maskieren(settings.get("COMPANY_ADDRESS_LINE1") or "")
+    addr2 = _auszeichnung_maskieren(settings.get("COMPANY_ADDRESS_LINE2") or "")
 
     if custom_header_text and custom_header_text.strip():
         text_html = custom_header_text.replace("\n", "<br/>")
@@ -190,6 +204,8 @@ def render_company_footer_block(settings: dict[str, str]):
     """Rendert den Fußzeilen-Block mit Bankverbindung + USt-IdNr."""
     from reportlab.lib.styles import ParagraphStyle
     from reportlab.platypus import Paragraph
+    # Maskiert wie im Briefkopf (_auszeichnung_maskieren, Abschnitt F).
+    settings = {k: _auszeichnung_maskieren(v) for k, v in settings.items() if isinstance(v, str)}
     parts: list[str] = []
     if settings.get("COMPANY_NAME"):
         parts.append(f"<b>{settings['COMPANY_NAME']}</b>")

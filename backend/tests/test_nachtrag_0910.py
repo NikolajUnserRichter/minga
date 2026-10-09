@@ -645,3 +645,193 @@ class TestDEinstellungenFuerDenDialog:
         assert client.get("/api/v1/admin/settings").status_code == 403
         _d_als("production_staff")
         assert client.get(self._URL).status_code == 403
+# ============================================================================
+# Abschnitt F — Firmendaten in den Einstellungen speichern auf dem Server
+# (Spec 2026-10-08, „Offen (niedrig, 09.10.)" Punkte 1 und 2)
+#
+# Briefkopf und Fuß der Minga-Belege kommen aus den Belegvorlagen
+# (document_templates.texts: header_text, footer_text). pdf_service nimmt je
+# Block ENTWEDER den Vorlagentext ODER die Firmendaten (COMPANY_*), nie beide.
+# F hält das mit Tests fest, maskiert die Firmendaten im PDF, prüft sie beim
+# Speichern und grüßt in Beleg-Mails ohne Firmennamen mit dem Absendernamen.
+# Helfer tragen das Präfix _f_, Klassen TestF1…TestF3.
+# ============================================================================
+import re as _f_re
+
+import pytest
+
+from tests.conftest import TestingSessionLocal
+from tests.test_documents_preise import _pdf_text as _f_pdf_roh
+
+_F_FIRMA = {
+    "COMPANY_NAME": "Testfarm GmbH",
+    "COMPANY_ADDRESS_LINE1": "Feldweg 1",
+    "COMPANY_ADDRESS_LINE2": "80000 Muenchen",
+    "COMPANY_USTID": "DE123456789",
+    "COMPANY_STEUERNR": "143/163/41625",
+    "COMPANY_PHONE": "+49 89 1234",
+    "COMPANY_EMAIL": "info@testfarm.example",
+    "COMPANY_WEBSITE": "www.testfarm.example",
+    "COMPANY_BANK_NAME": "Volksbank Test",
+    "COMPANY_IBAN": "DE89370400440532013000",
+    "COMPANY_BIC": "COBADEFFXXX",
+}
+# Wie die Minga-Vorlagen: Briefkopf eine Zeile, Fuß mit Bank, Geschäftsführung,
+# HRB und Öko-Kontrollnummer (Felder, die COMPANY_* gar nicht kennt).
+_F_VORLAGE = {
+    "header_text": "Testfarm GmbH · Feldweg 1 · 80000 Muenchen",
+    "footer_text": (
+        "Volksbank Test - IBAN DE89370400440532013000 - BIC COBADEFFXXX\n"
+        "Geschaeftsfuehrung: Erika Muster | HRB 123456 | DE-OEKO-001"
+    ),
+}
+
+
+@pytest.fixture
+def _f_ohne_umgebung(monkeypatch):
+    """Firmendaten und Absendername nur aus der Test-DB, nie vom Rechner."""
+    for schluessel in (*_F_FIRMA, "EMAILS_FROM_NAME"):
+        monkeypatch.delenv(schluessel, raising=False)
+
+
+def _f_setze_db(**werte):
+    """Setzt Einstellungen direkt in der DB (ohne die Prüfung von PATCH)."""
+    from app.services.settings_service import set_setting
+    with TestingSessionLocal() as db:
+        for schluessel, wert in werte.items():
+            set_setting(db, schluessel, wert)
+        db.commit()
+
+
+def _f_vorlage(client, belegart, texte=_F_VORLAGE):
+    r = client.patch(f"/api/v1/document-templates/{belegart}", json={"texts": dict(texte)})
+    assert r.status_code == 200, r.text
+
+
+def _f_bestellung(client):
+    r = client.post("/api/v1/sales/customers", json={"name": "Oekoring Handels GmbH", "typ": "HANDEL"})
+    assert r.status_code in (200, 201), r.text
+    r = client.post("/api/v1/sales/orders", json={
+        "customer_id": r.json()["id"],
+        "requested_delivery_date": "2026-03-05",
+        "lines": [{"product_name": "Erbsen-Schale", "quantity": 10, "unit": "STK",
+                   "unit_price": 2.50, "tax_rate": "REDUZIERT"}],
+    })
+    assert r.status_code == 201, r.text
+    bestellung = r.json()
+    r = client.post(f"/api/v1/sales/orders/{bestellung['id']}/confirm")
+    assert r.status_code == 200, r.text
+    return bestellung
+
+
+def _f_rechnung(client):
+    r = client.post(f"/api/v1/invoices/from-order/{_f_bestellung(client)['id']}")
+    assert r.status_code == 201, r.text
+    return r.json()
+
+
+def _f_ab(client):
+    r = client.post(f"/api/v1/sales/orders/{_f_bestellung(client)['id']}/confirmations", json={})
+    assert r.status_code == 201, r.text
+    return r.json()
+
+
+def _f_rechnungs_pdf(client, rechnung) -> bytes:
+    r = client.get(f"/api/v1/invoices/{rechnung['id']}/pdf")
+    assert r.status_code == 200, r.text
+    return r.content
+
+
+def _f_text(pdf: bytes) -> str:
+    """Alle Textstücke eines ReportLab-PDFs, mit Leerzeichen verbunden."""
+    roh = _f_pdf_roh(pdf).decode("latin-1", errors="ignore")
+    return " ".join(_f_re.findall(r"\((.*?)\) Tj", roh))
+
+
+@pytest.fixture
+def _f_mails(monkeypatch):
+    """Beleg-Mails abfangen (belegversand.send_email), SMTP 'konfiguriert'."""
+    from app.services.email_service import VersandErgebnis
+    monkeypatch.setenv("SMTP_HOST", "smtp.farm.example")
+    monkeypatch.setenv("SMTP_USER", "versand@farm.example")
+    gesendet = []
+
+    def senden(**kw):
+        gesendet.append(kw)
+        return VersandErgebnis(message_id=f"<f{len(gesendet)}@test.example>")
+
+    monkeypatch.setattr("app.services.belegversand.send_email", senden)
+    return gesendet
+
+
+def _f_ab_senden(client, ab):
+    return client.patch(f"/api/v1/sales/confirmations/{ab['id']}/send",
+                        json={"to": ["einkauf@oekoring.example"]})
+
+
+@pytest.mark.usefixtures("_f_ohne_umgebung")
+class TestF1PdfBriefkopf:
+    """Belegvorlage hat Vorrang; ohne Vorlagentext Firmendaten je Block einmal."""
+
+    def test_mit_vorlage_bleibt_das_pdf_bytegleich(self, client):
+        _f_vorlage(client, "RECHNUNG")
+        rechnung = _f_rechnung(client)
+        vorher = _f_rechnungs_pdf(client, rechnung)
+
+        r = client.patch("/api/v1/admin/settings", json=_F_FIRMA)
+        assert r.status_code == 200, r.text
+        nachher = _f_rechnungs_pdf(client, rechnung)
+
+        assert nachher == vorher
+        text = _f_text(nachher)
+        assert text.count("Testfarm GmbH") == 1, text
+        assert text.count("DE89370400440532013000") == 1, text
+        assert "Erika Muster" in text and "DE-OEKO-001" in text
+        assert "DE123456789" not in text and "Minga Greens" not in text
+
+    def test_ohne_vorlagentext_kopf_und_fuss_aus_den_firmendaten(self, client):
+        rechnung = _f_rechnung(client)
+        r = client.patch("/api/v1/admin/settings", json=_F_FIRMA)
+        assert r.status_code == 200, r.text
+
+        text = _f_text(_f_rechnungs_pdf(client, rechnung))
+
+        # Kopf: Name, Straße, Ort. Fuß: Name, „Straße · Ort", Kontakt, Steuer, Bank.
+        assert text.count("Testfarm GmbH") == 2, text
+        assert text.count("Feldweg 1") == 2, text
+        assert text.count("80000 Muenchen") == 2, text
+        assert text.count("DE123456789") == 1, text
+        assert text.count("DE89370400440532013000") == 1, text
+        assert "Minga Greens" not in text
+
+    def test_ab_nach_dem_setzen_der_firmendaten_erneut_sendbar(self, client, _f_mails):
+        """Der Versandnachweis vergleicht die PDF-Prüfsumme (Paket 3, Q2): mit
+        Vorlagentext ändern die Firmendaten das PDF nicht, also kein 409."""
+        _f_vorlage(client, "AUFTRAGSBESTAETIGUNG")
+        ab = _f_ab(client)
+        assert _f_ab_senden(client, ab).status_code == 200
+
+        assert client.patch("/api/v1/admin/settings", json=_F_FIRMA).status_code == 200
+        r = _f_ab_senden(client, ab)
+
+        assert r.status_code == 200, r.text
+        erste, zweite = r.json()["dispatches"][:2]
+        assert erste["attachment_sha256"] == zweite["attachment_sha256"]
+        assert len(_f_mails) == 2
+
+    def test_sonderzeichen_in_den_firmendaten_erscheinen_im_pdf(self, client):
+        rechnung = _f_rechnung(client)
+        _f_setze_db(COMPANY_NAME="Huber & Soehne <Bio> GmbH",
+                    COMPANY_EMAIL="Servus <servus@farm.example>",
+                    COMPANY_WEBSITE="feld>wald.example")
+
+        text = _f_text(_f_rechnungs_pdf(client, rechnung))
+
+        # ReportLab schreibt maskierte Zeichen als eigene Textstücke; _f_text
+        # verbindet sie mit Leerzeichen — deshalb ohne Leerzeichen vergleichen.
+        ohne_leer = text.replace(" ", "")
+        assert "Huber&Soehne<Bio>GmbH" in ohne_leer, text
+        assert "E-Mail:Servus<servus@farm.example>" in ohne_leer, text
+        # ">" bleibt unmaskiert: ReportLab druckt es richtig, und als ein
+        # Textstück wie vor F bleiben die PDF-Bytes solcher Werte gleich.
+        assert "feld>wald.example" in text, text
