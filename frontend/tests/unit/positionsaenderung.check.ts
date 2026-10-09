@@ -5,6 +5,8 @@ import { eingabeAusZahl, positionsaenderung } from '../../src/services/positions
 
 const MENGE_FALSCH = { fehler: 'Menge: eine Zahl größer als 0 mit höchstens 3 Nachkommastellen' };
 const PREIS_FALSCH = { fehler: 'Einzelpreis: eine Zahl ab 0 mit höchstens 4 Nachkommastellen' };
+const MENGE_TAUSENDER = { fehler: 'Menge: bitte ohne Tausenderpunkt eingeben, z. B. 1000,5' };
+const PREIS_TAUSENDER = { fehler: 'Einzelpreis: bitte ohne Tausenderpunkt eingeben, z. B. 1000,5' };
 // Die API liefert Dezimalzahlen je nach Weg als Zahl oder als Text ("10.000")
 const alt = { quantity: '10.000', unit_price: 2.5 };
 
@@ -23,9 +25,9 @@ const faelle: Array<[string, string, unknown]> = [
   ['10', '', PREIS_FALSCH],
   ['10', '-2', PREIS_FALSCH],
   ['10', '2,12345', PREIS_FALSCH],                            // 5 Nachkommastellen
-  ['10', '1.000,00', PREIS_FALSCH],                           // Tausenderpunkt
-  ['1.000', '2,5', MENGE_FALSCH],                             // mehrdeutig: 1000 oder 1?
-  ['10', '1.000', PREIS_FALSCH],                              // mehrdeutig, nicht raten
+  ['10', '1.000,00', PREIS_TAUSENDER],                        // Tausenderpunkt
+  ['1.000', '2,5', MENGE_TAUSENDER],                          // mehrdeutig: 1000 oder 1?
+  ['10', '1.000', PREIS_TAUSENDER],                           // mehrdeutig, nicht raten
 ];
 
 for (const [menge, preis, erwartet] of faelle) {

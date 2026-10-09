@@ -23,6 +23,7 @@ import { belegartDerRechnung } from '../services/belegpfad';
 import { getErrorMessage } from '../services/errors';
 import { rechnungPasstZurSuche } from '../services/rechnungssuche';
 import { eingabeAusZahl, positionsaenderung } from '../services/positionsaenderung';
+import { euro } from '../services/zahlenformat';
 import { BelegVersandAuftrag } from '../services/api';
 import { VersandFormular, VersandProtokoll, versandMeldung, versandZeile } from '../components/domain/BelegVersand';
 import { MonatsrechnungenDialog, MonatsrechnungenBanner } from '../components/domain/MonatsrechnungenDialog';
@@ -1434,12 +1435,12 @@ export function InvoiceDetail({ invoice: initial }: { invoice: Invoice }) {
                   ) : (
                     <>
                       <td className="text-right py-2">
-                        {line.quantity} {line.unit}
+                        {eingabeAusZahl(line.quantity)} {line.unit}
                       </td>
-                      <td className="text-right py-2">{line.unit_price.toFixed(2)} €</td>
+                      <td className="text-right py-2">{euro(line.unit_price)}</td>
                     </>
                   )}
-                  <td className="text-right py-2">{line.line_total.toFixed(2)} €</td>
+                  <td className="text-right py-2">{euro(line.line_total)}</td>
                   {isDraft && zeileInArbeit?.id === line.id && (
                     <td className="text-right py-2 whitespace-nowrap">
                       <button
@@ -1584,28 +1585,28 @@ export function InvoiceDetail({ invoice: initial }: { invoice: Invoice }) {
       <div className="border-t pt-4">
         <div className="flex justify-between text-sm">
           <span className="text-gray-500 dark:text-gray-400">Zwischensumme:</span>
-          <span>{invoice.subtotal.toFixed(2)} €</span>
+          <span>{euro(invoice.subtotal)}</span>
         </div>
         <div className="flex justify-between text-sm">
           <span className="text-gray-500 dark:text-gray-400">MwSt:</span>
-          <span>{invoice.tax_amount.toFixed(2)} €</span>
+          <span>{euro(invoice.tax_amount)}</span>
         </div>
         <div className="flex justify-between font-semibold mt-2 pt-2 border-t">
           <span>Gesamt:</span>
-          <span>{invoice.total.toFixed(2)} €</span>
+          <span>{euro(invoice.total)}</span>
         </div>
         {/* Pfand steckt im Gesamtbetrag, gehört aber dem Kunden — er bekommt
             es mit dem Gebinde zurück. Nachrichtlich, nicht addieren. */}
         {!!invoice.total_deposit && invoice.total_deposit > 0 && (
           <div className="flex justify-between text-sm text-gray-500 dark:text-gray-400 mt-1">
             <span>darin enthaltenes Pfand:</span>
-            <span>{invoice.total_deposit.toFixed(2)} €</span>
+            <span>{euro(invoice.total_deposit)}</span>
           </div>
         )}
         {invoice.paid_amount > 0 && (
           <div className="flex justify-between text-sm text-green-600 dark:text-green-400 mt-1">
             <span>Bezahlt:</span>
-            <span>{invoice.paid_amount.toFixed(2)} €</span>
+            <span>{euro(invoice.paid_amount)}</span>
           </div>
         )}
       </div>

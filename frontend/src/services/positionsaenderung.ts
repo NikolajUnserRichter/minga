@@ -18,13 +18,15 @@ export type Positionsaenderung =
   | { fehler: string }
   | { daten: { quantity?: number; unit_price?: number } }
 
+const TAUSENDERPUNKT = /^[1-9]\d{0,2}(?:\.\d{3})+(?:,\d+)?$/;
+
 /** Eingabe "2,5" oder "2.5" → 2.5. Keine Zahl, negativ, Tausenderpunkte oder
  *  mehr Nachkommastellen als die Spalte speichert → NaN. "1.000" ist
  *  mehrdeutig (deutscher Tausenderpunkt: 1000; Dezimalpunkt: 1) und wird
  *  abgelehnt statt geraten; "0.125", "3.10" und "1,000" bleiben eindeutig. */
 export function zahlAusEingabe(eingabe: string, nachkommastellen: number): number {
   const roh = eingabe.trim();
-  if (/^[1-9]\d{0,2}\.\d{3}$/.test(roh)) return NaN;
+  if (TAUSENDERPUNKT.test(roh)) return NaN;
   const text = roh.replace(',', '.');
   const muster = new RegExp(`^\\d+(\\.\\d{1,${nachkommastellen}})?$`);
   return muster.test(text) ? Number(text) : NaN;
@@ -38,8 +40,14 @@ export function eingabeAusZahl(wert: number | string): string {
 
 /** Menge: Spalte Numeric(10, 3); Einzelpreis: Numeric(10, 4). */
 export function positionsaenderung(alt: PositionsWerte, menge: string, preis: string): Positionsaenderung {
+  if (TAUSENDERPUNKT.test(menge.trim())) {
+    return { fehler: 'Menge: bitte ohne Tausenderpunkt eingeben, z. B. 1000,5' };
+  }
   const neueMenge = zahlAusEingabe(menge, 3);
   if (!(neueMenge > 0)) return { fehler: 'Menge: eine Zahl größer als 0 mit höchstens 3 Nachkommastellen' };
+  if (TAUSENDERPUNKT.test(preis.trim())) {
+    return { fehler: 'Einzelpreis: bitte ohne Tausenderpunkt eingeben, z. B. 1000,5' };
+  }
   const neuerPreis = zahlAusEingabe(preis, 4);
   if (!(neuerPreis >= 0)) return { fehler: 'Einzelpreis: eine Zahl ab 0 mit höchstens 4 Nachkommastellen' };
   const daten: { quantity?: number; unit_price?: number } = {};

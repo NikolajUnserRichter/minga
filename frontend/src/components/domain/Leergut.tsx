@@ -5,6 +5,7 @@ import { Modal } from '../ui/Modal';
 import { Badge, Button, Input, Select, SelectOption, useToast } from '../ui';
 import { leergutApi, LeergutArt, LeergutBewegung, LeergutVorschau } from '../../services/api';
 import { getErrorMessage } from '../../services/errors';
+import { euro } from '../../services/zahlenformat';
 import { useUser } from '../common/Layout';
 
 // Leergutkonto (Paket 3, Q6): Kunden mit Pfandabrechnung „monatlich“.
@@ -19,7 +20,6 @@ const ART_LABEL: Record<LeergutArt, string> = {
   ANFANGSBESTAND: 'Anfangsbestand',
 };
 
-const euro = (wert: number | string) => `${Number(wert).toFixed(2).replace('.', ',')} €`;
 const datum = (iso: string) => new Date(`${iso}T12:00:00`).toLocaleDateString('de-DE');
 
 /** Rückgabe je Kistenart erfassen — im Leergutkonto und im Tagesplan (Halle). */
