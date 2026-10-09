@@ -24,6 +24,7 @@ import { getErrorMessage } from '../services/errors';
 import { BelegVersandAuftrag } from '../services/api';
 import { VersandFormular, VersandProtokoll, versandMeldung, versandZeile } from '../components/domain/BelegVersand';
 import { sammelrechnungApi, SammelrechnungVorschauKunde } from '../services/api';
+import { LeergutLaufModal } from '../components/domain/Leergut';
 import { SepaEinzugsliste } from '../components/domain/SepaEinzugsliste';
 import { useAuth } from '../context/AuthContext';
 import { istEntwurfsnummer, rechnungsnummerAnzeige, FINALISIEREN_RUECKFRAGE } from '../services/rechnungsnummer';
@@ -97,6 +98,8 @@ export default function Invoices() {
   });
   const [sammelBis, setSammelBis] = useState(new Date().toISOString().split('T')[0]);
   const [sammelVorschau, setSammelVorschau] = useState<SammelrechnungVorschauKunde[] | null>(null);
+  // Leergutabrechnung (Pfand monatlich, Paket 3 Q6)
+  const [leergutOffen, setLeergutOffen] = useState(false);
   const [activeTab, setActiveTab] = useState('all');
   // SEPA-Einzugsliste (B10): Bankdaten nur für Admin und Buchhaltung
   const [einzugOffen, setEinzugOffen] = useState(false);
@@ -278,6 +281,10 @@ export default function Invoices() {
             <Button variant="secondary" onClick={() => setSammelOffen(true)}>
               Sammelrechnung
             </Button>
+            <Button variant="secondary" onClick={() => setLeergutOffen(true)}>
+              Leergutabrechnung
+            </Button>
+            <LeergutLaufModal open={leergutOffen} onClose={() => setLeergutOffen(false)} />
             {darfBankdaten && (
               <Button variant="secondary" onClick={() => setEinzugOffen(true)}>
                 Lastschrift-Einzüge
@@ -397,7 +404,9 @@ export default function Invoices() {
                     <div className="text-xs text-gray-500 dark:text-gray-400">
                       {invoice.invoice_type === 'GUTSCHRIFT' && invoice.original_invoice_id
                         ? 'Stornorechnung'
-                        : TYPE_LABELS[invoice.invoice_type]}
+                        : invoice.beleg_art === 'LEERGUT'
+                          ? 'Leergutabrechnung'
+                          : TYPE_LABELS[invoice.invoice_type]}
                     </div>
                     {invoice.dispatches && invoice.dispatches.length > 0 && (
                       <div
@@ -527,6 +536,7 @@ export default function Invoices() {
                         variant="ghost"
                         size="sm"
                         title="Zahlungserinnerung / Mahnung erzeugen (PDF)"
+                        disabled={invoice.beleg_art === 'LEERGUT' && Number(invoice.total) <= 0}
                         onClick={async (e) => {
                           e.stopPropagation();
                           const nextLevel = Math.min(3, (invoice.reminder_level || 0) + 1);
@@ -1136,7 +1146,10 @@ export function InvoiceDetail({ invoice: initial }: { invoice: Invoice }) {
     refetchOnMount: 'always',
   });
   const invoice = refreshed || initial;
-  const isDraft = invoice.status === 'ENTWURF';
+  // Leergutbeleg (Paket 3, Q6): Positionen und Kunde ergeben sich aus dem
+  // Leergutkonto, der Server lehnt Änderungen ab (409). Der Dialog zeigt ihn
+  // deshalb nur an; korrigiert wird im Leergutkonto, dann verwerfen und neu anlegen.
+  const isDraft = invoice.status === 'ENTWURF' && invoice.beleg_art !== 'LEERGUT';
 
   const { data: products = [] } = useQuery({
     queryKey: ['products', 'active'],
