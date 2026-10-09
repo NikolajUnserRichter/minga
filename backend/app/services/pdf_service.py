@@ -3,7 +3,7 @@ from io import BytesIO
 from typing import Optional
 from xml.sax.saxutils import escape
 from reportlab.lib.pagesizes import A4
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, KeepTogether
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 from reportlab.lib.units import cm
@@ -65,13 +65,25 @@ def line_desc_cell(main: Optional[str], product, styles) -> Paragraph:
         if sorte:
             extras.append(f"Sorte: {sorte}")
         if getattr(product, "is_bundle", False):
-            comps = sorted(product.components or [], key=lambda c: (c.sort_order or 0))
-            names = ", ".join(
-                (c.child_product.name_short or c.child_product.name)
-                for c in comps if c.child_product is not None
+            components = sorted(
+                (component for component in (product.components or []) if component.child_product is not None),
+                key=lambda component: component.sort_order or 0,
             )
+            names = [component.child_product.name_short or component.child_product.name
+                     for component in components]
             if names:
-                extras.append(names)
+                prefix, separator, _ = names[0].partition(" | ")
+                common_prefix = prefix + separator
+                if separator and all(name.startswith(common_prefix) for name in names):
+                    names = [name[len(common_prefix):] for name in names]
+                contents = []
+                for component, name in zip(components, names):
+                    quantity = component.quantity
+                    if quantity != 1:
+                        amount = format(quantity.normalize(), "f").replace(".", ",")
+                        name = f"{amount} × {name}"
+                    contents.append(name)
+                extras.append("Inhalt: " + ", ".join(contents))
         if getattr(product, "gtin", None):
             extras.append(f"EAN/GTIN {product.gtin}")
     for extra in extras:
@@ -459,6 +471,7 @@ class PDFService:
             elements.append(Spacer(1, 24))
 
         # Totals
+        closing_start = len(elements)
         if _en(tmpl, "totals_block", default=True):
             totals_data = []
             # § 14 Abs. 4 Nr. 7 UStG: vereinbarte Entgeltminderung ausweisen.
@@ -598,6 +611,7 @@ class PDFService:
                 or "Vielen Dank für Ihren Auftrag!"
             )
             elements.append(Paragraph(thanks_text, styles['Normal']))
+            elements[closing_start:] = [KeepTogether(elements[closing_start:])]
 
         _build_paginated(doc, elements, tmpl, settings, title,
                          "" if ist_entwurfsnummer(invoice.invoice_number) else invoice.invoice_number,

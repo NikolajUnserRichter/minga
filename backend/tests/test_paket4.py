@@ -2296,3 +2296,107 @@ class TestP4Fix8KontaktOhneEmail:
         assert antwort.status_code == 200, antwort.text
         assert antwort.json()["email"] is None
         assert antwort.json()["telefon"] == "089 123"
+
+
+_P4FIX9_TEXTE = {
+    "header_text": "Firma · Straße · Ort",
+    "footer_text": (
+        "Testbank | IBAN DE00 0000 0000 0000 0000 00 | BIC TESTDE00XXX\n"
+        "Geschäftsführung: Erika Muster, Max Mustermann, Maria Musterfrau\n"
+        "USt-ID DE000000000 | Steuer-Nr. 000/000/00000 | HRB 00000 | Öko-Nr. DE-ÖKO-000"
+    ),
+    "thanks_text": "Vielen Dank für Ihren Auftrag!",
+}
+
+
+def _p4fix9_belege(client, anzahl):
+    for art in ("RECHNUNG", "LIEFERSCHEIN"):
+        antwort = client.patch(f"/api/v1/document-templates/{art}", json={"texts": _P4FIX9_TEXTE})
+        assert antwort.status_code == 200, antwort.text
+    kunde = _p4c_kunde(client, "Mix-Testkunde", adresse="Testweg 1\n80000 Testort")
+    sorten = [_p4a_produkt(client, f"BIO Snackbox | {sorte}", f"F9-S{index}")
+              for index, sorte in enumerate(("Sonnenblume", "Radieschen", "Erbse",
+                                             "Kapuziner Kresse", "Borretsch", "Schnittknoblauch"))]
+    produkte = [
+        _p4a_produkt(client, "BIO Kiste | Erbse (VPE 6)", "F9-KISTE"),
+        _p4a_mix(client, [(sorte, 1) for sorte in sorten], "BIO Gourmetmix (VPE 6)", "F9-GM"),
+        _p4a_mix(client, [(sorte, 1) for sorte in sorten], "BIO Premiummix", "F9-PM"),
+    ]
+    positionen = [{"product_id": produkte[index % 3]["id"], "product_name": produkte[index % 3]["name"],
+                   "quantity": 4, "unit": "STK", "unit_price": 2.5, "tax_rate": "REDUZIERT"}
+                  for index in range(anzahl)]
+    antwort = client.post("/api/v1/sales/orders", json={
+        "customer_id": kunde["id"], "requested_delivery_date": _p4b_date.today().isoformat(),
+        "lines": positionen,
+    })
+    assert antwort.status_code == 201, antwort.text
+    bestellung = antwort.json()
+    rechnung = _p4c_rechnung(client, bestellung["id"])
+    antwort = client.post(f"/api/v1/sales/orders/{bestellung['id']}/delivery-notes", json={})
+    assert antwort.status_code == 201, antwort.text
+    return rechnung, antwort.json()
+
+
+@pytest.mark.usefixtures("_p4a_ohne_celery")
+class TestP4Fix9PDFMixUndSchluss:
+    @pytest.mark.parametrize("anzahl", range(4, 14))
+    def test_schluss_bleibt_bei_summen_am_seitenrand(self, client, tmp_path, anzahl):
+        import subprocess
+        rechnung, _ = _p4fix9_belege(client, anzahl)
+        antwort = client.get(f"/api/v1/invoices/{rechnung['id']}/pdf")
+        assert antwort.status_code == 200, antwort.text
+        datei = tmp_path / f"fix9-seitenrand-{anzahl}.pdf"
+        datei.write_bytes(antwort.content)
+        text = subprocess.run(["pdftotext", "-layout", str(datei), "-"],
+                              check=True, capture_output=True, text=True).stdout
+        letzte_seite = text.rstrip("\f").split("\f")[-1]
+        assert _P4FIX9_TEXTE["thanks_text"] in letzte_seite
+        assert "Gesamtbetrag" in letzte_seite
+
+    @pytest.mark.parametrize("art,anzahl", [("rechnung", 3), ("lieferschein", 3), ("rechnung", 14)])
+    def test_mixvorlage_seiten_und_schlusstext(self, client, tmp_path, art, anzahl):
+        import subprocess
+        rechnung, lieferschein = _p4fix9_belege(client, anzahl)
+        pfad = (f"/api/v1/invoices/{rechnung['id']}/pdf" if art == "rechnung"
+                else f"/api/v1/sales/delivery-notes/{lieferschein['id']}/pdf")
+        antwort = client.get(pfad)
+        assert antwort.status_code == 200, antwort.text
+        datei = tmp_path / f"fix9-{art}-{anzahl}.pdf"
+        datei.write_bytes(antwort.content)
+        text = subprocess.run(["pdftotext", "-layout", str(datei), "-"],
+                              check=True, capture_output=True, text=True).stdout
+        seiten = text.rstrip("\f").split("\f")
+        assert len(seiten) == 1 if anzahl == 3 else len(seiten) >= 2
+        assert "BIO Snackbox | " not in text
+        assert "Inhalt: Sonnenblume," in text
+        assert text.count("Schnittknoblauch") == 2 if anzahl == 3 else text.count("Schnittknoblauch") == 9
+        for seite in seiten:
+            for zeile in _P4FIX9_TEXTE["footer_text"].splitlines():
+                assert zeile in seite
+        assert _P4FIX9_TEXTE["header_text"] in seiten[0]
+        assert "BIO Kiste | Erbse" in text
+        if art == "rechnung":
+            assert _P4FIX9_TEXTE["thanks_text"] in seiten[-1]
+            assert "Gesamtbetrag" in seiten[-1] or "BIO Kiste | Erbse" in seiten[-1]
+            assert Decimal(str(rechnung["total"])) == Decimal(anzahl * 10) * Decimal("1.07")
+            assert f"{anzahl * 10 * 1.07:.2f} €" in text
+
+    @pytest.mark.parametrize("namen,mengen,erwartet", [
+        (["BIO Snackbox | Erbse", "BIO Snackbox | Radieschen"], ["2.00", "1.00"],
+         "Inhalt: 2 × Erbse, Radieschen"),
+        (["BIO Snackbox | Erbse", "BIO Kiste | Radieschen"], ["1.00", "1.00"],
+         "Inhalt: BIO Snackbox | Erbse, BIO Kiste | Radieschen"),
+        (["BIO Snackbox | Erbse", "Radieschen"], ["1.00", "1.00"],
+         "Inhalt: BIO Snackbox | Erbse, Radieschen"),
+        (["Erbse", "Radieschen"], ["1.50", "1.00"], "Inhalt: 1,5 × Erbse, Radieschen"),
+    ])
+    def test_inhalt_gemeinsamer_praefix_und_mengen(self, namen, mengen, erwartet):
+        from app.models.product import Product, BundleComponent
+        from app.services.pdf_service import line_desc_cell
+        from reportlab.lib.styles import getSampleStyleSheet
+        produkt = Product(name="Mix", is_bundle=True, components=[
+            BundleComponent(child_product=Product(name=name), quantity=Decimal(menge), sort_order=index)
+            for index, (name, menge) in enumerate(zip(namen, mengen))
+        ])
+        absatz = line_desc_cell("Mix", produkt, getSampleStyleSheet())
+        assert absatz.getPlainText() == "Mix" + erwartet
