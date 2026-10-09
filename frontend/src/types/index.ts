@@ -170,6 +170,8 @@ export interface Customer {
   show_prices_on_delivery_note?: boolean
   /** Pfandabrechnung: JE_LIEFERUNG = Pfand auf jeder Rechnung, KEINE = IFCO-Clearing (nicht auf der Rechnung) */
   pfand_abrechnung?: PfandAbrechnung
+  /** Nur lesend; geändert über sepaApi.setZahlungsart (Admin/Buchhaltung). null = Überweisung */
+  zahlungsart?: Zahlungsart | null
   aktiv: boolean
   /** Belegversand (Paket 3, Q2): Empfänger je Belegart; leer = Haupt-E-Mail */
   confirmation_emails?: string[]
@@ -603,6 +605,10 @@ export type InvoiceStatus = 'ENTWURF' | 'OFFEN' | 'TEILBEZAHLT' | 'BEZAHLT' | 'U
 export type InvoiceType = 'RECHNUNG' | 'GUTSCHRIFT' | 'PROFORMA'
 export type PaymentMethod = 'UEBERWEISUNG' | 'LASTSCHRIFT' | 'BAR' | 'EC' | 'KREDITKARTE' | 'PAYPAL'
 
+/** SEPA (B10). Am Kunden und an der Rechnung: null = Überweisung (Altbestand). */
+export type Zahlungsart = 'UEBERWEISUNG' | 'LASTSCHRIFT'
+export type LastschriftStatus = 'AUSSTEHEND' | 'EINGEZOGEN' | 'RUECKLASTSCHRIFT'
+
 /** Eine Zeile des Versandprotokolls (Backend: DocumentDispatchResponse) */
 export interface DocumentDispatch {
   id: string
@@ -657,6 +663,10 @@ export interface Invoice {
   last_reminder_sent_at?: string | null
   /** Versandprotokoll, älteste zuerst */
   dispatches?: DocumentDispatch[]
+  /** SEPA-Lastschrift (B10): beim Festschreiben eingefroren, IBAN darin nur maskiert */
+  zahlungsart?: Zahlungsart | null
+  lastschrift_status?: LastschriftStatus | null
+  sepa_hinweis?: string | null
   lines?: InvoiceLine[]
   payments?: Payment[]
   created_at: string

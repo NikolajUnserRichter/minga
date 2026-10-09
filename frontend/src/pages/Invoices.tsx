@@ -24,6 +24,8 @@ import { getErrorMessage } from '../services/errors';
 import { BelegVersandAuftrag } from '../services/api';
 import { VersandFormular, VersandProtokoll, versandMeldung, versandZeile } from '../components/domain/BelegVersand';
 import { sammelrechnungApi, SammelrechnungVorschauKunde } from '../services/api';
+import { SepaEinzugsliste } from '../components/domain/SepaEinzugsliste';
+import { useAuth } from '../context/AuthContext';
 import { istEntwurfsnummer, rechnungsnummerAnzeige, FINALISIEREN_RUECKFRAGE } from '../services/rechnungsnummer';
 import { lexofficeStatusLabel } from '../components/ui/statusLabels';
 
@@ -96,6 +98,10 @@ export default function Invoices() {
   const [sammelBis, setSammelBis] = useState(new Date().toISOString().split('T')[0]);
   const [sammelVorschau, setSammelVorschau] = useState<SammelrechnungVorschauKunde[] | null>(null);
   const [activeTab, setActiveTab] = useState('all');
+  // SEPA-Einzugsliste (B10): Bankdaten nur für Admin und Buchhaltung
+  const [einzugOffen, setEinzugOffen] = useState(false);
+  const { user } = useAuth();
+  const darfBankdaten = ['admin', 'accounting'].some((r) => user?.roles?.includes(r));
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 20;
 
@@ -272,6 +278,11 @@ export default function Invoices() {
             <Button variant="secondary" onClick={() => setSammelOffen(true)}>
               Sammelrechnung
             </Button>
+            {darfBankdaten && (
+              <Button variant="secondary" onClick={() => setEinzugOffen(true)}>
+                Lastschrift-Einzüge
+              </Button>
+            )}
             <Button icon={<Plus className="w-4 h-4" />} onClick={() => setIsCreating(true)}>
               Neue Rechnung
             </Button>
@@ -415,6 +426,11 @@ export default function Invoices() {
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
                     <Badge variant={STATUS_COLORS[invoice.status]}>{STATUS_LABELS[invoice.status]}</Badge>
+                    {invoice.zahlungsart === 'LASTSCHRIFT' && (
+                      <Badge variant={invoice.lastschrift_status === 'RUECKLASTSCHRIFT' ? 'danger' : 'purple'} className="ml-1">
+                        {invoice.lastschrift_status === 'RUECKLASTSCHRIFT' ? 'Rücklastschrift' : 'Lastschrift'}
+                      </Badge>
+                    )}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                     {invoice.status === 'ENTWURF' && (
@@ -504,7 +520,9 @@ export default function Invoices() {
                         </Button>
                       )
                     )}
-                    {['OFFEN', 'TEILBEZAHLT', 'UEBERFAELLIG'].includes(invoice.status) && (
+                    {['OFFEN', 'TEILBEZAHLT', 'UEBERFAELLIG'].includes(invoice.status)
+                      // Lastschrift: keine Mahnung, solange der Einzug aussteht (B10)
+                      && (invoice.zahlungsart !== 'LASTSCHRIFT' || invoice.lastschrift_status === 'RUECKLASTSCHRIFT') && (
                       <Button
                         variant="ghost"
                         size="sm"
@@ -622,6 +640,10 @@ export default function Invoices() {
       </Modal>
 
       {/* DATEV Export Modal */}
+      <Modal open={einzugOffen} onClose={() => setEinzugOffen(false)} title="Lastschrift-Einzüge" size="xl">
+        {einzugOffen && <SepaEinzugsliste />}
+      </Modal>
+
       <Modal open={showDatevExport} onClose={() => setShowDatevExport(false)} title="DATEV Export">
         <DatevExportForm onClose={() => setShowDatevExport(false)} />
       </Modal>

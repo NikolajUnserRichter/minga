@@ -12,6 +12,8 @@ import { useDebounce } from '../hooks/useDebounce';
 import { PageHeader, FilterBar } from '../components/common/Layout';
 import { CustomerCard } from '../components/domain/CustomerCard';
 import { CreateOrderModal } from '../components/domain/CreateOrderModal';
+import { SepaMandatKarte } from '../components/domain/SepaMandatKarte';
+import { useAuth } from '../context/AuthContext';
 import {
   Button,
   Input,
@@ -228,6 +230,10 @@ interface CustomerFormProps {
 
 function CustomerForm({ customer, onSubmit, onCancel }: CustomerFormProps) {
   const toast = useToast();
+  // Bankdaten (B10) nur für Admin und Buchhaltung — das Backend sperrt /sepa für alle anderen.
+  const { user } = useAuth();
+  const darfBankdaten = ['admin', 'accounting'].some((r) => user?.roles?.includes(r));
+  const istAdmin = !!user?.roles?.includes('admin');
   const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState({
     name: customer?.name || '',
@@ -485,6 +491,11 @@ function CustomerForm({ customer, onSubmit, onCancel }: CustomerFormProps) {
         <>
           <AddressList customerId={customer.id} />
           <ContactList customerId={customer.id} />
+          {darfBankdaten ? (
+            <SepaMandatKarte customerId={customer.id} customerName={customer.name} isAdmin={istAdmin} />
+          ) : customer.zahlungsart === 'LASTSCHRIFT' && (
+            <div className="text-sm text-gray-600 dark:text-gray-400">Zahlung per SEPA-Lastschrift</div>
+          )}
         </>
       ) : (
         <div className="rounded-lg border border-dashed border-gray-300 dark:border-gray-700 p-4 text-sm text-gray-500 dark:text-gray-400">

@@ -1640,3 +1640,98 @@ export const sammelrechnungApi = {
     api.get<Array<{ id: string; delivery_note_number: string; lieferdatum: string; betrag_netto: number }>>(
       `/invoices/${invoiceId}/delivery-notes`).then(r => r.data),
 }
+
+// ==================== SEPA-LASTSCHRIFT (B10) — nur Admin und Buchhaltung ====================
+// Typ inline importiert: der lange Typ-Import oben bleibt unberührt.
+type SepaZahlungsart = import('../types').Zahlungsart
+
+export type Mandatsart = 'CORE' | 'B2B'
+
+export interface SepaMandat {
+  id: string
+  customer_id: string
+  mandatsreferenz: string
+  mandatsart: Mandatsart
+  unterschrieben_am: string
+  kontoinhaber: string
+  iban: string
+  iban_maskiert: string
+  bic: string | null
+  bank_name: string | null
+  aktiv: boolean
+  widerrufen_am: string | null
+  letzter_einzug_am: string | null
+  aenderungen: Array<{ am: string; von: string | null; feld: string; alt: unknown; neu: unknown }> | null
+  created_at: string
+  created_by: string | null
+}
+
+export interface SepaMandatEingabe {
+  mandatsreferenz: string
+  mandatsart: Mandatsart
+  unterschrieben_am: string
+  kontoinhaber: string
+  iban: string
+  bic?: string | null
+  bank_name?: string | null
+}
+
+export interface SepaMandateUebersicht {
+  customer_id: string
+  zahlungsart: SepaZahlungsart | null
+  glaeubiger_id: string | null
+  mandate: SepaMandat[]
+}
+
+export interface SepaEinzugZeile {
+  invoice_id: string
+  invoice_number: string
+  customer_id: string
+  customer_name: string
+  betrag: number
+  waehrung: string
+  einzugsdatum: string
+  ueberfaellig_seit_tagen: number
+  rechnungsdatum: string
+  /** Erster erfolgreicher Mailversand der Rechnung (= der Vorabankündigung) */
+  versendet_am: string | null
+  ankuendigung: 'RECHTZEITIG' | 'ZU_SPAET' | 'NICHT_PER_MAIL'
+  /** Tag der Einreichung bei der Bank; eine Rechnung nur einmal */
+  eingereicht_am: string | null
+  mandat_id: string
+  mandatsreferenz: string
+  mandatsart: Mandatsart
+  unterschrieben_am: string
+  kontoinhaber: string
+  iban: string
+  bic: string | null
+  bank_name: string | null
+  mandat_aktiv: boolean
+}
+
+export const sepaApi = {
+  mandate: (customerId: string) =>
+    api.get<SepaMandateUebersicht>(`/sepa/kunden/${customerId}/mandate`).then(r => r.data),
+  mandatAnlegen: (customerId: string, data: SepaMandatEingabe) =>
+    api.post<SepaMandat>(`/sepa/kunden/${customerId}/mandate`, data).then(r => r.data),
+  mandatAendern: (mandatId: string, data: Partial<SepaMandatEingabe>) =>
+    api.patch<SepaMandat>(`/sepa/mandate/${mandatId}`, data).then(r => r.data),
+  mandatWiderrufen: (mandatId: string) =>
+    api.post<{ mandat: SepaMandat; zahlungsart: SepaZahlungsart | null; offene_lastschriften: string[] }>(
+      `/sepa/mandate/${mandatId}/widerruf`, {}).then(r => r.data),
+  setZahlungsart: (customerId: string, zahlungsart: SepaZahlungsart) =>
+    api.put<{ customer_id: string; zahlungsart: SepaZahlungsart }>(
+      `/sepa/kunden/${customerId}/zahlungsart`, { zahlungsart }).then(r => r.data),
+  einzugsliste: (bis?: string) =>
+    api.get<SepaEinzugZeile[]>('/sepa/einzugsliste', { params: bis ? { bis } : {} }).then(r => r.data),
+  /** CSV mit genau diesen Rechnungen; vermerkt sie als eingereicht (zweites Mal: 409) */
+  einreichen: (invoiceIds: string[], ankuendigungBestaetigt: boolean) =>
+    api.post('/sepa/einreichung',
+      { invoice_ids: invoiceIds, ankuendigung_bestaetigt: ankuendigungBestaetigt },
+      { responseType: 'blob' }),
+  einzugBuchen: (invoiceIds: string[], datum: string) =>
+    api.post<{ gebucht: string[]; hinweise: string[] }>('/sepa/einzug', { invoice_ids: invoiceIds, datum }).then(r => r.data),
+  ruecklastschrift: (invoiceId: string, datum: string, grund: string, zahlbarBis?: string) =>
+    api.post<{ invoice_number: string; status: string; lastschrift_status: string; gegenbuchung: number; faellig_am: string }>(
+      `/sepa/rechnungen/${invoiceId}/ruecklastschrift`, { datum, grund, zahlbar_bis: zahlbarBis || null }).then(r => r.data),
+}
