@@ -887,3 +887,36 @@ class TestP41VVerlaufAnzeige:
         )
         assert r.returncode == 0, r.stdout + r.stderr
         assert r.stdout.strip() == "bestellverlauf.check: 45 Fälle ok"
+
+
+# ============================================================
+# Abschnitt Z — Reiterzähler auf der Rechnungsseite
+# Präfixe: Klassen TestP41Z…, Helfer _p41z_…, Konstanten _P41Z_…
+# ============================================================
+
+
+def _p41z_node(befehl):
+    """Node im Ordner frontend (wie TestP4CBelegstatusAnzeige)."""
+    import os
+    import subprocess
+    from pathlib import Path
+    return subprocess.run(
+        befehl,
+        cwd=Path(__file__).resolve().parents[2] / "frontend",
+        env={**os.environ, "TZ": "UTC"}, capture_output=True, text=True, timeout=60,
+    )
+
+
+class TestP41ZZaehlfunktion:
+    """Zählfunktion der Reiter (frontend/src/services/rechnungssuche.ts):
+    die Node-Prüfungen laufen im Vollauf mit."""
+
+    def test_reiter_und_zaehler(self):
+        r = _p41z_node(["node", "tests/unit/rechnungsreiter.check.ts"])
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert r.stdout.strip() == "rechnungsreiter.check: 31 Fälle ok"
+
+    def test_suche_unveraendert(self):
+        r = _p41z_node(["node", "tests/unit/rechnungssuche.check.ts"])
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert r.stdout.strip() == "rechnungssuche.check: 14 Fälle ok"

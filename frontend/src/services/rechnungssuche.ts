@@ -26,3 +26,46 @@ export function rechnungPasstZurSuche(rechnung: Suchbar, suche: string): boolean
     .toLocaleLowerCase('de-DE');
   return woerter.every((wort) => text.includes(wort));
 }
+
+/** Reiter der Rechnungsliste (Invoices.tsx). */
+export type RechnungsReiter = 'all' | 'open' | 'overdue' | 'paid'
+
+export interface ReiterRechnung extends Suchbar {
+  status: string
+}
+
+/**
+ * Was jeder Reiter bei der aktuellen Suche zeigt (Paket 4.1, Z).
+ *
+ * Eine Regel für Tabelle und Zähler: die Tabelle zeigt `reiter[aktiv]`,
+ * der Zähler eines Reiters ist `reiter[id].length` — eine zweite
+ * Zähllogik gibt es nicht. „Offen“ und „Bezahlt“ filtern die geladene
+ * Liste nach Status, „Überfällig“ ist die Liste von GET /invoices/overdue
+ * (UEBERFAELLIG und überfällige TEILBEZAHLT); in jedem Reiter wirkt die
+ * Suche (Paket 4, B; G05).
+ */
+export function rechnungenJeReiter<T extends ReiterRechnung>(
+  rechnungen: T[],
+  ueberfaellige: T[],
+  suche: string,
+): Record<RechnungsReiter, T[]> {
+  const passt = (rechnung: T) => rechnungPasstZurSuche(rechnung, suche);
+  return {
+    all: rechnungen.filter(passt),
+    open: rechnungen.filter((r) => r.status === 'OFFEN' && passt(r)),
+    overdue: ueberfaellige.filter(passt),
+    paid: rechnungen.filter((r) => r.status === 'BEZAHLT' && passt(r)),
+  };
+}
+
+/**
+ * Zähler eines Reiters für die Reiterleiste (`badge` in Tabs.tsx).
+ *
+ * `gekuerzt`: Die geladene Liste hat die Listengrenze erreicht — ältere
+ * Rechnungen fehlen womöglich, die Zahl ist eine Untergrenze („12+“), wie
+ * „100+ Rechnungen“ im Seitenkopf. 0 bleibt 0; die Reiterleiste blendet
+ * sie aus (wie bei den Bestellungen).
+ */
+export function reiterZaehler(anzahl: number, gekuerzt: boolean): number | string {
+  return gekuerzt && anzahl > 0 ? `${anzahl}+` : anzahl;
+}
