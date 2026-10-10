@@ -6,7 +6,7 @@ und Wareneingangs-Verbuchung (Teil-/Vollmengen + Statuswechsel).
 """
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import date
 from decimal import Decimal
 from typing import Optional, Sequence
 from uuid import UUID
@@ -31,8 +31,10 @@ class ProcurementService:
     # ---------- Nummernkreis ----------
 
     def _next_po_number(self) -> str:
-        """Fortlaufende EK-Nummer im Format EK-{Jahr}-{4-stellig}."""
-        year = datetime.now(timezone.utc).year
+        """Fortlaufende EK-Nummer im Format EK-{Jahr}-{4-stellig}. Jahr des
+        Berliner Kalendertags, nicht des UTC-Tags (Paket 4.1, D)."""
+        from app.services.order_status_service import heute_berlin
+        year = heute_berlin().year
         prefix = f"EK-{year}-"
         count = self.db.execute(
             select(func.count())

@@ -552,3 +552,42 @@ class TestP41DBestellnummerBerlin:
         bestellung = _p41d_bestellung(client, _p41d_kunde(client), "2026-10-10")
 
         assert bestellung["order_number"] == "BE-20261010-0001"
+
+
+#: 00:30 in München am 01.01.2027 (Winterzeit, UTC+1) — UTC noch 31.12.2026.
+_P41D_NEUJAHR_HALB_EINS = "2026-12-31T23:30:00+00:00"
+#: 23:30 in München am 31.12.2026 — UTC 22:30, dasselbe Jahr.
+_P41D_SILVESTER_HALB_ZWOELF = "2026-12-31T22:30:00+00:00"
+
+
+class TestP41DJahreswechselEinkaufInventur:
+    """EK- und INV-Nummern tragen das Jahr; maßgeblich ist der Berliner Tag."""
+
+    def test_einkaufsnummer_am_neujahrstag(self, client, monkeypatch):
+        from app.services.procurement_service import ProcurementService
+        from tests.conftest import TestingSessionLocal
+        _p41d_uhr(monkeypatch, _P41D_NEUJAHR_HALB_EINS)
+
+        with TestingSessionLocal() as db:
+            assert ProcurementService(db)._next_po_number() == "EK-2027-0001"
+
+    def test_inventur_am_neujahrstag(self, client, monkeypatch):
+        _p41d_uhr(monkeypatch, _P41D_NEUJAHR_HALB_EINS)
+
+        r = client.post("/api/v1/inventory/counts")
+
+        assert r.status_code == 201, r.text
+        assert (r.json()["count_number"], r.json()["count_date"]) == ("INV-2027-0001", "2027-01-01")
+
+    def test_silvester_halb_zwoelf_im_alten_jahr(self, client, monkeypatch):
+        """Wächter: 23:30 Berliner Zeit ist in UTC derselbe Tag."""
+        from app.services.procurement_service import ProcurementService
+        from tests.conftest import TestingSessionLocal
+        _p41d_uhr(monkeypatch, _P41D_SILVESTER_HALB_ZWOELF)
+
+        r = client.post("/api/v1/inventory/counts")
+
+        assert r.status_code == 201, r.text
+        assert (r.json()["count_number"], r.json()["count_date"]) == ("INV-2026-0001", "2026-12-31")
+        with TestingSessionLocal() as db:
+            assert ProcurementService(db)._next_po_number() == "EK-2026-0001"

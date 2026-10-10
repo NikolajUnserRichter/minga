@@ -672,8 +672,11 @@ class InventoryService:
         """
         Startet eine neue Inventur.
         """
-        # Inventurnummer generieren
-        year = date.today().year
+        # Inventurnummer und Stichtag nach dem Berliner Kalendertag — der
+        # Container läuft in UTC (Paket 4.1, D)
+        from app.services.order_status_service import heute_berlin
+        heute = heute_berlin()
+        year = heute.year
         count_num = self.db.execute(
             select(func.count(InventoryCount.id))
             .where(InventoryCount.count_number.like(f"INV-{year}-%"))
@@ -681,7 +684,7 @@ class InventoryService:
         count_number = f"INV-{year}-{count_num + 1:04d}"
 
         count = InventoryCount(
-            count_date=count_date or date.today(),
+            count_date=count_date or heute,
             count_number=count_number,
             status="OFFEN",
             location_id=location_id,
