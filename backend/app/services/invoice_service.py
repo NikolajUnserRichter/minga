@@ -4,7 +4,7 @@ Rechnungs-Service - Business Logic für Rechnungen
 Mit deutscher MwSt-Berechnung und DATEV-Export
 """
 from datetime import date, datetime, timedelta, timezone
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal
 from fractions import Fraction
 import math
 from uuid import UUID, uuid4
@@ -209,34 +209,57 @@ def netto_je_lieferschein(db: Session, invoice: Invoice, lieferscheine: list[Del
     entsteht bei jedem Abruf neu, ein später geändertes Kundenfeld
     änderte sonst die Anlage einer versendeten Rechnung (GoBD).
 
-    - Sammelrechnung: invoice_line_sources (Menge je Lieferschein) mal
-      Einzelpreis der Position, nach Positionsrabatt.
+    - Sammelrechnung: Jede Position verteilt ihren Zeilenbetrag (line_total,
+      so im PDF gedruckt) exakt auf ihre Lieferscheine, im Verhältnis der
+      Mengen aus invoice_line_sources.
     - Rechnung aus Bestellung (S6 hängt genau einen Lieferschein an, ohne
       invoice_line_sources): die Positionen, deren order_item_id zur
       Bestellung des Lieferscheins gehört.
-    Der Rabatt auf die ganze Rechnung (Kopfrabatt) bleibt wie bisher außen vor.
+    Auf Cent gerundet wird erst der Betrag je Lieferschein, mit
+    auf_cent_verteilen über alle Lieferscheine der Rechnung (Paket 4.1, R):
+    Die Anlage summiert sich exakt zu den Positionen, aus denen sie stammt;
+    jeder Lieferschein liegt weniger als 1 Cent neben seinem Anteil. Bis
+    Paket 4.1 rundete jeder Lieferschein Menge × Preis für sich — war das
+    kein ganzer Centbetrag (Preise mit 3–4 Nachkommastellen,
+    Positionsrabatt, Bruchmengen auch bei Centpreisen), lag die Anlage um
+    Cent neben dem Rechnungsnetto. Sind alle Anteile ganze Cent, ändert
+    sich nichts.
+    Der Rabatt auf die ganze Rechnung (Kopfrabatt, im PDF z. B.
+    "Jahresbonus und Verpackungspauschale") bleibt wie bisher außen vor:
+    Die Anlage summiert sich zur Zwischensumme vor diesem Rabatt. Von Hand
+    ergänzte Positionen (ohne Lieferschein) stehen nicht darin.
     """
-    betraege = {n.id: Decimal("0") for n in lieferscheine}
-    mit_quelle = set()
-    quellen = db.execute(
-        select(InvoiceLineSource.delivery_note_id, InvoiceLineSource.quantity,
-               InvoiceLine.unit_price, InvoiceLine.discount_percent)
+    anteile = {n.id: Fraction(0) for n in lieferscheine}
+    rang = {n.id: (n.delivery_note_number or "", str(n.id)) for n in lieferscheine}
+    je_position: dict = {}
+    for line_id, note_id, nummer, menge, zeilenbetrag in db.execute(
+        select(InvoiceLineSource.invoice_line_id, InvoiceLineSource.delivery_note_id,
+               DeliveryNote.delivery_note_number, InvoiceLineSource.quantity, InvoiceLine.line_total)
         .join(InvoiceLine, InvoiceLineSource.invoice_line_id == InvoiceLine.id)
+        .join(DeliveryNote, InvoiceLineSource.delivery_note_id == DeliveryNote.id)
         .where(InvoiceLine.invoice_id == invoice.id)
-    ).all()
-    for note_id, menge, preis, rabatt in quellen:
-        if note_id in betraege:
-            betraege[note_id] += menge * preis * (1 - (rabatt or Decimal("0")) / 100)
-            mit_quelle.add(note_id)
+    ).all():
+        je_position.setdefault(line_id, (zeilenbetrag, []))[1].append((note_id, menge))
+        # Auch Lieferscheine, die nicht (mehr) an der Rechnung hängen, bekommen
+        # ihren Anteil — sonst rutschte er auf die anderen.
+        rang.setdefault(note_id, (nummer or "", str(note_id)))
+    for zeilenbetrag, quellen in je_position.values():
+        gesamtmenge = sum((Fraction(menge) for _, menge in quellen), Fraction(0))
+        for note_id, menge in quellen:
+            # Anteil nach Menge; ohne Menge (nur in Altdaten denkbar) zu gleichen Teilen
+            gewicht = Fraction(menge) / gesamtmenge if gesamtmenge else Fraction(1, len(quellen))
+            anteile[note_id] = anteile.get(note_id, Fraction(0)) + Fraction(zeilenbetrag or 0) * gewicht
+    mit_quelle = {note_id for _, quellen in je_position.values() for note_id, _ in quellen}
     for note in lieferscheine:
         if note.id in mit_quelle or note.order is None:
             continue
         bestellzeilen = {l.id for l in note.order.lines}
-        betraege[note.id] = sum(
-            (l.line_total for l in invoice.lines if l.order_item_id in bestellzeilen),
-            Decimal("0"),
+        anteile[note.id] = sum(
+            (Fraction(l.line_total or 0) for l in invoice.lines if l.order_item_id in bestellzeilen),
+            Fraction(0),
         )
-    return {nid: b.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP) for nid, b in betraege.items()}
+    betraege = auf_cent_verteilen(anteile, rang)
+    return {n.id: betraege[n.id] for n in lieferscheine}
 
 
 class InvoiceService:
