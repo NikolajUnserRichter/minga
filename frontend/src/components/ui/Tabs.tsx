@@ -4,7 +4,9 @@ interface Tab {
   id: string;
   label: string;
   icon?: ReactNode;
-  badge?: number;
+  // Zahl (ab 1 sichtbar) oder Text wie „100+“ (Rechnungsliste an der
+  // Listengrenze, Paket 4.1 Z)
+  badge?: number | string;
 }
 
 interface TabsContextType {
@@ -48,7 +50,7 @@ export function Tabs({ tabs, defaultTab, activeTab: controlledTab, onChange, chi
             >
               {tab.icon && <span className="mr-2">{tab.icon}</span>}
               {tab.label}
-              {tab.badge !== undefined && tab.badge > 0 && (
+              {(typeof tab.badge === 'string' ? tab.badge !== '' : tab.badge !== undefined && tab.badge > 0) && (
                 <span className="ml-2 badge badge-sm badge-gray">{tab.badge}</span>
               )}
             </button>

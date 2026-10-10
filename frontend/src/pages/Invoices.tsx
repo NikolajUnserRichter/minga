@@ -21,7 +21,7 @@ import { ListPageSkeleton } from '../components/ui/Skeleton';
 import { belegHerunterladen } from '../services/belegordner';
 import { belegartDerRechnung } from '../services/belegpfad';
 import { getErrorMessage } from '../services/errors';
-import { rechnungPasstZurSuche } from '../services/rechnungssuche';
+import { rechnungenJeReiter, reiterZaehler, type RechnungsReiter } from '../services/rechnungssuche';
 import { eingabeAusZahl, positionsaenderung } from '../services/positionsaenderung';
 import { euro } from '../services/zahlenformat';
 import { BelegVersandAuftrag } from '../services/api';
@@ -193,9 +193,6 @@ export default function Invoices() {
 
 
 
-  // Suche „nach Nummer oder Kunde“ — in jedem Reiter (Paket 4, B; G05)
-  const passtZurSuche = (invoice: Invoice) => rechnungPasstZurSuche(invoice, search);
-
   const statusOptions: SelectOption[] = [
     { value: 'all', label: 'Alle Status' },
     { value: 'ENTWURF', label: 'Entwurf' },
@@ -213,23 +210,23 @@ export default function Invoices() {
     { value: 'PROFORMA', label: 'Proforma' },
   ];
 
-  // Je Reiter seine Liste, darauf die Suche. Die Zähler zeigen, was der
-  // Reiter mit der aktuellen Suche zeigt (Paket 4, B; G05).
-  const reiter: Record<string, Invoice[]> = {
-    all: invoices.filter(passtZurSuche),
-    open: invoices.filter((i) => i.status === 'OFFEN' && passtZurSuche(i)),
-    overdue: overdueInvoices.filter(passtZurSuche),
-    paid: invoices.filter((i) => i.status === 'BEZAHLT' && passtZurSuche(i)),
-  };
+  // Je Reiter seine Liste, darauf die Suche „nach Nummer oder Kunde“
+  // (Paket 4, B; G05). Tabelle und Zähler lesen dieselben Listen; der
+  // Zähler geht an `badge` — `count` kennt die Reiterleiste nicht
+  // (Paket 4.1, Z).
+  const reiter = rechnungenJeReiter(invoices, overdueInvoices, search);
+  // Volle Liste: ältere Rechnungen fehlen womöglich, die Zahl ist eine
+  // Untergrenze („60+“). „Überfällig“ kommt ungekürzt von /invoices/overdue.
+  const listeGekuerzt = invoices.length === LISTENGRENZE;
 
   const tabs = [
-    { id: 'all', label: 'Alle', count: reiter.all.length },
-    { id: 'open', label: 'Offen', count: reiter.open.length },
-    { id: 'overdue', label: 'Überfällig', count: reiter.overdue.length },
-    { id: 'paid', label: 'Bezahlt', count: reiter.paid.length },
+    { id: 'all', label: 'Alle', badge: reiterZaehler(reiter.all.length, listeGekuerzt) },
+    { id: 'open', label: 'Offen', badge: reiterZaehler(reiter.open.length, listeGekuerzt) },
+    { id: 'overdue', label: 'Überfällig', badge: reiterZaehler(reiter.overdue.length, false) },
+    { id: 'paid', label: 'Bezahlt', badge: reiterZaehler(reiter.paid.length, listeGekuerzt) },
   ];
 
-  const displayInvoices = reiter[activeTab] ?? reiter.all;
+  const displayInvoices = reiter[activeTab as RechnungsReiter] ?? reiter.all;
 
   if (isLoading) {
     return <ListPageSkeleton />;

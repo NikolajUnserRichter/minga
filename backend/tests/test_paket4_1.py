@@ -920,3 +920,171 @@ class TestP41ZZaehlfunktion:
         r = _p41z_node(["node", "tests/unit/rechnungssuche.check.ts"])
         assert r.returncode == 0, r.stdout + r.stderr
         assert r.stdout.strip() == "rechnungssuche.check: 14 Fälle ok"
+
+
+# Lädt eine .ts/.tsx-Datei des Frontends mit Ersatzmodulen (wie
+# _abnahme_frontend in test_gernot_261008_paket3.py) und rendert die
+# Rechnungsseite mit festen Listen. Bausteine (Tabs, Pagination, Input …)
+# ersetzt ein Platzhalter: geprüft wird, was die Seite ihnen übergibt.
+# Welche Abfrage welche Liste bekommt, entscheidet ihre queryFn
+# (invoicesApi.list bzw. invoicesApi.getOverdue), nicht der Schlüssel.
+_P41Z_BOOTSTRAP = r"""
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const vm = require('node:vm');
+const ts = require('typescript');
+function laden(datei, ersatz = {}) {
+    const code = ts.transpileModule(fs.readFileSync(datei, 'utf8'), {
+        compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX }
+    }).outputText;
+    const exports = {};
+    const ladenImport = (name) => {
+        if (Object.hasOwn(ersatz, name)) return ersatz[name];
+        if (name.startsWith('.')) {
+            const basis = path.resolve(path.dirname(datei), name);
+            const ziel = [basis + '.ts', basis + '.tsx', path.join(basis, 'index.ts')]
+                .find(kandidat => fs.existsSync(kandidat));
+            assert.ok(ziel, name);
+            return laden(ziel, ersatz);
+        }
+        return require(name);
+    };
+    vm.runInNewContext(code, { exports, require: ladenImport }, { filename: datei });
+    return exports;
+}
+function elemente(element) {
+    if (!element || typeof element !== 'object') return [];
+    if (Array.isArray(element)) return element.flatMap(elemente);
+    return [element, ...elemente(element.props?.children)];
+}
+function rechnung(nr, status, kunde) {
+    return {
+        id: 'r' + nr, invoice_number: 'RE-2026-' + String(nr).padStart(5, '0'),
+        invoice_type: 'RECHNUNG', status, customer_name: kunde,
+        customer_number: 'KD-' + (10000 + nr), invoice_date: '2026-10-09',
+        due_date: '2026-10-23', total: 10, paid_amount: 0,
+    };
+}
+function seite(rechnungen, ueberfaellig, suche = '') {
+    const platzhalter = new Map();
+    const bausteine = new Proxy({}, {
+        get: (_, name) => {
+            if (name === 'useToast') return () => ({});
+            if (!platzhalter.has(name)) platzhalter.set(name, function Platzhalter() { return null; });
+            return platzhalter.get(name);
+        },
+    });
+    const api = new Proxy({}, {
+        get: (_, name) => name === 'invoicesApi'
+            ? { list: () => 'liste', getOverdue: () => 'ueberfaellig' }
+            : new Proxy({}, { get: () => () => null }),
+    });
+    let ueberfaelligSchluessel = null;
+    let sucheGesetzt = false;
+    const ersatz = {
+        // Der erste useState('') in Invoices() ist das Suchfeld — unten am
+        // Wert des Suchfelds nachgeprüft.
+        react: { useState: (wert) => {
+            if (wert === '' && !sucheGesetzt) { sucheGesetzt = true; return [suche, () => {}]; }
+            return [wert, () => {}];
+        } },
+        '@tanstack/react-query': {
+            useQueryClient: () => ({}), useMutation: () => ({}),
+            useQuery: ({ queryKey, queryFn }) => {
+                const art = queryFn ? queryFn() : null;
+                if (art === 'liste') return { data: rechnungen };
+                if (art === 'ueberfaellig') { ueberfaelligSchluessel = queryKey; return { data: ueberfaellig }; }
+                return {};
+            },
+        },
+        '../services/api': api,
+        '../components/ui': bausteine,
+        '../components/common/Layout': bausteine,
+        '../components/ui/Skeleton': bausteine,
+        '../components/domain/BelegVersand': bausteine,
+        '../components/domain/MonatsrechnungenDialog': bausteine,
+        '../components/domain/Leergut': bausteine,
+        '../components/domain/SepaEinzugsliste': bausteine,
+        '../context/AuthContext': { useAuth: () => ({ user: { roles: ['admin'] } }) },
+    };
+    const Invoices = laden('src/pages/Invoices.tsx', ersatz).default;
+    const alle = elemente(Invoices());
+    const suchfeld = alle.filter(e => e.props?.placeholder === 'Suchen nach Nummer oder Kunde...');
+    assert.equal(suchfeld.length, 1);
+    assert.equal(suchfeld[0].props.value, suche);
+    const leiste = alle.filter(e => Array.isArray(e.props?.tabs));
+    assert.equal(leiste.length, 1);
+    const blaettern = alle.find(e => e.props?.totalItems !== undefined);
+    return {
+        zaehler: Object.fromEntries(leiste[0].props.tabs.map(t => [t.label, t.badge])),
+        zeilen: alle.filter(e => e.type === 'tr' && e.key != null).length,
+        gesamt: blaettern ? blaettern.props.totalItems : null,
+        ueberfaelligSchluessel,
+    };
+}
+// Gemischte Liste: 3 offen, 2 bezahlt, 1 Entwurf, 1 überfällig
+const _gemischt = [
+    rechnung(1, 'OFFEN', 'Ökoring Handels GmbH'),
+    rechnung(2, 'OFFEN', 'Ökoring Handels GmbH'),
+    rechnung(3, 'OFFEN', 'Großer Kern GmbH'),
+    rechnung(4, 'BEZAHLT', 'Großer Kern GmbH'),
+    rechnung(5, 'BEZAHLT', 'Dorint Hotel'),
+    rechnung(6, 'ENTWURF', 'Dorint Hotel'),
+    rechnung(7, 'UEBERFAELLIG', 'Großer Kern GmbH'),
+];
+const _ueberfaellig = [_gemischt[6]];
+"""
+
+
+def _p41z_frontend(skript):
+    r = _p41z_node(["node", "-e", _P41Z_BOOTSTRAP + skript])
+    assert r.returncode == 0, r.stdout + r.stderr
+
+
+class TestP41ZRechnungsseite:
+    """Die Reiter der Rechnungsseite zeigen ihre Zahl (Paket 4.1, Z): dieselbe
+    Liste wie die Tabelle, mit Suche; an der Listengrenze „N+“."""
+
+    def test_zaehler_ohne_suche(self):
+        _p41z_frontend("""
+const s = seite(_gemischt, _ueberfaellig);
+assert.deepEqual(s.zaehler, { 'Alle': 7, 'Offen': 3, 'Überfällig': 1, 'Bezahlt': 2 });
+assert.equal(s.zeilen, 7);
+""")
+
+    def test_zaehler_folgen_der_suche(self):
+        _p41z_frontend("""
+const s = seite(_gemischt, _ueberfaellig, 'kern');
+assert.deepEqual(s.zaehler, { 'Alle': 3, 'Offen': 1, 'Überfällig': 1, 'Bezahlt': 1 });
+assert.equal(s.zeilen, 3);
+const keiner = seite(_gemischt, _ueberfaellig, 'gibt es nicht');
+assert.deepEqual(keiner.zaehler, { 'Alle': 0, 'Offen': 0, 'Überfällig': 0, 'Bezahlt': 0 });
+assert.equal(keiner.zeilen, 0);
+""")
+
+    def test_listengrenze_zeigt_untergrenze(self):
+        _p41z_frontend("""
+const hundert = Array.from({ length: 100 }, (_, i) => rechnung(i + 1, i < 60 ? 'OFFEN' : 'BEZAHLT', 'Kunde ' + i));
+const s = seite(hundert, [rechnung(200, 'UEBERFAELLIG', 'Alt'), rechnung(201, 'TEILBEZAHLT', 'Alt')]);
+assert.deepEqual(s.zaehler, { 'Alle': '100+', 'Offen': '60+', 'Überfällig': 2, 'Bezahlt': '40+' });
+assert.equal(s.zeilen, 20);
+assert.equal(s.gesamt, 100);
+const neunundneunzig = seite(hundert.slice(1), []);
+assert.deepEqual(neunundneunzig.zaehler, { 'Alle': 99, 'Offen': 59, 'Überfällig': 0, 'Bezahlt': 40 });
+""")
+
+    def test_reiterleiste_zeigt_zahl_und_text(self):
+        _p41z_frontend("""
+const { renderToStaticMarkup } = require('react-dom/server');
+const { createElement } = require('react');
+const { Tabs } = laden('src/components/ui/Tabs.tsx');
+const html = renderToStaticMarkup(createElement(Tabs, { activeTab: 'all', tabs: [
+    { id: 'all', label: 'Alle', badge: '100+' },
+    { id: 'open', label: 'Offen', badge: 3 },
+    { id: 'paid', label: 'Bezahlt', badge: 0 },
+    { id: 'ohne', label: 'Ohne' },
+] }));
+const zahlen = [...html.matchAll(/<span class="ml-2 badge badge-sm badge-gray">([^<]*)<\\/span>/g)].map(m => m[1]);
+assert.deepEqual(zahlen, ['100+', '3']);
+""")
