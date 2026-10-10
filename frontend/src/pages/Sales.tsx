@@ -20,6 +20,7 @@ import {
 } from '../components/ui';
 import { getErrorMessage } from '../services/errors';
 import { invalidateOrderViews } from '../services/orderQueries';
+import { datumKurz } from '../services/belegstatus';
 import {
   Plus,
   Users,
@@ -310,7 +311,8 @@ export default function Sales() {
               <div>
                 <p className="text-sm text-gray-500 dark:text-gray-400">Erstellt am</p>
                 <p className="font-medium">
-                  {new Date(selectedOrder.bestell_datum).toLocaleDateString('de-DE')}
+                  {/* naiver UTC-Zeitstempel → Berliner Tag wie Nummer und Beleg (Paket 4.1, D) */}
+                  {datumKurz(selectedOrder.bestell_datum)}
                 </p>
               </div>
             </div>

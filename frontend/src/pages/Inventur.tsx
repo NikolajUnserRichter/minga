@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ClipboardList, FileDown, FileText, Lock, Plus, Printer } from 'lucide-react';
 import { inventurApi, Inventur as InventurTyp, InventurPosition } from '../services/api';
 import { getErrorMessage } from '../services/errors';
+import { heuteBerlin } from '../services/belegstatus';
 import { PageHeader } from '../components/common/Layout';
 import { Badge, Button, EmptyState, Input, Modal, PageLoader, Select, useToast } from '../components/ui';
 
@@ -28,7 +29,9 @@ export default function Inventur() {
   const queryClient = useQueryClient();
   const [neuOffen, setNeuOffen] = useState(false);
   const [typ, setTyp] = useState('JAHRESINVENTUR');
-  const [stichtag, setStichtag] = useState(new Date().toISOString().split('T')[0]);
+  // Berliner Tag, nicht der UTC-Tag des Browsers: zwischen 0 und 2 Uhr wäre es
+  // sonst der Vortag, und die Inventurnummer trägt das Berliner Jahr (Paket 4.1, D)
+  const [stichtag, setStichtag] = useState(() => heuteBerlin());
   const [aktiveId, setAktiveId] = useState<string | null>(null);
 
   const { data: inventuren, isLoading } = useQuery({
