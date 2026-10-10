@@ -5,6 +5,8 @@ Mit deutscher MwSt-Berechnung und DATEV-Export
 """
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
+from fractions import Fraction
+import math
 from uuid import UUID, uuid4
 from io import StringIO
 from zoneinfo import ZoneInfo
@@ -171,6 +173,29 @@ def ist_clearing_pfand(db: Session, kunde: Optional[Customer], line: OrderLine) 
     if kunde.pfand_abrechnung == PfandAbrechnung.KEINE:
         return True
     return im_leergutkonto(kunde, line.order)
+
+
+def auf_cent_verteilen(anteile: dict, rang: dict) -> dict:
+    """Rundet exakte Anteile (in Euro) auf Cent, ohne ihre Summe zu ändern.
+
+    Größte-Reste-Verfahren (Hare-Niemeyer): jeden Anteil auf den Cent
+    abrunden; die Cent, die dann zur Summe fehlen, gehen einzeln an die
+    Anteile mit dem größten abgeschnittenen Rest, bei gleichem Rest zuerst an
+    den kleineren Rang (rang[k], z. B. die Lieferscheinnummer). Damit gilt:
+    - Summe der Ergebnisse = Summe der Anteile (die ein ganzer Centbetrag ist),
+    - jedes Ergebnis liegt weniger als 1 Cent neben seinem Anteil,
+    - Anteile, die schon ganze Cent sind, bleiben unverändert,
+    - gleiche Eingabe, gleiches Ergebnis — unabhängig von der Reihenfolge.
+    Anteile exakt (Fraction, Decimal oder int; auch Drittel), Ergebnis
+    Decimal mit zwei Nachkommastellen. Paket 4.1, R.
+    """
+    in_cent = {k: Fraction(v) * 100 for k, v in anteile.items()}
+    cent = {k: math.floor(v) for k, v in in_cent.items()}
+    fehlend = round(sum(in_cent.values(), Fraction(0))) - sum(cent.values())
+    nach_rest = sorted(in_cent, key=lambda k: (cent[k] - in_cent[k], rang[k]))
+    for k in nach_rest[:fehlend]:
+        cent[k] += 1
+    return {k: (Decimal(c) / 100).quantize(Decimal("0.01")) for k, c in cent.items()}
 
 
 def netto_je_lieferschein(db: Session, invoice: Invoice, lieferscheine: list[DeliveryNote]) -> dict[UUID, Decimal]:
