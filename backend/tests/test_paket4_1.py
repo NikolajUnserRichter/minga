@@ -591,3 +591,71 @@ class TestP41DJahreswechselEinkaufInventur:
         assert (r.json()["count_number"], r.json()["count_date"]) == ("INV-2026-0001", "2026-12-31")
         with TestingSessionLocal() as db:
             assert ProcurementService(db)._next_po_number() == "EK-2026-0001"
+
+
+def _p41d_rechnungsentwurf(client, kunde, datum="2026-12-31", faellig="2027-01-14"):
+    r = client.post("/api/v1/invoices", json={
+        "customer_id": kunde["id"], "invoice_date": datum, "due_date": faellig,
+        "lines": [{"description": "Erbsen-Schale", "quantity": 10, "unit": "STK",
+                   "unit_price": "2.50", "tax_rate": "REDUZIERT"}],
+    })
+    assert r.status_code == 201, r.text
+    return r.json()
+
+
+def _p41d_festschreiben(client, rechnung):
+    r = client.post(f"/api/v1/invoices/{rechnung['id']}/finalize")
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+class TestP41DRechnungsjahrBerlin:
+    """Wächter (seit P4-B.2 richtig, invoice_service._heute_berlin): RE-Jahr
+    und Rechnungsdatum nach dem Berliner Tag des Festschreibens."""
+
+    def test_festschreiben_um_halb_eins_am_neujahrstag(self, client, monkeypatch):
+        _p41d_uhr(monkeypatch, _P41D_NEUJAHR_HALB_EINS)
+        entwurf = _p41d_rechnungsentwurf(client, _p41d_kunde(client))
+
+        rechnung = _p41d_festschreiben(client, entwurf)
+
+        assert (rechnung["invoice_number"], rechnung["invoice_date"], rechnung["due_date"]) == (
+            "RE-2027-00001", "2027-01-01", "2027-01-15")
+
+    def test_festschreiben_um_halb_zwoelf_an_silvester(self, client, monkeypatch):
+        _p41d_uhr(monkeypatch, _P41D_SILVESTER_HALB_ZWOELF)
+        entwurf = _p41d_rechnungsentwurf(client, _p41d_kunde(client))
+
+        rechnung = _p41d_festschreiben(client, entwurf)
+
+        assert (rechnung["invoice_number"], rechnung["invoice_date"]) == ("RE-2026-00001", "2026-12-31")
+
+    def test_storno_nach_mitternacht_im_neuen_jahr(self, client, monkeypatch):
+        """Die Stornorechnung bekommt Nummer und Datum des Neujahrstags; das
+        Original behält RE-2026-00001 vom 31.12. (GoBD)."""
+        _p41d_uhr(monkeypatch, _P41D_SILVESTER_HALB_ZWOELF)
+        original = _p41d_festschreiben(client, _p41d_rechnungsentwurf(client, _p41d_kunde(client)))
+        _p41d_uhr(monkeypatch, _P41D_NEUJAHR_HALB_EINS)
+
+        r = client.post(f"/api/v1/invoices/{original['id']}/cancel",
+                        json={"reason": "Menge falsch", "create_credit_note": True})
+
+        assert r.status_code == 200, r.text
+        storno, gutschrift = r.json()["invoice"], r.json()["credit_note"]
+        assert (storno["invoice_number"], storno["invoice_date"]) == ("RE-2026-00001", "2026-12-31")
+        assert (gutschrift["invoice_number"], gutschrift["invoice_date"]) == ("RE-2027-00001", "2027-01-01")
+
+    def test_neujahrslieferung_von_der_bestellung_bis_zur_rechnung(self, client, monkeypatch):
+        """Alle Nummern einer Lieferung um 00:30 am 01.01.2027 tragen den Neujahrstag."""
+        _p41d_uhr(monkeypatch, _P41D_NEUJAHR_HALB_EINS)
+        bestellung = _p41d_bestellung(client, _p41d_kunde(client), "2027-01-01")
+        _p41d_ausliefern(client, bestellung)
+        r = client.post(f"/api/v1/invoices/from-order/{bestellung['id']}")
+        assert r.status_code == 201, r.text
+
+        rechnung = _p41d_festschreiben(client, r.json())
+
+        assert bestellung["order_number"] == "BE-20270101-0001"
+        assert _p41d_lieferscheine(client, bestellung) == [
+            ("LS-20270101-0001", "PL-20270101-0001", "2027-01-01")]
+        assert (rechnung["invoice_number"], rechnung["invoice_date"]) == ("RE-2027-00001", "2027-01-01")
