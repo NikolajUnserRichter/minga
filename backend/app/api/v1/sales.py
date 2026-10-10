@@ -1694,9 +1694,34 @@ async def delete_order_line(
 
 # ============== Order Audit Log ==============
 
+# Bestellverlauf für Logins ohne Konditionssicht (die Halle; Paket 4.1, V.2 —
+# Gernot 09.10. zu „Rolle Produktion ohne Rechnungen/Konditionen“: „Danke!“).
+# Positivliste: nur Werte, die die Halle an der Bestellung selbst sieht und für
+# Packen und Liefern braucht. Preise, Rabatte, Steuersätze, Beträge und jeder
+# hier nicht genannte Schlüssel (z. B. aus Korrektur-Runbooks) fallen weg.
+VERLAUF_WERTE_FUER_ALLE = frozenset({
+    "status", "actual_delivery_date", "requested_delivery_date",
+    "confirmed_delivery_date", "packing_date", "customer_reference",
+    "notes", "internal_notes", "billing_address", "delivery_address",
+    "position", "product", "quantity", "bestell_nr_extern", "datei",
+})
+
+
+def _verlaufswerte_ohne_konditionen(werte: Optional[dict]) -> tuple[Optional[dict], bool]:
+    """(sichtbare Werte, ob etwas ausgeblendet wurde) — für Logins ohne Konditionssicht."""
+    if not werte:
+        return werte, False
+    sichtbar = {feld: wert for feld, wert in werte.items() if feld in VERLAUF_WERTE_FUER_ALLE}
+    return sichtbar, len(sichtbar) != len(werte)
+
+
 @router.get("/orders/{order_id}/audit-log", response_model=list[OrderAuditLogResponse])
-async def get_order_audit_log(order_id: UUID, db: DBSession):
-    """Änderungsprotokoll einer Bestellung abrufen."""
+async def get_order_audit_log(order_id: UUID, db: DBSession, user: CurrentUser):
+    """Änderungsprotokoll einer Bestellung (Bestellverlauf im Belege-Dialog).
+
+    Logins ohne Konditionssicht (rollen.sieht_konditionen) bekommen je Eintrag
+    nur die Werte aus VERLAUF_WERTE_FUER_ALLE; werte_ausgeblendet zeigt an,
+    dass etwas fehlt (Paket 4.1, V.2)."""
     order = db.get(Order, order_id)
     if not order:
         raise HTTPException(status_code=404, detail="Bestellung nicht gefunden")
@@ -1707,7 +1732,18 @@ async def get_order_audit_log(order_id: UUID, db: DBSession):
         .order_by(OrderAuditLog.created_at.desc())
     ).scalars().all()
 
-    return [OrderAuditLogResponse.model_validate(log) for log in audit_logs]
+    eintraege = [OrderAuditLogResponse.model_validate(log) for log in audit_logs]
+    if sieht_konditionen(user):
+        return eintraege
+    gefiltert = []
+    for eintrag in eintraege:
+        alt, alt_ausgeblendet = _verlaufswerte_ohne_konditionen(eintrag.old_values)
+        neu, neu_ausgeblendet = _verlaufswerte_ohne_konditionen(eintrag.new_values)
+        gefiltert.append(eintrag.model_copy(update={
+            "old_values": alt, "new_values": neu,
+            "werte_ausgeblendet": alt_ausgeblendet or neu_ausgeblendet,
+        }))
+    return gefiltert
 
 
 # ============== Bulk Operations ==============

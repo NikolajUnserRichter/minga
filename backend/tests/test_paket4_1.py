@@ -783,3 +783,90 @@ class TestP41VVerlaufWer:
         assert eintrag["new_values"].get("product") == "Erbsen-Schale"
         assert Decimal(eintrag["old_values"]["quantity"]) == 4
         assert Decimal(eintrag["new_values"]["quantity"]) == 6
+
+
+def _p41v_halle_aendert_preis(client):
+    """Bestätigte Bestellung; die Halle ändert Menge, Preis und Rabatt der ersten
+    Position (per API erlaubt, Paket 3 Q4.8, Frage 4 offen) und packt sie."""
+    order = _p41v_bestellung(client)
+    _p41v_als("production_staff", name="halle")
+    r = client.patch(f"/api/v1/sales/orders/{order['id']}/lines/{order['lines'][0]['id']}",
+                     json={"quantity": 6, "unit_price": "3.80", "discount_percent": 10})
+    assert r.status_code == 200, r.text
+    r = client.post(f"/api/v1/sales/orders/{order['id']}/status", json={"status": "IN_PRODUKTION"})
+    assert r.status_code == 200, r.text
+    return order
+
+
+def _p41v_datenkorrektur(order):
+    """Eintrag wie aus einem Korrektur-Runbook. Prod (10.10.): RECHNUNG_ZUGEORDNET,
+    Name „Systemkorrektur“ mit user_id, alt NULL, neu {"invoice": "RE-…"}. Hier
+    bewusst mit erfundenen Schlüsseln auf beiden Seiten (alt invoice_id, neu
+    invoice_id/rechnung/betrag): Der Filter muss jeden Schlüssel außerhalb der
+    Positivliste wegnehmen, auch in old_values."""
+    from app.models.order import OrderAuditLog
+    with TestingSessionLocal() as db:
+        db.add(OrderAuditLog(
+            order_id=uuid.UUID(order["id"]), user_id=None, user_name="Systemkorrektur",
+            action="RECHNUNG_ZUGEORDNET",
+            old_values={"invoice_id": None},
+            new_values={"invoice_id": str(uuid.uuid4()), "rechnung": "RE-2026-09999",
+                        "betrag": "123.45"},
+            reason="Rechnung zugeordnet (Datenkorrektur)"))
+        db.commit()
+
+
+class TestP41VVerlaufRechte:
+    """Den Verlauf lesen alle Rollen des Auftragsrouters (main.py, _deps_auftraege),
+    auch die Halle. Logins ohne Konditionssicht (rollen.sieht_konditionen, P4-D.2)
+    bekommen nur die Werte aus sales.VERLAUF_WERTE_FUER_ALLE: Preise, Rabatte,
+    Steuersätze, Beträge und unbekannte Schlüssel fallen weg, und
+    werte_ausgeblendet sagt der Oberfläche, dass etwas fehlt."""
+
+    def test_halle_sieht_menge_aber_keinen_preis_und_rabatt(self, client):
+        order = _p41v_halle_aendert_preis(client)
+
+        eintrag = _p41v_eintrag(_p41v_verlauf(client, order), "UPDATE_LINE")
+
+        assert set(eintrag["old_values"]) == {"quantity"}
+        assert set(eintrag["new_values"]) == {"position", "product", "quantity"}
+        assert eintrag["werte_ausgeblendet"] is True
+        assert eintrag["user_name"] == "halle"
+
+    def test_halle_sieht_statuswechsel_vollstaendig(self, client):
+        order = _p41v_halle_aendert_preis(client)
+
+        verlauf = _p41v_verlauf(client, order)
+
+        for aktion, alt, neu in (("CONFIRM", "ENTWURF", "BESTAETIGT"),
+                                 ("STATUS_CHANGE", "BESTAETIGT", "IN_PRODUKTION")):
+            eintrag = _p41v_eintrag(verlauf, aktion)
+            assert (eintrag["old_values"], eintrag["new_values"]) == ({"status": alt}, {"status": neu})
+            assert eintrag["werte_ausgeblendet"] is False
+
+    def test_halle_sieht_keine_werte_aus_datenkorrekturen(self, client):
+        order = _p41v_bestellung(client)
+        _p41v_datenkorrektur(order)
+        _p41v_als("production_staff", name="halle")
+
+        eintrag = _p41v_eintrag(_p41v_verlauf(client, order), "RECHNUNG_ZUGEORDNET")
+
+        assert (eintrag["old_values"], eintrag["new_values"]) == ({}, {})
+        assert eintrag["werte_ausgeblendet"] is True
+        assert eintrag["user_name"] == "Systemkorrektur"
+        assert eintrag["reason"] == "Rechnung zugeordnet (Datenkorrektur)"
+
+    @pytest.mark.parametrize("rollen", [
+        ("admin",), ("sales",), ("accounting",), ("production_planner",),
+        ("production_staff", "sales"),  # Zusatzrolle: hat_rolle prüft „mindestens eine“
+    ])
+    def test_rollen_mit_konditionssicht_sehen_preis_und_rabatt(self, client, rollen):
+        order = _p41v_halle_aendert_preis(client)
+        _p41v_als(*rollen)
+
+        eintrag = _p41v_eintrag(_p41v_verlauf(client, order), "UPDATE_LINE")
+
+        assert Decimal(eintrag["old_values"]["unit_price"]) == Decimal("4.50")
+        assert Decimal(eintrag["new_values"]["unit_price"]) == Decimal("3.80")
+        assert Decimal(eintrag["new_values"]["discount_percent"]) == 10
+        assert eintrag.get("werte_ausgeblendet", False) is False

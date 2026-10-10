@@ -293,6 +293,9 @@ class OrderAuditLogResponse(BaseModel):
     user_name: Optional[str]
     created_at: datetime
     reason: Optional[str]
+    # Paket 4.1, V.2: true, wenn der Server Werte für dieses Login ausgeblendet
+    # hat (Logins ohne Konditionssicht, sales.VERLAUF_WERTE_FUER_ALLE)
+    werte_ausgeblendet: bool = False
 
 
 # ==================== LIST SCHEMAS ====================
