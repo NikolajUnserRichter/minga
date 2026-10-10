@@ -39,8 +39,8 @@ from app.services.datev_service import DatevService
 from app.services.invoice_service import InvoiceService
 from app.models.invoice import ist_entwurfsnummer
 from app.services.order_status_service import (
-    BestandsbuchungFehler, StatuswechselFehler, bestaetigen, bezeichnung, pruefe_uebergang,
-    setze_status, setze_status_im_tagesplan,
+    BestandsbuchungFehler, StatuswechselFehler, bestaetigen, bezeichnung, heute_berlin,
+    pruefe_uebergang, setze_status, setze_status_im_tagesplan,
 )
 from app.services.steuersatz import steuersatz_der_position
 
@@ -717,10 +717,13 @@ async def process_today_subscriptions(db: DBSession):
 def _generate_order_number(db: DBSession) -> str:
     """Generiert sequenzielle Bestellnummer im Format BE-YYYYMMDD-NNNN.
 
+    YYYYMMDD ist der Berliner Kalendertag, nicht der UTC-Tag des Containers
+    (Paket 4.1, D) — auch für den Abo-Lauf, der diese Funktion nutzt.
+
     Uses SELECT ... FOR UPDATE to prevent duplicate numbers under
     concurrent access.
     """
-    today = date.today()
+    today = heute_berlin()
     prefix = f"BE-{today.strftime('%Y%m%d')}"
 
     # Lock matching rows to prevent concurrent duplicates

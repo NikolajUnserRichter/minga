@@ -478,3 +478,77 @@ class TestP41DLieferscheinnummerBerlin:
 
         assert _p41d_lieferscheine(client, bestellung) == [
             ("LS-20261010-0001", "PL-20261010-0001", "2026-10-10")]
+
+
+def _p41d_einheit():
+    from app.models.unit import UnitCategory, UnitOfMeasure
+    from tests.conftest import TestingSessionLocal
+    with TestingSessionLocal() as db:
+        einheit = db.query(UnitOfMeasure).filter_by(code="STK").first()
+        if einheit is None:
+            einheit = UnitOfMeasure(code="STK", name="Stück", category=UnitCategory.COUNT)
+            db.add(einheit)
+            db.commit()
+        return str(einheit.id)
+
+
+def _p41d_bestellnummern():
+    from app.models.order import Order
+    from tests.conftest import TestingSessionLocal
+    with TestingSessionLocal() as db:
+        return sorted((o.order_number, o.requested_delivery_date.isoformat()) for o in db.query(Order))
+
+
+class TestP41DBestellnummerBerlin:
+    """BE-Nummern (Bestellung, Abo-Lauf, Shopify-Import) nach dem Berliner Tag."""
+
+    def test_bestellung_um_halb_eins(self, client, monkeypatch):
+        _p41d_uhr(monkeypatch, _P41D_HALB_EINS)
+
+        bestellung = _p41d_bestellung(client, _p41d_kunde(client), "2026-10-10")
+
+        assert bestellung["order_number"] == "BE-20261010-0001"
+
+    def test_neuer_tag_beginnt_um_mitternacht_in_berlin(self, client, monkeypatch):
+        kunde = _p41d_kunde(client)
+        _p41d_uhr(monkeypatch, _P41D_HALB_ZWOELF)
+        _p41d_bestellung(client, kunde, "2026-10-12")
+        _p41d_uhr(monkeypatch, _P41D_HALB_EINS)
+        _p41d_bestellung(client, kunde, "2026-10-12")
+
+        assert [nummer for nummer, _ in _p41d_bestellnummern()] == ["BE-20261009-0001", "BE-20261010-0001"]
+
+    def test_abo_lauf_um_halb_eins(self, client, monkeypatch):
+        """„Heute verarbeiten“ um 00:30: Liefertag und Nummer tragen denselben Tag."""
+        _p41d_uhr(monkeypatch, _P41D_HALB_EINS)
+        kunde = _p41d_kunde(client, "LfA Förderbank Bayern")
+        r = client.post("/api/v1/products", json={
+            "name": "Erbse", "sku": "P41D-ABO", "base_price": "3.50",
+            "category": "MICROGREEN", "base_unit_id": _p41d_einheit()})
+        assert r.status_code in (200, 201), r.text
+        r = client.post("/api/v1/sales/subscriptions", json={
+            "kunde_id": kunde["id"], "product_id": r.json()["id"], "menge": 2, "einheit": "STUECK",
+            "intervall": "TAEGLICH", "liefertage": [], "gueltig_von": "2026-10-10"})
+        assert r.status_code == 201, r.text
+
+        r = client.post("/api/v1/sales/subscriptions/process-today")
+
+        assert r.status_code == 200, r.text
+        assert r.json()["details"]["erstellt"] == 1
+        assert _p41d_bestellnummern() == [("BE-20261010-0001", "2026-10-10")]
+
+    def test_shopify_nummer_um_halb_eins(self, client, monkeypatch):
+        from app.services.shopify_service import _next_order_number
+        from tests.conftest import TestingSessionLocal
+        _p41d_uhr(monkeypatch, _P41D_HALB_EINS)
+
+        with TestingSessionLocal() as db:
+            assert _next_order_number(db) == "BE-20261010-0001"
+
+    def test_nach_zwei_uhr_wie_bisher(self, client, monkeypatch):
+        """Wächter."""
+        _p41d_uhr(monkeypatch, _P41D_HALB_DREI)
+
+        bestellung = _p41d_bestellung(client, _p41d_kunde(client), "2026-10-10")
+
+        assert bestellung["order_number"] == "BE-20261010-0001"

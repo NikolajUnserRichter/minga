@@ -147,7 +147,9 @@ def _next_customer_number(db) -> str:
 def _next_order_number(db) -> str:
     from sqlalchemy import select
     from app.models.order import Order
-    prefix = f"BE-{date.today().strftime('%Y%m%d')}"
+    from app.services.order_status_service import heute_berlin
+    # Berliner Kalendertag wie sales._generate_order_number (Paket 4.1, D)
+    prefix = f"BE-{heute_berlin().strftime('%Y%m%d')}"
     last = db.execute(
         select(Order.order_number)
         .where(Order.order_number.like(f"{prefix}-%"))
