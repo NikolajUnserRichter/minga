@@ -870,3 +870,20 @@ class TestP41VVerlaufRechte:
         assert Decimal(eintrag["new_values"]["unit_price"]) == Decimal("3.80")
         assert Decimal(eintrag["new_values"]["discount_percent"]) == 10
         assert eintrag.get("werte_ausgeblendet", False) is False
+
+
+class TestP41VVerlaufAnzeige:
+    """Aufbereitung des Verlaufs (frontend/src/services/bestellverlauf.ts): die
+    Node-Prüfung läuft im Vollauf mit (wie TestP4CBelegstatusAnzeige)."""
+
+    def test_node_pruefung(self):
+        import os
+        import subprocess
+        from pathlib import Path
+        r = subprocess.run(
+            ["node", "tests/unit/bestellverlauf.check.ts"],
+            cwd=Path(__file__).resolve().parents[2] / "frontend",
+            env={**os.environ, "TZ": "UTC"}, capture_output=True, text=True, timeout=60,
+        )
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert r.stdout.strip() == "bestellverlauf.check: 45 Fälle ok"
