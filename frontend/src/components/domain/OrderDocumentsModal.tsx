@@ -14,6 +14,7 @@ import { rechnungsnummerAnzeige, FINALISIEREN_RUECKFRAGE } from '../../services/
 import { belegStatusLabel } from '../ui/statusLabels';
 import { invalidateOrderViews } from '../../services/orderQueries';
 import { InvoiceDetail } from '../../pages/Invoices';
+import { OrderVerlauf } from './OrderVerlauf';
 
 interface Props {
   open: boolean;
@@ -546,6 +547,9 @@ export function OrderDocumentsModal({ open, onClose, order }: Props) {
           )}
         </section>
         )}
+
+        {/* VERLAUF — alle Rollen; die Halle ohne Preise und Beträge (Server, P41-V.2) */}
+        <OrderVerlauf orderId={order.id} open={open} />
       </div>
     </Modal>
   );
