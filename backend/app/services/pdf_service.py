@@ -665,10 +665,21 @@ class PDFService:
             elements.append(Paragraph(f"<b>{title}</b> Nr. {doc_number}", styles['Heading2']))
             elements.append(Spacer(1, 10))
 
-        # Meta
+        # Meta. „Datum“ ist das Bestelldatum. Order.order_date ist naiv in UTC
+        # gespeichert; gedruckt wird der Berliner Tag wie in Bestell-, AB-, LS-
+        # und PL-Nummer. Sonst stünde zwischen 0 und 2 Uhr der Vortag neben der
+        # Nummer (Paket 4.1, D).
+        from datetime import timezone as _timezone
+        from zoneinfo import ZoneInfo as _ZoneInfo
+        bestelldatum = "-"
+        if order.order_date:
+            zeitpunkt = order.order_date
+            if zeitpunkt.tzinfo is None:
+                zeitpunkt = zeitpunkt.replace(tzinfo=_timezone.utc)
+            bestelldatum = zeitpunkt.astimezone(_ZoneInfo("Europe/Berlin")).strftime("%d.%m.%Y")
         meta_data = [
             ["Bestellung:", order.order_number],
-            ["Datum:", (order.order_date.strftime("%d.%m.%Y") if order.order_date else "-")],
+            ["Datum:", bestelldatum],
             ["Kunde:", order.customer.name if order.customer else "-"],
         ]
         if order.customer and order.customer.customer_number:

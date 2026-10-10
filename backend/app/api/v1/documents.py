@@ -15,7 +15,7 @@ Workflow:
 """
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 from decimal import Decimal
 from io import BytesIO
 from uuid import UUID
@@ -81,9 +81,9 @@ def create_confirmation(order_id: UUID, data: OrderConfirmationCreate, db: DBSes
     if not order.lines:
         raise HTTPException(status_code=400, detail="Bestellung hat keine Positionen — AB nicht möglich")
 
-    today = date.today()
+    # Berliner Kalendertag wie Lieferschein und Packliste (Paket 4.1, D)
     number = _next_document_number(
-        db, OrderConfirmation, OrderConfirmation.confirmation_number, "AB", today
+        db, OrderConfirmation, OrderConfirmation.confirmation_number, "AB", heute_berlin()
     )
     conf = OrderConfirmation(
         order_id=order.id,

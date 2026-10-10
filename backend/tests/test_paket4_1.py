@@ -299,3 +299,182 @@ class TestP41RAnlageRandfaelle:
         storno_id = r.json()["credit_note"]["id"]
 
         assert _p41r_anlage(client, {"id": storno_id}) == {}
+
+
+# ============================================================
+# Abschnitt D — Berliner Datum in Belegnummern (Paket 4.1)
+# ============================================================
+import importlib as _p41d_importlib
+from datetime import date as _p41d_date, datetime as _p41d_datetime, timezone as _p41d_timezone
+
+#: Module, deren date.today() eine Nummer oder ihr Datum bestimmte — dort
+#: liefert die Testuhr den UTC-Tag wie der Container (python:3.11-slim ohne TZ).
+_P41D_DATE_MODULE = (
+    "app.services.lieferschein_service", "app.api.v1.documents", "app.api.v1.sales",
+    "app.services.shopify_service", "app.services.inventory_service",
+    "app.services.invoice_service", "app.tasks.subscription_tasks",
+)
+#: Module, deren datetime.now(...) einen Berliner Tag, eine Nummer oder das
+#: gedruckte Bestelldatum liefert (models.order: Standard von Order.order_date).
+_P41D_DATETIME_MODULE = (
+    "app.services.order_status_service", "app.services.invoice_service",
+    "app.services.procurement_service", "app.models.order",
+)
+
+
+def _p41d_uhr(monkeypatch, utc):
+    """Server wie in Produktion (Prozess-Zeitzone UTC) zum Zeitpunkt `utc`:
+    date.today() ist der UTC-Tag, datetime.now(tz) der Zeitpunkt in tz,
+    datetime.now() naive UTC. Muster: TestNacharbeitPacktagBerlin
+    (test_gernot_261008_paket2.py), TestAbnahmeSepaBerlin (paket3).
+    raising=False: ein Modul, das `date` oder `datetime` nach Abschnitt D
+    nicht mehr importiert (documents.py, procurement_service.py), bekommt
+    den Namen nur für die Dauer des Tests."""
+    zeitpunkt = _p41d_datetime.fromisoformat(utc)
+
+    class _P41DUhr(_p41d_datetime):
+        @classmethod
+        def now(cls, tz=None):
+            if tz is None:
+                return zeitpunkt.astimezone(_p41d_timezone.utc).replace(tzinfo=None)
+            return zeitpunkt.astimezone(tz)
+
+    class _P41DServertag(_p41d_date):
+        @classmethod
+        def today(cls):
+            return zeitpunkt.astimezone(_p41d_timezone.utc).date()
+
+    for name in _P41D_DATETIME_MODULE:
+        monkeypatch.setattr(_p41d_importlib.import_module(name), "datetime", _P41DUhr, raising=False)
+    for name in _P41D_DATE_MODULE:
+        monkeypatch.setattr(_p41d_importlib.import_module(name), "date", _P41DServertag, raising=False)
+
+
+#: 00:30 in München am 10.10.2026 (Sommerzeit, UTC+2) — UTC noch 09.10.
+_P41D_HALB_EINS = "2026-10-09T22:30:00+00:00"
+#: 23:30 in München am 09.10.2026 — derselbe Tag in UTC und Berlin.
+_P41D_HALB_ZWOELF = "2026-10-09T21:30:00+00:00"
+#: 02:30 in München am 10.10.2026 — UTC ist auch schon der 10.10.
+_P41D_HALB_DREI = "2026-10-10T00:30:00+00:00"
+
+
+def _p41d_kunde(client, name="Dorint Hotels Betriebs GmbH"):
+    r = client.post("/api/v1/sales/customers", json={"name": name, "typ": "GASTRO"})
+    assert r.status_code in (200, 201), r.text
+    return r.json()
+
+
+def _p41d_bestellung(client, kunde, liefertag):
+    """Bestätigte Bestellung mit einer Freitextposition (10 × 2,50 € zu 7 %)."""
+    r = client.post("/api/v1/sales/orders", json={
+        "customer_id": kunde["id"], "requested_delivery_date": liefertag,
+        "lines": [{"product_name": "Erbsen-Schale", "quantity": 10, "unit": "STK",
+                   "unit_price": "2.50", "tax_rate": "REDUZIERT"}],
+    })
+    assert r.status_code == 201, r.text
+    bestellung = r.json()
+    r = client.post(f"/api/v1/sales/orders/{bestellung['id']}/confirm")
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def _p41d_ausliefern(client, bestellung):
+    r = client.post(f"/api/v1/sales/orders/{bestellung['id']}/status", json={"status": "GELIEFERT"})
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def _p41d_lieferscheine(client, bestellung):
+    r = client.get(f"/api/v1/sales/orders/{bestellung['id']}/delivery-notes")
+    assert r.status_code == 200, r.text
+    return [(ls["delivery_note_number"], ls["packing_list"]["packing_list_number"],
+             ls["actual_delivery_date"]) for ls in r.json()]
+
+
+def _p41d_pdf_daten(client, url):
+    """Alle Daten TT.MM.JJJJ im Text eines Beleg-PDFs, in Druckreihenfolge."""
+    import re
+    from tests.test_documents_preise import _pdf_text
+    r = client.get(url)
+    assert r.status_code == 200, r.text
+    return re.findall(r"\d\d\.\d\d\.\d{4}", _pdf_text(r.content).decode("latin-1", errors="ignore"))
+
+
+class TestP41DLieferscheinnummerBerlin:
+    """Lieferschein, Packliste und Auftragsbestätigung heißen nach dem
+    Berliner Anlagetag. Der Container läuft in UTC: zwischen 0 und 2 Uhr
+    (Sommerzeit; Winterzeit 0–1 Uhr) hieß der automatische Lieferschein nach
+    dem Vortag, während actual_delivery_date schon den Berliner Tag trug."""
+
+    def test_ausliefern_um_halb_eins(self, client, monkeypatch):
+        _p41d_uhr(monkeypatch, _P41D_HALB_EINS)
+        bestellung = _p41d_bestellung(client, _p41d_kunde(client), "2026-10-10")
+
+        geliefert = _p41d_ausliefern(client, bestellung)
+
+        assert geliefert["actual_delivery_date"] == "2026-10-10"
+        assert _p41d_lieferscheine(client, bestellung) == [
+            ("LS-20261010-0001", "PL-20261010-0001", "2026-10-10")]
+
+    def test_neuer_lieferschein_um_halb_eins(self, client, monkeypatch):
+        """„Neuer LS“ im Belegdialog und „Packliste“ im Tagesplan."""
+        _p41d_uhr(monkeypatch, _P41D_HALB_EINS)
+        bestellung = _p41d_bestellung(client, _p41d_kunde(client), "2026-10-10")
+
+        r = client.post(f"/api/v1/sales/orders/{bestellung['id']}/delivery-notes", json={})
+
+        assert r.status_code == 201, r.text
+        assert (r.json()["delivery_note_number"], r.json()["packing_list"]["packing_list_number"]) == (
+            "LS-20261010-0001", "PL-20261010-0001")
+
+    def test_auftragsbestaetigung_um_halb_eins(self, client, monkeypatch):
+        _p41d_uhr(monkeypatch, _P41D_HALB_EINS)
+        bestellung = _p41d_bestellung(client, _p41d_kunde(client), "2026-10-12")
+
+        r = client.post(f"/api/v1/sales/orders/{bestellung['id']}/confirmations", json={})
+
+        assert r.status_code == 201, r.text
+        assert r.json()["confirmation_number"] == "AB-20261010-0001"
+
+    def test_belegdatum_im_pdf_um_halb_eins(self, client, monkeypatch):
+        """AB, Lieferschein und Packliste drucken „Datum:“ (Bestelldatum,
+        Order.order_date, naiv in UTC gespeichert) und „Lieferdatum:“. Um 00:30
+        stand sonst neben AB-/LS-/PL-20261010-… der 09.10.2026."""
+        _p41d_uhr(monkeypatch, _P41D_HALB_EINS)
+        bestellung = _p41d_bestellung(client, _p41d_kunde(client), "2026-10-12")
+        r = client.post(f"/api/v1/sales/orders/{bestellung['id']}/confirmations", json={})
+        assert r.status_code == 201, r.text
+        ab = r.json()
+        r = client.post(f"/api/v1/sales/orders/{bestellung['id']}/delivery-notes", json={})
+        assert r.status_code == 201, r.text
+        ls = r.json()
+
+        daten = [_p41d_pdf_daten(client, url) for url in (
+            f"/api/v1/sales/confirmations/{ab['id']}/pdf",
+            f"/api/v1/sales/delivery-notes/{ls['id']}/pdf",
+            f"/api/v1/sales/delivery-notes/{ls['id']}/packing-list/pdf")]
+
+        assert daten == [["10.10.2026", "12.10.2026"]] * 3
+
+    def test_neuer_tag_beginnt_um_mitternacht_in_berlin(self, client, monkeypatch):
+        """23:30 und 00:30 Berliner Zeit: zwei Tage, zwei Nummernkreise."""
+        kunde = _p41d_kunde(client)
+        _p41d_uhr(monkeypatch, _P41D_HALB_ZWOELF)
+        abend = _p41d_bestellung(client, kunde, "2026-10-09")
+        _p41d_ausliefern(client, abend)
+        _p41d_uhr(monkeypatch, _P41D_HALB_EINS)
+        nacht = _p41d_bestellung(client, kunde, "2026-10-10")
+        _p41d_ausliefern(client, nacht)
+
+        assert [_p41d_lieferscheine(client, b)[0][0] for b in (abend, nacht)] == [
+            "LS-20261009-0001", "LS-20261010-0001"]
+
+    def test_nach_zwei_uhr_wie_bisher(self, client, monkeypatch):
+        """Wächter: ab 2 Uhr sind UTC- und Berliner Tag gleich."""
+        _p41d_uhr(monkeypatch, _P41D_HALB_DREI)
+        bestellung = _p41d_bestellung(client, _p41d_kunde(client), "2026-10-10")
+
+        _p41d_ausliefern(client, bestellung)
+
+        assert _p41d_lieferscheine(client, bestellung) == [
+            ("LS-20261010-0001", "PL-20261010-0001", "2026-10-10")]

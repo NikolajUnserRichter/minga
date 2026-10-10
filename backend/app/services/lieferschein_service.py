@@ -27,7 +27,8 @@ from app.schemas.documents import PackingListItemCreate
 
 
 def naechste_belegnummer(db: Session, model, number_col, prefix: str, today: date) -> str:
-    """Generiert {PREFIX}-YYYYMMDD-NNNN sequenziell (AB, LS, PL)."""
+    """Generiert {PREFIX}-YYYYMMDD-NNNN sequenziell (AB, LS, PL). `today` ist
+    der Berliner Kalendertag des Aufrufers (order_status_service.heute_berlin)."""
     date_part = today.strftime("%Y%m%d")
     full_prefix = f"{prefix}-{date_part}"
     last = db.execute(
@@ -57,7 +58,12 @@ def lieferschein_anlegen(
     serialisiert SQLite vor dem Lesen der Nummern. Der Savepoint hält
     Lieferschein und Packliste bei Nummernkollisionen zusammen; andere
     Integritätsfehler werden nicht wiederholt. Committet nicht."""
-    today = date.today()
+    # Nummerndatum = Anlagetag in Europe/Berlin. Der Container läuft in UTC:
+    # zwischen 0 und 2 Uhr hieß der Lieferschein sonst nach dem Vortag,
+    # während actual_delivery_date schon den Berliner Tag trug (Paket 4.1, D).
+    # Später Import: order_status_service importiert dieses Modul.
+    from app.services.order_status_service import heute_berlin
+    today = heute_berlin()
     db.flush()
     db.execute(
         update(Order).where(Order.id == order.id)
