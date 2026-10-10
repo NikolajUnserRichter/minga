@@ -659,3 +659,127 @@ class TestP41DRechnungsjahrBerlin:
         assert _p41d_lieferscheine(client, bestellung) == [
             ("LS-20270101-0001", "PL-20270101-0001", "2027-01-01")]
         assert (rechnung["invoice_number"], rechnung["invoice_date"]) == ("RE-2027-00001", "2027-01-01")
+
+
+# =============================================================================
+# Abschnitt V — Bestellverlauf in der Oberfläche (Paket-4-Abnahme, „offen“)
+# Präfixe: Klassen TestP41V…, Helfer _p41v_…, Konstanten _P41V_…
+# =============================================================================
+import uuid
+from datetime import date, timedelta
+from decimal import Decimal
+
+import pytest
+
+from app.api.deps import get_current_user
+from app.main import app
+from tests.conftest import TestingSessionLocal
+
+_P41V_USER_ID = "123e4567-e89b-12d3-a456-426614174000"
+
+
+def _p41v_als(*rollen, name="p41v"):
+    """Login mit genau diesen Rollen und diesem Benutzernamen (Muster _p4d_als).
+    Das client-Fixture setzt das Login beim nächsten Test neu."""
+    async def override():
+        return {"id": _P41V_USER_ID, "username": name, "email": "p41v@example.com",
+                "roles": list(rollen)}
+    app.dependency_overrides[get_current_user] = override
+
+
+def _p41v_verwaltung():
+    """Standard-Login des client-Fixtures (conftest.py): admin + Planung, testuser."""
+    _p41v_als("admin", "production_planner", name="testuser")
+
+
+def _p41v_bestellung(client):
+    """Bestätigte Bestellung mit zwei freien Positionen, angelegt von der Verwaltung."""
+    _p41v_verwaltung()
+    r = client.post("/api/v1/sales/customers", json={
+        "name": f"Verlaufskunde {uuid.uuid4().hex[:6]}", "typ": "GASTRO"})
+    assert r.status_code == 201, r.text
+    r = client.post("/api/v1/sales/orders", json={
+        "customer_id": r.json()["id"],
+        "requested_delivery_date": (date.today() + timedelta(days=3)).isoformat(),
+        "lines": [
+            {"product_name": "Erbsen-Schale", "quantity": 4, "unit": "STK",
+             "unit_price": "4.50", "tax_rate": "REDUZIERT"},
+            {"product_name": "Radieschen-Schale", "quantity": 2, "unit": "STK",
+             "unit_price": "3.20", "tax_rate": "REDUZIERT"},
+        ],
+    })
+    assert r.status_code == 201, r.text
+    r = client.post(f"/api/v1/sales/orders/{r.json()['id']}/confirm")
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def _p41v_verlauf(client, order):
+    r = client.get(f"/api/v1/sales/orders/{order['id']}/audit-log")
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def _p41v_eintrag(verlauf, aktion):
+    treffer = [e for e in verlauf if e["action"] == aktion]
+    assert len(treffer) == 1, treffer
+    return treffer[0]
+
+
+def _p41v_aenderungen(client, order):
+    """Je eine Änderung an Kopf und Positionen der bestätigten Bestellung —
+    UPDATE, ADD_LINE, UPDATE_LINE, DELETE_LINE (sales.py, _create_audit_log)."""
+    basis = f"/api/v1/sales/orders/{order['id']}"
+    erste, zweite = order["lines"][0], order["lines"][1]
+    r = client.patch(basis, json={"notes": "Tor 2", "change_reason": "Kunde rief an"})
+    assert r.status_code == 200, r.text
+    r = client.post(f"{basis}/lines", json={
+        "product_name": "Senf-Schale", "quantity": 1, "unit": "STK", "unit_price": "2.80"})
+    assert r.status_code == 201, r.text
+    r = client.patch(f"{basis}/lines/{erste['id']}", json={"quantity": 6})
+    assert r.status_code == 200, r.text
+    r = client.delete(f"{basis}/lines/{zweite['id']}")
+    assert r.status_code == 204, r.text
+
+
+class TestP41VVerlaufWer:
+    """Gernot sieht im Verlauf, wer etwas geändert hat. Statuswechsel und Importe
+    speichern den Benutzernamen schon (order_status_service.setze_status,
+    imports); Änderungen an Kopf und Positionen (sales._create_audit_log) bisher
+    nur die Benutzer-ID — die Oberfläche hätte keinen Namen."""
+
+    @pytest.mark.parametrize("aktion", ["UPDATE", "ADD_LINE", "UPDATE_LINE", "DELETE_LINE"])
+    def test_aenderung_nennt_den_benutzer(self, client, aktion):
+        order = _p41v_bestellung(client)
+        _p41v_als("admin", name="gernot")
+        _p41v_aenderungen(client, order)
+
+        eintrag = _p41v_eintrag(_p41v_verlauf(client, order), aktion)
+
+        assert eintrag["user_name"] == "gernot"
+        assert eintrag["user_id"] == _P41V_USER_ID
+
+    def test_statuswechsel_und_grund_wie_bisher(self, client):
+        """Wächter: CONFIRM trug den Namen schon, UPDATE den Änderungsgrund."""
+        order = _p41v_bestellung(client)
+        _p41v_aenderungen(client, order)
+        verlauf = _p41v_verlauf(client, order)
+
+        bestaetigt = _p41v_eintrag(verlauf, "CONFIRM")
+        assert bestaetigt["user_name"] == "testuser"
+        assert (bestaetigt["old_values"], bestaetigt["new_values"]) == (
+            {"status": "ENTWURF"}, {"status": "BESTAETIGT"})
+        assert _p41v_eintrag(verlauf, "UPDATE")["reason"] == "Kunde rief an"
+
+    def test_geaenderte_position_nennt_nummer_und_produkt(self, client):
+        """UPDATE_LINE trug nur Menge, Preis, Steuersatz und Rabatt — welche
+        Position, stand nirgends (line_id setzt _create_audit_log nicht)."""
+        order = _p41v_bestellung(client)
+        _p41v_aenderungen(client, order)
+
+        eintrag = _p41v_eintrag(_p41v_verlauf(client, order), "UPDATE_LINE")
+
+        assert eintrag["new_values"].get("position") == 1
+        assert eintrag["new_values"].get("product") == "Erbsen-Schale"
+        assert Decimal(eintrag["old_values"]["quantity"]) == 4
+        assert Decimal(eintrag["new_values"]["quantity"]) == 6

@@ -779,12 +779,18 @@ def _create_audit_log(
     action: str,
     old_values: Optional[dict] = None,
     new_values: Optional[dict] = None,
-    reason: Optional[str] = None
+    reason: Optional[str] = None,
+    user_name: Optional[str] = None,
 ) -> OrderAuditLog:
-    """Erstellt Audit-Log-Eintrag für Bestellung."""
+    """Erstellt Audit-Log-Eintrag für Bestellung.
+
+    user_name: Benutzername aus dem Token wie bei Statuswechseln
+    (order_status_service.setze_status) — der Bestellverlauf zeigt ihn als
+    „wer“ (Paket 4.1, V.1)."""
     audit_log = OrderAuditLog(
         order_id=order.id,
         user_id=user_id,
+        user_name=user_name,
         action=action,
         old_values=old_values,
         new_values=new_values,
@@ -1257,6 +1263,7 @@ async def update_order(
         _create_audit_log(
             db, order,
             user_id=UUID(user["id"]) if user else None,
+            user_name=(user or {}).get("username"),
             action="UPDATE",
             old_values=old_values,
             new_values=new_values,
@@ -1491,6 +1498,7 @@ async def add_order_line(
         _create_audit_log(
             db, order,
             user_id=UUID(user["id"]) if user else None,
+            user_name=(user or {}).get("username"),
             action="ADD_LINE",
             new_values={
                 "position": line.position,
@@ -1585,9 +1593,13 @@ async def update_order_line(
         _create_audit_log(
             db, order,
             user_id=UUID(user["id"]) if user else None,
+            user_name=(user or {}).get("username"),
             action="UPDATE_LINE",
             old_values=old_values,
             new_values={
+                # Welche Position (der Verlauf nennt sie; Paket 4.1, V.1)
+                "position": line.position,
+                "product": line.beschreibung,
                 "quantity": str(line.quantity),
                 "unit_price": str(line.unit_price),
                 "tax_rate": line.tax_rate.value,
@@ -1660,6 +1672,7 @@ async def delete_order_line(
         _create_audit_log(
             db, order,
             user_id=UUID(user["id"]) if user else None,
+            user_name=(user or {}).get("username"),
             action="DELETE_LINE",
             old_values={
                 "position": line.position,
