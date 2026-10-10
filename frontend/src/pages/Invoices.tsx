@@ -127,7 +127,11 @@ export default function Invoices() {
 
   // Fetch overdue
   const { data: overdueInvoices = [] } = useQuery({
-    queryKey: ['invoices-overdue'],
+    // Unter 'invoices': jede invalidateQueries({ queryKey: ['invoices'] })
+    // (Zahlung, Storno, Finalisieren, Versand …) lädt auch „Überfällig“
+    // neu — sonst blieben Liste und Zähler bis zum Neuladen stehen
+    // (Paket 4.1, Z).
+    queryKey: ['invoices', 'overdue'],
     queryFn: () => invoicesApi.getOverdue(),
   });
 

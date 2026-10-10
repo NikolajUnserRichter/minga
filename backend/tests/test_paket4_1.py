@@ -1088,3 +1088,20 @@ const html = renderToStaticMarkup(createElement(Tabs, { activeTab: 'all', tabs: 
 const zahlen = [...html.matchAll(/<span class="ml-2 badge badge-sm badge-gray">([^<]*)<\\/span>/g)].map(m => m[1]);
 assert.deepEqual(zahlen, ['100+', '3']);
 """)
+
+
+class TestP41ZUeberfaelligNeuLaden:
+    """„Überfällig“ lädt mit jeder invalidateQueries({ queryKey: ['invoices'] })
+    neu (Zahlung, Storno, Finalisieren, Versand …) — sonst bleiben Liste und
+    Zähler bis zum Neuladen der Seite stehen (Paket 4.1, Z)."""
+
+    def test_schluessel_unter_invoices(self):
+        _p41z_frontend("""
+// Über react-query: es re-exportiert query-core, das selbst nicht in
+// frontend/package.json steht (nur transitiv installiert).
+const { partialMatchKey } = require('@tanstack/react-query');
+const s = seite(_gemischt, _ueberfaellig);
+assert.ok(s.ueberfaelligSchluessel, 'keine Abfrage für Überfällig');
+assert.equal(partialMatchKey(s.ueberfaelligSchluessel, ['invoices']), true, JSON.stringify(s.ueberfaelligSchluessel));
+assert.equal(s.zaehler['Überfällig'], 1);
+""")
